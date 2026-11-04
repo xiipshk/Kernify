@@ -1,0 +1,390 @@
+{
+  "title": "Урок 25: Object model — layout, alignment, strict aliasing, placement new, object lifetime",
+  "slug": "object-model-layout-alignment-strict-aliasing-placement-new-object-lifetime",
+  "short_description": "layout, alignment, strict aliasing, placement new, object lifetime",
+  "goals": [
+    "Понять memory layout объектов: поля, vptr, base classes, virtual bases",
+    "Освоить alignment requirements и `alignas`/`alignof`",
+    "Разобраться в strict aliasing rule и type punning",
+    "Изучить placement new, manual lifetime management",
+    "Понять object lifetime rules и `std::launder`"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять memory layout объектов: поля, vptr, base classes, virtual bases",
+        "Освоить alignment requirements и `alignas`/`alignof`",
+        "Разобраться в strict aliasing rule и type punning",
+        "Изучить placement new, manual lifetime management",
+        "Понять object lifetime rules и `std::launder`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Memory Layout (Структура объекта в памяти)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Standard Layout ([class.prop])"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct StandardLayout {\n    int a;\n    double b;\n    char c;\n    // Поля в порядке объявления, без виртуальных функций/базовых классов\n    // Гарантирует совместимость с C и offsetof\n};\nstatic_assert(std::is_standard_layout_v<StandardLayout>);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Non-Standard Layout:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct Base { int x; };\nstruct Derived : Base {\n    virtual void f();  // vptr добавляется\n    int y;\n};\n// Layout: [vptr][Base::x][Derived::y] — порядок implementation-defined"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Virtual Inheritance:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct A { int a; };\nstruct B : virtual A { int b; };\nstruct C : virtual A { int c; };\nstruct D : B, C { int d; };\n// Layout D: [B::b][C::c][D::d][A::a] + vbptr(s) для доступа к виртуальной базе A"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Empty Base Optimization (EBO):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct Empty {};\nstruct WithEmpty : Empty { int x; };\n// sizeof(WithEmpty) == sizeof(int) — пустой базовый класс не занимает место\nstatic_assert(sizeof(WithEmpty) == sizeof(int));"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`[[no_unique_address]]` (C++20):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct [[no_unique_address]] Empty {};\nstruct Holder {\n    Empty e1;\n    Empty e2;  // Могут иметь одинаковый адрес\n    int x;\n};\nstatic_assert(sizeof(Holder) == sizeof(int));"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Alignment (Выравнивание)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Fundamental Alignment:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "alignof(int)        // 4 (обычно)\nalignof(double)     // 8\nalignof(std::max_align_t)  // максимальное фундаментальное (обычно 16 или 8)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Extended Alignment (Over-aligned types):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct alignas(32) CacheLine {\n    char data[64];\n};\n\nalignas(64) int aligned_array[10];  // массив с выравниванием 64 байта\n\n// alignas в new (C++17)\nvoid* p = ::operator new(sizeof(CacheLine), std::align_val_t(32));\n::operator delete(p, std::align_val_t(32));"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Alignment в контейнерах:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "std::vector<CacheLine, std::allocator<CacheLine>> v;  // аллокатор должен поддерживать alignment\n// C++17: std::allocator использует aligned_alloc для over-aligned types"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::assume_aligned` (C++20):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void process(int* ptr) {\n    auto aligned = std::assume_aligned<32>(ptr);\n    // Компилятор знает, что aligned выровнен на 32 байта\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Strict Aliasing Rule"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правило ([basic.lval]):"
+    },
+    {
+      "type": "blockquote",
+      "content": "Объект может быть доступен (read/write) только через:\n- Его точный тип\n- cv-квалифицированную версию его типа\n- char / unsigned char / std::byte (C++17)\n- Тип, который является base class объекта\n- Тип, который является member объекта"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Нарушения (UB):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int x = 42;\nfloat f = *reinterpret_cast<float*>(&x);  // UB! type punning через pointer cast\n\nunion { int i; float f; } u;\nu.i = 42;\nfloat f = u.f;  // UB до C++20! (active member = i)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Разрешённый type punning (C++20):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Через union — OK в C++20 (active member меняется неявно при чтении неактивного)\nunion { int i; float f; } u;\nu.i = 0x3f800000;  // 1.0f в IEEE 754\nfloat f = u.f;     // OK в C++20\n\n// Лучше: std::bit_cast (C++20)\n#include <bit>\nfloat f = std::bit_cast<float>(0x3f800000);  // гарантированно безопасно, constexpr"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::launder` для pointer aliasing:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <new>\n\nstruct A { int x; };\nstruct B { int y; };\n\nvoid foo() {\n    alignas(A) char storage[sizeof(A)];\n    A* a = new (storage) A{42};\n    a->x = 10;\n\n    a->~A();\n    B* b = new (storage) B{20};  // reuse memory\n\n    // a всё ещё указывает на ту память, но объект A мёртв\n    // Для доступа к новому объекту B через старый указатель:\n    B* valid_b = std::launder(reinterpret_cast<B*>(a));\n    // или просто используй b напрямую\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`restrict` / `__restrict` / `[[gnu::always_inline]]`:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// C++ не имеет restrict, но компиляторы поддерживают как расширение\nvoid memcpy_noalias(void* __restrict dest, const void* __restrict src, size_t n);\n// Позволяет компилятору предполагать отсутствие aliasing между dest и src"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Placement New и Manual Lifetime Management"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Placement New синтаксис:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <new>\n\nchar buffer[sizeof(std::string)];\nstd::string* s = new (buffer) std::string(\"hello\");  // конструктор в pre-allocated памяти\n\n// Явный вызов деструктора\ns->~std::string();\n\n// Массивы\nchar buf[10 * sizeof(int)];\nint* arr = new (buf) int[10]{1,2,3,4,5,6,7,8,9,10};\n// Деструкторы для int тривиальны, но для non-trivial:\nstd::string* str_arr = new (buf) std::string[3]{\"a\", \"b\", \"c\"};\nfor (int i = 0; i < 3; ++i) str_arr[i].~basic_string();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::construct_at` / `std::destroy_at` (C++20):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <memory>\n\nstd::string* s = std::construct_at(reinterpret_cast<std::string*>(buffer), \"hello\");\nstd::destroy_at(s);  // эквивалентно s->~string()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Object Pool / Arena Allocator:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "template <typename T, size_t PoolSize>\nclass ObjectPool {\n    alignas(T) char storage[PoolSize * sizeof(T)];\n    std::array<bool, PoolSize> used{};\n    size_t next_free = 0;\n\npublic:\n    template <typename... Args>\n    T* allocate(Args&&... args) {\n        for (size_t i = 0; i < PoolSize; ++i) {\n            size_t idx = (next_free + i) % PoolSize;\n            if (!used[idx]) {\n                used[idx] = true;\n                next_free = (idx + 1) % PoolSize;\n                return std::construct_at(reinterpret_cast<T*>(storage + idx * sizeof(T)),\n                                         std::forward<Args>(args)...);\n            }\n        }\n        return nullptr;  // pool exhausted\n    }\n\n    void deallocate(T* ptr) {\n        size_t idx = (reinterpret_cast<char*>(ptr) - storage) / sizeof(T);\n        if (idx < PoolSize && used[idx]) {\n            std::destroy_at(ptr);\n            used[idx] = false;\n        }\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Object Lifetime (Детально)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Этапы жизни ([basic.life]):"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "1. Storage obtained (malloc, new, automatic, static)\n2. Initialization begins (constructor called)\n3. Lifetime begins (initialization complete)\n4. Object is alive — can be accessed\n5. Destructor called (explicit or implicit)\n6. Lifetime ends\n7. Storage released (free, delete, scope exit)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Доступ вне lifetime (UB):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct S { int x; ~S() { std::cout << \"dtor\\n\"; } };\n\nvoid test() {\n    S s;           // lifetime begins\n    s.~S();        // lifetime ends\n    s.x = 42;      // UB! access to dead object\n    new (&s) S();  // new lifetime begins in same storage\n    s.x = 99;      // OK, new object\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Lifetime и `const`/`reference`:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "const int& ref = 42;  // временный продлевается до конца scope\n// Но:\nconst int& ref2 = *new int(42);  // временный НЕ продлевается! UB при доступе"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::start_lifetime_as` (C++23):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <memory>\n\nvoid* buf = std::malloc(sizeof(int));\nint* p = std::start_lifetime_as<int>(buf);  // начинает lifetime без конструктора\n*p = 42;\nstd::cout << *p;\nstd::free(buf);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Data Layout Optimization"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Structure Packing:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Плохое выравнивание — много padding\nstruct Bad {\n    char c;      // 1 byte\n    // 7 bytes padding\n    double d;    // 8 bytes\n    int i;       // 4 bytes\n    // 4 bytes padding\n};  // sizeof = 24\n\n// Хорошее — группируем по размеру\nstruct Good {\n    double d;    // 8 bytes\n    int i;       // 4 bytes\n    char c;      // 1 byte\n    // 3 bytes padding\n};  // sizeof = 16\n\n// Принудительное упакование (не рекомендуется для переносимости)\n#pragma pack(push, 1)\nstruct Packed {\n    char c;\n    double d;\n    int i;\n};\n#pragma pack(pop)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`offsetof` и reflection:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <cstddef>\n\nstruct S { int a; double b; char c; };\n\nconstexpr size_t off_a = offsetof(S, a);  // 0\nconstexpr size_t off_b = offsetof(S, b);  // 8 (с padding)\nconstexpr size_t off_c = offsetof(S, c);  // 16"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Layout Analysis"
+    },
+    {
+      "type": "text",
+      "content": "Напишите программу, выводящую layout класса с виртуальными функциями, множественным наследованием и виртуальными базовыми классами. Используйте <code>/d1reportSingleClassLayout</code> (MSVC) или <code>-fdump-lang-class</code> (GCC)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Alignment Benchmark"
+    },
+    {
+      "type": "text",
+      "content": "Сравните производительность доступа к <code>alignas(64)</code> массиву vs обычному массиву в цикле. Измерьте cache misses через <code>perf</code> или VTune."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Strict Aliasing"
+    },
+    {
+      "type": "text",
+      "content": "Найдите UB в коде:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void process(float* f, int* i) {\n    *i = 0x3f800000;  // 1.0f bits\n    float x = *f;     // UB если f == i (strict aliasing violation)\n}"
+    },
+    {
+      "type": "text",
+      "content": "Исправьте через <code>std::bit_cast</code> или <code>memcpy</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Placement New Vector"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте <code>SmallVector<T, N></code> — вектор с small buffer optimization (SBO), использующий placement new для inline storage."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Object Pool"
+    },
+    {
+      "type": "text",
+      "content": "Напишите thread-safe object pool с <code>std::atomic</code> freelist для высокопроизводительного выделения однотипных объектов."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Lifetime Sanitizers"
+    },
+    {
+      "type": "text",
+      "content": "Скомпилируйте код с use-after-free и double-destroy под <code>-fsanitize=address</code>. Проанализируйте отчёт."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**C++ Object Model** (Stanley Lippman) — классика",
+        "**C++ Reference: Object Lifetime** — https://en.cppreference.com/w/cpp/language/lifetime",
+        "**C++ Reference: Alignment** — https://en.cppreference.com/w/cpp/language/alignas",
+        "**Strict Aliasing Rule** — https://cellperformance.beyond3d.com/articles/2006/06/strict-aliasing.html",
+        "**CppCon: \"The Object Model\" (Arthur O'Dwyer)**",
+        "**Compiler Explorer** — для просмотра layout и asm",
+        "**P0593R6** — `std::assume_aligned` proposal"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [
+    "**C++ Object Model** (Stanley Lippman) — классика",
+    "**C++ Reference: Object Lifetime** — https://en.cppreference.com/w/cpp/language/lifetime",
+    "**C++ Reference: Alignment** — https://en.cppreference.com/w/cpp/language/alignas",
+    "**Strict Aliasing Rule** — https://cellperformance.beyond3d.com/articles/2006/06/strict-aliasing.html",
+    "**CppCon: \"The Object Model\" (Arthur O'Dwyer)**",
+    "**Compiler Explorer** — для просмотра layout и asm",
+    "**P0593R6** — `std::assume_aligned` proposal"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 25
+}

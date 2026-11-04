@@ -1,0 +1,521 @@
+{
+  "title": "Урок 32: Производительность и надёжность",
+  "slug": "proizvoditelnost-i-nadezhnost",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Бенчмаркирование с Criterion"
+    },
+    {
+      "type": "text",
+      "content": "Criterion — де-факто стандарт для бенчмарков в Rust. В отличие от встроенного <code>test::Bencher</code> (работает только на ночном компиляторе), Criterion работает на стабильном компиляторе, статистически корректно обрабатывает результаты (разогрев, несколько итераций, доверительные интервалы) и генерирует HTML-отчёты."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Подключение"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый бенчмарк"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// benches/my_bench.rs\nuse criterion::{black_box, criterion_group, criterion_main, Criterion};\n\nfn fibonacci(n: u64) -> u64 {\n    match n {\n        0 => 0,\n        1 => 1,\n        _ => fibonacci(n - 1) + fibonacci(n - 2),\n    }\n}\n\nfn criterion_benchmark(c: &mut Criterion) {\n    c.bench_function(\"fibonacci 20\", |b| b.iter(|| fibonacci(black_box(20))));\n}\n\ncriterion_group!(benches, criterion_benchmark);\ncriterion_main!(benches);"
+    },
+    {
+      "type": "text",
+      "content": "Запуск:"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo bench"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Группа с параметрами"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn bench_sort(c: &mut Criterion) {\n    let mut group = c.benchmark_group(\"sort\");\n    group.sample_size(100);               // больше итераций — точнее результат\n    group.warm_up_time(std::time::Duration::from_millis(100));\n    group.measurement_time(std::time::Duration::from_secs(5));\n\n    for size in [10, 100, 1000, 10_000] {\n        group.bench_with_input(format!(\"vec_{}\", size), &size, |b, &size| {\n            let mut v: Vec<i32> = (0..size as i32).collect();\n            v.reverse();\n            b.iter(|| {\n                let mut v = v.clone();\n                v.sort_unstable();\n                black_box(&v);\n            });\n        });\n    }\n    group.finish();\n}\n\ncriterion_group!(benches, criterion_benchmark, bench_sort);\ncriterion_main!(benches);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение двух реализаций"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn sum_fast(input: &[i32]) -> i32 {\n    input.iter().sum()\n}\n\nfn sum_slow(input: &[i32]) -> i32 {\n    let mut s = 0;\n    for &x in input {\n        s += x;\n    }\n    s\n}\n\nfn bench_comparison(c: &mut Criterion) {\n    let data: Vec<i32> = (0..1000).collect();\n    c.bench_function(\"sum fast\", |b| b.iter(|| sum_fast(black_box(&data))));\n    c.bench_function(\"sum slow\", |b| b.iter(|| sum_slow(black_box(&data))));\n}"
+    },
+    {
+      "type": "text",
+      "content": "Отчёты сохраняются в <code>target/criterion/reports/</code> в виде HTML. Для CI полезно сохранять базовые результаты и сравнивать:"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo bench -- --save-baseline baseline"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Async бенчмарки"
+    },
+    {
+      "type": "text",
+      "content": "Criterion не поддерживает <code>async</code> напрямую. Для async-кода используйте обёртку над рантаймом (например, <code>tokio::test</code> внутри бенчмарка) или क्रейт <code>criterion-async</code>."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Профилирование аллокаций памяти"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Замена системного аллокатора"
+    },
+    {
+      "type": "text",
+      "content": "По умолчанию Rust использует системный аллокатор (<code>System</code>). Для продакшена можно заменить на jemalloc, mimalloc или snmalloc."
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "heaptrack (KDE)"
+    },
+    {
+      "type": "text",
+      "content": "Инструмент для профилирования аллокаций: показывает, кто и когда выделяет память, и где происходят пики."
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "dhat (Dynamic Heap Analysis)"
+    },
+    {
+      "type": "text",
+      "content": "Встроенный в компилятор профилировщик аллокаций (ночной инструмент):"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "RUSTFLAGS=\"-Zdhat\" cargo run --release"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Valgrind Massif"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "valgrind --tool=massif ./target/release/my_binary\nms_print massif.out.<pid>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пламяграфик (flamegraph)"
+    },
+    {
+      "type": "text",
+      "content": "Показывает, сколько времени тратится в каждой функции (CPU профилирование):"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo install cargo-flamegraph\ncargo flamegraph --binary my_binary"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Валидация unsafe кода (Miri, Loom)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Miri — поиск неопределённого поведения (UB)"
+    },
+    {
+      "type": "text",
+      "content": "Miri запускает Rust-код в интерпретаторе и发现 неинициализированную память, use-after-free, нарушение правил aliasing, невалидные указатели и другие виды UB."
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "rustup component add miri\ncargo miri test        # все тесты под Miri\ncargo miri run         # запуск бинаря под Miri\ncargo miri test --package my_crate"
+    },
+    {
+      "type": "text",
+      "content": "Ограничения: Miri медленный, и не поддерживает FFI (вызовы внешних C-функций будут ошибкой)."
+    },
+    {
+      "type": "text",
+      "content": "Пример кода, который Miri поймает:"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let x = Box::new(42);\n    let raw = Box::into_raw(x);\n    drop(unsafe { Box::from_raw(raw) }); // память освобождена\n    unsafe { *raw = 0; } // Miri: use-after-free!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Loom — тестирование конкурентности"
+    },
+    {
+      "type": "text",
+      "content": "Loom моделирует все возможные переключения потоков и помогает найти data races и deadlocks в конкурентном/unsafe коде."
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Фаззинг (cargo-fuzz)"
+    },
+    {
+      "type": "text",
+      "content": "Фаззинг — автоматическая генерация случайных и некорректных входных данных для поиска паник и UB."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo install cargo-fuzz\ncargo fuzz init"
+    },
+    {
+      "type": "text",
+      "content": "Создаётся папка <code>fuzz/</code> с целями фаззинга."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Цель фаззинга"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// fuzz/fuzz_targets/parse_input.rs\n#![no_main]\nuse libfuzzer_sys::fuzz_target;\n\nfuzz_target!(|data: &[u8]| {\n    // попробуем обработать произвольные входные байты\n    if let Ok(s) = std::str::from_utf8(data) {\n        let _ = s.parse::<i32>();\n    }\n    // любая паника здесь = баг, который нужно исправить\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Запуск"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo fuzz run parse_input            # фаззинг цели\ncargo fuzz run parse_input -r 1000    # ограниченное число запусков\ncargo fuzz run parse_input -- -max_len=4096"
+    },
+    {
+      "type": "text",
+      "content": "Кейсы, вызвавшие паник, сохраняются в <code>fuzz/corpus/parse_input/</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генерация структур через `arbitrary`"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[dependencies]\narbitrary = \"1.0\""
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use arbitrary::Arbitrary;\n\n#[derive(Arbitrary, Debug)]\nstruct MyInput {\n    flag: bool,\n    count: u8,\n    name: String,\n}\n\nfuzz_target!(|data: &[u8]| {\n    if let Ok(input) = MyInput::arbitrary_from(data) {\n        // обработать input\n    }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Интеграция в CI"
+    },
+    {
+      "type": "text",
+      "content": "Фаззинг лучше запускать с ограничением по времени или числу итераций:"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "- run: cargo fuzz run parse_input -r 10000"
+    },
+    {
+      "type": "text",
+      "content": "Для открытых проектов можно подключить OSS-Fuzz (Google) — постоянный фаззинг в облаке."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Property-based тесты (proptest, quickcheck)"
+    },
+    {
+      "type": "text",
+      "content": "Property-based тестирование генерирует случайные входные данные и проверяет, что某种 свойство (инвариант) выполняется для всех них. При падении теста автоматически выполняется shrinking — сокращение примера до минимального воспроизведения."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "proptest"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "quickcheck"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение proptest и quickcheck"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Критерий",
+        "proptest",
+        "quickcheck"
+      ],
+      "rows": [
+        [
+          "Shrinking (сокращение counterexample)",
+          "✅ встроенный",
+          "✅"
+        ],
+        [
+          "Гибкие стратегии генерации",
+          "✅ комбинаторы",
+          "проще"
+        ],
+        [
+          "Поддержка async",
+          "✅ (через рантайм)",
+          "ограничена"
+        ],
+        [
+          "Популярность в экосистеме",
+          "выше",
+          "ниже"
+        ]
+      ]
+    },
+    {
+      "type": "text",
+      "content": "Рекомендация: используйте <code>proptest</code> для новых проектов."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Бенчмарк показывает ноль или нестабильно",
+          "Компилятор оптимизировал код, либо шум системы"
+        ],
+        [
+          "`cargo miri` падает на FFI",
+          "Мiri не поддерживает вызовы внешних C-функций"
+        ],
+        [
+          "Loom'explodes state space",
+          "Много потоков и мьютексов в модели"
+        ],
+        [
+          "Фаззинг не находится багов",
+          "Слишком простая цель фаззинга"
+        ],
+        [
+          "Property-тест падает на редком входе",
+          "Недостаточно сгенерировано примеров"
+        ],
+        [
+          "`cargo bench` не видит бенчмарков",
+          "`harness = false` не указан в `[[bench]]`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Шпаргалка: Инструменты производительности и надёжности"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Инструмент",
+        "Команда / использование"
+      ],
+      "rows": [
+        [
+          "Бенчмарки",
+          "`criterion`",
+          "`cargo bench`, отчёт в `target/criterion/reports/`"
+        ],
+        [
+          "Аллокатор",
+          "`tikv-jemallocator` / `mimalloc`",
+          "`#[global_allocator]`"
+        ],
+        [
+          "Профайлер аллокаций",
+          "`heaptrack`",
+          "`heaptrack ./binary`, `heaptrack --analyze`"
+        ],
+        [
+          "DHAT профайлер",
+          "`dhat`",
+          "`RUSTFLAGS=\"-Zdhat\" cargo run`"
+        ],
+        [
+          "Пламяграфик",
+          "`cargo-flamegraph`",
+          "`cargo flamegraph`"
+        ],
+        [
+          "Поиск UB",
+          "`miri`",
+          "`cargo miri test / run`"
+        ],
+        [
+          "Конкурентность",
+          "`loom`",
+          "`loom::model(",
+          "",
+          "{ ... })`"
+        ],
+        [
+          "Фаззинг",
+          "`cargo-fuzz`",
+          "`cargo fuzz init`, `cargo fuzz run <target>`"
+        ],
+        [
+          "Property-тесты",
+          "`proptest` / `quickcheck`",
+          "`proptest! { ... }`, `#[quickcheck]`"
+        ],
+        [
+          "Аудит зависимостей",
+          "`cargo-audit`",
+          "`cargo audit`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Criterion**: бенчмаркирование, `black_box`, группы, параметризация, сравнение реализаций, отчёты",
+        "**Профилирование аллокаций**: замена аллокатора (jemalloc/mimalloc), `heaptrack`, `dhat`, `massif`, `cargo-flamegraph`",
+        "**Валидация unsafe**: `miri` (поиск UB), `loom` (конкурентность, data races), инварианты unsafe",
+        "**Фаззинг**: `cargo-fuzz`, цели фаззинга, `arbitrary`, интеграция в CI, OSS-Fuzz",
+        "**Property-тесты**: `proptest` и `quickcheck`, стратегии, shrinking, сравнение"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Бенчмарк показывает ноль или нестабильно",
+      "correct": "Компилятор оптимизировал код, либо шум системы"
+    },
+    {
+      "mistake": "`cargo miri` падает на FFI",
+      "correct": "Мiri не поддерживает вызовы внешних C-функций"
+    },
+    {
+      "mistake": "Loom'explodes state space",
+      "correct": "Много потоков и мьютексов в модели"
+    },
+    {
+      "mistake": "Фаззинг не находится багов",
+      "correct": "Слишком простая цель фаззинга"
+    },
+    {
+      "mistake": "Property-тест падает на редком входе",
+      "correct": "Недостаточно сгенерировано примеров"
+    },
+    {
+      "mistake": "`cargo bench` не видит бенчмарков",
+      "correct": "`harness = false` не указан в `[[bench]]`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 32
+}

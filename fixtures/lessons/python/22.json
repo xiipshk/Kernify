@@ -1,0 +1,450 @@
+{
+  "title": "Урок 2.11: Производительность и профилирование — timeit, cProfile, memory_profiler, оптимизация",
+  "slug": "proizvoditelnost-i-profilirovanie-timeit-cprofile-memory-profiler-optimizatsiya",
+  "short_description": "timeit, cProfile, memory_profiler, оптимизация",
+  "goals": [
+    "Измерять время выполнения (timeit, perf_counter)",
+    "Профилировать CPU (cProfile, snakeviz, py-spy)",
+    "Профилировать память (memory_profiler, tracemalloc, objgraph)",
+    "Понимать GIL и обходить его",
+    "Оптимизировать код: алгоритмы, структуры данных, кэширование"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Измерять время выполнения (timeit, perf_counter)",
+        "Профилировать CPU (cProfile, snakeviz, py-spy)",
+        "Профилировать память (memory_profiler, tracemalloc, objgraph)",
+        "Понимать GIL и обходить его",
+        "Оптимизировать код: алгоритмы, структуры данных, кэширование"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Измерение времени"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "timeit — точные замеры"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import timeit\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "perf_counter — высокоточный таймер"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import time\n\nstart = time.perf_counter()\nresult = heavy_computation()\nelapsed = time.perf_counter() - start\nprint(f\"Выполнено за {elapsed:.6f} сек\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Декоратор для тайминга"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import functools\nimport time\n\ndef timer(func):\n    @functools.wraps(func)\n    def wrapper(*args, **kwargs):\n        start = time.perf_counter()\n        result = func(*args, **kwargs)\n        elapsed = time.perf_counter() - start\n        print(f\"{func.__name__}: {elapsed:.4f} сек\")\n        return result\n    return wrapper\n\n@timer\ndef slow_function():\n    time.sleep(1)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. CPU профилирование — cProfile"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import cProfile\nimport pstats\n\nprofiler = cProfile.Profile()\nprofiler.enable()\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сохранение и визуализация"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "py-spy — sampling профайлер (без изменения кода)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install py-spy\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Профилирование памяти"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "memory_profiler — по строкам"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install memory_profiler"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from memory_profiler import profile\n\n@profile\ndef memory_heavy():\n    a = [1] * (10**6)\n    b = [2] * (2 * 10**7)\n    del b\n    return a\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "tracemalloc — встроенный (Python 3.4+)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import tracemalloc\n\ntracemalloc.start()\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "objgraph — поиск утечек"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install objgraph"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import objgraph\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. GIL (Global Interpreter Lock)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое GIL"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Только один поток выполняет Python байт-код одновременно",
+        "CPU-bound задачи не ускоряются потоками",
+        "I/O-bound — нормально (GIL отпускается при I/O)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Обход GIL"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "multiprocessing — отдельные процессы"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from multiprocessing import Pool\nimport time\n\ndef cpu_heavy(n):\n    return sum(i*i for i in range(n))\n\nif __name__ == \"__main__\":\n    with Pool(4) as pool:\n        results = pool.map(cpu_heavy, [10**6] * 4)"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "concurrent.futures — высокоуровневый API"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor\n"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "C-расширения (Cython, Rust/PyO3)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "asyncio — для I/O без потоков"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import asyncio\nimport aiohttp\n\nasync def fetch_all(urls):\n    async with aiohttp.ClientSession() as session:\n        tasks = [fetch(session, url) for url in urls]\n        return await asyncio.gather(*tasks)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Типичные оптимизации"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Алгоритмическая сложность"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правильные структуры данных"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кэширование"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import lru_cache\n\n@lru_cache(maxsize=128)\ndef expensive_computation(x):"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генераторы вместо списков"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Встроенные функции быстрее циклов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Избегайте лишних атрибутов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Профилирование в продакшене"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "py-spy на продакшене"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Continuous profiling (Pyroscope, Datadog)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Инструменты для анализа производительности"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Инструмент",
+        "Назначение"
+      ],
+      "rows": [
+        [
+          "`timeit`",
+          "Микробенчмарки"
+        ],
+        [
+          "`cProfile`",
+          "Детерминированное CPU профилирование"
+        ],
+        [
+          "`py-spy`",
+          "Sampling профилирование (zero overhead)"
+        ],
+        [
+          "`snakeviz`",
+          "Визуализация cProfile"
+        ],
+        [
+          "`memory_profiler`",
+          "Построчное профилирование памяти"
+        ],
+        [
+          "`tracemalloc`",
+          "Встроенное отслеживание аллокаций"
+        ],
+        [
+          "`objgraph`",
+          "Анализ ссылок, поиск утечек"
+        ],
+        [
+          "`scalene`",
+          "CPU + GPU + память вместе"
+        ],
+        [
+          "`line_profiler`",
+          "Построчное CPU профилирование"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Scalene — всё в одном"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install scalene\npython -m scalene script.py"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Оптимизируют без профилирования",
+          "Сначала `cProfile` / `py-spy`, потом оптимизируйте хотспоты"
+        ],
+        [
+          "Потоки для CPU-bound задач",
+          "`multiprocessing` / `ProcessPoolExecutor`"
+        ],
+        [
+          "Преждевременная оптимизация",
+          "\"Premature optimization is the root of all evil\" — Knuth"
+        ],
+        [
+          "Игнорируют аллокации памяти",
+          "`tracemalloc` / `memory_profiler` для large data"
+        ],
+        [
+          "Тестируют на малых данных",
+          "Бенчмарки на реалистичных объёмах"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Performance Tips** — https://wiki.python.org/moin/PythonSpeed/PerformanceTips",
+        "**Real Python: Profiling** — https://realpython.com/python-profiling/",
+        "**Scalene** — https://github.com/plasma-umass/scalene",
+        "**py-spy** — https://github.com/benfred/py-spy",
+        "**High Performance Python** — Micha Gorelick, Ian Ozsvald (O'Reilly)",
+        "**Effective Python: Item 66-68** — Brett Slatkin"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Оптимизируют без профилирования",
+      "correct": "Сначала `cProfile` / `py-spy`, потом оптимизируйте хотспоты"
+    },
+    {
+      "mistake": "Потоки для CPU-bound задач",
+      "correct": "`multiprocessing` / `ProcessPoolExecutor`"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "\"Premature optimization is the root of all evil\" — Knuth"
+    },
+    {
+      "mistake": "Игнорируют аллокации памяти",
+      "correct": "`tracemalloc` / `memory_profiler` для large data"
+    },
+    {
+      "mistake": "Тестируют на малых данных",
+      "correct": "Бенчмарки на реалистичных объёмах"
+    }
+  ],
+  "resources": [
+    "**Python Performance Tips** — https://wiki.python.org/moin/PythonSpeed/PerformanceTips",
+    "**Real Python: Profiling** — https://realpython.com/python-profiling/",
+    "**Scalene** — https://github.com/plasma-umass/scalene",
+    "**py-spy** — https://github.com/benfred/py-spy",
+    "**High Performance Python** — Micha Gorelick, Ian Ozsvald (O'Reilly)",
+    "**Effective Python: Item 66-68** — Brett Slatkin"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 22
+}

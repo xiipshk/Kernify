@@ -1,0 +1,484 @@
+{
+  "title": "Урок 17: Умные указатели (Smart Pointers)",
+  "slug": "umnye-ukazateli-smart-pointers",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. `Box<T>` — простое владение в куче"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let b = Box::new(5);\n    println!(\"{}\", *b); // Разыменование через Deref\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Рекурсивные типы (связные списки, деревья)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "enum List {\n    Cons(i32, Box<List>),\n    Nil,\n}\n\nuse List::{Cons, Nil};\n\nfn main() {\n    let list = Cons(1, Box::new(Cons(2, Box::new(Cons(3, Box::new(Nil))))));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Trait objects"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Draw {\n    fn draw(&self);\n}\n\nstruct Circle { r: f64 }\nimpl Draw for Circle { fn draw(&self) { println!(\"Circle {}\", self.r); } }\n\nstruct Square { s: f64 }\nimpl Draw for Square { fn draw(&self) { println!(\"Square {}\", self.s); } }\n\nfn main() {\n    let shapes: Vec<Box<dyn Draw>> = vec![\n        Box::new(Circle { r: 5.0 }),\n        Box::new(Square { s: 3.0 }),\n    ];\n    for s in shapes { s.draw(); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. `Rc<T>` / `Arc<T>` — разделяемое владение (Reference Counting)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Rc<T>` — single-threaded"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::rc::Rc;\n\nfn main() {\n    let a = Rc::new(String::from(\"hello\"));\n    let b = Rc::clone(&a); // Увеличивает strong count\n    let c = a.clone();     // Тоже самое\n\n    println!(\"count = {}\", Rc::strong_count(&a)); // 3\n    drop(b);\n    println!(\"count = {}\", Rc::strong_count(&a)); // 2\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Arc<T>` — atomic (thread-safe)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::Arc;\nuse std::thread;\n\nfn main() {\n    let data = Arc::new(vec![1, 2, 3]);\n    let mut handles = vec![];\n\n    for i in 0..3 {\n        let data = Arc::clone(&data);\n        handles.push(thread::spawn(move || {\n            println!(\"Thread {}: {:?}\", i, data);\n        }));\n    }\n    for h in handles { h.join().unwrap(); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тип",
+        "Потокобезопасность",
+        "Overhead",
+        "Использование"
+      ],
+      "rows": [
+        [
+          "`Box<T>`",
+          "Нет (exclusive)",
+          "1 указатель",
+          "Рекурсивные типы, trait objects"
+        ],
+        [
+          "`Rc<T>`",
+          "Нет (!Send, !Sync)",
+          "2 счётчика (strong/weak)",
+          "Графы, кэши в одном потоке"
+        ],
+        [
+          "`Arc<T>`",
+          "Да (Send + Sync)",
+          "Атомарные счётчики",
+          "Shared state между потоками"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Внутренняя изменяемость (Interior Mutability)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема: `&T` обычно неизменяем"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let x = 5;\n    // let y = &x; *y = 10; // ОШИБКА\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`RefCell<T>` — runtime borrow checking (single-threaded)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::cell::RefCell;\n\nfn main() {\n    let data = RefCell::new(vec![1, 2, 3]);\n\n    // Неизменяемое заимствование\n    let borrowed: std::cell::Ref<Vec<i32>> = data.borrow();\n    println!(\"{:?}\", *borrowed);\n\n    // Изменяемое заимствование\n    {\n        let mut borrowed_mut = data.borrow_mut();\n        borrowed_mut.push(4);\n    } // borrow_mut дропается здесь\n\n    println!(\"{:?}\", data.borrow());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила `RefCell` (паника при нарушении)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Паника: already borrowed: BorrowMutError\nlet mut_ref = data.borrow_mut();\nlet _ = data.borrow(); // PANIC!\n\n// Паника: already mutably borrowed: BorrowMutError\nlet mut_ref1 = data.borrow_mut();\nlet mut_ref2 = data.borrow_mut(); // PANIC!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Mutex<T>` — thread-safe interior mutability"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::Mutex;\nuse std::thread;\n\nfn main() {\n    let data = Mutex::new(vec![1, 2, 3]);\n    let mut handles = vec![];\n\n    for i in 0..3 {\n        let data = Arc::new(data.clone()); // Arc<Mutex<T>>\n        handles.push(thread::spawn(move || {\n            let mut lock = data.lock().unwrap(); // Блокирует поток\n            lock.push(i);\n        }));\n    }\n    for h in handles { h.join().unwrap(); }\n\n    println!(\"{:?}\", data.lock().unwrap());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`RwLock<T>` — много читателей, один писатель"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::RwLock;\n\nfn main() {\n    let data = RwLock::new(vec![1, 2, 3]);\n\n    // Множественные читатели\n    let r1 = data.read().unwrap();\n    let r2 = data.read().unwrap();\n    println!(\"{:?}, {:?}\", *r1, *r2);\n    drop((r1, r2));\n\n    // Один писатель\n    let mut w = data.write().unwrap();\n    w.push(4);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тип",
+        "Потоки",
+        "Правила",
+        "Блокировка"
+      ],
+      "rows": [
+        [
+          "`RefCell<T>`",
+          "1",
+          "Runtime panic",
+          "Нет (проверка в коде)"
+        ],
+        [
+          "`Mutex<T>`",
+          "Мн.",
+          "Блокировка потока",
+          "OS mutex"
+        ],
+        [
+          "`RwLock<T>`",
+          "Мн.",
+          "Read/Write lock",
+          "OS rwlock"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. `Weak<T>` — слабые ссылки (предотвращение циклов)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема: цикл Rc -> утечка памяти"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::rc::Rc;\nuse std::cell::RefCell;\n\nstruct Node {\n    value: i32,\n    parent: RefCell<Option<Rc<Node>>>,\n    children: RefCell<Vec<Rc<Node>>>,\n}\n\nfn main() {\n    let leaf = Rc::new(Node { value: 3, parent: RefCell::new(None), children: RefCell::new(vec![]) });\n    let branch = Rc::new(Node { value: 5, parent: RefCell::new(None), children: RefCell::new(vec![]) });\n\n    branch.children.borrow_mut().push(Rc::clone(&leaf));\n    *leaf.parent.borrow_mut() = Some(Rc::clone(&branch));\n\n    // Цикл! leaf -> branch -> leaf\n    // Память НЕ освободится при выходе из scope\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Решение: `Weak<T>` для родительских ссылок"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::rc::{Rc, Weak};\nuse std::cell::RefCell;\n\nstruct Node {\n    value: i32,\n    parent: RefCell<Weak<Node>>,  // Weak вместо Rc\n    children: RefCell<Vec<Rc<Node>>>,\n}\n\nfn main() {\n    let leaf = Rc::new(Node { value: 3, parent: RefCell::new(Weak::new()), children: RefCell::new(vec![]) });\n    let branch = Rc::new(Node { value: 5, parent: RefCell::new(Weak::new()), children: RefCell::new(vec![]) });\n\n    branch.children.borrow_mut().push(Rc::clone(&leaf));\n    *leaf.parent.borrow_mut() = Rc::downgrade(&branch); // Weak ссылка\n\n    // Нет цикла strong count!\n    println!(\"leaf strong: {}, weak: {}\", Rc::strong_count(&leaf), Rc::weak_count(&leaf));\n    // leaf strong: 1, weak: 1\n\n    // Доступ через upgrade\n    if let Some(parent) = leaf.parent.borrow().upgrade() {\n        println!(\"Parent value: {}\", parent.value);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. `Cow<T>` — Copy on Write (Копирование при записи)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Концепция"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::borrow::Cow;\n\nfn process(input: &str) -> Cow<str> {\n    if input.contains(\"bad\") {\n        Cow::Owned(input.replace(\"bad\", \"good\")) // Копия + изменение\n    } else {\n        Cow::Borrowed(input) // Заимствование без копирования\n    }\n}\n\nfn main() {\n    let good = process(\"hello world\");      // Borrowed\n    let bad = process(\"hello bad world\");   // Owned\n    println!(\"{}\", good);\n    println!(\"{}\", bad);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Cow<[T]>` для векторов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn process_vec(input: &[i32]) -> Cow<[i32]> {\n    if input.iter().any(|&x| x < 0) {\n        Cow::Owned(input.iter().map(|x| x.abs()).collect())\n    } else {\n        Cow::Borrowed(input)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. `Pin<P>` — закрепление в памяти"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Для самозареференцирующихся структур"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\nuse std::marker::PhantomPinned;\n\nstruct SelfRef {\n    data: String,\n    ptr: *const String,\n    _pin: PhantomPinned, // !Unpin\n}\n\nimpl SelfRef {\n    fn new() -> Pin<Box<Self>> {\n        let mut boxed = Box::pin(SelfRef {\n            data: String::from(\"hello\"),\n            ptr: std::ptr::null(),\n            _pin: PhantomPinned,\n        });\n        let ptr = &boxed.data as *const String;\n        unsafe { boxed.as_mut().get_unchecked_mut().ptr = ptr; }\n        boxed\n    }\n\n    fn print(self: Pin<&Self>) {\n        println!(\"data: {}, ptr valid: {}\", self.data, unsafe { &*self.ptr == &self.data });\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Создание своих умных указателей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Deref` / `DerefMut` / `Drop`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ops::{Deref, DerefMut};\n\nstruct MyBox<T>(T);\n\nimpl<T> MyBox<T> {\n    fn new(x: T) -> Self { MyBox(x) }\n}\n\nimpl<T> Deref for MyBox<T> {\n    type Target = T;\n    fn deref(&self) -> &T { &self.0 }\n}\n\nimpl<T> DerefMut for MyBox<T> {\n    fn deref_mut(&mut self) -> &mut T { &mut self.0 }\n}\n\nimpl<T> Drop for MyBox<T> {\n    fn drop(&mut self) { println!(\"Dropping MyBox\"); }\n}\n\nfn main() {\n    let mut b = MyBox::new(5);\n    *b += 1; // DerefMut\n    println!(\"{}\", *b); // Deref\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Receiver` типы для методов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "impl MyBox<T> {\n    fn by_ref(&self) { }           // &self\n    fn by_mut(&mut self) { }       // &mut self\n    fn by_val(self) { }            // self\n    fn by_box(self: Box<Self>) { } // Box<Self>\n    fn by_rc(self: Rc<Self>) { }   // Rc<Self>\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Граф с Rc/Weak"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::rc::{Rc, Weak};\nuse std::cell::RefCell;\n\n#[derive(Debug)]\nstruct GraphNode {\n    id: u32,\n    neighbors: RefCell<Vec<Weak<GraphNode>>>,\n}\n\nimpl GraphNode {\n    fn new(id: u32) -> Rc<Self> {\n        Rc::new(GraphNode { id, neighbors: RefCell::new(vec![]) })\n    }\n\n    fn add_edge(a: &Rc<GraphNode>, b: &Rc<GraphNode>) {\n        a.neighbors.borrow_mut().push(Rc::downgrade(b));\n        b.neighbors.borrow_mut().push(Rc::downgrade(a));\n    }\n\n    fn print_neighbors(node: &Rc<GraphNode>) {\n        println!(\"Node {} neighbors:\", node.id);\n        for weak in node.neighbors.borrow().iter() {\n            if let Some(n) = weak.upgrade() {\n                println!(\"  -> {}\", n.id);\n            }\n        }\n    }\n}\n\nfn main() {\n    let a = GraphNode::new(1);\n    let b = GraphNode::new(2);\n    let c = GraphNode::new(3);\n\n    GraphNode::add_edge(&a, &b);\n    GraphNode::add_edge(&b, &c);\n    GraphNode::add_edge(&c, &a);\n\n    GraphNode::print_neighbors(&a);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Кэш с Arc<RwLock>"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::{Arc, RwLock};\nuse std::collections::HashMap;\nuse std::time::{Duration, Instant};\n\nstruct Cache<K, V> {\n    data: RwLock<HashMap<K, (V, Instant)>>,\n    ttl: Duration,\n}\n\nimpl<K: Eq + std::hash::Hash + Clone, V: Clone> Cache<K, V> {\n    fn new(ttl: Duration) -> Self {\n        Cache { data: RwLock::new(HashMap::new()), ttl }\n    }\n\n    fn get(&self, key: &K) -> Option<V> {\n        let mut guard = self.data.write().unwrap();\n        if let Some((val, time)) = guard.get(key) {\n            if time.elapsed() < self.ttl {\n                return Some(val.clone());\n            }\n            guard.remove(key);\n        }\n        None\n    }\n\n    fn set(&self, key: K, value: V) {\n        self.data.write().unwrap().insert(key, (value, Instant::now()));\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Copy-on-Write конфиг"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::borrow::Cow;\nuse std::collections::HashMap;\n\nstruct Config {\n    data: HashMap<String, String>,\n}\n\nimpl Config {\n    fn get(&self, key: &str) -> Cow<str> {\n        match self.data.get(key) {\n            Some(v) => Cow::Borrowed(v.as_str()),\n            None => Cow::Owned(String::new()),\n        }\n    }\n\n    fn set(&mut self, key: String, value: String) {\n        self.data.insert(key, value);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`cannot move out of borrowed content`",
+          "Пытаетесь вынуть из `Rc`/`RefCell`"
+        ],
+        [
+          "`already borrowed`",
+          "Два `borrow_mut` или `borrow` + `borrow_mut`"
+        ],
+        [
+          "`deadlock`",
+          "Mutex в одном потоке дважды"
+        ],
+        [
+          "`memory leak`",
+          "Цикл `Rc`"
+        ],
+        [
+          "`cannot send between threads`",
+          "`Rc`/`RefCell` не `Send`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Шпаргалка: Smart Pointers"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Указатель",
+        "Владение",
+        "Изменяемость",
+        "Потоки",
+        "Overhead"
+      ],
+      "rows": [
+        [
+          "`Box<T>`",
+          "Exclusive",
+          "`&mut`",
+          "Send",
+          "1 ptr"
+        ],
+        [
+          "`Rc<T>`",
+          "Shared",
+          "`RefCell`",
+          "!Send",
+          "2 counters"
+        ],
+        [
+          "`Arc<T>`",
+          "Shared",
+          "`Mutex`/`RwLock`",
+          "Send+Sync",
+          "Atomic counters"
+        ],
+        [
+          "`RefCell<T>`",
+          "Exclusive",
+          "Runtime check",
+          "!Send",
+          "1 counter"
+        ],
+        [
+          "`Mutex<T>`",
+          "Exclusive",
+          "Lock",
+          "Send+Sync",
+          "OS mutex"
+        ],
+        [
+          "`RwLock<T>`",
+          "Exclusive",
+          "Read/Write lock",
+          "Send+Sync",
+          "OS rwlock"
+        ],
+        [
+          "`Cow<T>`",
+          "Borrowed/Owned",
+          "Copy-on-write",
+          "Зависит от T",
+          "Enum tag"
+        ],
+        [
+          "`Pin<P>`",
+          "Exclusive",
+          "`&mut` (pinned)",
+          "Зависит от P",
+          "1 ptr"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`Box<T>` — простое владение в куче, рекурсивные типы, trait objects",
+        "`Rc<T>` / `Arc<T>` — разделяемое владение с reference counting",
+        "`RefCell<T>` — interior mutability для single-threaded (runtime checks)",
+        "`Mutex<T>` / `RwLock<T>` — interior mutability для multi-threaded (blocking)",
+        "`Weak<T>` — слабые ссылки для предотвращения циклов Rc/Arc",
+        "`Cow<T>` — Copy-on-Write оптимизация",
+        "`Pin<P>` — закрепление для самозареференцирующихся структур",
+        "Реализация своих умных указателей через `Deref`/`DerefMut`/`Drop`"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`cannot move out of borrowed content`",
+      "correct": "Пытаетесь вынуть из `Rc`/`RefCell`"
+    },
+    {
+      "mistake": "`already borrowed`",
+      "correct": "Два `borrow_mut` или `borrow` + `borrow_mut`"
+    },
+    {
+      "mistake": "`deadlock`",
+      "correct": "Mutex в одном потоке дважды"
+    },
+    {
+      "mistake": "`memory leak`",
+      "correct": "Цикл `Rc`"
+    },
+    {
+      "mistake": "`cannot send between threads`",
+      "correct": "`Rc`/`RefCell` не `Send`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 17
+}

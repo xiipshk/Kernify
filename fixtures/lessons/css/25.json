@@ -1,0 +1,707 @@
+{
+  "title": "Урок 25: Селекторы/логические свойства — сложный :has(), writing modes, @supports, прогрессивное улучшение",
+  "slug": "selektorylogicheskie-svoystva-slozhnyy-has-writing-modes-supports-progressivnoe-uluchshenie",
+  "short_description": "сложный :has(), writing modes, @supports, прогрессивное улучшение",
+  "goals": [
+    "Освоить родительский селектор :has() и его практические применения",
+    "Изучить writing modes и логические свойства для интернационализации (LTR/RTL/вертикальный текст)",
+    "Научиться использовать @supports для проверки поддержки свойств и селекторов",
+    "Применять прогрессивное улучшение — базовый опыт работает везде, улучшения для современных браузеров",
+    "Комбинировать :has() с другими селекторами для сложной логики без JavaScript"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Освоить родительский селектор :has() и его практические применения",
+        "Изучить writing modes и логические свойства для интернационализации (LTR/RTL/вертикальный текст)",
+        "Научиться использовать @supports для проверки поддержки свойств и селекторов",
+        "Применять прогрессивное улучшение — базовый опыт работает везде, улучшения для современных браузеров",
+        "Комбинировать :has() с другими селекторами для сложной логики без JavaScript"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Селектор :has() — родительский селектор"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема, которую решает :has()"
+    },
+    {
+      "type": "text",
+      "content": "Раньше CSS не мог стилизовать родителя на основе дочернего элемента. Нужно было JavaScript. Теперь :has() делает это нативно."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Стиль элемента, который СОДЕРЖИТ элемент, соответствующий селектору */\n.card:has(img) {\n  border: 2px solid blue;\n}\n\n/* Стиль элемента, у которого есть потомок с классом */\n.nav:has(.active) {\n  background: green;\n}\n\n/* Стиль элемента, у которого следующий брат соответствует селектору */\nlabel:has(> input:checked) {\n  color: green;\n}\n\n/* Сложная комбинация */\n.card:has(.featured, .new) {\n  outline: 3px solid gold;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Практические примеры"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Карточка с изображением — убираем отступы, если есть картинка"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  padding: 1.5rem;\n  border: 1px solid oklch(0.88 0.006 285);\n  border-radius: 1rem;\n}\n\n.card:has(img) {\n  padding: 0;  /* Изображение идёт от края до края */\n}\n\n.card:has(img) .card__body {\n  padding: 1.5rem;\n}"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"card\">\n  <img src=\"photo.jpg\" alt=\"\">\n  <div class=\"card__body\">...</div>\n</div>"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Форма — подсветить поле, если есть ошибка внутри"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".form-field:has(input:invalid) {\n  border-color: oklch(0.65 0.22 20);\n  background-color: color-mix(in oklch, oklch(0.65 0.22 20), white 95%);\n}\n\n.form-field:has(input:focus-visible) {\n  border-color: oklch(0.62 0.22 264);\n  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.2);\n}"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"form-field\">\n  <input type=\"email\" required>\n  <span class=\"error\">Введите корректный email</span>\n</div>"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Навигация — активный раздел подсвечивает весь навигационный блок"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".nav:has(.nav__link--active) {\n  border-bottom: 3px solid oklch(0.62 0.22 264);\n  background: color-mix(in oklch, oklch(0.62 0.22 264), white 95%);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Список — пустой список показывает заглушку"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".list:not(:has(> li)) {\n  min-height: 200px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  color: oklch(0.55 0.01 285);\n  font-style: italic;\n}\n\n.list:not(:has(> li))::before {\n  content: \"Список пуст\";\n}"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Соседние элементы — стилизовать элемент перед активным"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Элемент перед активным */\n.step:has(+ .step--active) {\n  background: oklch(0.97 0.01 264);\n}\n\n/* Элемент после активного */\n.step:has(~ .step--active) {\n  opacity: 0.5;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ограничения :has()"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Нельзя вкладывать :has() в :has() (в некоторых браузерах)",
+        ":has() с псевдоэлементами (::before, ::after) не работает",
+        "Производительность — используй осторожно в больших списках",
+        "Поддержка: Chrome 105+, Firefox 121+, Safari 15.4+, Edge 105+"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ":has() с :not()"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Карточка без изображения — другие отступы */\n.card:not(:has(img)) {\n  padding: 2rem;\n}\n\n/* Форма без ошибок — зелёная граница */\n.form-field:not(:has(:invalid)) {\n  border-color: oklch(0.75 0.18 150);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Writing modes — направление и режим письма"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "direction — направление текста"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* LTR — слева направо (по умолчанию для русского/английского) */\n.ltr {\n  direction: ltr;\n}\n\n/* RTL — справа налево (арабский, иврит, персидский) */\n.rtl {\n  direction: rtl;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "writing-mode — горизонтальный или вертикальный текст"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* По умолчанию — горизонтальный текст, строки сверху вниз */\n.horizontal {\n  writing-mode: horizontal-tb;\n}\n\n/* Вертикальный текст, строки справа налево (японский стиль) */\n.vertical-rl {\n  writing-mode: vertical-rl;\n}\n\n/* Вертикальный текст, строки слева направо */\n.vertical-lr {\n  writing-mode: vertical-lr;\n}\n\n/* Горизонтальный, строки снизу вверх (редко) */\n.sideways-rl {\n  writing-mode: sideways-rl;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "text-orientation — ориентация символов в вертикальном тексте"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".vertical-text {\n  writing-mode: vertical-rl;\n  text-orientation: upright;   /* Символы вертикальные (по умолчанию) */\n  /* text-orientation: sideways; */ /* Символы повернуты на 90° */\n  /* text-orientation: mixed; */    /* Смешанное (латинские повернуты, другие нет) */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Логические свойства + writing mode"
+    },
+    {
+      "type": "text",
+      "content": "Логические свойства автоматически подстраиваются под writing-mode и direction:"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Физическое",
+        "Логическое",
+        "При horizontal-tb LTR",
+        "При vertical-rl"
+      ],
+      "rows": [
+        [
+          "`margin-left`",
+          "`margin-inline-start`",
+          "margin-left",
+          "margin-top"
+        ],
+        [
+          "`margin-right`",
+          "`margin-inline-end`",
+          "margin-right",
+          "margin-bottom"
+        ],
+        [
+          "`padding-top`",
+          "`padding-block-start`",
+          "padding-top",
+          "padding-right"
+        ],
+        [
+          "`padding-bottom`",
+          "`padding-block-end`",
+          "padding-bottom",
+          "padding-left"
+        ],
+        [
+          "`width`",
+          "`inline-size`",
+          "width",
+          "height"
+        ],
+        [
+          "`height`",
+          "`block-size`",
+          "height",
+          "width"
+        ],
+        [
+          "`text-align: left`",
+          "`text-align: start`",
+          "left",
+          "top"
+        ],
+        [
+          "`text-align: right`",
+          "`text-align: end`",
+          "right",
+          "bottom"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: карточка, работающая в любом языке"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  /* Логические отступы — работают и в LTR, и в RTL */\n  padding-inline-start: 1rem;  /* отступ с начала строки */\n  padding-inline-end: 1rem;    /* отступ с конца строки */\n  padding-block-start: 1.5rem; /* отступ сверху (horizontal-tb) / справа (vertical-rl) */\n  padding-block-end: 1.5rem;   /* отступ снизу / слева */\n\n  margin-block-end: 2rem;\n\n  /* Логические размеры */\n  inline-size: 100%;  /* вместо width */\n  block-size: auto;   /* вместо height */\n\n  /* Граница с начала строки */\n  border-inline-start: 4px solid oklch(0.62 0.22 264);\n\n  /* Выравнивание текста по началу строки */\n  text-align: start;\n}\n\n/* Для явно заданного RTL */\nhtml[dir=\"rtl\"] .card {\n  /* Ничего менять не нужно! Логические свойства автоматически переключаются */\n}\n\n/* Для вертикального текста */\n.vertical-card {\n  writing-mode: vertical-rl;\n  /* Логические свойства перестроятся автоматически */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример HTML с разными направлениями"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Русский — LTR -->\n<article class=\"card\" dir=\"ltr\">\n  <h2>Заголовок на русском</h2>\n  <p>Текст слева направо.</p>\n</article>\n\n<!-- Арабский — RTL -->\n<article class=\"card\" dir=\"rtl\">\n  <h2>عنوان باللغة العربية</h2>\n  <p>نص من اليمين إلى اليسار.</p>\n</article>\n\n<!-- Вертикальный текст (японский) -->\n<article class=\"card\" style=\"writing-mode: vertical-rl;\">\n  <h2>縦書きのテキスト</h2>\n  <p>縦方向に組まれた文章です。</p>\n</article>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Границы и логические свойства"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Вместо border-left — border-inline-start */\n.card {\n  border-inline-start: 4px solid oklch(0.62 0.22 264);\n  /* В LTR — слева, в RTL — справа */\n}\n\n/* Вместо margin-left — margin-inline-start */\n.list-item {\n  margin-inline-start: 1rem;\n}\n\n/* Вместо padding-right — padding-inline-end */\n.btn {\n  padding-inline-end: 1.5rem;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. @supports — проверка поддержки свойств и селекторов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Проверка поддержки свойства */\n@supports (display: grid) {\n  .grid {\n    display: grid;\n  }\n}\n\n/* Проверка отрицания */\n@supports not (display: masonry) {\n  .fallback {\n    display: flex;\n    flex-wrap: wrap;\n  }\n}\n\n/* Проверка нескольких условий (И) */\n@supports (display: grid) and (gap: 1rem) {\n  .grid {\n    display: grid;\n    gap: 1rem;\n  }\n}\n\n/* Проверка любого условия (ИЛИ) */\n@supports (display: grid) or (display: flex) {\n  .layout {\n    /* Базовый layout */\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "@supports с селекторами (selector())"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Проверка поддержки :has() */\n@supports selector(:has(*)) {\n  .card:has(img) {\n    padding: 0;\n  }\n}\n\n/* Проверка поддержки :focus-visible */\n@supports selector(:focus-visible) {\n  :focus-visible {\n    outline: 3px solid oklch(0.62 0.22 264);\n  }\n}\n\n/* Проверка поддержки :is() и :where() */\n@supports selector(:is(*)) {\n  :is(.btn, .card) {\n    transition: all 0.2s;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Комбинированные проверки"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@supports (display: grid) and selector(:has(*)) {\n  .advanced-grid {\n    display: grid;\n  }\n\n  .advanced-grid:has(.featured) {\n    grid-column: 1 / -1;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Цветовые функции"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Fallback для старых браузеров */\n.btn {\n  background: #2563eb;\n}\n\n/* OKLCH для современных */\n@supports (color: oklch(0 0 0)) {\n  .btn {\n    background: oklch(0.62 0.22 264);\n  }\n}\n\n/* color-mix */\n.card {\n  border: 1px solid #e5e7eb;\n}\n\n@supports (background: color-mix(in oklch, #000, #fff)) {\n  .card {\n    border-color: color-mix(in oklch, #e5e7eb, black 10%);\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Прогрессивное улучшение — стратегия"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Концепция"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Базовый опыт** — работает во всех браузерах (HTML + базовый CSS)",
+        "**Улучшения** — новые свойства для современных браузеров (@supports)",
+        "**Деградация** — если новое свойство не поддерживается, старый опыт всё ещё приемлем"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: Grid с фолбэком на Flexbox"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Базовый — Flexbox, работает везде */\n.cards {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 1rem;\n}\n\n.card {\n  flex: 1 1 250px;\n  min-width: 200px;\n}\n\n/* Улучшение — Grid для современных браузеров */\n@supports (display: grid) {\n  .cards {\n    display: grid;\n    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));\n  }\n\n  .card {\n    flex: none;  /* Сброс flex-стилей */\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: :has() с JS-фолбэком"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Базовый стиль — все карточки одинаковые */\n.card {\n  padding: 1.5rem;\n}\n\n/* Улучшение — если есть изображение, убираем отступы */\n@supports selector(:has(*)) {\n  .card:has(img) {\n    padding: 0;\n  }\n\n  .card:has(img) .card__body {\n    padding: 1.5rem;\n  }\n}\n\n/* JS-фолбэк для старых браузеров (добавляет класс has-img) */"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// JS-фолбэк для :has()\ndocument.querySelectorAll('.card').forEach(card => {\n  if (card.querySelector('img')) {\n    card.classList.add('has-img');\n  }\n});"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* CSS для JS-фолбэка */\n.card.has-img {\n  padding: 0;\n}\n\n.card.has-img .card__body {\n  padding: 1.5rem;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: subgrid с фолбэком"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Базовый — обычная grid с дублированием значений */\n.child {\n  display: grid;\n  grid-template-columns: 200px 1fr 200px;\n}\n\n/* Улучшение — subgrid */\n@supports (display: subgrid) {\n  .child {\n    display: subgrid;\n    grid-template-columns: subgrid;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Сложные селекторы — комбинаторы и псевдоклассы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Комбинаторы"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Прямой потомок (ребенок) */\n.parent > .child { }\n\n/* Любой потомок */\n.ancestor .descendant { }\n\n/* Смежный брат (следующий элемент) */\nh2 + p { margin-top: 0; }\n\n/* Все последующие братья */\nh2 ~ p { color: oklch(0.55 0.01 285); }\n\n/* Последующий брат (новый, только один элемент) */\nh2 /*! */ p { } /* hypothetical */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Псевдоклассы состояния"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Активный элемент */\nbutton:active { transform: scale(0.98); }\n\n/* Фокус для клавиатуры */\nbutton:focus-visible { outline: 3px solid blue; }\n\n/* Проверенное состояние */\ninput[type=\"checkbox\"]:checked { background: blue; }\n\n/* Выключенный элемент */\nbutton:disabled { opacity: 0.5; cursor: not-allowed; }\n\n/* Обязательное поле */\ninput:required { border-color: blue; }\n\n/* Поле с ошибкой валидации */\ninput:invalid { border-color: red; }\n\n/* Поле в фокусе с валидным значением */\ninput:focus:valid { border-color: green; }\n\n/* Элемент в целевой секции (для якорных ссылок) */\nsection:target { background: yellow; }\n\n/* Первый/последний ребенок */\nli:first-child { font-weight: bold; }\nli:last-child { margin-bottom: 0; }\n\n/* N-я позиция */\nli:nth-child(2n) { background: oklch(0.97 0.001 285); }  /* Чётные */\nli:nth-child(2n+1) { background: white; }                /* Нечётные */\nli:nth-child(3) { font-weight: bold; }                   /* Третий */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ":is() и :where() — группировка селекторов"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* :is() — специфичность = максимум из вложенных селекторов */\n:is(.btn, .card, .nav) {\n  transition: all 0.2s;\n}\n/* Эквивалентно: .btn, .card, .nav { ... } но с правильной специфичностью */\n\n/* :where() — специфичность всегда (0,0,0,0) — самое низкое приоритетное */\n:where(.btn, .card, .nav) {\n  transition: all 0.2s;\n}\n/* Легко переопределяется любым другим селектором */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Практика :where() для плагинов"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Стили плагина с низкой специфичностью — легко переопределяются */\n:where(.plugin-btn) {\n  background: blue;\n  color: white;\n}\n\n/* Пользователь может легко переопределить */\n.my-btn {\n  background: red;  /* Выигрывает у :where(.plugin-btn) */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Комплексный пример: доступная форма с :has(), логическими свойствами, @supports"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<form class=\"form\" novalidate>\n  <div class=\"form__group\">\n    <label for=\"email\" class=\"form__label\">Email</label>\n    <input\n      type=\"email\"\n      id=\"email\"\n      class=\"form__input\"\n      required\n      placeholder=\"name@example.com\"\n    >\n    <span class=\"form__error\">Введите корректный email</span>\n  </div>\n\n  <div class=\"form__group\">\n    <label for=\"password\" class=\"form__label\">Пароль</label>\n    <input\n      type=\"password\"\n      id=\"password\"\n      class=\"form__input\"\n      required\n      minlength=\"8\"\n    >\n    <span class=\"form__error\">Минимум 8 символов</span>\n  </div>\n\n  <div class=\"form__group form__group--checkbox\">\n    <input type=\"checkbox\" id=\"agree\" class=\"form__checkbox\">\n    <label for=\"agree\" class=\"form__label\">Я согласен с условиями</label>\n  </div>\n\n  <button type=\"submit\" class=\"btn btn--primary\">Регистрация</button>\n</form>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components;\n\n@layer components {\n  .form__group {\n    display: flex;\n    flex-direction: column;\n    gap: 0.5rem;\n    margin-block-end: 1.5rem;\n\n    /* Логические свойства — работают в LTR и RTL */\n    padding-inline-start: 0;\n    padding-inline-end: 0;\n    padding-block-start: 0;\n    padding-block-end: 0;\n  }\n\n  .form__label {\n    font-size: 0.875rem;\n    font-weight: 500;\n    color: oklch(0.21 0.006 285);\n  }\n\n  .form__input {\n    padding: 0.75rem 1rem;\n    font-size: 1rem;\n    border: 1px solid oklch(0.88 0.006 285);\n    border-radius: 0.5rem;\n    background: white;\n    color: oklch(0.21 0.006 285);\n    min-height: 44px;\n  }\n\n  .form__input:focus-visible {\n    outline: 3px solid oklch(0.62 0.22 264);\n    outline-offset: 2px;\n    border-color: oklch(0.62 0.22 264);\n  }\n\n  /* :has() — если внутри есть невалидное поле */\n  .form__group:has(:invalid) .form__input {\n    border-color: oklch(0.65 0.22 20);\n    background-color: color-mix(in oklch, oklch(0.65 0.22 20), white 95%);\n  }\n\n  /* :has() — если внутри есть поле с фокусом */\n  .form__group:has(:focus-visible) .form__input {\n    border-color: oklch(0.62 0.22 264);\n    box-shadow: 0 0 0 3px rgb(37 99 235 / 0.2);\n  }\n\n  .form__error {\n    font-size: 0.75rem;\n    color: oklch(0.65 0.22 20);\n    display: none;\n  }\n\n  /* Показываем ошибку только если поле невалидно */\n  .form__group:has(:invalid) .form__error {\n    display: block;\n  }\n\n  .form__group--checkbox {\n    flex-direction: row;\n    align-items: center;\n    gap: 0.5rem;\n    margin-block-end: 1.5rem;\n  }\n\n  .form__checkbox {\n    width: 20px;\n    height: 20px;\n    accent-color: oklch(0.62 0.22 264);\n    cursor: pointer;\n  }\n\n  .form__checkbox:focus-visible {\n    outline: 3px solid oklch(0.62 0.22 264);\n    outline-offset: 2px;\n  }\n\n  .btn {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    padding: 0.75rem 1.5rem;\n    font-size: 1rem;\n    font-weight: 600;\n    border: none;\n    border-radius: 0.5rem;\n    cursor: pointer;\n    min-height: 44px;\n    transition: background 0.2s;\n  }\n\n  .btn--primary {\n    background: oklch(0.62 0.22 264);\n    color: white;\n  }\n\n  .btn--primary:hover {\n    background: oklch(0.55 0.22 264);\n  }\n\n  .btn--primary:focus-visible {\n    outline: 3px solid oklch(0.62 0.22 264);\n    outline-offset: 2px;\n  }\n\n  .btn:disabled {\n    opacity: 0.5;\n    cursor: not-allowed;\n  }\n}\n\n/* @supports — если :has() не поддерживается, показываем ошибки всегда */\n@supports not selector(:has(*)) {\n  .form__error {\n    display: block;\n  }\n}\n\n/* RTL поддержка — логические свойства уже работают, но можно уточнить */\n[dir=\"rtl\"] .form__group {\n  /* Ничего не нужно менять — логические свойства автоматически переключаются */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "JS-фолбэк для :has() в старых браузерах"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "document.querySelectorAll('.form__group').forEach(group => {\n  const invalidInput = group.querySelector(':invalid');\n  const focusedInput = group.querySelector(':focus-visible');\n\n  if (invalidInput) group.classList.add('has-invalid');\n  if (focusedInput) group.classList.add('has-focus');\n\n  group.addEventListener('focusin', () => group.classList.add('has-focus'));\n  group.addEventListener('focusout', () => group.classList.remove('has-focus'));\n  group.addEventListener('input', () => {\n    if (group.querySelector(':invalid')) {\n      group.classList.add('has-invalid');\n    } else {\n      group.classList.remove('has-invalid');\n    }\n  });\n});"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* CSS для JS-фолбэка */\n.form__group.has-invalid .form__input {\n  border-color: oklch(0.65 0.22 20);\n}\n\n.form__group.has-invalid .form__error {\n  display: block;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Таблица поддержки (2024)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Фича",
+        "Chrome",
+        "Firefox",
+        "Safari",
+        "Edge"
+      ],
+      "rows": [
+        [
+          ":has()",
+          "105+",
+          "121+",
+          "15.4+",
+          "105+"
+        ],
+        [
+          ":is() / :where()",
+          "88+",
+          "78+",
+          "14+",
+          "88+"
+        ],
+        [
+          "writing-mode",
+          "Все",
+          "Все",
+          "Все",
+          "Все"
+        ],
+        [
+          "Логические свойства",
+          "89+",
+          "89+",
+          "14.1+",
+          "89+"
+        ],
+        [
+          "@supports (свойства)",
+          "Все",
+          "Все",
+          "Все",
+          "Все"
+        ],
+        [
+          "@supports selector()",
+          "105+",
+          "121+",
+          "15.4+",
+          "105+"
+        ],
+        [
+          "direction: rtl",
+          "Все",
+          "Все",
+          "Все",
+          "Все"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Чек-лист (Definition of Done)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Критерий",
+        "Статус"
+      ],
+      "rows": [
+        [
+          ":has() используется для стилизовать родителя на основе потомка",
+          "☐"
+        ],
+        [
+          ":has() с :not() для обратной логики",
+          "☐"
+        ],
+        [
+          "Логические свойства (margin-inline-start, padding-block-end) вместо физических",
+          "☐"
+        ],
+        [
+          "writing-mode для вертикального текста (опционально)",
+          "☐"
+        ],
+        [
+          "direction: rtl для арабского/иврита",
+          "☐"
+        ],
+        [
+          "@supports для проверки поддержки новых свойств",
+          "☐"
+        ],
+        [
+          "@supports selector() для проверки :has() / :is()",
+          "☐"
+        ],
+        [
+          "Фолбэк для старых браузеров (медиа-запросы, JS-классы)",
+          "☐"
+        ],
+        [
+          "Прогрессивное улучшение — базовый опыт работает везде",
+          "☐"
+        ],
+        [
+          "Специфичность :where() для легкой переопределяемости",
+          "☐"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практическое задание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 1: :has() для карточек"
+    },
+    {
+      "type": "text",
+      "content": "Создай сетку карточек:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Карточка с изображением — отступы 0, изображение на всю ширину",
+        "Карточка без изображения — отступы 1.5rem, текст по центру",
+        "Карточка с классом `.featured` — золотой обводка",
+        "Используй `:has()` и `:not(:has())`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 2: RTL карточка"
+    },
+    {
+      "type": "text",
+      "content": "Создай карточку, которая работает и в LTR, и в RTL:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Используй только логические свойства (margin-inline-start, padding-block-end, border-inline-start)",
+        "Добавь `dir=\"rtl\"` на одну карточку для проверки",
+        "Проверь, что отступы и границы автоматически переключаются"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 3: writing mode"
+    },
+    {
+      "type": "text",
+      "content": "Создай блок с вертикальным текстом (<code>writing-mode: vertical-rl</code>):"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Заголовок вертикально справа",
+        "Основной контент горизонтально",
+        "Проверь, что логические свойства подстроились под writing mode"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 4: @supports с :has()"
+    },
+    {
+      "type": "text",
+      "content": "Создай компонент с :has() улучшением:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Базовый стиль для всех браузеров",
+        "@supports selector(:has(*)) для современных",
+        "JS-фолбэк для старых (добавление класса)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 5: Прогрессивное улучшение Grid"
+    },
+    {
+      "type": "text",
+      "content": "Создай сетку с фолбэком:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Базовый: Flexbox с flex-wrap",
+        "Улучшение: Grid с auto-fit (через @supports)",
+        "Проверь в DevTools, отключив поддержку CSS Grid"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 6: :is() и :where()"
+    },
+    {
+      "type": "text",
+      "content": "Создай groupe из селекторов с :is() и :where():"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Проверь специфичность в DevTools",
+        "Попробуй переопределить стили :where() более простым классом",
+        "Проверь, что :is() ведёт себя как обычная группировка по специфичности"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 25
+}

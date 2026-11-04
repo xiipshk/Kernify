@@ -1,0 +1,458 @@
+{
+  "title": "Урок 16: Коллекции и алгоритмы — интерфейсы, структуры данных, сравнение/сортировка, итераторы, yield",
+  "slug": "kollektsii-i-algoritmy-interfeysy-struktury-dannyh-sravneniesortirovka-iteratory-yield",
+  "short_description": "интерфейсы, структуры данных, сравнение/сортировка, итераторы, yield",
+  "goals": [
+    "Знать иерархию интерфейсов коллекций и когда какой использовать",
+    "Понимать внутреннюю структуру основных коллекций (List, Dictionary, HashSet, Queue, Stack)",
+    "Реализовывать кастомные коллекции через IEnumerable/IEnumerator",
+    "Использовать yield return для ленивых последовательностей",
+    "Работать с сравнением, сортировкой и поиском"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Знать иерархию интерфейсов коллекций и когда какой использовать",
+        "Понимать внутреннюю структуру основных коллекций (List, Dictionary, HashSet, Queue, Stack)",
+        "Реализовывать кастомные коллекции через IEnumerable/IEnumerator",
+        "Использовать yield return для ленивых последовательностей",
+        "Работать с сравнением, сортировкой и поиском"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Иерархия интерфейсов коллекций"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "IEnumerable<T>\n    │\n    ├── ICollection<T> (Count, Add, Remove, Clear, Contains, CopyTo)\n    │       │\n    │       ├── IList<T> (индексатор, Insert, RemoveAt, IndexOf)\n    │       │       ├── List<T>\n    │       │       ├── Array (T[])\n    │       │       └── Collection<T> (базовый класс для кастомных)\n    │       │\n    │       ├── ISet<T> (математические множества)\n    │       │       ├── HashSet<T>\n    │       │       └── SortedSet<T>\n    │       │\n    │       └── IReadOnlyCollection<T> (только чтение, Count)\n    │\n    ├── IReadOnlyList<T> (индексатор, Count)\n    │\n    └── IReadOnlySet<T> (.NET 6+)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда какой интерфейс использовать"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Интерфейс",
+        "Использование"
+      ],
+      "rows": [
+        [
+          "`IEnumerable<T>`",
+          "Входные параметры методов (только перебор)"
+        ],
+        [
+          "`IReadOnlyList<T>` / `IReadOnlyCollection<T>`",
+          "Возврат из методов (только чтение, нужен Count/индексатор)"
+        ],
+        [
+          "`ICollection<T>` / `IList<T>`",
+          "Когда нужно добавлять/удалять"
+        ],
+        [
+          "`ISet<T>`",
+          "Уникальные элементы, операции множеств"
+        ],
+        [
+          "`IDictionary<TKey, TValue>`",
+          "Ключ-значение"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Основные коллекции — внутреннее устройство"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "List<T> — динамический массив"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Внутри: T[] _items, int _size, int _version\n// Capacity удваивается при переполнении (amortized O(1) Add)\n\nvar list = new List<int>(100); // задать начальную capacity\nlist.Add(1);                    // O(1) амортизированное\nlist[0] = 2;                    // O(1) доступ по индексу\nlist.Insert(0, 3);              // O(n) — сдвиг элементов\nlist.RemoveAt(0);               // O(n) — сдвиг\nlist.BinarySearch(5);           // O(log n) — ТРЕБУЕТ отсортированного списка!\n\n// TrimExcess() — уменьшает capacity до size"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dictionary<TKey, TValue> — хеш-таблица"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Внутри: buckets (int[]), entries (Entry[]), count, version\n// Entry: int HashCode, int Next, TKey Key, TValue Value\n// Разрешение коллизий: chaining (цепочки)\n\nvar dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);\ndict[\"key\"] = 42;                    // O(1) среднее\ndict.TryGetValue(\"key\", out var v);  // O(1) без исключений\ndict.GetValueOrDefault(\"missing\");   // .NET 6+: возвращает default если нет\n\n// Важно: не меняйте ключ после добавления (хеш изменится — элемент потерян!)\n// Для reference types используйте immutable ключи или IEqualityComparer"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "HashSet<T> — множество на хеш-таблице"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var set = new HashSet<int> { 1, 2, 3 };\nset.Add(4);              // true (добавлен)\nset.Add(4);              // false (уже есть)\nset.Contains(2);         // O(1)\n\n// Операции множеств (мутируют текущий!)\nset.UnionWith(other);        // ∪\nset.IntersectWith(other);    // ∩\nset.ExceptWith(other);       // \\\nset.SymmetricExceptWith(other); // △ (XOR)\nset.IsSubsetOf(other);\nset.IsSupersetOf(other);\nset.Overlaps(other);         // есть пересечение\nset.SetEquals(other);        // равны как множества"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SortedSet<T> / SortedDictionary<TKey, TValue> — красно-чёрное дерево"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// O(log n) для всех операций, элементы ВСЕГДА отсортированы\nvar sorted = new SortedSet<int> { 3, 1, 2 };\nforeach (var x in sorted) Console.Write(x); // 1 2 3\n\n// Range queries\nvar range = sorted.GetViewBetween(2, 5); // подмножество [2, 5]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Queue<T> / Stack<T> — FIFO / LIFO"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Queue — кольцевой буфер на массиве\nvar q = new Queue<int>();\nq.Enqueue(1); q.Enqueue(2);\nq.Dequeue(); // 1\nq.Peek();    // 2 (без удаления)\n\n// Stack — массив с указателем вершины\nvar s = new Stack<int>();\ns.Push(1); s.Push(2);\ns.Pop();  // 2\ns.Peek(); // 1"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "LinkedList<T> — двусвязный список"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// O(1) вставка/удаление в середине (если есть узел), O(n) поиск\nvar list = new LinkedList<int>();\nvar node = list.AddLast(1);      // LinkedListNode<int>\nlist.AddAfter(node, 2);\nlist.AddBefore(node, 0);\nlist.Remove(node);               // O(1)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Concurrent Collections (Thread-Safe)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Collections.Concurrent;\n\nvar dict = new ConcurrentDictionary<int, string>();\ndict.GetOrAdd(1, _ => \"computed\");     // атомарно\ndict.AddOrUpdate(1, \"new\", (k, v) => v + \"!\");\ndict.TryRemove(1, out _);\n\nvar bag = new ConcurrentBag<int>();    // неупорядоченный мешок\nvar queue = new ConcurrentQueue<int>(); // FIFO\nvar stack = new ConcurrentStack<int>(); // LIFO\nvar blocking = new BlockingCollection<int>(); // с ожиданием (Producer/Consumer)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Immutable Collections (System.Collections.Immutable)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Collections.Immutable;\n\n// Неизменяемые — все операции возвращают НОВУЮ коллекцию (structural sharing)\nvar list = ImmutableList.Create(1, 2, 3);\nvar list2 = list.Add(4);        // list НЕ изменился!\nvar list3 = list2.RemoveAt(0);\n\n// Производительность: O(log n) для большинства операций\n// Thread-safe по дизайну"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Сравнение и сортировка"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "IComparable<T> / IComparer<T>"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Внутри типа — естественный порядок\npublic class Person : IComparable<Person>\n{\n    public string Name { get; set; }\n    public int Age { get; set; }\n\n    public int CompareTo(Person? other)\n    {\n        if (other is null) return 1;\n        var cmp = string.Compare(Name, other.Name, StringComparison.Ordinal);\n        return cmp != 0 ? cmp : Age.CompareTo(other.Age);\n    }\n}\n\n// Внешний компаратор — для альтернативных порядков\npublic class PersonAgeComparer : IComparer<Person>\n{\n    public int Compare(Person? x, Person? y)\n    {\n        if (x is null && y is null) return 0;\n        if (x is null) return -1;\n        if (y is null) return 1;\n        return x.Age.CompareTo(y.Age);\n    }\n}\n\n// Использование\nvar people = new List<Person> { ... };\npeople.Sort();                           // использует IComparable\npeople.Sort(new PersonAgeComparer());    // использует IComparer\npeople.Sort((a, b) => a.Age.CompareTo(b.Age)); // лямбда -> Comparison<T>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "IEquatable<T> / IEqualityComparer<T>"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Для Dictionary/HashSet — критически важно!\npublic class Person : IEquatable<Person>\n{\n    public string Id { get; set; }\n\n    public bool Equals(Person? other) => other is not null && Id == other.Id;\n    public override bool Equals(object? obj) => Equals(obj as Person);\n    public override int GetHashCode() => Id.GetHashCode(); // ДОЛЖЕН быть согласован с Equals!\n}\n\n// Кастомный компаратор для Dictionary\nvar dict = new Dictionary<Person, string>(new PersonIdEqualityComparer());"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Comparison<T> delegate"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Для Array.Sort / List.Sort без создания класса компаратора\nComparison<Person> byName = (a, b) => string.Compare(a.Name, b.Name);\nComparison<Person> byAgeDesc = (a, b) => b.Age.CompareTo(a.Age);\n\npeople.Sort(byName);\nArray.Sort(array, byAgeDesc);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стандартные компараторы"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "StringComparer.Ordinal              // бинарное, case-sensitive\nStringComparer.OrdinalIgnoreCase    // case-insensitive\nStringComparer.CurrentCulture       // с учётом культуры\nComparer<T>.Default                 // IComparable<T> или IComparable\nEqualityComparer<T>.Default         // IEquatable<T> или object.Equals"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Итераторы и yield return"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как работает yield"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Компилятор генерирует state machine (IEnumerator)\npublic IEnumerable<int> GetNumbers()\n{\n    Console.WriteLine(\"Start\");\n    yield return 1;  // состояние 1\n    Console.WriteLine(\"After 1\");\n    yield return 2;  // состояние 2\n    yield return 3;  // состояние 3\n    Console.WriteLine(\"End\");\n}\n\n// Использование — ленивое выполнение!\nvar enum = GetNumbers(); // ничего не печатает!\nforeach (var n in enum)  // печатает по мере перебора\n    Console.WriteLine(n);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "yield break — досрочное завершение"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public IEnumerable<int> TakeWhilePositive(IEnumerable<int> source)\n{\n    foreach (var n in source)\n    {\n        if (n <= 0) yield break; // останавливает итерацию\n        yield return n;\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Итераторы vs возвращение List"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ПЛОХО: материализует всю последовательность в памяти\npublic List<int> GetAllNumbers() => Enumerable.Range(1, 1_000_000).ToList();\n\n// ХОРОШО: стримит по одному элементу\npublic IEnumerable<int> GetNumbersStream() => Enumerable.Range(1, 1_000_000);\n\n// Если нужны методы List — используйте IReadOnlyList или ToList() у вызывающего"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Реализация IEnumerable/IEnumerator вручную"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class CustomCollection : IEnumerable<int>\n{\n    private readonly int[] _data = { 1, 2, 3 };\n\n    public IEnumerator<int> GetEnumerator() => new Enumerator(this);\n    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();\n\n    // Вложенный struct — избегает аллокации enumerator'а (struct = stack)\n    public struct Enumerator : IEnumerator<int>\n    {\n        private readonly CustomCollection _collection;\n        private int _index;\n\n        public Enumerator(CustomCollection collection) => _collection = collection;\n\n        public int Current => _collection._data[_index];\n        object? IEnumerator.Current => Current;\n\n        public bool MoveNext() => ++_index < _collection._data.Length;\n        public void Reset() => _index = -1;\n        public void Dispose() { } // struct не требует Dispose, но интерфейс требует\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Продвинутые паттерны"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Поиск (Binary Search)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Требует отсортированной коллекции!\nvar list = new List<int> { 1, 3, 5, 7, 9 };\nint index = list.BinarySearch(5);  // 2 (найден)\nint index2 = list.BinarySearch(4); // ~1 (bitwise complement: ~index = -2 -> insert at 1)\n\n// Кастомный компаратор\nlist.BinarySearch(5, Comparer<int>.Create((a, b) => b.CompareTo(a))); // по убыванию"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Копирование и конвертация"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var list = new List<int> { 1, 2, 3 };\nint[] array = list.ToArray();\nList<int> list2 = array.ToList();\nHashSet<int> set = list.ToHashSet();\nDictionary<int, string> dict = list.ToDictionary(x => x, x => x.ToString());\nILookup<int, string> lookup = list.ToLookup(x => x % 2, x => x.ToString()); // группировка с множественными значениями\nIReadOnlyList<int> ro = list.AsReadOnly(); // wrapper, не копия"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Span и Memory для коллекций"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Zero-allocation slices\nint[] array = { 1, 2, 3, 4, 5 };\nSpan<int> slice = array.AsSpan(1, 3); // [2, 3, 4] — НЕ копия!\n\n// List/Array -> Span\nSpan<int> span = CollectionsMarshal.AsSpan(list); // .NET 5+, доступ к внутреннему массиву\n\n// Stackalloc для малых массивов\nSpan<int> stackSpan = stackalloc int[100];"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Benchmark: выбор коллекции"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Операция",
+        "List<T>",
+        "Dictionary",
+        "HashSet",
+        "SortedSet",
+        "LinkedList"
+      ],
+      "rows": [
+        [
+          "Доступ по индексу",
+          "O(1)",
+          "-",
+          "-",
+          "-",
+          "O(n)"
+        ],
+        [
+          "Поиск по значению",
+          "O(n)",
+          "O(1)",
+          "O(1)",
+          "O(log n)",
+          "O(n)"
+        ],
+        [
+          "Поиск по ключу",
+          "-",
+          "O(1)",
+          "-",
+          "O(log n)",
+          "-"
+        ],
+        [
+          "Вставка в конец",
+          "O(1)*",
+          "-",
+          "O(1)",
+          "O(log n)",
+          "O(1)"
+        ],
+        [
+          "Вставка в середину",
+          "O(n)",
+          "-",
+          "-",
+          "O(log n)",
+          "O(1)*"
+        ],
+        [
+          "Удаление",
+          "O(n)",
+          "O(1)",
+          "O(1)",
+          "O(log n)",
+          "O(1)*"
+        ],
+        [
+          "Перебор в порядке",
+          "да",
+          "нет (произв.)",
+          "нет",
+          "да",
+          "да"
+        ],
+        [
+          "Память на элемент",
+          "низкая",
+          "высокая",
+          "высокая",
+          "высокая",
+          "очень высокая"
+        ]
+      ]
+    },
+    {
+      "type": "text",
+      "content": "*амортизированное / при наличии узла"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`foreach` с изменением коллекции",
+          "Используйте `for` или `ToList()` перед изменением"
+        ],
+        [
+          "`Dictionary` с mutable ключом",
+          "Ключи — только immutable типы"
+        ],
+        [
+          "`List<T>` для частых поиск",
+          "`HashSet<T>` или `Dictionary<TKey, TValue>`"
+        ],
+        [
+          "`IEnumerable` в API, где нужен Count",
+          "`IReadOnlyCollection<T>` / `IReadOnlyList<T>`"
+        ],
+        [
+          "`struct` implements `IEnumerator` без `Dispose`",
+          "Реализуйте пустой `Dispose()`"
+        ],
+        [
+          "`yield` в `try/finally` без понимания",
+          "`finally` выполняется при `Dispose()` enumerator'а"
+        ],
+        [
+          "`ConcurrentDictionary` + `GetOrAdd` с тяжелым factory",
+          "Factory вызывается ПОД БЛОКИРОВКОЙ — выносите тяжелые вычисления"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`foreach` с изменением коллекции",
+      "correct": "Используйте `for` или `ToList()` перед изменением"
+    },
+    {
+      "mistake": "`Dictionary` с mutable ключом",
+      "correct": "Ключи — только immutable типы"
+    },
+    {
+      "mistake": "`List<T>` для частых поиск",
+      "correct": "`HashSet<T>` или `Dictionary<TKey, TValue>`"
+    },
+    {
+      "mistake": "`IEnumerable` в API, где нужен Count",
+      "correct": "`IReadOnlyCollection<T>` / `IReadOnlyList<T>`"
+    },
+    {
+      "mistake": "`struct` implements `IEnumerator` без `Dispose`",
+      "correct": "Реализуйте пустой `Dispose()`"
+    },
+    {
+      "mistake": "`yield` в `try/finally` без понимания",
+      "correct": "`finally` выполняется при `Dispose()` enumerator'а"
+    },
+    {
+      "mistake": "`ConcurrentDictionary` + `GetOrAdd` с тяжелым factory",
+      "correct": "Factory вызывается ПОД БЛОКИРОВКОЙ — выносите тяжелые вычисления"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 16
+}

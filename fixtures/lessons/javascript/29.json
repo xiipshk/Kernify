@@ -1,0 +1,520 @@
+{
+  "title": "Урок 29: Security — XSS, CSRF, Same-Origin Policy, CSP, Dependency Security",
+  "slug": "security-xss-csrf-same-origin-policy-csp-dependency-security",
+  "short_description": "XSS, CSRF, Same-Origin Policy, CSP, Dependency Security",
+  "goals": [
+    "Глубоко понять XSS (Cross-Site Scripting): типы, векторы атаки, защита",
+    "Освоить CSRF (Cross-Site Request Forgery): механика, токены, SameSite cookies",
+    "Разобрать Same-Origin Policy (SOP) и CORS: детали, preflight, credentials",
+    "Изучить Content Security Policy (CSP): директивы, nonce, hash, strict-dynamic",
+    "Понять Dependency Security: supply chain attacks, audit, SCA tools",
+    "Рассмотреть современные угрозы: prototype pollution, DOM clobbering, clickjacking"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубоко понять XSS (Cross-Site Scripting): типы, векторы атаки, защита",
+        "Освоить CSRF (Cross-Site Request Forgery): механика, токены, SameSite cookies",
+        "Разобрать Same-Origin Policy (SOP) и CORS: детали, preflight, credentials",
+        "Изучить Content Security Policy (CSP): директивы, nonce, hash, strict-dynamic",
+        "Понять Dependency Security: supply chain attacks, audit, SCA tools",
+        "Рассмотреть современные угрозы: prototype pollution, DOM clobbering, clickjacking"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. XSS (Cross-Site Scripting) — Deep Dive"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.1 Типы XSS"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "┌─────────────────────────────────────────────────────────────────┐\n│                        XSS CLASSIFICATION                       │\n├─────────────────┬─────────────────┬─────────────────────────────┤\n│  Reflected      │  Stored         │  DOM-based                  │\n│  (Non-persistent)│ (Persistent)   │  (Client-side only)         │\n├─────────────────┼─────────────────┼─────────────────────────────┤\n│ URL param       │ Database        │ location.hash               │\n│ → Server        │ → Server        │ → JS reads                  │\n│ → Response      │ → Response      │ → sink (innerHTML, eval)    │\n│ → Victim clicks │ → Victim views  │ → Executes                  │\n├─────────────────┼─────────────────┼─────────────────────────────┤\n│ Search forms    │ Comments,       │ SPA routers                 │\n│ Error pages     │ Profiles,       │ PostMessage handlers        │\n│                 │ Forums          │ Client-side templates       │\n└─────────────────┴─────────────────┴─────────────────────────────┘"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.2 XSS Vectors (OWASP Cheat Sheet)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Классические векторы: -->\n<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n<svg onload=alert(1)>\n<iframe src=\"javascript:alert(1)\">\n<input autofocus onfocus=alert(1)>\n<select autofocus onfocus=alert(1)>\n<textarea autofocus onfocus=alert(1)>\n<keygen autofocus onfocus=alert(1)>\n<video><source onerror=alert(1)>\n<audio src=x onerror=alert(1)>\n<details open ontoggle=alert(1)>\n\n<!-- Обход фильтров: -->\n<ScRiPt>alert(1)</ScRiPt>\n<script>alert(1)</script>\n<svg/onload=alert(1)>\n<img src=`x` onerror=alert(1)>\n<img src=\"x\" onerror=alert(1)>\n<img src='x' onerror=alert(1)>\n<iframe/src=\"javascript:alert(1)\">\n\n<!-- Event handlers (50+): -->\nonload, onerror, onclick, onmouseover, onfocus, onblur, onchange,\nonsubmit, onreset, onselect, onkeydown, onkeyup, onkeypress,\nonabort, oncanplay, oncanplaythrough, ondurationchange, onemptied,\nonended, onloadeddata, onloadedmetadata, onloadstart, onpause,\nonplay, onplaying, onprogress, onratechange, onseeked, onseeking,\nonstalled, onsuspend, ontimeupdate, onvolumechange, onwaiting,\nonwheel, onscroll, onresize, oncontextmenu, ondblclick, ondrag...\n\n<!-- CSS-based (expression deprecated, но): -->\n<style>@keyframes x{}</style><x style=\"animation-name:x\" onanimationstart=alert(1)>\n<link rel=stylesheet href=\"data:text/css,*{color:red;}\" onload=alert(1)>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.3 Sinks (Dangerous APIs)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// HTML Sinks:\nelement.innerHTML = userInput;           // ОПАСНО\nelement.outerHTML = userInput;           // ОПАСНО\ndocument.write(userInput);               // ОПАСНО\ndocument.writeln(userInput);             // ОПАСНО\nelement.insertAdjacentHTML(pos, input);  // ОПАСНО\nrange.createContextualFragment(input);   // ОПАСНО\ndocument.domain = userInput;             // ОПАСНО (legacy)\n\n// Execution Sinks:\neval(userInput);                         // ОПАСНО\nnew Function(userInput)();               // ОПАСНО\nsetTimeout(userInput, 0);                // ОПАСНО (string)\nsetInterval(userInput, 0);               // ОПАСНО (string)\nscript.src = userInput;                  // ОПАСНО\nscript.text = userInput;                 // ОПАСНО\n\n// URL Sinks:\nlocation.href = userInput;               // ОПАСНО (javascript:)\nlocation.assign(userInput);              // ОПАСНО\nlocation.replace(userInput);             // ОПАСНО\nwindow.open(userInput);                  // ОПАСНО\na.href = userInput;                      // ОПАСНО\n\n// Other:\nelement.style.cssText = userInput;       // CSS injection\nobject.data = userInput;                 // Plugin content\nembed.src = userInput;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.4 Defense: Context-Aware Output Encoding"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Правило: КОДИРУЙТЕ ВЫВОД В ЗАВИСИМОСТИ ОТ КОНТЕКСТА!\n\n// 1. HTML Body / Attribute context:\nfunction escapeHtml(str) {\n  return String(str)\n    .replace(/&/g, '&')\n    .replace(/</g, '<')\n    .replace(/>/g, '>')\n    .replace(/\"/g, '\"')\n    .replace(/'/g, ''')\n    .replace(/\\//g, '&#x2F;');\n}\n\n// Использование:\n<div>${escapeHtml(userName)}</div>\n<input value=\"${escapeHtml(userInput)}\">\n\n// 2. JavaScript context (inside <script>):\nfunction escapeJs(str) {\n  return String(str)\n    .replace(/\\\\/g, '\\\\\\\\')\n    .replace(/'/g, \"\\\\'\")\n    .replace(/\"/g, '\\\\\"')\n    .replace(/\\n/g, '\\\\n')\n    .replace(/\\r/g, '\\\\r')\n    .replace(/</g, '\\\\u003C')\n    .replace(/>/g, '\\\\u003E')\n    .replace(/&/g, '\\\\u0026')\n    .replace(/=/g, '\\\\u003D')\n    .replace(/-/g, '\\\\u002D')\n    .replace(/;/g, '\\\\u003B');\n}\n\n// <script>const user = '${escapeJs(userName)}';</script>\n\n// 3. CSS context:\nfunction escapeCss(str) {\n  return String(str).replace(/[^a-zA-Z0-9]/g, c =>\n    '\\\\' + c.charCodeAt(0).toString(16).padStart(6, ' ')\n  );\n}\n\n// 4. URL context:\nfunction escapeUrl(str) {\n  return encodeURIComponent(str);\n}\n\n// <a href=\"/search?q=${escapeUrl(query)}\">Search</a>\n\n// 5. Используйте библиотеки: DOMPurify (sanitization),\n// escape-html, js-xss, sanitize-html\n\nimport DOMPurify from 'dompurify';\n\n// Для HTML content (richeditors):\nconst clean = DOMPurify.sanitize(dirtyHtml, {\n  ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'p', 'br'],\n  ALLOWED_ATTR: ['href', 'target', 'rel']\n});\nelement.innerHTML = clean; // БЕЗОПАСНО"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.5 Trusted Types (Modern Browser Defense)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Trusted Types — браузерный API для предотвращения DOM XSS\n// Требует: 'trusted-types' в CSP или Content-Security-Policy\n\n// 1. Определяем политику:\nif (window.trustedTypes && trustedTypes.createPolicy) {\n  const policy = trustedTypes.createPolicy('myPolicy', {\n    createHTML: (input) => DOMPurify.sanitize(input),\n    createScriptURL: (input) => {\n      // Валидация URL для скриптов\n      const url = new URL(input, location.origin);\n      if (url.origin !== location.origin) throw new Error('Cross-origin script');\n      return input;\n    },\n    createScript: (input) => {\n      // Для inline scripts (если нужны)\n      return input; // но лучше избегать inline\n    }\n  });\n}\n\n// 2. Использование (браузер БЛОКИРУЕТ string assignment без TrustedHTML):\nelement.innerHTML = policy.createHTML(userInput); // OK\n// element.innerHTML = userInput; // TypeError!\n\n// 3. CSP для принуждения:\nContent-Security-Policy: trusted-types myPolicy; require-trusted-types-for 'script'"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.6 DOM Clobbering"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Атака: перезапись глобальных переменных через named DOM elements -->\n<form id=\"config\"></form>\n<!-- window.config теперь ссылается на <form> элемент! -->\n\n<script>\n  // Если код делает:\n  const cfg = window.config || { apiUrl: '/api' };\n  fetch(cfg.apiUrl); // TypeError: cfg.apiUrl is undefined (form не имеет apiUrl)\n  // ИЛИ хуже:\n  eval(window.config); // если config = <img src=x onerror=alert(1)>\n</script>\n\n<!-- Защита: -->\n// 1. Используйте `const`/`let` вместо `var` (не создают свойства window)\n// 2. Проверяйте типы: if (typeof config === 'object' && config !== null)\n// 3. CSP: trusted-types + не используйте named access"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. CSRF (Cross-Site Request Forgery)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.1 Как работает CSRF"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Злоумышленник создаёт страницу: -->\n<form action=\"https://bank.com/transfer\" method=\"POST\" id=\"csrf\">\n  <input name=\"to\" value=\"attacker\">\n  <input name=\"amount\" value=\"10000\">\n</form>\n<script>document.getElementById('csrf').submit();</script>\n\n<!-- Жертва заходит на страницу → форма сабмитится автоматически -->\n<!-- Браузер ПРИКРЕПЛЯЕТ cookies (включая session) к запросу! -->\n<!-- Банк думает: \"это легальный запрос от авторизованного пользователя\" -->"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.2 CSRF Tokens (Synchronizer Token Pattern)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Server-side (Express example):\nconst csrf = require('csurf');\napp.use(csrf({ cookie: true }));\n\napp.get('/form', (req, res) => {\n  res.render('form', { csrfToken: req.csrfToken() });\n});\n\napp.post('/transfer', (req, res) => {\n  // csurf middleware автоматически проверяет _csrf токен\n  // из body, query, или header 'x-csrf-token'\n  res.send('OK');\n});\n\n// Client-side:\n<form method=\"POST\" action=\"/transfer\">\n  <input type=\"hidden\" name=\"_csrf\" value=\"{{csrfToken}}\">\n  <!-- или в header для AJAX: -->\n  <script>\n    fetch('/transfer', {\n      method: 'POST',\n      headers: { 'X-CSRF-Token': '{{csrfToken}}', 'Content-Type': 'application/json' },\n      body: JSON.stringify({ to: '...', amount: 100 })\n    });\n  </script>\n</form>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.3 SameSite Cookies (Modern Primary Defense)"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.4 Double Submit Cookie Pattern"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Для SPA / stateless API:\nfunction generateCsrfToken() {\n  return crypto.randomBytes(32).toString('base64url');\n}\n\n// Login / Session creation:\nconst csrfToken = generateCsrfToken();\nres.cookie('csrf_token', csrfToken, {\n  sameSite: 'lax',  // или 'strict'\n  secure: true,\n  httpOnly: false  // JS должен читать!\n});\n\n// Client читает cookie и отправляет в header:\nconst csrfToken = document.cookie.match(/csrf_token=([^;]+)/)[1];\nfetch('/api/action', {\n  method: 'POST',\n  headers: { 'X-CSRF-Token': csrfToken },\n  credentials: 'include'\n});\n\n// Server проверяет:\nif (req.cookies.csrf_token !== req.headers['x-csrf-token']) {\n  return res.status(403).send('Invalid CSRF token');\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.5 Additional CSRF Defenses"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Custom Header (не может быть установлен cross-origin без CORS):\nfetch('/api', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });\n// Server: проверяет наличие header\n\n// 2. Origin / Referer header validation:\napp.use((req, res, next) => {\n  const origin = req.get('Origin') || req.get('Referer');\n  if (origin && !origin.startsWith('https://myapp.com')) {\n    return res.status(403).send('Forbidden');\n  }\n  next();\n});\n\n// 3. User interaction requirement (re-auth для критических действий):\n// - Re-enter password\n// - 2FA confirmation\n// - CAPTCHA"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Same-Origin Policy (SOP) & CORS"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.1 Same-Origin Policy Details"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Origin = Scheme + Host + Port\n// https://example.com:443 ≠ https://example.com:8443 ≠ http://example.com\n\n// SOP блокирует:\n// - DOM доступ: iframe.contentWindow.document (cross-origin)\n// - JavaScript API: localStorage, IndexedDB, Cookies (read/write)\n// - fetch/XHR: cross-origin запросы (без CORS)\n// - WebSockets: origin проверяется при handshake\n// - Canvas: tainted canvas (cross-origin images) → toDataURL() blocked\n\n// SOP НЕ блокирует:\n// - Навигация: window.location = 'https://other.com' (top-level)\n// - Form submit: <form action=\"https://other.com\"> (POST без чтения ответа)\n// - Script/Link/Img tags: <script src=\"https://other.com/script.js\">\n// - CSS: <link rel=\"stylesheet\" href=\"https://other.com/style.css\">\n// - Web Fonts: @font-face src(url(...))\n// - iframe embedding (но не чтение содержимого!)\n// - postMessage (explicit cross-origin communication)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.2 CORS (Cross-Origin Resource Sharing) Deep Dive"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.3 CORS Misconfigurations (Common Vulnerabilities)"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.4 COOP / COEP (Cross-Origin Isolation)"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Content Security Policy (CSP) — Complete Guide"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.1 CSP Directives Reference"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": "Content-Security-Policy:"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.2 Nonce-based CSP (Best Practice for Inline Scripts)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Server генерирует уникальный nonce для КАЖДОГО запроса: -->\n<script nonce=\"a1b2c3d4e5f6\">\n  console.log('This inline script is allowed');\n</script>\n\n<!-- CSP header: -->\nContent-Security-Policy: script-src 'nonce-a1b2c3d4e5f6' 'strict-dynamic'\n\n<!-- 'strict-dynamic': если скрипт с nonce загружает другие скрипты — они тоже доверяются! -->\n<script nonce=\"a1b2c3d4e5f6\">\n  // Этот скрипт может динамически загрузить другие скрипты:\n  const s = document.createElement('script');\n  s.src = '/analytics.js';\n  document.head.appendChild(s); // Разрешено благодаря strict-dynamic!\n</script>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.3 Hash-based CSP (Для статических inline scripts)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Вычислите SHA256 от содержимого скрипта: -->\n<script>console.log('Hello');</script>\n<!-- sha256-base64: -->\n<!-- echo -n 'console.log(\\'Hello\\');' | openssl dgst -sha256 -binary | base64 -->\n\n<!-- CSP: -->\nContent-Security-Policy: script-src 'sha256-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'\n\n<!-- Для стилей: -->\n<style>body { color: red; }</style>\n<!-- sha256-YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY -->\nContent-Security-Policy: style-src 'sha256-YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY'"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.4 CSP Reporting & Monitoring"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Reporting API endpoint:\napp.post('/csp-report', express.json({ type: 'application/csp-report' }), (req, res) => {\n  const report = req.body['csp-report'] || req.body;\n  console.log('CSP Violation:', {\n    directive: report['violated-directive'],\n    blockedURI: report['blocked-uri'],\n    sourceFile: report['source-file'],\n    lineNumber: report['line-number'],\n    scriptSample: report['script-sample']\n  });\n  res.status(204).end();\n});\n\n// Report-Only mode (для тестирования):\nContent-Security-Policy-Report-Only: script-src 'self'; report-uri /csp-report\n// Не блокирует, только репортит!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Dependency Security (Supply Chain)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.1 Supply Chain Attack Vectors"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Compromised package (event-stream, ua-parser-js, node-ipc)\n// 2. Typosquatting (lodash -> lodashjs, react -> raect)\n// 3. Dependency confusion (private package name claimed on public npm)\n// 4. Malicious maintainer / hijacked account\n// 5. Build pipeline compromise (SolarWinds style)\n// 6. Protestware (node-ipc, colors.js — intentional breakage)\n\n// Real incidents:\n// - event-stream (2018): flatmap-stream injected bitcoin stealer\n// - ua-parser-js (2021): crypto miner в популярном пакете\n// - colors.js / faker.js (2022): maintainer broke own packages\n// - node-ipc (2022): protestware wiped files in Russia/Belarus"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.2 Defense Strategies"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.3 Subresource Integrity (SRI)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Для CDN ресурсов — гарантирует, что файл не изменён: -->\n<script\n  src=\"https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js\"\n  integrity=\"sha256-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=\"\n  crossorigin=\"anonymous\">\n</script>\n\n<!-- Генерация SRI: -->"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.4 Package Verification"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Additional Attack Vectors & Defenses"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.1 Clickjacking (UI Redressing)"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.2 Prototype Pollution"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Атака: Object.prototype заражается через merge/assign\nconst malicious = JSON.parse('{\"__proto__\": {\"polluted\": true}}');\n_.merge({}, malicious); // lodash < 4.17.12 vulnerable!\n\n// Проверка:\nconsole.log({}.polluted); // true — ВСЕ объекты заражены!\n\n// Защита:\n// 1. Обновляйте зависимости (lodash >= 4.17.12)\n// 2. Object.freeze(Object.prototype) — ранний freeze\n// 3. Используйте Map вместо plain objects для user data\n// 4. Валидируйте ключи: Object.keys(obj).filter(k => !['__proto__', 'constructor', 'prototype'].includes(k))\n// 5. Safe libraries: lodash.cloneDeepWith, merge с customizer"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.3 Open Redirects"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ Опасно:\napp.get('/redirect', (req, res) => {\n  res.redirect(req.query.url); // Атакующий: /redirect?url=https://evil.com\n});\n\n// ✅ Безопасно:\nconst allowedDomains = ['example.com', 'partner.com'];\napp.get('/redirect', (req, res) => {\n  const url = new URL(req.query.url);\n  if (!allowedDomains.includes(url.hostname)) {\n    return res.status(400).send('Invalid redirect');\n  }\n  res.redirect(url.toString());\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.4 Host Header Injection"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ Опасно: использование Host header для генерации ссылок\nconst resetLink = `https://${req.headers.host}/reset?token=${token}`;\n// Атакующий: Host: evil.com → ссылка ведёт на evil.com\n\n// ✅ Безопасно: используйте конфигурируемый base URL\nconst baseUrl = process.env.APP_BASE_URL; // https://app.example.com\nconst resetLink = `${baseUrl}/reset?token=${token}`;"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Secure Headers Checklist"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Browser vs Node.js Security Context"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Feature",
+        "Browser",
+        "Node.js"
+      ],
+      "rows": [
+        [
+          "**SOP / CORS**",
+          "Enforced by browser",
+          "Application responsibility"
+        ],
+        [
+          "**CSP**",
+          "Enforced by browser",
+          "Not applicable (but can proxy)"
+        ],
+        [
+          "**Cookies**",
+          "HttpOnly, Secure, SameSite",
+          "Manual handling (cookie-parser)"
+        ],
+        [
+          "**XSS**",
+          "DOM sinks, Trusted Types",
+          "Template injection (server-side)"
+        ],
+        [
+          "**CSRF**",
+          "SameSite cookies, tokens",
+          "SameSite cookies, tokens"
+        ],
+        [
+          "**Dependency Security**",
+          "npm packages in bundle",
+          "Direct dependencies + transitive"
+        ],
+        [
+          "**Prototype Pollution**",
+          "Client-side objects",
+          "Server objects (req.body, query)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: XSS Challenge"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Дан уязвимый код:\nfunction renderComment(comment) {\n  return `<div class=\"comment\">${comment}</div>`;\n}\n// Эксплойты:\n// 1. <img src=x onerror=alert(1)>\n// 2. <svg onload=alert(1)>\n// 3. </div><script>alert(1)</script><div>\n// Задача: исправите с правильным escaping / DOMPurify"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: CSP Implementation"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Напишите middleware для Express, который:\n// - Генерирует случайный nonce для каждого запроса\n// - Устанавливает CSP header с nonce и strict-dynamic\n// - Делает report-only режим через query param ?csp-report-only=1\n// - Логирует нарушения в /csp-report endpoint"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: CSRF Protection"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Реализуйте double-submit cookie CSRF protection:\n// - Middleware для установки csrf_token cookie\n// - Middleware для проверки X-CSRF-Token header\n// - Интеграция с fetch API на клиенте (автоматическое чтение cookie)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 4: Dependency Audit"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Дополнительные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**OWASP Top 10**: https://owasp.org/www-project-top-ten/",
+        "**OWASP XSS Prevention Cheat Sheet**: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html",
+        "**OWASP CSRF Prevention**: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html",
+        "**CSP Reference**: https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP",
+        "**Trusted Types**: https://developer.mozilla.org/en-US/docs/Web/API/Trusted_Types_API",
+        "**Web Security Academy**: https://portswigger.net/web-security",
+        "**npm Security**: https://docs.npmjs.com/about-security-audits",
+        "**Socket.dev**: https://socket.dev (malware detection in packages)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Контрольные вопросы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "В чём разница между Reflected, Stored и DOM-based XSS?",
+        "Почему `innerHTML = userInput` опасно, а `textContent = userInput` — нет?",
+        "Как SameSite=Lax защищает от CSRF, а SameSite=Strict — нет для некоторых кейсов?",
+        "Что такое preflight request и когда он отправляется?",
+        "Зачем нужен `strict-dynamic` в CSP?",
+        "Как Trusted Types предотвращают DOM XSS?",
+        "Что такое Prototype Pollution и как его предотвратить?",
+        "Какие заголовки нужны для Cross-Origin Isolation?"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "📝 Саммари"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Концепция",
+        "Ключевой момент"
+      ],
+      "rows": [
+        [
+          "**XSS**",
+          "Context-aware output encoding; DOMPurify для HTML; Trusted Types (modern)"
+        ],
+        [
+          "**CSRF**",
+          "SameSite=Lax cookies (primary); CSRF tokens (double-submit) для старых браузеров"
+        ],
+        [
+          "**SOP/CORS**",
+          "Origin = scheme+host+port; CORS headers для разрешения; валидируйте Origin!"
+        ],
+        [
+          "**CSP**",
+          "default-src 'self'; nonce/hash для inline; strict-dynamic; report-only для тестов"
+        ],
+        [
+          "**Dependencies**",
+          "Lockfiles + audit + SCA tools (Snyk, Dependabot, Socket); SRI для CDN"
+        ],
+        [
+          "**Modern Headers**",
+          "COOP/COEP для isolation; Permissions-Policy; HSTS; Referrer-Policy"
+        ]
+      ]
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 29
+}

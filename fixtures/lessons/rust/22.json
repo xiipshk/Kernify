@@ -1,0 +1,180 @@
+{
+  "title": "Урок 22: Проект — Параллельный веб-краулер (Intermediate)",
+  "slug": "proekt-parallelnyy-veb-krauler-intermediate",
+  "short_description": "Параллельный веб-краулер (Intermediate)",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Структура проекта"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "crawler/\n├── Cargo.toml\n├── config.toml\n├── src/\n│   ├── main.rs\n│   ├── lib.rs\n│   ├── config.rs\n│   ├── crawler.rs\n│   ├── fetcher.rs\n│   ├── parser.rs\n│   ├── storage.rs\n│   └── error.rs\n└── tests/\n    └── integration_test.rs"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Cargo.toml"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[package]\nname = \"crawler\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ntokio = { version = \"1\", features = [\"full\", \"tracing\"] }\nreqwest = { version = \"0.12\", features = [\"json\", \"cookies\", \"gzip\", \"brotli\", \"rustls-tls\"] }\nscraper = \"0.18\"\nurl = \"2.5\"\nserde = { version = \"1.0\", features = [\"derive\"] }\nserde_json = \"1.0\"\ntoml = \"0.8\"\ntracing = \"0.1\"\ntracing-subscriber = { version = \"0.3\", features = [\"env-filter\"] }\nanyhow = \"1.0\"\nthiserror = \"1.0\"\nclap = { version = \"4\", features = [\"derive\"] }\nonce_cell = \"1.19\""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Конфигурация (config.toml)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Ошибки (src/error.rs)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/error.rs\nuse thiserror::Error;\n\n#[derive(Error, Debug)]\npub enum CrawlerError {\n    #[error(\"HTTP request failed: {0}\")]\n    Request(#[from] reqwest::Error),\n\n    #[error(\"URL parse error: {0}\")]\n    UrlParse(#[from] url::ParseError),\n\n    #[error(\"HTML parsing error: {0}\")]\n    Parse(String),\n\n    #[error(\"IO error: {0}\")]\n    Io(#[from] std::io::Error),\n\n    #[error(\"Serialization error: {0}\")]\n    Serde(#[from] serde_json::Error),\n\n    #[error(\"Configuration error: {0}\")]\n    Config(String),\n\n    #[error(\"Max depth exceeded\")]\n    MaxDepth,\n\n    #[error(\"Task cancelled\")]\n    Cancelled,\n}\n\npub type Result<T> = std::result::Result<T, CrawlerError>;"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Конфиг (src/config.rs)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/config.rs\nuse serde::Deserialize;\nuse std::path::Path;\n\n#[derive(Debug, Deserialize, Clone)]\npub struct CrawlerConfig {\n    pub start_urls: Vec<String>,\n    pub max_depth: usize,\n    pub max_concurrent: usize,\n    pub request_timeout_secs: u64,\n    pub delay_ms: u64,\n    pub user_agent: String,\n    pub respect_robots_txt: bool,\n}\n\n#[derive(Debug, Deserialize, Clone)]\npub struct StorageConfig {\n    pub r#type: String,\n    pub path: String,\n}\n\n#[derive(Debug, Deserialize, Clone)]\npub struct LoggingConfig {\n    pub level: String,\n    pub file: String,\n}\n\n#[derive(Debug, Deserialize, Clone)]\npub struct Config {\n    pub crawler: CrawlerConfig,\n    pub storage: StorageConfig,\n    pub logging: LoggingConfig,\n}\n\nimpl Config {\n    pub fn load(path: &Path) -> anyhow::Result<Self> {\n        let content = std::fs::read_to_string(path)?;\n        let config: Config = toml::from_str(&content)?;\n        Ok(config)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Fetcher (src/fetcher.rs)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/fetcher.rs\nuse crate::error::{CrawlerError, Result};\nuse reqwest::Client;\nuse std::sync::Arc;\nuse std::time::Duration;\n\npub struct Fetcher {\n    client: Client,\n    timeout: Duration,\n    user_agent: String,\n}\n\nimpl Fetcher {\n    pub fn new(timeout_secs: u64, user_agent: String) -> Result<Self> {\n        let client = Client::builder()\n            .timeout(Duration::from_secs(timeout_secs))\n            .user_agent(user_agent.clone())\n            .build()?;\n        Ok(Self {\n            client,\n            timeout: Duration::from_secs(timeout_secs),\n            user_agent,\n        })\n    }\n\n    pub async fn fetch(&self, url: &str) -> Result<String> {\n        let resp = self.client.get(url).send().await?;\n        if !resp.status().is_success() {\n            return Err(CrawlerError::Request(\n                reqwest::Error::from(resp.error_for_status().unwrap_err())\n            ));\n        }\n        let text = resp.text().await?;\n        Ok(text)\n    }\n\n    pub async fn fetch_with_retry(&self, url: &str, max_retries: u32) -> Result<String> {\n        let mut last_err = None;\n        for attempt in 0..=max_retries {\n            match self.fetch(url).await {\n                Ok(html) => return Ok(html),\n                Err(e) => {\n                    last_err = Some(e);\n                    if attempt < max_retries {\n                        tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempt))).await;\n                    }\n                }\n            }\n        }\n        Err(last_err.unwrap())\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Парсер (src/parser.rs)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/parser.rs\nuse crate::error::{CrawlerError, Result};\nuse scraper::{Html, Selector};\nuse url::Url;\n\npub struct Parser {\n    link_selector: Selector,\n}\n\nimpl Parser {\n    pub fn new() -> Result<Self> {\n        let link_selector = Selector::parse(\"a[href]\")\n            .map_err(|e| CrawlerError::Parse(e.to_string()))?;\n        Ok(Self { link_selector })\n    }\n\n    pub fn extract_links(&self, base_url: &str, html: &str) -> Result<Vec<String>> {\n        let document = Html::parse_document(html);\n        let base = Url::parse(base_url)?;\n        let mut links = Vec::new();\n\n        for element in document.select(&self.link_selector) {\n            if let Some(href) = element.value().attr(\"href\") {\n                if let Ok(absolute) = base.join(href) {\n                    let url_str = absolute.to_string();\n                    // Фильтруем только http/https\n                    if url_str.starts_with(\"http://\") || url_str.starts_with(\"https://\") {\n                        links.push(url_str);\n                    }\n                }\n            }\n        }\n        Ok(links)\n    }\n\n    pub fn extract_text(&self, html: &str) -> String {\n        let document = Html::parse_document(html);\n        document.root_element().text().collect::<Vec<_>>().join(\" \")\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Хранилище (src/storage.rs)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/storage.rs\nuse crate::error::{CrawlerError, Result};\nuse serde::{Deserialize, Serialize};\nuse std::collections::HashMap;\nuse std::fs;\nuse std::path::Path;\nuse tokio::sync::RwLock;\n\n#[derive(Debug, Serialize, Deserialize, Clone)]\npub struct CrawledPage {\n    pub url: String,\n    pub title: String,\n    pub content: String,\n    pub links: Vec<String>,\n    pub depth: usize,\n    pub timestamp: chrono::DateTime<chrono::Utc>,\n}\n\n#[derive(Debug, Serialize, Deserialize)]\npub struct CrawlResult {\n    pub pages: HashMap<String, CrawledPage>,\n    pub stats: CrawlStats,\n}\n\n#[derive(Debug, Serialize, Deserialize, Default)]\npub struct CrawlStats {\n    pub total_pages: usize,\n    pub total_links: usize,\n    pub errors: usize,\n}\n\npub struct Storage {\n    path: String,\n    data: RwLock<CrawlResult>,\n}\n\nimpl Storage {\n    pub fn new(path: String) -> Result<Self> {\n        let data = if Path::new(&path).exists() {\n            let content = fs::read_to_string(&path)?;\n            serde_json::from_str(&content)?\n        } else {\n            CrawlResult {\n                pages: HashMap::new(),\n                stats: CrawlStats::default(),\n            }\n        };\n        Ok(Self {\n            path,\n            data: RwLock::new(data),\n        })\n    }\n\n    pub async fn save_page(&self, page: CrawledPage) {\n        let mut data = self.data.write().await;\n        data.pages.insert(page.url.clone(), page.clone());\n        data.stats.total_pages = data.pages.len();\n        data.stats.total_links += page.links.len();\n    }\n\n    pub async fn increment_errors(&self) {\n        let mut data = self.data.write().await;\n        data.stats.errors += 1;\n    }\n\n    pub async fn persist(&self) -> Result<()> {\n        let data = self.data.read().await;\n        let json = serde_json::to_string_pretty(&*data)?;\n        fs::write(&self.path, json)?;\n        Ok(())\n    }\n\n    pub async fn get_visited(&self) -> Vec<String> {\n        let data = self.data.read().await;\n        data.pages.keys().cloned().collect()\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Основной краулер (src/crawler.rs)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/crawler.rs\nuse crate::config::CrawlerConfig;\nuse crate::error::{CrawlerError, Result};\nuse crate::fetcher::Fetcher;\nuse crate::parser::Parser;\nuse crate::storage::{CrawledPage, Storage};\nuse std::sync::Arc;\nuse tokio::sync::Semaphore;\nuse tokio::time::{sleep, Duration};\nuse tracing::{info, warn, error};\nuse url::Url;\n\npub struct Crawler {\n    config: CrawlerConfig,\n    fetcher: Arc<Fetcher>,\n    parser: Arc<Parser>,\n    storage: Arc<Storage>,\n    semaphore: Arc<Semaphore>,\n    visited: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,\n}\n\nimpl Crawler {\n    pub fn new(\n        config: CrawlerConfig,\n        fetcher: Fetcher,\n        parser: Parser,\n        storage: Storage,\n    ) -> Self {\n        let semaphore = Arc::new(Semaphore::new(config.max_concurrent));\n        Self {\n            config,\n            fetcher: Arc::new(fetcher),\n            parser: Arc::new(parser),\n            storage: Arc::new(storage),\n            semaphore,\n            visited: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),\n        }\n    }\n\n    pub async fn run(&self) -> Result<()> {\n        let mut handles = vec![];\n\n        for url in &self.config.start_urls {\n            let crawler = self.clone();\n            let url = url.clone();\n            handles.push(tokio::spawn(async move {\n                if let Err(e) = crawler.crawl(&url, 0).await {\n                    error!(\"Error crawling {}: {}\", url, e);\n                    crawler.storage.increment_errors().await;\n                }\n            }));\n        }\n\n        for handle in handles {\n            handle.await.unwrap();\n        }\n\n        self.storage.persist().await?;\n        info!(\"Crawl completed\");\n        Ok(())\n    }\n\n    async fn crawl(&self, url: &str, depth: usize) -> Result<()> {\n        if depth > self.config.max_depth {\n            return Err(CrawlerError::MaxDepth);\n        }\n\n        // Проверка посещённых\n        {\n            let visited = self.visited.read().await;\n            if visited.contains(url) {\n                return Ok(());\n            }\n        }\n\n        // Записываем как посещённый\n        {\n            let mut visited = self.visited.write().await;\n            visited.insert(url.to_string());\n        }\n\n        // Получаем permit для ограничения параллелизма\n        let _permit = self.semaphore.acquire().await.unwrap();\n\n        // Задержка между запросами\n        sleep(Duration::from_millis(self.config.delay_ms)).await;\n\n        info!(\"Crawling: {} (depth {})\", url, depth);\n\n        // Получаем HTML\n        let html = self.fetcher.fetch_with_retry(url, 3).await?;\n\n        // Парсим\n        let links = self.parser.extract_links(url, &html)?;\n        let text = self.parser.extract_text(&html);\n        let title = self.extract_title(&html);\n\n        // Сохраняем\n        let page = CrawledPage {\n            url: url.to_string(),\n            title,\n            content: text,\n            links: links.clone(),\n            depth,\n            timestamp: chrono::Utc::now(),\n        };\n        self.storage.save_page(page).await;\n\n        // Рекурсивно обходим ссылки\n        for link in links {\n            if let Err(e) = self.crawl(&link, depth + 1).await {\n                warn!(\"Failed to crawl {}: {}\", link, e);\n            }\n        }\n\n        Ok(())\n    }\n\n    fn extract_title(&self, html: &str) -> String {\n        let document = scraper::Html::parse_document(html);\n        let selector = scraper::Selector::parse(\"title\").ok();\n        selector.and_then(|s| document.select(&s).next())\n            .map(|e| e.text().collect::<String>())\n            .unwrap_or_default()\n    }\n}\n\n// Clone для передачи в задачи\nimpl Clone for Crawler {\n    fn clone(&self) -> Self {\n        Self {\n            config: self.config.clone(),\n            fetcher: self.fetcher.clone(),\n            parser: self.parser.clone(),\n            storage: self.storage.clone(),\n            semaphore: self.semaphore.clone(),\n            visited: self.visited.clone(),\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Main (src/main.rs)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/main.rs\nmod config;\nmod crawler;\nmod error;\nmod fetcher;\nmod parser;\nmod storage;\n\nuse clap::Parser;\nuse std::path::PathBuf;\nuse tracing_subscriber::{fmt, EnvFilter};\n\n#[derive(Parser)]\n#[command(name = \"crawler\", version, about = \"Parallel web crawler\")]\nstruct Args {\n    #[arg(short, long, default_value = \"config.toml\")]\n    config: PathBuf,\n}\n\n#[tokio::main]\nasync fn main() -> anyhow::Result<()> {\n    // Аргументы\n    let args = Args::parse();\n\n    // Загружаем конфиг\n    let config = config::Config::load(&args.config)?;\n\n    // Инициализируем логирование\n    init_logging(&config.logging)?;\n\n    tracing::info!(\"Starting crawler with config: {:?}\", config.crawler);\n\n    // Создаём компоненты\n    let fetcher = fetcher::Fetcher::new(\n        config.crawler.request_timeout_secs,\n        config.crawler.user_agent.clone(),\n    )?;\n    let parser = parser::Parser::new()?;\n    let storage = storage::Storage::new(config.storage.path.clone())?;\n\n    // Запускаем краулер\n    let crawler = crawler::Crawler::new(\n        config.crawler,\n        fetcher,\n        parser,\n        storage,\n    );\n\n    // Graceful shutdown\n    let crawler_handle = tokio::spawn(async move {\n        if let Err(e) = crawler.run().await {\n            tracing::error!(\"Crawler error: {}\", e);\n        }\n    });\n\n    // Ждём Ctrl+C\n    tokio::signal::ctrl_c().await?;\n    tracing::info!(\"Shutdown signal received\");\n\n    crawler_handle.await?;\n    Ok(())\n}\n\nfn init_logging(logging: &config::LoggingConfig) -> anyhow::Result<()> {\n    let filter = EnvFilter::try_from_default_env()\n        .unwrap_or_else(|_| EnvFilter::new(&logging.level));\n\n    let file_appender = tracing_appender::rolling::daily(\".\", &logging.file);\n    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);\n\n    tracing_subscriber::fmt()\n        .with_env_filter(filter)\n        .with_writer(non_blocking)\n        .with_ansi(false)\n        .init();\n\n    Ok(())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Тесты (tests/integration_test.rs)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// tests/integration_test.rs\nuse crawler::{config, fetcher, parser, storage};\nuse std::path::Path;\n\n#[tokio::test]\nasync fn test_config_load() {\n    let config = config::Config::load(Path::new(\"../config.toml\")).unwrap();\n    assert_eq!(config.crawler.max_depth, 3);\n    assert_eq!(config.crawler.max_concurrent, 10);\n}\n\n#[tokio::test]\nasync fn test_fetcher() {\n    let fetcher = fetcher::Fetcher::new(5, \"test-agent\".into()).unwrap();\n    // Можно тестировать с mock сервером\n}\n\n#[tokio::test]\nasync fn test_parser() {\n    let parser = parser::Parser::new().unwrap();\n    let html = r#\"<html><body><a href=\"/page1\">Link</a></body></html>\"#;\n    let links = parser.extract_links(\"https://example.com\", html).unwrap();\n    assert!(links.contains(&\"https://example.com/page1\".to_string()));\n}\n\n#[tokio::test]\nasync fn test_storage() {\n    let temp_dir = tempfile::tempdir().unwrap();\n    let path = temp_dir.path().join(\"test.json\");\n    let storage = storage::Storage::new(path.to_str().unwrap().to_string()).unwrap();\n\n    let page = storage::CrawledPage {\n        url: \"https://example.com\".into(),\n        title: \"Test\".into(),\n        content: \"Content\".into(),\n        links: vec![],\n        depth: 0,\n        timestamp: chrono::Utc::now(),\n    };\n\n    storage.save_page(page).await;\n    storage.persist().await.unwrap();\n\n    let visited = storage.get_visited().await;\n    assert!(visited.contains(&\"https://example.com\".to_string()));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Запуск"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Расширения (идеи для практики)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Robots.txt** — парсинг и соблюдение `robots.txt`",
+        "**SQLite хранение** — заменить JSON на `sqlx` + SQLite",
+        "**Распределённый краулер** — координация через Redis",
+        "**Метрики** — Prometheus экспорт (страниц/сек, ошибки, очередь)",
+        "**Плагины** — динамическая загрузка парсеров для разных сайтов",
+        "**Rate limiting per domain** — токен-бакет на домен"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме проекта"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы построили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Асинхронный краулер с контролем параллелизма (`Semaphore`)",
+        "Ретраи с экспоненциальным backoff",
+        "Парсинг ссылок и текста через `scraper`",
+        "Персистентное хранение в JSON",
+        "Graceful shutdown через `tokio::signal::ctrl_c`",
+        "Конфигурация через TOML",
+        "Структурированное логирование с `tracing`",
+        "Тесты (unit + integration)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 22
+}

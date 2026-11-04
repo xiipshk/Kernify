@@ -1,0 +1,415 @@
+{
+  "title": "Урок 21: Проект — адаптивная система компонентов с анимацией и проверкой доступности",
+  "slug": "proekt-adaptivnaya-sistema-komponentov-s-animatsiey-i-proverkoy-dostupnosti",
+  "short_description": "адаптивная система компонентов с анимацией и проверкой доступности",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели проекта"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Построить полную систему компонентов: кнопка, карточка, модалка, навигация, фильтр",
+        "Сделать всё адаптивным (mobile-first, 320px – 1920px+)",
+        "Добавить анимации (appear, hover, модалка) с уважением `prefers-reduced-motion`",
+        "Обеспечить доступность: WCAG AA контраст, `:focus-visible`, keyboard navigation, skip-link, ARIA",
+        "Применить архитектуру из уроков 20: БЭМ, токены, @layer, design tokens",
+        "Написать чек-лист качества и провести само-аудит"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Техническое задание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Компоненты системы"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Компонент",
+        "Состояния",
+        "Требования"
+      ],
+      "rows": [
+        [
+          "Кнопка (`.c-btn`)",
+          "default, hover, focus-visible, active, disabled, loading",
+          "Адаптивный размер, контраст, фокус"
+        ],
+        [
+          "Карточка (`.c-card`)",
+          "default, hover, featured",
+          "Изображение, заголовок, текст, цена, кнопка"
+        ],
+        [
+          "Модалка (`.c-modal`)",
+          "closed, open, closing",
+          "Focus trap, ESC закрывает, backdrop"
+        ],
+        [
+          "Навигация (`.c-nav`)",
+          "default, scrolled, mobile",
+          "Skip-link, клавиатура, логика折�ения"
+        ],
+        [
+          "Фильтр (`.c-filter`)",
+          "default, active, selected",
+          "Чекбоксы, радио, селект, доступность"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Глобальные требования"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Критерий",
+        "Значение"
+      ],
+      "rows": [
+        [
+          "Адаптивность",
+          "320px – 1920px+, mobile-first"
+        ],
+        [
+          "Типографика",
+          "Fluid `clamp()`, 6 шагов, rem"
+        ],
+        [
+          "Цвета",
+          "OKLCH, dark mode, контраст ≥ 4.5:1 (AA)"
+        ],
+        [
+          "Layout",
+          "Flexbox (1D), Grid (2D)"
+        ],
+        [
+          "Контейнеры",
+          "Container Queries для карточек"
+        ],
+        [
+          "Изображения",
+          "object-fit: cover, aspect-ratio, lazy loading"
+        ],
+        [
+          "Доступность",
+          "WCAG AA, :focus-visible, prefers-reduced-motion, ARIA"
+        ],
+        [
+          "Анимации",
+          "Уважение reduced motion, will-change, GPU-ускорение"
+        ],
+        [
+          "Архитектура",
+          "БЭМ, токены, @layer, низкая специфичность"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Архитектура файлов"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "project/\n├── index.html\n├── css/\n│   ├── reset.css          @layer reset\n│   ├── tokens.css         @layer tokens (дизайн-токены)\n│   ├── base.css           @layer base (типографика, фокус)\n│   ├── layout.css         @layer layout (контейнер, секции)\n│   ├── components/\n│   │   ├── btn.css        @layer components\n│   │   ├── card.css       @layer components\n│   │   ├── modal.css      @layer components\n│   │   ├── nav.css        @layer components\n│   │   └── filter.css     @layer components\n│   ├── utilities.css      @layer utilities\n│   └── overrides.css      @layer overrides\n└── js/\n    └── app.js             (модалка, навигация, фильтр)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Подключение стилей (в правильном порядке слоёв)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<link rel=\"stylesheet\" href=\"css/reset.css\">\n<link rel=\"stylesheet\" href=\"css/tokens.css\">\n<link rel=\"stylesheet\" href=\"css/base.css\">\n<link rel=\"stylesheet\" href=\"css/layout.css\">\n<link rel=\"stylesheet\" href=\"css/components/btn.css\">\n<link rel=\"stylesheet\" href=\"css/components/card.css\">\n<link rel=\"stylesheet\" href=\"css/components/modal.css\">\n<link rel=\"stylesheet\" href=\"css/components/nav.css\">\n<link rel=\"stylesheet\" href=\"css/components/filter.css\">\n<link rel=\"stylesheet\" href=\"css/utilities.css\">\n<link rel=\"stylesheet\" href=\"css/overrides.css\">"
+    },
+    {
+      "type": "text",
+      "content": "Или одним файлом с <code>@layer</code>:"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* main.css */\n@layer reset, tokens, base, layout, components, utilities, overrides;\n\n@layer reset { @import url('css/reset.css'); }\n@layer tokens { @import url('css/tokens.css'); }\n/* и т.д. */"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Дизайн-токены (tokens.css)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer tokens {\n  :root {\n    /* Primitive — OKLCH */\n    --color-slate-50: oklch(0.98 0.001 285);\n    --color-slate-100: oklch(0.96 0.003 285);\n    --color-slate-900: oklch(0.21 0.006 285);\n    --color-slate-950: oklch(0.13 0.006 285);\n\n    --color-blue-500: oklch(0.62 0.22 264);\n    --color-blue-600: oklch(0.55 0.22 264);\n    --color-blue-700: oklch(0.48 0.22 264);\n\n    --color-green-500: oklch(0.75 0.18 150);\n    --color-red-500: oklch(0.65 0.22 20);\n\n    /* Semantic */\n    --color-primary: var(--color-blue-600);\n    --color-primary-hover: var(--color-blue-500);\n    --color-primary-active: var(--color-blue-700);\n    --color-bg: var(--color-slate-50);\n    --color-bg-inverted: var(--color-slate-950);\n    --color-text: var(--color-slate-900);\n    --color-text-inverted: var(--color-slate-50);\n    --color-muted: oklch(0.55 0.01 285);\n    --color-border: oklch(0.88 0.006 285);\n    --color-success: var(--color-green-500);\n    --color-error: var(--color-red-500);\n\n    /* Spacing */\n    --space-xs: 0.25rem;\n    --space-sm: 0.5rem;\n    --space-md: 1rem;\n    --space-lg: 1.5rem;\n    --space-xl: 2rem;\n    --space-2xl: 3rem;\n\n    /* Typography */\n    --fs-xs: 0.75rem;\n    --fs-sm: 0.875rem;\n    --fs-base: 1rem;\n    --fs-lg: 1.125rem;\n    --fs-xl: 1.25rem;\n    --fs-2xl: 1.5rem;\n    --fs-3xl: 2rem;\n\n    line-height-tight: 1.1;\n    line-height-base: 1.6;\n\n    /* Radius */\n    --radius-sm: 0.25rem;\n    --radius-md: 0.5rem;\n    --radius-lg: 1rem;\n    --radius-full: 9999px;\n\n    /* Shadows */\n    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);\n    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);\n    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);\n\n    /* Transitions */\n    --duration-fast: 150ms;\n    --duration-base: 250ms;\n    --duration-slow: 350ms;\n    --ease-base: cubic-bezier(0.4, 0, 0.2, 1);\n  }\n\n  /* Dark mode */\n  @media (prefers-color-scheme: dark) {\n    :root {\n      --color-bg: var(--color-slate-950);\n      --color-text: var(--color-slate-50);\n      --color-border: oklch(0.28 0.006 285);\n      --color-muted: oklch(0.55 0.01 285);\n    }\n  }\n\n  /* Класс темы (альтернатива медиа-запросу) */\n  [data-theme=\"dark\"] {\n    --color-bg: var(--color-slate-950);\n    --color-text: var(--color-slate-50);\n    --color-border: oklch(0.28 0.006 285);\n    --color-muted: oklch(0.55 0.01 285);\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Сброс и базовые стили (reset.css + base.css)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer reset {\n  *, *::before, *::after {\n    box-sizing: border-box;\n  }\n\n  * {\n    margin: 0;\n    padding: 0;\n  }\n\n  img, picture, video, canvas, svg {\n    display: block;\n    max-width: 100%;\n    height: auto;\n  }\n\n  input, button, textarea, select {\n    font: inherit;\n    color: inherit;\n  }\n\n  a {\n    color: inherit;\n    text-decoration: none;\n  }\n\n  ul, ol {\n    list-style: none;\n  }\n\n  html {\n    scroll-behavior: smooth;\n    font-size: 100%;\n  }\n}\n\n@layer base {\n  @media (prefers-reduced-motion: reduce) {\n    html {\n      scroll-behavior: auto;\n    }\n\n    *, *::before, *::after {\n      animation-duration: 0.01ms !important;\n      animation-iteration-count: 1 !important;\n      transition-duration: 0.01ms !important;\n    }\n  }\n\n  body {\n    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;\n    font-size: var(--fs-base);\n    line-height: var(--line-height-base);\n    color: var(--color-text);\n    background: var(--color-bg);\n    -webkit-font-smoothing: antialiased;\n  }\n\n  h1, h2, h3, h4, h5, h6 {\n    font-weight: 700;\n    line-height: var(--line-height-tight);\n    color: var(--color-text);\n  }\n\n  h1 { font-size: var(--fs-3xl); }\n  h2 { font-size: var(--fs-2xl); }\n  h3 { font-size: var(--fs-xl); }\n  h4 { font-size: var(--fs-lg); }\n  p {\n    margin-block-end: var(--space-md);\n    color: var(--color-muted);\n  }\n\n  :focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n    border-radius: 2px;\n  }\n\n  :focus:not(:focus-visible) {\n    outline: none;\n  }\n\n  ::selection {\n    background: var(--color-primary);\n    color: var(--color-text-inverted);\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Layout (layout.css)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer layout {\n  .container {\n    width: 100%;\n    max-inline-size: 1200px;\n    margin-inline: auto;\n    padding-inline: var(--space-md);\n  }\n\n  .section {\n    padding-block: var(--space-2xl);\n  }\n\n  .section--sm {\n    padding-block: var(--space-xl);\n  }\n\n  .grid {\n    display: grid;\n    gap: var(--space-lg);\n  }\n\n  .grid--2 {\n    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));\n  }\n\n  .grid--3 {\n    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));\n  }\n\n  .flex {\n    display: flex;\n    gap: var(--space-md);\n  }\n\n  .flex--col {\n    flex-direction: column;\n  }\n\n  .skip-link {\n    position: absolute;\n    top: -1000px;\n    left: 0;\n    background: var(--color-primary);\n    color: var(--color-text-inverted);\n    padding: var(--space-sm) var(--space-md);\n    z-index: 10000;\n    transition: top var(--duration-base) var(--ease-base);\n    border-radius: var(--radius-md);\n    font-weight: 600;\n  }\n\n  .skip-link:focus {\n    top: var(--space-sm);\n    left: var(--space-sm);\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Компонент: Кнопка (btn.css)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components {\n  .c-btn {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    gap: var(--space-xs);\n    padding: var(--space-sm) var(--space-md);\n    font-size: var(--fs-sm);\n    font-weight: 600;\n    border-radius: var(--radius-md);\n    border: 1px solid transparent;\n    cursor: pointer;\n    transition:\n      background var(--duration-base) var(--ease-base),\n      border-color var(--duration-base) var(--ease-base),\n      transform var(--duration-fast) var(--ease-base);\n    min-height: 44px;\n    white-space: nowrap;\n    line-height: 1;\n  }\n\n  .c-btn__label {\n    font-weight: inherit;\n  }\n\n  .c-btn__icon {\n    width: 1em;\n    height: 1em;\n    display: block;\n    flex-shrink: 0;\n  }\n\n  /* Variants */\n  .c-btn--primary {\n    background: var(--color-primary);\n    color: var(--color-text-inverted);\n    border-color: var(--color-primary);\n  }\n\n  .c-btn--primary:hover {\n    background: var(--color-primary-hover);\n  }\n\n  .c-btn--primary:active {\n    background: var(--color-primary-active);\n    transform: scale(0.98);\n  }\n\n  .c-btn--primary:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n  }\n\n  .c-btn--secondary {\n    background: transparent;\n    color: var(--color-primary);\n    border-color: var(--color-primary);\n  }\n\n  .c-btn--secondary:hover {\n    background: var(--color-primary);\n    color: var(--color-text-inverted);\n  }\n\n  .c-btn--ghost {\n    background: transparent;\n    color: var(--color-text);\n    border-color: transparent;\n  }\n\n  .c-btn--ghost:hover {\n    background: var(--color-border);\n  }\n\n  /* Sizes */\n  .c-btn--sm {\n    padding: var(--space-xs) var(--space-sm);\n    font-size: var(--fs-xs);\n    min-height: 36px;\n  }\n\n  .c-btn--lg {\n    padding: var(--space-md) var(--space-lg);\n    font-size: var(--fs-base);\n    min-height: 52px;\n  }\n\n  /* States */\n  .c-btn:disabled,\n  .c-btn.is-disabled,\n  .c-btn.is-loading {\n    opacity: 0.5;\n    cursor: not-allowed;\n    pointer-events: none;\n    transform: none !important;\n  }\n\n  /* Loading spinner */\n  .c-btn--loading .c-btn__spinner {\n    animation: spin 1s linear infinite;\n  }\n\n  @keyframes spin {\n    to { transform: rotate(360deg); }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Компонент: Карточка (card.css)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components {\n  .c-card {\n    container-type: inline-size;\n    display: flex;\n    flex-direction: column;\n    gap: var(--space-md);\n    padding: var(--space-lg);\n    border: var(--color-border);\n    border-radius: var(--radius-lg);\n    background: var(--color-bg);\n    transition:\n      box-shadow var(--duration-base) var(--ease-base),\n      border-color var(--duration-base) var(--ease-base),\n      transform var(--duration-fast) var(--ease-base);\n    will-change: transform;\n  }\n\n  .c-card:hover {\n    box-shadow: var(--shadow-lg);\n    transform: translateY(-2px);\n    border-color: var(--color-primary);\n  }\n\n  .c-card:focus-within {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n    border-radius: var(--radius-lg);\n  }\n\n  .c-card--featured {\n    border: 2px solid var(--color-primary);\n    background: color-mix(in oklch, var(--color-primary), white 95%);\n  }\n\n  .c-card__media {\n    aspect-ratio: 16 / 9;\n    width: 100%;\n    background: var(--color-slate-100);\n    border-radius: var(--radius-md);\n    overflow: hidden;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n  }\n\n  .c-card__img {\n    width: 100%;\n    height: 100%;\n    object-fit: cover;\n    object-position: center;\n  }\n\n  .c-card__body {\n    display: flex;\n    flex-direction: column;\n    gap: var(--space-sm);\n    flex: 1;\n  }\n\n  .c-card__title {\n    font-size: var(--fs-lg);\n    font-weight: 600;\n    color: var(--color-text);\n    margin: 0;\n    line-height: 1.3;\n  }\n\n  .c-card__text {\n    font-size: var(--fs-sm);\n    color: var(--color-muted);\n    line-height: 1.5;\n    margin: 0;\n  }\n\n  .c-card__price {\n    font-size: var(--fs-xl);\n    font-weight: 700;\n    color: var(--color-text);\n    margin-top: auto;\n  }\n\n  .c-card__footer {\n    display: flex;\n    gap: var(--space-sm);\n    margin-top: auto;\n  }\n\n  /* Container Query — адаптация карточки под контейнер */\n  @container (max-width: 320px) {\n    .c-card {\n      padding: var(--space-md);\n    }\n\n    .c-card__title {\n      font-size: var(--fs-base);\n    }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Компонент: Модалка (modal.css)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components {\n  /* Overlay */\n  .c-modal__overlay {\n    position: fixed;\n    inset: 0;\n    background: rgb(0 0 0 / 0.5);\n    backdrop-filter: blur(4px);\n    -webkit-backdrop-filter: blur(4px);\n    z-index: 1000;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    padding: var(--space-md);\n    opacity: 0;\n    pointer-events: none;\n    transition: opacity var(--duration-base) var(--ease-base);\n  }\n\n  .c-modal__overlay.is-open {\n    opacity: 1;\n    pointer-events: auto;\n  }\n\n  /* Modal content */\n  .c-modal {\n    position: relative;\n    background: var(--color-bg);\n    border-radius: var(--radius-lg);\n    padding: var(--space-xl);\n    max-width: 560px;\n    width: 100%;\n    max-height: 90vh;\n    overflow-y: auto;\n    transform: scale(0.95) translateY(20px);\n    opacity: 0;\n    transition:\n      transform var(--duration-slow) var(--ease-base),\n      opacity var(--duration-slow) var(--ease-base);\n    box-shadow: var(--shadow-lg);\n  }\n\n  .c-modal__overlay.is-open .c-modal {\n    transform: scale(1) translateY(0);\n    opacity: 1;\n  }\n\n  .c-modal__header {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    margin-bottom: var(--space-lg);\n  }\n\n  .c-modal__title {\n    font-size: var(--fs-xl);\n    font-weight: 600;\n    color: var(--color-text);\n    margin: 0;\n  }\n\n  .c-modal__close {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    width: 36px;\n    height: 36px;\n    background: transparent;\n    border: none;\n    border-radius: var(--radius-full);\n    cursor: pointer;\n    color: var(--color-muted);\n    transition: background 0.2s, color 0.2s;\n  }\n\n  .c-modal__close:hover {\n    background: var(--color-border);\n    color: var(--color-text);\n  }\n\n  .c-modal__close:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n  }\n\n  .c-modal__body {\n    display: flex;\n    flex-direction: column;\n    gap: var(--space-md);\n  }\n\n  /* ESC закрывает — обрабатывается в JS */\n  .c-modal[hidden] {\n    display: none;\n  }\n\n  /* Prevent body scroll when modal open */\n  body.modal-open {\n    overflow: hidden;\n    padding-right: var(--scrollbar-width, 0);\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Компонент: Навигация (nav.css)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components {\n  .c-nav {\n    position: sticky;\n    top: 0;\n    z-index: 100;\n    background: var(--color-bg);\n    border-bottom: 1px solid var(--color-border);\n  }\n\n  .c-nav__inner {\n    display: flex;\n    align-items: center;\n    justify-content: space-between;\n    gap: var(--space-md);\n    height: 64px;\n  }\n\n  .c-nav__logo {\n    font-size: var(--fs-lg);\n    font-weight: 800;\n    color: var(--color-text);\n  }\n\n  .c-nav__list {\n    display: flex;\n    gap: var(--space-lg);\n    align-items: center;\n  }\n\n  .c-nav__link {\n    font-size: var(--fs-sm);\n    font-weight: 500;\n    color: var(--color-muted);\n    padding: var(--space-xs) 0;\n    border-bottom: 2px solid transparent;\n    transition: color 0.2s, border-color 0.2s;\n  }\n\n  .c-nav__link:hover {\n    color: var(--color-primary);\n  }\n\n  .c-nav__link:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 4px;\n    border-radius: 2px;\n  }\n\n  .c-nav__link--active {\n    color: var(--color-primary);\n    border-bottom-color: var(--color-primary);\n    font-weight: 600;\n  }\n\n  /* Mobile menu toggle */\n  .c-nav__menu-toggle {\n    display: none;\n    align-items: center;\n    justify-content: center;\n    width: 40px;\n    height: 40px;\n    background: transparent;\n    border: 1px solid var(--color-border);\n    border-radius: var(--radius-md);\n    cursor: pointer;\n    color: var(--color-text);\n  }\n\n  .c-nav__menu-toggle:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n  }\n\n  /* Mobile: hide nav, show toggle */\n  @media (max-width: 767px) {\n    .c-nav__list {\n      position: fixed;\n      inset: 64px 0 0 0;\n      flex-direction: column;\n      background: var(--color-bg);\n      border-bottom: 1px solid var(--color-border);\n      padding: var(--space-lg);\n      gap: var(--space-md);\n      transform: translateX(-100%);\n      transition: transform var(--duration-base) var(--ease-base);\n    }\n\n    .c-nav__list.is-open {\n      transform: translateX(0);\n    }\n\n    .c-nav__menu-toggle {\n      display: flex;\n    }\n  }\n\n  /* Skip-link для навигации */\n  .c-skip-link {\n    position: absolute;\n    top: -1000px;\n    left: 0;\n    background: var(--color-primary);\n    color: var(--color-text-inverted);\n    padding: var(--space-sm) var(--space-md);\n    z-index: 10000;\n    transition: top var(--duration-base) var(--ease-base);\n  }\n\n  .c-skip-link:focus {\n    top: 0;\n    left: 0;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Компонент: Фильтр (filter.css)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components {\n  .c-filter {\n    display: flex;\n    flex-wrap: wrap;\n    gap: var(--space-sm);\n    align-items: center;\n    padding: var(--space-md);\n    background: var(--color-bg);\n    border: 1px solid var(--color-border);\n    border-radius: var(--radius-lg);\n  }\n\n  .c-filter__label {\n    font-size: var(--fs-sm);\n    font-weight: 500;\n    color: var(--color-text);\n    white-space: nowrap;\n  }\n\n  .c-filter__group {\n    display: flex;\n    align-items: center;\n    gap: var(--space-sm);\n  }\n\n  .c-filter__checkbox {\n    width: 20px;\n    height: 20px;\n    accent-color: var(--color-primary);\n    cursor: pointer;\n  }\n\n  .c-filter__checkbox:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n    border-radius: 2px;\n  }\n\n  .c-filter__select {\n    padding: var(--space-xs) var(--space-sm);\n    font-size: var(--fs-sm);\n    border: 1px solid var(--color-border);\n    border-radius: var(--radius-md);\n    background: var(--color-bg);\n    color: var(--color-text);\n    cursor: pointer;\n    min-height: 36px;\n  }\n\n  .c-filter__select:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n    border-color: var(--color-primary);\n  }\n\n  .c-filter__button {\n    font-size: var(--fs-sm);\n    padding: var(--space-xs) var(--space-sm);\n    background: var(--color-primary);\n    color: var(--color-text-inverted);\n    border: none;\n    border-radius: var(--radius-md);\n    cursor: pointer;\n    min-height: 36px;\n  }\n\n  .c-filter__button:hover {\n    background: var(--color-primary-hover);\n  }\n\n  .c-filter__button:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n  }\n\n  /* Mobile: stack vertically */\n  @media (max-width: 639px) {\n    .c-filter {\n      flex-direction: column;\n      align-items: stretch;\n    }\n\n    .c-filter__group {\n      width: 100%;\n    }\n\n    .c-filter__select {\n      width: 100%;\n    }\n\n    .c-filter__button {\n      width: 100%;\n    }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. JavaScript — модалка, навигация, фокус"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// app.js — минимальная интерактивность для доступности\n\n// --- Модалка ---\nconst modalOverlay = document.querySelector('.c-modal__overlay');\nconst modalOpenBtns = document.querySelectorAll('[data-open-modal]');\nconst modalCloseBtn = document.querySelector('.c-modal__close');\n\nfunction openModal() {\n  modalOverlay.classList.add('is-open');\n  document.body.classList.add('modal-open');\n  // Переместить фокус внутрь модалки\n  const firstFocusable = modalOverlay.querySelector(\n    'button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])'\n  );\n  if (firstFocusable) firstFocusable.focus();\n}\n\nfunction closeModal() {\n  modalOverlay.classList.remove('is-open');\n  document.body.classList.remove('modal-open');\n  // Вернуть фокус на кнопку открытия\n  const trigger = document.querySelector('[data-open-modal].aria-expanded=\"true\"');\n  if (trigger) trigger.focus();\n}\n\nmodalOpenBtns.forEach(btn => {\n  btn.addEventListener('click', openModal);\n  btn.setAttribute('aria-expanded', 'false');\n  btn.addEventListener('click', () => btn.setAttribute('aria-expanded', 'true'));\n});\n\nmodalCloseBtn.addEventListener('click', closeModal);\n\nmodalOverlay.addEventListener('click', (e) => {\n  if (e.target === modalOverlay) closeModal();\n});\n\ndocument.addEventListener('keydown', (e) => {\n  if (e.key === 'Escape' && modalOverlay.classList.contains('is-open')) {\n    closeModal();\n  }\n});\n\n// --- Мобильная навигация ---\nconst menuToggle = document.querySelector('.c-nav__menu-toggle');\nconst navList = document.querySelector('.c-nav__list');\n\nmenuToggle.addEventListener('click', () => {\n  const isOpen = navList.classList.toggle('is-open');\n  menuToggle.setAttribute('aria-expanded', isOpen);\n});\n\n// Закрыть мобильное меню при клике на ссылку\ndocument.querySelectorAll('.c-nav__link').forEach(link => {\n  link.addEventListener('click', () => {\n    navList.classList.remove('is-open');\n    menuToggle.setAttribute('aria-expanded', 'false');\n  });\n});\n\n// --- Фильтр ---\nconst filterBtn = document.querySelector('.c-filter__button');\nfilterBtn.addEventListener('click', () => {\n  // Пример: применить фильтр, anunciar screen reader\n  const resultCount = document.querySelector('.c-filter__result');\n  if (resultCount) {\n    resultCount.setAttribute('aria-live', 'polite');\n    resultCount.textContent = 'Результаты обновлены';\n  }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. HTML — страница с компонентами"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!DOCTYPE html>\n<html lang=\"ru\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Система компонентов — CSS Course</title>\n  <link rel=\"stylesheet\" href=\"css/main.css\">\n</head>\n<body>\n\n  <!-- Skip link -->\n  <a href=\"#main-content\" class=\"c-skip-link\">Перейти к основному контенту</a>\n\n  <header class=\"c-nav\" role=\"banner\">\n    <div class=\"container c-nav__inner\">\n      <a href=\"#\" class=\"c-nav__logo\" aria-label=\"Главная\">Logo</a>\n\n      <button class=\"c-nav__menu-toggle\" aria-label=\"Меню\" aria-expanded=\"false\" aria-controls=\"mobile-nav\">☰</button>\n\n      <nav class=\"c-nav__list\" id=\"mobile-nav\" role=\"navigation\" aria-label=\"Основная навигация\">\n        <a href=\"#\" class=\"c-nav__link c-nav__link--active\">Главная</a>\n        <a href=\"#features\" class=\"c-nav__link\">Компоненты</a>\n        <a href=\"#about\" class=\"c-nav__link\">О нас</a>\n        <a href=\"#contact\" class=\"c-nav__link\">Контакты</a>\n      </nav>\n    </div>\n  </header>\n\n  <main id=\"main-content\" tabindex=\"-1\">\n\n    <section class=\"section\" id=\"features\" aria-labelledby=\"features-title\">\n      <div class=\"container\">\n        <header class=\"text-center\" style=\"margin-bottom: var(--space-2xl);\">\n          <h2 id=\"features-title\" class=\"h2\">Компоненты системы</h2>\n          <p>Адаптивные, доступные, анимированные UI-компоненты.</p>\n        </header>\n\n        <div class=\"grid grid--3\">\n\n          <!-- Карточка 1 -->\n          <article class=\"c-card\">\n            <div class=\"c-card__media\">\n              <img src=\"photo1.jpg\" alt=\"Компонент кнопки\" class=\"c-card__img\" loading=\"lazy\" width=\"400\" height=\"225\">\n            </div>\n            <div class=\"c-card__body\">\n              <h3 class=\"c-card__title\">Кнопка</h3>\n              <p class=\"c-card__text\">Адаптивная кнопка с состояниями hover, focus, disabled, loading.</p>\n              <div class=\"c-card__price\">Бесплатно</div>\n            </div>\n            <div class=\"c-card__footer\">\n              <button class=\"c-btn c-btn--primary c-btn--sm\">Изучить</button>\n            </div>\n          </article>\n\n          <!-- Карточка 2 -->\n          <article class=\"c-card c-card--featured\">\n            <div class=\"c-card__media\">\n              <img src=\"photo2.jpg\" alt=\"Карточка товара\" class=\"c-card__img\" loading=\"lazy\" width=\"400\" height=\"225\">\n            </div>\n            <div class=\"c-card__body\">\n              <h3 class=\"c-card__title\">Карточка товара</h3>\n              <p class=\"c-card__text\">Карточка с изображением, ценой и действиями. Работает в контейнерах.</p>\n              <div class=\"c-card__price\">299 ₽</div>\n            </div>\n            <div class=\"c-card__footer\">\n              <button class=\"c-btn c-btn--primary c-btn--sm\">В корзину</button>\n            </div>\n          </article>\n\n          <!-- Карточка 3 -->\n          <article class=\"c-card\">\n            <div class=\"c-card__media\">\n              <img src=\"photo3.jpg\" alt=\"Модальное окно\" class=\"c-card__img\" loading=\"lazy\" width=\"400\" height=\"225\">\n            </div>\n            <div class=\"c-card__body\">\n              <h3 class=\"c-card__title\">Модалка</h3>\n              <p class=\"c-card__text\">Доступное модальное окно с focus trap, ESC и возвратом фокуса.</p>\n              <div class=\"c-card__price\">Бесплатно</div>\n            </div>\n            <div class=\"c-card__footer\">\n              <button class=\"c-btn c-btn--secondary c-btn--sm\" data-open-modal>Открыть</button>\n            </div>\n          </article>\n\n        </div>\n      </div>\n    </section>\n\n    <!-- Фильтр -->\n    <section class=\"section section--sm\" aria-labelledby=\"filter-title\">\n      <div class=\"container\">\n        <form class=\"c-filter\" aria-labelledby=\"filter-title\">\n          <h2 id=\"filter-title\" class=\"sr-only\">Фильтр компонентов</h2>\n          <label class=\"c-filter__label\">Категория:</label>\n          <div class=\"c-filter__group\">\n            <input type=\"checkbox\" id=\"filter-all\" class=\"c-filter__checkbox\" checked>\n            <label for=\"filter-all\" class=\"c-filter__label\">Все</label>\n          </div>\n          <div class=\"c-filter__group\">\n            <input type=\"checkbox\" id=\"filter-btn\" class=\"c-filter__checkbox\">\n            <label for=\"filter-btn\" class=\"c-filter__label\">Кнопки</label>\n          </div>\n          <div class=\"c-filter__group\">\n            <input type=\"checkbox\" id=\"filter-card\" class=\"c-filter__checkbox\">\n            <label for=\"filter-card\" class=\"c-filter__label\">Карточки</label>\n          </div>\n          <select class=\"c-filter__select\">\n            <option>Сортировка</option>\n            <option>По имени</option>\n            <option>По дате</option>\n          </select>\n          <button type=\"button\" class=\"c-filter__button\">Применить</button>\n          <span class=\"c-filter__result\" aria-live=\"polite\"></span>\n        </form>\n      </div>\n    </section>\n\n  </main>\n\n  <!-- Модалка -->\n  <div class=\"c-modal__overlay\" role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"modal-title\">\n    <div class=\"c-modal\">\n      <header class=\"c-modal__header\">\n        <h2 id=\"modal-title\" class=\"c-modal__title\">Подписка на новости</h2>\n        <button class=\"c-modal__close\" aria-label=\"Закрыть\">✕</button>\n      </header>\n      <div class=\"c-modal__body\">\n        <p>Получайте свежие уроки по CSS и доступности на почту.</p>\n        <div class=\"c-filter__group\" style=\"margin-top: var(--space-md);\">\n          <label class=\"c-filter__label\">Email</label>\n          <input type=\"email\" class=\"c-filter__select\" placeholder=\"name@example.com\">\n        </div>\n      </div>\n      <div style=\"margin-top: var(--space-lg); display: flex; gap: var(--space-sm);\">\n        <button class=\"c-btn c-btn--secondary\" type=\"button\">Отмена</button>\n        <button class=\"c-btn c-btn--primary\" type=\"button\">Подписаться</button>\n      </div>\n    </div>\n  </div>\n\n</body>\n</html>"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Чек-лист качества (Definition of Done)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Критерий",
+        "Статус"
+      ],
+      "rows": [
+        [
+          "HTML",
+          "Семантические теги (header, main, section, nav, article, button)",
+          "☐"
+        ],
+        [
+          "HTML",
+          "ARIA label/aria-labelledby/aria-expanded где нужно",
+          "☐"
+        ],
+        [
+          "HTML",
+          "Alt-тексты для изображений (пустые для декоративных)",
+          "☐"
+        ],
+        [
+          "HTML",
+          "`loading=\"lazy\"` + `width`/`height` на img",
+          "☐"
+        ],
+        [
+          "CSS",
+          "БЭМ именование (block__element--modifier)",
+          "☐"
+        ],
+        [
+          "CSS",
+          "Дизайн-токены для цветов, отступов, шрифтов",
+          "☐"
+        ],
+        [
+          "CSS",
+          "`@layer` в правильном порядке",
+          "☐"
+        ],
+        [
+          "CSS",
+          "Нет `!important` (кроме utilities)",
+          "☐"
+        ],
+        [
+          "CSS",
+          "Нет ID-селекторов для стилей",
+          "☐"
+        ],
+        [
+          "CSS",
+          "Fluid typography `clamp()` / `rem`",
+          "☐"
+        ],
+        [
+          "CSS",
+          "`prefers-reduced-motion` respected",
+          "☐"
+        ],
+        [
+          "CSS",
+          "`prefers-color-scheme` dark mode",
+          "☐"
+        ],
+        [
+          "Доступность",
+          "Контраст ≥ 4.5:1 обычный текст, 3:1 крупный",
+          "☐"
+        ],
+        [
+          "Доступность",
+          "`:focus-visible` на всех интерактивных элементах",
+          "☐"
+        ],
+        [
+          "Доступность",
+          "Логический Tab-порядок (DOM order)",
+          "☐"
+        ],
+        [
+          "Доступность",
+          "Skip-link виден при фокусе",
+          "☐"
+        ],
+        [
+          "Доступность",
+          "Модалка: focus trap, ESC закрывает, возврат фокуса",
+          "☐"
+        ],
+        [
+          "Доступность",
+          "Минимальная площадь касания 44×44px",
+          "☐"
+        ],
+        [
+          "Анимации",
+          "Плавные появления/исчезновения модалки",
+          "☐"
+        ],
+        [
+          "Анимации",
+          "`prefers-reduced-motion` отключает анимацию",
+          "☐"
+        ],
+        [
+          "Адаптивность",
+          "Mobile-first, 320px – 1920px+",
+          "☐"
+        ],
+        [
+          "Адаптивность",
+          "Container Queries для карточек",
+          "☐"
+        ],
+        [
+          "Производительность",
+          "will-change только для анимируемых, GPU-свойства",
+          "☐"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "14. Само-аудит (что проверить в браузере)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Контраст**: открой DevTools → Инспектор → выбери текст → проверь отношение контраста в палитре цветов (≥ 4.5:1)",
+        "**Фокус**: пройдись Tab по всей странице — каждый интерактивный элемент должен иметь чёткую обводку (`:focus-visible`)",
+        "**Мышь**: кликни на кнопку — обводки быть не должно (`:focus:not(:focus-visible)`)",
+        "**Масштаб**: Ctrl/Cmd + `+` до 200% — текст увеличивается, нет обрезки и горизонтальной прокрутки",
+        "**Модалка**: открой через Tab + Enter, попробуй сфокусироваться за пределами модалки (не должно получиться), нажми ESC — модалка закрывается, фокус возвращается на кнопку",
+        "**Reduced motion**: включи в настройках ОС «Уменьшить движение» — анимации модалки отключаются",
+        "**Темы**: переключи ОС в тёмную тему — цвета адаптируются (dark mode)",
+        "**Мобильный**: открой DevTools Device Toolbar (iPhone SE, 375px) — меню скрыто, карточки в одну колонку"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "15. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "16. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 21
+}

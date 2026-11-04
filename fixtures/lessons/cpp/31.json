@@ -1,0 +1,506 @@
+{
+  "title": "Урок 31: Security — memory errors, overflow, fuzzing, sanitizers, analyzers",
+  "slug": "security-memory-errors-overflow-fuzzing-sanitizers-analyzers",
+  "short_description": "memory errors, overflow, fuzzing, sanitizers, analyzers",
+  "goals": [
+    "Понять основные классы уязвимостей памяти в C++",
+    "Освоить Sanitizers (ASan, UBSan, TSan, MSan, LSan)",
+    "Изучить Fuzzing: libFuzzer, AFL++, honggfuzz",
+    "Научиться статическому анализу: Clang Static Analyzer, cppcheck, PVS-Studio",
+    "Разобрать secure coding practices и hardening"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять основные классы уязвимостей памяти в C++",
+        "Освоить Sanitizers (ASan, UBSan, TSan, MSan, LSan)",
+        "Изучить Fuzzing: libFuzzer, AFL++, honggfuzz",
+        "Научиться статическому анализу: Clang Static Analyzer, cppcheck, PVS-Studio",
+        "Разобрать secure coding practices и hardening"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Memory Safety Vulnerabilities"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Buffer Overflow"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Stack buffer overflow\nvoid unsafe_copy(const char* input) {\n    char buf[64];\n    strcpy(buf, input);  // UB если input > 63 chars\n}\n\n// Heap buffer overflow\nvoid unsafe_heap(const char* input) {\n    char* buf = new char[64];\n    strcpy(buf, input);  // UB\n    delete[] buf;\n}\n\n// Off-by-one\nvoid off_by_one(const char* input) {\n    char buf[64];\n    for (int i = 0; i <= 64; ++i)  // <= вместо <\n        buf[i] = input[i];\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Use-After-Free / Double-Free"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void use_after_free() {\n    int* p = new int(42);\n    delete p;\n    *p = 100;  // UAF — UB\n}\n\nvoid double_free() {\n    int* p = new int(42);\n    delete p;\n    delete p;  // Double free — UB\n}\n\nvoid use_after_scope() {\n    int* p;\n    {\n        int x = 42;\n        p = &x;\n    }\n    *p = 100;  // UAF — UB\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Uninitialized Memory"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void uninit_read() {\n    int x;           // uninitialized\n    int y = x + 1;   // UB — читаем uninitialized value\n}\n\nvoid uninit_member() {\n    struct S { int x; };\n    S s;             // s.x uninitialized\n    use(s.x);        // UB\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Type Confusion / Strict Aliasing"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void type_confusion() {\n    float f = 1.0f;\n    int i = *reinterpret_cast<int*>(&f);  // UB — strict aliasing\n}\n\n// Правильно:\nint i = std::bit_cast<int>(f);  // C++20\n// или memcpy\nint i2; memcpy(&i2, &f, sizeof(f));"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Integer Overflow / Wraparound"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void signed_overflow() {\n    int x = INT_MAX;\n    x += 1;  // UB — signed overflow\n}\n\nvoid size_t_wraparound() {\n    size_t n = SIZE_MAX;\n    n += 1;  // OK — unsigned wraparound defined\n    // Но: allocation может упасть\n    char* buf = new char[n];  // bad_alloc или UB если n слишком велик\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Sanitizers (Dynamic Analysis)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "AddressSanitizer (ASan)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "UndefinedBehaviorSanitizer (UBSan)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "g++ -fsanitize=undefined -fno-sanitize-recover=all -g -O1 main.cpp -o app\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ThreadSanitizer (TSan)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "g++ -fsanitize=thread -fPIE -pie -g -O1 main.cpp -o app\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MemorySanitizer (MSan) — uninitialized reads"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "clang++ -fsanitize=memory -fPIE -pie -g -O1 main.cpp -o app"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "LeakSanitizer (LSan)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Hardware-assisted: HWASan (ARM64), KASAN (kernel)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Fuzzing (Automated Testing)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "libFuzzer (in-process, coverage-guided)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// fuzz_target.cpp\n#include <cstdint>\n#include <cstring>\n\nextern \"C\" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {\n    if (size < 4) return 0;\n\n    // Ваш парсер/обработчик\n    if (data[0] == 'F' && data[1] == 'U' && data[2] == 'Z' && data[3] == 'Z') {\n        // Trigger bug\n        *(volatile int*)0 = 0;  // crash\n    }\n    return 0;\n}"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "AFL++ (Out-of-process, binary instrumentation)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Honggfuzz (Feedback-driven)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "honggfuzz -i seeds/ -o output/ -- ./app ___FILE___"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Structure-aware Fuzzing (Protobuf, custom)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// libprotobuf-mutator\n#include \"protobuf_mutator.h\"\n\nDEFINE_PROTO_FUZZER(const MyProto::Message& msg) {\n    process_message(msg);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Fuzzing Best Practices"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// 1. Fuzz entry point — single function\n// 2. Deterministic — no random, no time, no external state\n// 3. Fast — in-process, no I/O\n// 4. Corpus — seed с валидными входными данными\n// 5. Dictionary — ключевые слова/токены формата"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Static Analysis"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Clang Static Analyzer (scan-build)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Clang-Tidy (Linting + Checks)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cppcheck"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cppcheck --enable=all --std=c++20 --inconclusive \\\n  --suppress=missingIncludeSystem \\\n  -I include src/"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "PVS-Studio (Commercial)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pvs-studio-analyzer analyze -j8 -o report.log\nplog-converter -a GA:1,2 -t tasklist -o report.tasks report.log"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Coverity / CodeQL (GitHub Advanced Security)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Compiler Hardening Flags"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GCC/Clang"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MSVC"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "/GS              # Buffer security check (/GS- to disable)\n/sdl             # Security Development Lifecycle (рекомендует)\n/guard:cf        # Control Flow Guard\n/CETCOMPAT       # Intel CET (shadow stacks, IBT)\n/DYNAMICBASE     # ASLR\n/NXCOMPAT        # DEP (NX)\n/HIGHENTROPYVA   # 64-bit ASLR"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Secure Coding Practices"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Safe String/Buffer Handling"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ПЛОХО\nchar buf[256];\nsprintf(buf, \"%s\", user_input);\nstrcpy(buf, user_input);\nstrcat(buf, more);\n\n// ХОРОШО\nchar buf[256];\nsnprintf(buf, sizeof(buf), \"%s\", user_input);\nstrncpy(buf, user_input, sizeof(buf)-1);\nbuf[sizeof(buf)-1] = '\\0';\n\n// ЛУЧШЕ: C++ strings\nstd::string buf = user_input;\nstd::string buf2 = user_input + more;\n\n// C++23: std::format (type-safe)\nstd::string s = std::format(\"{} {}\", user_input, more);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Bounds Checking"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Вручную\nvoid safe_copy(int* dst, size_t dst_size, const int* src, size_t src_size) {\n    size_t n = std::min(dst_size, src_size);\n    std::copy_n(src, n, dst);\n}\n\n// gsl::span (Guidelines Support Library)\n#include <gsl/span>\nvoid process(gsl::span<int> dst, gsl::span<const int> src) {\n    Expects(dst.size() >= src.size());\n    std::copy(src.begin(), src.end(), dst.begin());\n}\n\n// std::span (C++20)\nvoid process(std::span<int> dst, std::span<const int> src) {\n    if (dst.size() < src.size()) throw std::length_error(\"dst too small\");\n    std::copy(src.begin(), src.end(), dst.begin());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Integer Safety"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Checked integer arithmetic\n#include <cstdint>\n\nbool safe_add(int a, int b, int& result) {\n    if (b > 0 && a > INT_MAX - b) return false;\n    if (b < 0 && a < INT_MIN - b) return false;\n    result = a + b;\n    return true;\n}\n\n// Или boost::safe_numerics\n#include <boost/safe_numerics/safe_integer.hpp>\nboost::safe_numerics::safe<int> x = INT_MAX;\nx += 1; // throws на overflow"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Resource Management (RAII)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Всегда RAII для ресурсов\nclass FileHandle {\n    int fd_;\npublic:\n    FileHandle(const char* path) : fd_(open(path, O_RDONLY)) {\n        if (fd_ < 0) throw std::system_error(errno, std::generic_category());\n    }\n    ~FileHandle() { if (fd_ >= 0) close(fd_); }\n    FileHandle(const FileHandle&) = delete;\n    FileHandle& operator=(const FileHandle&) = delete;\n    FileHandle(FileHandle&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }\n    int get() const { return fd_; }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Input Validation"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Валидируйте ВСЕ входные данные\nbool validate_and_process(std::string_view input) {\n    // Size limits\n    if (input.size() > MAX_INPUT) return false;\n\n    // Character set validation\n    if (!std::all_of(input.begin(), input.end(), [](char c){\n        return std::isprint(static_cast<unsigned char>(c));\n    })) return false;\n\n    // Structural validation (JSON, XML, etc.)\n    // Используйте правильные парсеры, не regex для сложных форматов\n\n    return process(input);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Supply Chain Security"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SBOM (Software Bill of Materials)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dependency Scanning"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Reproducible Builds"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: ASan/UBSan Integration"
+    },
+    {
+      "type": "text",
+      "content": "Добавьте в CMake опцию <code>ENABLE_SANITIZERS</code>. Соберите проект с ASan+UBSan. Запустите тесты. Найдите и исправьте хотя бы 3 ошибки."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Fuzzing JSON Parser"
+    },
+    {
+      "type": "text",
+      "content": "Возьмите любой JSON парсер (или напишите простой). Напишите libFuzzer target. Найдите баг (crash/hang/OOM). Исправьте."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Static Analysis"
+    },
+    {
+      "type": "text",
+      "content": "Запустите <code>clang-tidy</code> с профилем <code>cert</code> и <code>cppcoreguidelines</code> на своем коде. Исправьте top 10 предупреждений. Настройте CI для автоматического запуска."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Hardening Flags"
+    },
+    {
+      "type": "text",
+      "content": "Соберите проект с полным набором hardening флагов (stack protector, FORTIFY, CFI, RELRO, PIE). Проверьте <code>checksec --file=app</code>. Убедитесь, что производительность не деградировала >5%."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Secure Code Review"
+    },
+    {
+      "type": "text",
+      "content": "Проведите code review кода на предмет:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Buffer overflows",
+        "Integer overflows",
+        "Use-after-free",
+        "Race conditions (TSan)",
+        "Injection vulnerabilities (format string, command injection)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Документируйте найденные проблемы."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Fuzzing Campaign"
+    },
+    {
+      "type": "text",
+      "content": "Настройте непрерывный фаззинг (OSS-Fuzz style) для своего проекта:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Corpus сбор и минимизация",
+        "Dictionary",
+        "CI integration (nightly runs)",
+        "Crash triage automation"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**CERT C++ Coding Standard** — https://wiki.sei.cmu.edu/confluence/display/cplusplus",
+        "**CWE Top 25** — https://cwe.mitre.org/top25/",
+        "**OWASP C++ Security Cheat Sheet**",
+        "**Google Sanitizers Wiki** — https://github.com/google/sanitizers",
+        "**libFuzzer Tutorial** — https://llvm.org/docs/LibFuzzer.html",
+        "**AFL++ Documentation** — https://aflplus.plus/docs/",
+        "**CppCon: \"Fuzzing C++\" (Kostya Serebryany)**",
+        "**CppCon: \"Securing C++\" (Matthew Butler)**",
+        "**SEI CERT C++ Rules** — CON36-CPP, MEM30-CPP, etc."
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [
+    "**CERT C++ Coding Standard** — https://wiki.sei.cmu.edu/confluence/display/cplusplus",
+    "**CWE Top 25** — https://cwe.mitre.org/top25/",
+    "**OWASP C++ Security Cheat Sheet**",
+    "**Google Sanitizers Wiki** — https://github.com/google/sanitizers",
+    "**libFuzzer Tutorial** — https://llvm.org/docs/LibFuzzer.html",
+    "**AFL++ Documentation** — https://aflplus.plus/docs/",
+    "**CppCon: \"Fuzzing C++\" (Kostya Serebryany)**",
+    "**CppCon: \"Securing C++\" (Matthew Butler)**",
+    "**SEI CERT C++ Rules** — CON36-CPP, MEM30-CPP, etc."
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 31
+}

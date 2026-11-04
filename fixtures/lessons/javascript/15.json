@@ -1,0 +1,302 @@
+{
+  "title": "Урок 15: Modules & Tooling — ES Modules, npm, структура проекта, бандлеры",
+  "slug": "modules-tooling-es-modules-npm-struktura-proekta-bandlery",
+  "short_description": "ES Modules, npm, структура проекта, бандлеры",
+  "goals": [
+    "Мастерски использовать ES Modules (import/export)",
+    "Понимать CommonJS vs ESM, interop",
+    "Работать с npm: package.json, scripts, dependencies, workspaces",
+    "Организовывать структуру проекта",
+    "Настраивать бандлеры (Vite, esbuild, Rollup, Webpack)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Мастерски использовать ES Modules (import/export)",
+        "Понимать CommonJS vs ESM, interop",
+        "Работать с npm: package.json, scripts, dependencies, workspaces",
+        "Организовывать структуру проекта",
+        "Настраивать бандлеры (Vite, esbuild, Rollup, Webpack)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. ES Modules (ESM) — нативные модули"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// math.js — именованные экспорты\nexport function add(a, b) { return a + b; }\nexport function sub(a, b) { return a - b; }\nexport const PI = 3.14159;\n\n// default экспорт (один на файл)\nexport default function multiply(a, b) { return a * b; }\n\n// Экспорт списком\nfunction div(a, b) { return a / b; }\nfunction mod(a, b) { return a % b; }\nexport { div, mod };\n\n// Реэкспорт (переэкспорт)\nexport { add, sub } from \"./math.js\";\nexport { default as multiply } from \"./multiply.js\";\nexport * from \"./constants.js\"; // все именованные"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Импорт"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Именованные\nimport { add, sub, PI } from \"./math.js\";\nimport { add as addNumbers } from \"./math.js\"; // алиас\n\n// Default\nimport multiply from \"./multiply.js\"; // любое имя\nimport { default as mul } from \"./multiply.js\";\n\n// Комбинированный\nimport multiply, { add, PI } from \"./math.js\";\n\n// Namespace import (все именованные в объекте)\nimport * as Math from \"./math.js\";\nMath.add(1, 2);\n\n// Динамический импорт (Promise-based, работает везде)\nconst module = await import(\"./math.js\");\nmodule.add(1, 2);\n\n// Условный/ленивый импорт\nif (condition) {\n  const { heavy } = await import(\"./heavy.js\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ESM в браузере"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<script type=\"module\" src=\"./main.js\"></script>\n<!-- Или inline -->\n<script type=\"module\">\n  import { add } from \"./math.js\";\n  console.log(add(1, 2));\n</script>\n\n<!-- nomodule — фоллбек для старых браузеров -->\n<script nomodule src=\"./legacy-bundle.js\"></script>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Особенности ESM"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Всегда strict mode\n// 2. Топ-уровневый await (ES2022)\nconst data = await fetch(\"/api/data\").then(r => r.json());\n\n// 3. import.meta — метаданные модуля\nconsole.log(import.meta.url);     // полный URL модуля\nconsole.log(import.meta.resolve); // функция resolve (предложение)\nimport.meta.env;                  // Vite/инструменты инжектят env\n\n// 4. Циклические зависимости — работают (live bindings)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. CommonJS (CJS) — Node.js legacy"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// math.cjs\nfunction add(a, b) { return a + b; }\nmodule.exports = { add }; // или exports.add = add;\n\n// main.cjs\nconst { add } = require(\"./math.cjs\");\nconst math = require(\"./math.cjs\"); // { add }\n\n// Динамический require\nconst mod = require(`./lang/${lang}.cjs`);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ESM ↔ CJS Interop"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ESM импортирует CJS\nimport pkg from \"lodash\"; // default = module.exports\nimport { debounce } from \"lodash\"; // именованные из свойств default\n\n// CJS импортирует ESM (только динамически!)\nconst esm = await import(\"./esm-module.js\"); // Promise\n// require(\"./esm-module.js\") — ОШИБКА!\n\n// package.json: \"type\": \"module\" — весь проект ESM\n// Файлы .mjs = ESM, .cjs = CJS (явное расширение)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "package.json: exports / imports (современный)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"name\": \"my-lib\",\n  \"type\": \"module\",\n  \"exports\": {\n    \".\": {\n      \"import\": \"./dist/index.js\",\n      \"require\": \"./dist/index.cjs\",\n      \"types\": \"./dist/index.d.ts\"\n    },\n    \"./utils\": \"./dist/utils.js\"\n  },\n  \"imports\": {\n    \"#internal/*\": \"./src/internal/*\"\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. npm — управление пакетами"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "package.json ключевые поля"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"name\": \"my-app\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\",\n  \"main\": \"./dist/index.cjs\",\n  \"module\": \"./dist/index.js\",\n  \"exports\": { \".\": \"./dist/index.js\" },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"preview\": \"vite preview\",\n    \"test\": \"vitest\",\n    \"lint\": \"eslint .\",\n    \"format\": \"prettier --write .\"\n  },\n  \"dependencies\": {\n    \"lodash\": \"^4.17.21\",\n    \"zod\": \"^3.22.0\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^5.0.0\",\n    \"vitest\": \"^1.0.0\",\n    \"eslint\": \"^8.56.0\",\n    \"prettier\": \"^3.2.0\",\n    \"typescript\": \"^5.3.0\"\n  },\n  \"engines\": { \"node\": \">=18\" },\n  \"packageManager\": \"pnpm@9.0.0\"\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Версионирование (SemVer)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "^1.2.3  — совместимые (>=1.2.3 <2.0.0)\n~1.2.3  — только патчи (>=1.2.3 <1.3.0)\n1.2.3   — точно версия\n*       — любая"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Workspaces (монорепо)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"name\": \"my-monorepo\",\n  \"private\": true,\n  \"workspaces\": [\n    \"packages/*\",\n    \"apps/*\"\n  ],\n  \"scripts\": {\n    \"build\": \"turbo run build\",\n    \"test\": \"turbo run test\"\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Структура проекта (best practices)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Рекомендуемая структура (Vite/React/Vue/Svelte)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "my-app/\n├── public/              # Статические ассеты (копируются как есть)\n│   └── favicon.ico\n├── src/\n│   ├── assets/          # Импортируемые ассеты (CSS, изображения)\n│   ├── components/      # UI компоненты\n│   ├── features/        # Feature-based модули (domain logic)\n│   │   └── auth/\n│   │       ├── api.js\n│   │       ├── components/\n│   │       ├── hooks/\n│   │       └── index.js\n│   ├── lib/             # Утилиты, хелперы, конфиги\n│   ├── hooks/           # Общие хуки\n│   ├── styles/          # Глобальные стили, переменные\n│   ├── App.jsx\n│   ├── main.jsx         # Entry point\n│   └── vite-env.d.ts    # Типы для import.meta.env\n├── tests/               # Интеграционные/E2E тесты\n├── .eslintrc.cjs\n├── .prettierrc\n├── tsconfig.json\n├── vite.config.ts\n├── package.json\n└── README.md"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Библиотека (npm package)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "my-lib/\n├── src/\n│   ├── index.ts         # Public API entry\n│   ├── utils/\n│   └── types.ts\n├── dist/                # Билд (gitignored, публикуется)\n├── tests/\n├── package.json         # \"exports\", \"types\"\n├── tsconfig.json\n├── rollup.config.js / vite.config.ts\n└── README.md"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Бандлеры: Vite, esbuild, Rollup, Webpack"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Vite (современный стандарт для приложений)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// vite.config.ts\nimport { defineConfig } from \"vite\";\nimport react from \"@vitejs/plugin-react\";\nimport path from \"path\";\n\nexport default defineConfig({\n  plugins: [react()],\n  resolve: {\n    alias: { \"@\": path.resolve(__dirname, \"./src\") }\n  },\n  build: {\n    target: \"es2022\",\n    minify: \"esbuild\", // или \"terser\"\n    sourcemap: true,\n    rollupOptions: {\n      output: {\n        manualChunks: { vendor: [\"react\", \"react-dom\"] }\n      }\n    }\n  },\n  server: { port: 3000, proxy: { \"/api\": \"http://localhost:4000\" } }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Rollup (для библиотек)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// rollup.config.js\nimport resolve from \"@rollup/plugin-node-resolve\";\nimport commonjs from \"@rollup/plugin-commonjs\";\nimport typescript from \"@rollup/plugin-typescript\";\nimport dts from \"rollup-plugin-dts\";\nimport { readFileSync } from \"fs\";\n\nconst pkg = JSON.parse(readFileSync(\"package.json\", \"utf-8\"));\n\nexport default [\n  // ES + CJS builds\n  {\n    input: \"src/index.ts\",\n    output: [\n      { file: pkg.module, format: \"es\", sourcemap: true },\n      { file: pkg.main, format: \"cjs\", sourcemap: true }\n    ],\n    plugins: [resolve(), commonjs(), typescript()],\n    external: [...Object.keys(pkg.dependencies || {}), ...Object.keys(pkg.peerDependencies || {})]\n  },\n  // .d.ts\n  {\n    input: \"dist/index.d.ts\",\n    output: [{ file: \"dist/index.d.ts\", format: \"es\" }],\n    plugins: [dts()]\n  }\n];"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "esbuild (максимальная скорость)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Webpack (legacy / complex configs)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// webpack.config.js — только если нужен Module Federation, сложные оптимизации\nmodule.exports = {\n  entry: \"./src/index.ts\",\n  module: { rules: [{ test: /\\.ts$/, use: \"ts-loader\" }] },\n  resolve: { extensions: [\".ts\", \".js\"] },\n  optimization: { usedExports: true }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. TypeScript + ESM конфигурация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "tsconfig.json (современный)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"Bundler\",\n    \"lib\": [\"ES2022\", \"DOM\", \"DOM.Iterable\"],\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"esModuleInterop\": true,\n    \"allowSyntheticDefaultImports\": true,\n    \"resolveJsonModule\": true,\n    \"isolatedModules\": true,\n    \"baseUrl\": \".\",\n    \"paths\": { \"@/*\": [\"src/*\"] }\n  },\n  \"include\": [\"src/**/*\", \"vite.config.ts\"],\n  \"exclude\": [\"node_modules\", \"dist\"]\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`import \"lodash\"` в CJS файле",
+          "`const _ = require(\"lodash\")` или переименуйте в `.mjs` / `\"type\": \"module\"`"
+        ],
+        [
+          "`require(\"esm-module\")`",
+          "Только `await import(\"esm-module\")`"
+        ],
+        [
+          "Циклические импорты ломают код",
+          "ESM поддерживает live bindings — рефакторьте архитектуру"
+        ],
+        [
+          "`package.json` без `\"exports\"` — утечка внутренних файлов",
+          "Всегда объявляйте `exports` для публичного API"
+        ],
+        [
+          "Бандлер включает `node_modules` в бандл библиотеки",
+          "`external: [...Object.keys(pkg.dependencies)]`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`import \"lodash\"` в CJS файле",
+      "correct": "`const _ = require(\"lodash\")` или переименуйте в `.mjs` / `\"type\": \"module\"`"
+    },
+    {
+      "mistake": "`require(\"esm-module\")`",
+      "correct": "Только `await import(\"esm-module\")`"
+    },
+    {
+      "mistake": "Циклические импорты ломают код",
+      "correct": "ESM поддерживает live bindings — рефакторьте архитектуру"
+    },
+    {
+      "mistake": "`package.json` без `\"exports\"` — утечка внутренних файлов",
+      "correct": "Всегда объявляйте `exports` для публичного API"
+    },
+    {
+      "mistake": "Бандлер включает `node_modules` в бандл библиотеки",
+      "correct": "`external: [...Object.keys(pkg.dependencies)]`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 15
+}

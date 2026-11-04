@@ -1,0 +1,414 @@
+{
+  "title": "Урок 18: Node.js — Runtime, Modules, Filesystem, HTTP Server, Env Vars",
+  "slug": "nodejs-runtime-modules-filesystem-http-server-env-vars",
+  "short_description": "Runtime, Modules, Filesystem, HTTP Server, Env Vars",
+  "goals": [
+    "Понимать архитектуру Node.js: V8, libuv, Event Loop, Worker Threads",
+    "Мастерски работать с модулями: ESM, CommonJS, interop, package.json exports",
+    "Работать с файловой системой: fs/promises, streams, watchers",
+    "Создавать HTTP серверы: нативный http, Express/Fastify, middleware",
+    "Управлять переменными окружения: dotenv, конфигурация, секреты",
+    "Использовать процессы: child_process, worker_threads, кластеризация"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать архитектуру Node.js: V8, libuv, Event Loop, Worker Threads",
+        "Мастерски работать с модулями: ESM, CommonJS, interop, package.json exports",
+        "Работать с файловой системой: fs/promises, streams, watchers",
+        "Создавать HTTP серверы: нативный http, Express/Fastify, middleware",
+        "Управлять переменными окружения: dotenv, конфигурация, секреты",
+        "Использовать процессы: child_process, worker_threads, кластеризация"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Node.js Runtime Architecture"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Компоненты"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "┌─────────────────────────────────────────────────────────────┐\n│                      Node.js Process                         │\n│  ┌──────────────┐    ┌──────────────────────────────────┐   │\n│  │   V8 Engine  │    │           libuv                  │   │\n│  │  (JS Heap)   │    │  ┌──────────┐ ┌──────────────┐   │   │\n│  │  Call Stack  │    │  │ Timer    │ │ I/O (poll)   │   │   │\n│  └──────────────┘    │  │ Queue    │ │ (network, fs)│   │   │\n│         │            │  └──────────┘ └──────────────┘   │   │\n│         ▼            │  ┌──────────┐ ┌──────────────┐   │   │\n│  ┌──────────────┐    │  │ Check    │ │ Close        │   │   │\n│  │ Microtask    │    │  │ Queue    │ │ Callbacks    │   │   │\n│  │ Queue        │    │  └──────────┘ └──────────────┘   │   │\n│  └──────────────┘    └──────────────────────────────────┘   │\n│         │                    │                               │\n│         └────────────────────┼───────────────────────────────┘\n│                              ▼\n│                     ┌──────────────┐\n│                     │  Event Loop  │\n│                     └──────────────┘\n└─────────────────────────────────────────────────────────────┘"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Глобальные объекты"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// В Node.js (не в браузере)\nglobalThis;        // глобальный объект (как window)\nglobal;            // alias для globalThis\nprocess;           // информация о процессе\nmodule;            // текущий модуль (CJS)\nrequire;           // CJS импорт\n__dirname;         // директория текущего файла (CJS)\n__filename;        // полный путь к файлу (CJS)\nBuffer;            // бинарные данные\nconsole;           // расширенный (stdout/stderr)\nsetImmediate;      // после I/O callbacks\nqueueMicrotask;    // микрозадача"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "process объект"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "process.argv;           // аргументы командной строки\nprocess.env;            // переменные окружения\nprocess.cwd();          // текущая рабочая директория\nprocess.chdir(\"/path\"); // смена директории\nprocess.exit(code);     // выход (0 = успех)\nprocess.kill(pid, sig); // отправка сигнала\nprocess.pid;            // PID процесса\nprocess.ppid;           // PID родителя\nprocess.platform;       // \"win32\", \"linux\", \"darwin\"\nprocess.arch;           // \"x64\", \"arm64\"\nprocess.version;        // \"v20.10.0\"\nprocess.versions;       // { node, v8, uv, zlib, ... }\nprocess.memoryUsage();  // { rss, heapUsed, heapTotal, external }\nprocess.cpuUsage();     // { user, system } микросекунды\nprocess.hrtime.bigint(); // высокоточное время (нс)\nprocess.nextTick(fn);   // перед микрозадачами!\n\n// Сигналы\nprocess.on(\"SIGINT\", () => {});   // Ctrl+C\nprocess.on(\"SIGTERM\", () => {});  // kill\nprocess.on(\"exit\", (code) => {}); // синхронный cleanup\nprocess.on(\"uncaughtException\", (err) => {}); // не перехватывайте в проде!\nprocess.on(\"unhandledRejection\", (reason) => {});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Modules — ESM и CommonJS"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ESM (рекомендуется)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// package.json: \"type\": \"module\"\n// или файл .mjs\n\n// Именованные экспорты\nexport function add(a, b) { return a + b; }\nexport const PI = 3.14159;\n\n// Default экспорт\nexport default function multiply(a, b) { return a * b; }\n\n// Реэкспорт\nexport { add, PI } from \"./math.js\";\nexport { default } from \"./multiply.js\";\nexport * from \"./constants.js\";\n\n// Импорт\nimport { add, PI } from \"./math.js\";\nimport multiply from \"./multiply.js\";\nimport * as Math from \"./math.js\";\nimport { default as mul } from \"./multiply.js\";\n\n// Динамический импорт\nconst { add } = await import(\"./math.js\");\n\n// import.meta\nimport.meta.url;           // file:///path/to/file.js\nimport.meta.dirname;       // /path/to (Node 20.11+)\nimport.meta.resolve(\"./x\"); // resolve specifier"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CommonJS (legacy)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// package.json без \"type\" или файл .cjs\n\n// Экспорт\nfunction add(a, b) { return a + b; }\nmodule.exports = { add };\n// или\nexports.add = add;\n\n// Импорт\nconst { add } = require(\"./math.cjs\");\nconst math = require(\"./math.cjs\"); // { add }\n\n// Динамический require\nconst mod = require(`./lang/${lang}.cjs`);\n\n// __dirname / __filename доступны\nconsole.log(__dirname);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ESM ↔ CJS Interop"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ESM импортирует CJS\nimport lodash from \"lodash\";           // default = module.exports\nimport { debounce } from \"lodash\";     // именованные из свойств default\n\n// CJS импортирует ESM (ТОЛЬКО динамически!)\nconst esm = await import(\"./esm-module.js\");\n// require(\"./esm-module.js\") — ОШИБКА!\n\n// Проверка типа модуля\nimport { fileURLToPath } from \"url\";\nimport { dirname } from \"path\";\nconst __filename = fileURLToPath(import.meta.url);\nconst __dirname = dirname(__filename);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "package.json exports (современный)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"name\": \"my-lib\",\n  \"type\": \"module\",\n  \"exports\": {\n    \".\": {\n      \"import\": \"./dist/index.js\",\n      \"require\": \"./dist/index.cjs\",\n      \"types\": \"./dist/index.d.ts\",\n      \"default\": \"./dist/index.js\"\n    },\n    \"./utils\": {\n      \"import\": \"./dist/utils.js\",\n      \"require\": \"./dist/utils.cjs\"\n    },\n    \"./package.json\": \"./package.json\"\n  },\n  \"imports\": {\n    \"#internal/*\": \"./src/internal/*\"\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Node.js Built-in Modules (Node 20+)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Файловая система\nimport * as fs from \"fs/promises\";\nimport * as path from \"path\";\nimport * as os from \"os\";\n\n// HTTP\nimport * as http from \"http\";\nimport * as https from \"https\";\n\n// Утилиты\nimport * as crypto from \"crypto\";\nimport * as util from \"util\";\nimport * as events from \"events\";\nimport * as stream from \"stream\";\nimport * as assert from \"assert\";\n\n// Новые (Node 18+)\nimport { fetch } from \"undici\"; // или глобальный fetch\nimport { WebSocket } from \"ws\"; // нативный в Node 22+\n\n// Проверка доступности\nimport { availableParallelism } from \"os\";\nconst cores = availableParallelism();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Filesystem — fs/promises, Streams, Watchers"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "fs/promises (async/await)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "import * as fs from \"fs/promises\";\nimport * as path from \"path\";\n\n// Чтение/запись\nconst content = await fs.readFile(\"file.txt\", \"utf-8\");\nawait fs.writeFile(\"file.txt\", \"Hello\", \"utf-8\");\nawait fs.appendFile(\"log.txt\", \"\\nNew line\");\n\n// JSON\nconst pkg = await fs.readFile(\"package.json\", \"utf-8\").then(JSON.parse);\nawait fs.writeFile(\"config.json\", JSON.stringify(config, null, 2));\n\n// Директории\nawait fs.mkdir(\"dir/subdir\", { recursive: true });\nconst entries = await fs.readdir(\"dir\", { withFileTypes: true });\nfor (const entry of entries) {\n  console.log(entry.name, entry.isDirectory(), entry.isFile());\n}\n\n// Статус\nconst stats = await fs.stat(\"file.txt\");\nstats.isFile();        // true\nstats.isDirectory();   // false\nstats.size;            // байты\nstats.mtime;           // Date модификации\n\n// Существование\nawait fs.access(\"file.txt\", fs.constants.R_OK | fs.constants.W_OK);\n// или\ntry { await fs.stat(\"file.txt\"); exists = true; } catch { exists = false; }\n\n// Удаление/перемещение\nawait fs.rm(\"file.txt\");\nawait fs.rm(\"dir\", { recursive: true, force: true });\nawait fs.rename(\"old.txt\", \"new.txt\");\nawait fs.copyFile(\"src.txt\", \"dest.txt\");\n\n// Симлинки\nawait fs.symlink(\"target\", \"link\");\nawait fs.readlink(\"link\"); // \"target\"\nawait fs.unlink(\"link\");\n\n// Временные файлы\nimport { tmpdir } from \"os\";\nimport { mkdtemp, writeFile } from \"fs/promises\";\nconst tempDir = await mkdtemp(path.join(tmpdir(), \"myapp-\"));\nawait writeFile(path.join(tempDir, \"data.json\"), \"{}\");"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Streams — для больших файлов"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "import { createReadStream, createWriteStream } from \"fs\";\nimport { pipeline } from \"stream/promises\";\nimport { createGzip } from \"zlib\";\nimport { createCipheriv } from \"crypto\";\n\n// Копирование больших файлов (backpressure handled)\nawait pipeline(\n  createReadStream(\"input.txt\"),\n  createWriteStream(\"output.txt\")\n);\n\n// Сжатие на лету\nawait pipeline(\n  createReadStream(\"huge.log\"),\n  createGzip(),\n  createWriteStream(\"huge.log.gz\")\n);\n\n// Шифрование\nconst key = crypto.randomBytes(32);\nconst iv = crypto.randomBytes(16);\nawait pipeline(\n  createReadStream(\"secret.txt\"),\n  createCipheriv(\"aes-256-gcm\", key, iv),\n  createWriteStream(\"secret.enc\")\n);\n\n// Readable stream как async iterator\nfor await (const chunk of createReadStream(\"file.txt\", { highWaterMark: 64 * 1024 })) {\n  // chunk — Buffer\n  processChunk(chunk);\n}\n\n// Object mode streams\nimport { Readable } from \"stream\";\nconst readable = Readable.from([1, 2, 3, 4, 5], { objectMode: true });\nfor await (const item of readable) {\n  console.log(item);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "File Watchers"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "import { watch, watchFile } from \"fs\";\n\n// watch — событийный (лучше для директорий)\nconst watcher = watch(\"src\", { recursive: true }, (eventType, filename) => {\n  console.log(eventType, filename); // \"rename\", \"change\"\n});\nwatcher.close(); // остановка\n\n// watchFile — polling (fallback)\nwatchFile(\"config.json\", { interval: 1000 }, (curr, prev) => {\n  if (curr.mtime !== prev.mtime) reloadConfig();\n});\nunwatchFile(\"config.json\");\n\n// chokidar — production выбор (батчерит события)\nimport chokidar from \"chokidar\";\nconst watcher = chokidar.watch(\"src/**/*.js\", {\n  ignored: /node_modules/,\n  persistent: true,\n  ignoreInitial: true\n});\nwatcher.on(\"change\", path => console.log(\"Changed:\", path));\nwatcher.on(\"add\", path => console.log(\"Added:\", path));\nwatcher.on(\"unlink\", path => console.log(\"Removed:\", path));\nawait watcher.close();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. HTTP Server — Native, Express, Fastify"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Native http модуль"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "import { createServer } from \"http\";\nimport { parse } from \"url\";\nimport { readFile } from \"fs/promises\";\nimport { join, extname } from \"path\";\n\nconst server = createServer(async (req, res) => {\n  // Парсинг URL\n  const { pathname, query } = parse(req.url, true);\n\n  // CORS\n  res.setHeader(\"Access-Control-Allow-Origin\", \"*\");\n  res.setHeader(\"Access-Control-Allow-Methods\", \"GET,POST,OPTIONS\");\n  res.setHeader(\"Access-Control-Allow-Headers\", \"Content-Type\");\n\n  if (req.method === \"OPTIONS\") {\n    res.writeHead(204);\n    return res.end();\n  }\n\n  // Routing\n  if (pathname === \"/api/users\" && req.method === \"GET\") {\n    const users = await getUsers();\n    res.setHeader(\"Content-Type\", \"application/json\");\n    return res.end(JSON.stringify(users));\n  }\n\n  if (pathname === \"/api/users\" && req.method === \"POST\") {\n    let body = \"\";\n    for await (const chunk of req) body += chunk;\n    const user = JSON.parse(body);\n    const created = await createUser(user);\n    res.writeHead(201, { \"Content-Type\": \"application/json\" });\n    return res.end(JSON.stringify(created));\n  }\n\n  // Static files\n  if (pathname.startsWith(\"/static/\")) {\n    try {\n      const filePath = join(process.cwd(), \"public\", pathname.slice(8));\n      const content = await readFile(filePath);\n      const mime = getMimeType(extname(filePath));\n      res.setHeader(\"Content-Type\", mime);\n      return res.end(content);\n    } catch {\n      res.writeHead(404);\n      return res.end(\"Not Found\");\n    }\n  }\n\n  res.writeHead(404);\n  res.end(\"Not Found\");\n});\n\nserver.listen(3000, () => console.log(\"Server on :3000\"));\n\n// Graceful shutdown\nconst shutdown = () => {\n  server.close(() => {\n    console.log(\"Closed\");\n    process.exit(0);\n  });\n  setTimeout(() => process.exit(1), 10000); // force\n};\nprocess.on(\"SIGTERM\", shutdown);\nprocess.on(\"SIGINT\", shutdown);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Express (популярный фреймворк)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install express\nnpm install -D @types/express"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "import express from \"express\";\nimport cors from \"cors\";\nimport helmet from \"helmet\";\nimport morgan from \"morgan\";\nimport rateLimit from \"express-rate-limit\";\n\nconst app = express();\n\n// Middleware\napp.use(helmet());           // security headers\napp.use(cors());             // CORS\napp.use(express.json());     // JSON body parser\napp.use(express.urlencoded({ extended: true }));\napp.use(morgan(\"combined\")); // logging\napp.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 })); // rate limit\n\n// Routes\napp.get(\"/api/health\", (req, res) => {\n  res.json({ status: \"ok\", timestamp: new Date().toISOString() });\n});\n\napp.get(\"/api/users\", async (req, res, next) => {\n  try {\n    const users = await getUsers(req.query);\n    res.json(users);\n  } catch (err) {\n    next(err); // передача в error handler\n  }\n});\n\napp.post(\"/api/users\", async (req, res, next) => {\n  try {\n    const user = await createUser(req.body);\n    res.status(201).json(user);\n  } catch (err) {\n    next(err);\n  }\n});\n\n// Параметры маршрута\napp.get(\"/api/users/:id\", async (req, res, next) => {\n  try {\n    const user = await getUserById(req.params.id);\n    if (!user) return res.status(404).json({ error: \"Not found\" });\n    res.json(user);\n  } catch (err) {\n    next(err);\n  }\n});\n\n// Error handler (4 аргумента!)\napp.use((err, req, res, next) => {\n  console.error(err);\n  const status = err.statusCode || 500;\n  res.status(status).json({\n    error: err.message,\n    ...(process.env.NODE_ENV === \"development\" && { stack: err.stack })\n  });\n});\n\n// 404 handler\napp.use((req, res) => {\n  res.status(404).json({ error: \"Not found\" });\n});\n\nconst server = app.listen(3000, () => console.log(\"Express on :3000\"));"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Fastify (быстрый, современный)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install fastify"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "import Fastify from \"fastify\";\n\nconst fastify = Fastify({ logger: true });\n\n// Плагины\nawait fastify.register(import(\"@fastify/cors\"));\nawait fastify.register(import(\"@fastify/helmet\"));\nawait fastify.register(import(\"@fastify/rate-limit\"), {\n  max: 100,\n  timeWindow: \"15 minutes\"\n});\n\n// Валидация схем (JSON Schema)\nfastify.post(\"/api/users\", {\n  schema: {\n    body: {\n      type: \"object\",\n      required: [\"name\", \"email\"],\n      properties: {\n        name: { type: \"string\", minLength: 1 },\n        email: { type: \"string\", format: \"email\" }\n      }\n    },\n    response: {\n      201: {\n        type: \"object\",\n        properties: {\n          id: { type: \"string\" },\n          name: { type: \"string\" },\n          email: { type: \"string\" }\n        }\n      }\n    }\n  }\n}, async (request, reply) => {\n  const user = await createUser(request.body);\n  return reply.code(201).send(user);\n});\n\n// Hooks\nfastify.addHook(\"onRequest\", async (request, reply) => {\n  // auth check, logging, etc.\n});\n\nfastify.addHook(\"onError\", async (request, reply, error) => {\n  fastify.log.error(error);\n});\n\nawait fastify.listen({ port: 3000, host: \"0.0.0.0\" });"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Environment Variables & Configuration"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "dotenv"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install dotenv"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфигурация по окружениям"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// config/index.js\nimport { env } from \"./env.js\";\n\nexport const config = {\n  development: {\n    db: { ...env.DATABASE_URL, logging: true },\n    cache: { ttl: 60 },\n    cors: { origin: \"http://localhost:5173\" }\n  },\n  production: {\n    db: { ...env.DATABASE_URL, logging: false, pool: { max: 20 } },\n    cache: { ttl: 3600 },\n    cors: { origin: \"https://app.example.com\" }\n  },\n  test: {\n    db: { url: \"sqlite::memory:\", logging: false },\n    cache: { ttl: 0 },\n    cors: { origin: \"*\" }\n  }\n}[env.NODE_ENV];"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Секреты в продакшене"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Processes — Child Process, Worker Threads, Clustering"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "child_process"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "import { spawn, execFile, fork } from \"child_process\";\nimport { promisify } from \"util\";\n\n// spawn — потоковый, для длинных процессов\nconst child = spawn(\"ffmpeg\", [\"-i\", \"input.mp4\", \"output.mp4\"]);\nchild.stdout.on(\"data\", data => console.log(data.toString()));\nchild.stderr.on(\"data\", data => console.error(data.toString()));\nchild.on(\"close\", code => console.log(`Exited: ${code}`));\n\n// execFile — буферизированный, для коротких\nconst { stdout, stderr } = await promisify(execFile)(\"git\", [\"status\", \"--porcelain\"]);\n\n// fork — отдельный Node.js процесс (IPC)\nconst worker = fork(\"./worker.js\", [\"arg1\"], {\n  env: { ...process.env, WORKER_ID: \"1\" },\n  stdio: [\"pipe\", \"pipe\", \"pipe\", \"ipc\"] // 4-й канал для IPC\n});\nworker.send({ type: \"task\", data: [1, 2, 3] });\nworker.on(\"message\", (msg) => console.log(\"Result:\", msg));\n\n// В worker.js\nprocess.on(\"message\", (msg) => {\n  if (msg.type === \"task\") {\n    const result = msg.data.reduce((a, b) => a + b, 0);\n    process.send({ type: \"result\", value: result });\n  }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Worker Threads (CPU-intensive задачи)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install node:worker_threads (built-in Node 12+)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// main.js\nimport { Worker, isMainThread, parentPort, workerData } from \"worker_threads\";\nimport { resolve } from \"path\";\n\nif (isMainThread) {\n  const worker = new Worker(resolve(\"./worker.js\"), {\n    workerData: { iterations: 1000000 }\n  });\n\n  worker.on(\"message\", (result) => {\n    console.log(\"Result:\", result);\n  });\n  worker.on(\"error\", (err) => console.error(err));\n  worker.on(\"exit\", (code) => {\n    if (code !== 0) console.error(`Worker stopped with code ${code}`);\n  });\n} else {\n  // worker.js код\n  const { iterations } = workerData;\n  let sum = 0;\n  for (let i = 0; i < iterations; i++) sum += Math.sqrt(i);\n  parentPort.postMessage(sum);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SharedArrayBuffer (память между тредами)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// main.js\nconst buffer = new SharedArrayBuffer(1024);\nconst view = new Int32Array(buffer);\nconst worker = new Worker(\"./worker.js\", { workerData: { buffer } });\nview[0] = 42; // запись из main\nworker.postMessage({ buffer }); // передача ссылки"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Clustering (multi-core)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// cluster.js\nimport cluster from \"cluster\";\nimport { cpus } from \"os\";\nimport { createServer } from \"http\";\n\nif (cluster.isPrimary) {\n  const numCPUs = cpus().length;\n  console.log(`Primary ${process.pid} forking ${numCPUs} workers`);\n\n  for (let i = 0; i < numCPUs; i++) {\n    cluster.fork();\n  }\n\n  cluster.on(\"exit\", (worker, code, signal) => {\n    console.log(`Worker ${worker.process.pid} died (${signal || code}). Restarting...`);\n    cluster.fork();\n  });\n} else {\n  // Worker процесс — ваш сервер\n  const server = createServer((req, res) => {\n    res.writeHead(200);\n    res.end(`Hello from worker ${process.pid}`);\n  });\n  server.listen(3000);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "PM2 (production process manager)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -g pm2\npm2 start ecosystem.config.js\npm2 monit\npm2 logs\npm2 reload all --update-env"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ecosystem.config.js\nexport default {\n  apps: [{\n    name: \"my-api\",\n    script: \"./dist/server.js\",\n    instances: \"max\", // или число\n    exec_mode: \"cluster\",\n    env: { NODE_ENV: \"development\" },\n    env_production: { NODE_ENV: \"production\" },\n    error_file: \"/var/log/pm2/error.log\",\n    out_file: \"/var/log/pm2/out.log\",\n    log_date_format: \"YYYY-MM-DD HH:mm:ss\",\n    max_memory_restart: \"500M\",\n    watch: false,\n    ignore_watch: [\"node_modules\", \"logs\"]\n  }]\n};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`require(\"esm-module\")` в CJS",
+          "Только `await import(\"esm-module\")`"
+        ],
+        [
+          "`__dirname` в ESM",
+          "`import { dirname } from \"path\"; import { fileURLToPath } from \"url\"; const __dirname = dirname(fileURLToPath(import.meta.url))`"
+        ],
+        [
+          "`fs.readFile` без `await` / не промис",
+          "Используйте `fs/promises` или `promisify`"
+        ],
+        [
+          "Большие файлы в память (`readFile`)",
+          "Используйте `createReadStream` + `pipeline`"
+        ],
+        [
+          "`process.on(\"uncaughtException\")` в проде",
+          "Не перехватывайте — падайте и рестартуйте (PM2, systemd)"
+        ],
+        [
+          "`child_process.exec` с пользовательским вводом",
+          "`execFile` / `spawn` с массивом аргументов (no shell injection)"
+        ],
+        [
+          "Воркеры для I/O задач",
+          "Worker Threads — для CPU-bound, для I/O — async/await"
+        ],
+        [
+          "Кластеризация без sticky sessions для WebSocket",
+          "Используйте Redis adapter или отдельный WS сервер"
+        ],
+        [
+          "Хардкод конфига в коде",
+          "Только через `process.env` + валидация (zod)"
+        ],
+        [
+          "`.env` в git",
+          "`.env` в `.gitignore`, `.env.example` в репо"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`require(\"esm-module\")` в CJS",
+      "correct": "Только `await import(\"esm-module\")`"
+    },
+    {
+      "mistake": "`__dirname` в ESM",
+      "correct": "`import { dirname } from \"path\"; import { fileURLToPath } from \"url\"; const __dirname = dirname(fileURLToPath(import.meta.url))`"
+    },
+    {
+      "mistake": "`fs.readFile` без `await` / не промис",
+      "correct": "Используйте `fs/promises` или `promisify`"
+    },
+    {
+      "mistake": "Большие файлы в память (`readFile`)",
+      "correct": "Используйте `createReadStream` + `pipeline`"
+    },
+    {
+      "mistake": "`process.on(\"uncaughtException\")` в проде",
+      "correct": "Не перехватывайте — падайте и рестартуйте (PM2, systemd)"
+    },
+    {
+      "mistake": "`child_process.exec` с пользовательским вводом",
+      "correct": "`execFile` / `spawn` с массивом аргументов (no shell injection)"
+    },
+    {
+      "mistake": "Воркеры для I/O задач",
+      "correct": "Worker Threads — для CPU-bound, для I/O — async/await"
+    },
+    {
+      "mistake": "Кластеризация без sticky sessions для WebSocket",
+      "correct": "Используйте Redis adapter или отдельный WS сервер"
+    },
+    {
+      "mistake": "Хардкод конфига в коде",
+      "correct": "Только через `process.env` + валидация (zod)"
+    },
+    {
+      "mistake": "`.env` в git",
+      "correct": "`.env` в `.gitignore`, `.env.example` в репо"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 18
+}

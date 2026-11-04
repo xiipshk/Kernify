@@ -1,0 +1,373 @@
+{
+  "title": "Урок 16: Архитектура приложений",
+  "slug": "arhitektura-prilozheniy",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Принципы архитектуры в Rust"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Разделение ответственности (Separation of Concerns)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "src/\n├── domain/           # Бизнес-логика, сущности, трейты\n│   ├── models.rs     # Domain entities (User, Order, etc.)\n│   ├── repositories.rs # Repository traits\n│   └── services.rs   # Business logic traits\n├── infrastructure/   # Реализации (DB, HTTP, FS)\n│   ├── database.rs   # SQLx/SeaORM implementations\n│   ├── http_client.rs\n│   └── file_storage.rs\n├── application/      # Use cases, команды, запросы\n│   ├── commands.rs\n│   ├── queries.rs\n│   └── dto.rs\n├── presentation/     # Входные точки (CLI, HTTP, gRPC)\n│   ├── cli.rs\n│   ├── http/\n│   │   ├── routes.rs\n│   │   ├── handlers.rs\n│   │   └── middleware.rs\n│   └── grpc/\n└── config.rs         # Конфигурация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dependency Inversion (Инверсия зависимостей)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Domain layer — определяет контракты (трейты)\npub trait UserRepository: Send + Sync {\n    fn find_by_id(&self, id: UserId) -> Result<Option<User>, AppError>;\n    fn save(&self, user: &User) -> Result<(), AppError>;\n}\n\n// Application layer — использует трейты\npub struct UserService<R: UserRepository> {\n    repo: R,\n}\n\nimpl<R: UserRepository> UserService<R> {\n    pub fn new(repo: R) -> Self { Self { repo } }\n    pub fn get_user(&self, id: UserId) -> Result<User, AppError> {\n        self.repo.find_by_id(id)?.ok_or(AppError::NotFound)\n    }\n}\n\n// Infrastructure layer — реализует трейты\npub struct PostgresUserRepository { pool: PgPool }\n\nimpl UserRepository for PostgresUserRepository { ... }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Repository Pattern"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Трейт репозитория"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use async_trait::async_trait;\n\n#[async_trait]\npub trait UserRepository: Send + Sync {\n    async fn find_by_id(&self, id: UserId) -> Result<Option<User>, RepoError>;\n    async fn find_by_email(&self, email: &str) -> Result<Option<User>, RepoError>;\n    async fn save(&self, user: &User) -> Result<(), RepoError>;\n    async fn delete(&self, id: UserId) -> Result<(), RepoError>;\n    async fn list(&self, filter: UserFilter) -> Result<Vec<User>, RepoError>;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Реализация для SQLx"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub struct SqlxUserRepository {\n    pool: PgPool,\n}\n\n#[async_trait]\nimpl UserRepository for SqlxUserRepository {\n    async fn find_by_id(&self, id: UserId) -> Result<Option<User>, RepoError> {\n        let row = sqlx::query_as!(\n            UserRow,\n            \"SELECT id, email, name, created_at FROM users WHERE id = $1\",\n            id.0\n        )\n        .fetch_optional(&self.pool)\n        .await?;\n        Ok(row.map(User::from))\n    }\n    // ... остальные методы\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "In-memory для тестов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub struct InMemoryUserRepository {\n    users: RwLock<HashMap<UserId, User>>,\n}\n\n#[async_trait]\nimpl UserRepository for InMemoryUserRepository {\n    async fn find_by_id(&self, id: UserId) -> Result<Option<User>, RepoError> {\n        Ok(self.users.read().await.get(&id).cloned())\n    }\n    // ... просто работа с HashMap\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Service Layer (Бизнес-логика)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Use Case / Command"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[derive(Debug, Validate)]\npub struct CreateUserCommand {\n    #[validate(email)]\n    pub email: String,\n    #[validate(length(min = 2))]\n    pub name: String,\n}\n\npub struct CreateUserUseCase<R: UserRepository> {\n    repo: R,\n    email_sender: EmailSender,\n}\n\nimpl<R: UserRepository> CreateUserUseCase<R> {\n    pub async fn execute(&self, cmd: CreateUserCommand) -> Result<User, AppError> {\n        // Валидация\n        cmd.validate()?;\n\n        // Проверка уникальности\n        if self.repo.find_by_email(&cmd.email).await?.is_some() {\n            return Err(AppError::Conflict(\"Email already exists\"));\n        }\n\n        // Создание\n        let user = User::new(cmd.email, cmd.name);\n        self.repo.save(&user).await?;\n        self.email_sender.send_welcome(&user).await?;\n\n        Ok(user)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Query (чтение без изменений)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub struct GetUserQuery<R: UserRepository> {\n    repo: R,\n}\n\nimpl<R: UserRepository> GetUserQuery<R> {\n    pub async fn execute(&self, id: UserId) -> Result<UserDto, AppError> {\n        let user = self.repo.find_by_id(id).await?\n            .ok_or(AppError::NotFound)?;\n        Ok(UserDto::from(user))\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. DTO (Data Transfer Objects)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Разделение Domain и DTO"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Domain entity — богатая, с методами\npub struct User {\n    id: UserId,\n    email: Email,\n    name: String,\n    password_hash: String,\n    created_at: DateTime<Utc>,\n    version: u64, // для optimistic locking\n}\n\nimpl User {\n    pub fn new(email: String, name: String) -> Self { ... }\n    pub fn change_email(&mut self, new: Email) -> Result<(), DomainError> { ... }\n    pub fn verify_password(&self, password: &str) -> bool { ... }\n}\n\n// DTO для API — простая, сериализуемая\n#[derive(Serialize, Deserialize)]\npub struct UserDto {\n    pub id: Uuid,\n    pub email: String,\n    pub name: String,\n    pub created_at: DateTime<Utc>,\n}\n\nimpl From<User> for UserDto {\n    fn from(user: User) -> Self {\n        Self { id: user.id.0, email: user.email.0, name: user.name, created_at: user.created_at }\n    }\n}\n\n// Request/Response DTO\n#[derive(Deserialize, Validate)]\npub struct CreateUserRequest {\n    #[validate(email)]\n    pub email: String,\n    #[validate(length(min = 2))]\n    pub name: String,\n    #[validate(length(min = 8))]\n    pub password: String,\n}\n\n#[derive(Serialize)]\npub struct CreateUserResponse {\n    pub user: UserDto,\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Конфигурация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "config.rs"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use config::{Config, File, Environment};\nuse serde::Deserialize;\nuse std::net::SocketAddr;\n\n#[derive(Deserialize, Clone)]\npub struct AppConfig {\n    pub server: ServerConfig,\n    pub database: DatabaseConfig,\n    pub redis: RedisConfig,\n    pub email: EmailConfig,\n}\n\n#[derive(Deserialize, Clone)]\npub struct ServerConfig {\n    pub addr: SocketAddr,\n    pub workers: usize,\n}\n\n#[derive(Deserialize, Clone)]\npub struct DatabaseConfig {\n    pub url: String,\n    pub max_connections: u32,\n    pub min_connections: u32,\n}\n\nimpl AppConfig {\n    pub fn load() -> Result<Self, config::ConfigError> {\n        let mut cfg = Config::builder()\n            .add_source(File::with_name(\"config/default\"))\n            .add_source(File::with_name(&format!(\"config/{}\", env::var(\"APP_ENV\").unwrap_or(\"development\".into()))).required(false))\n            .add_source(Environment::with_prefix(\"APP\").separator(\"__\"))\n            .build()?;\n        cfg.try_deserialize()\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "config/default.toml"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[server]\naddr = \"0.0.0.0:8080\"\nworkers = 4\n\n[database]\nurl = \"postgres://localhost/mydb\"\nmax_connections = 10\nmin_connections = 2\n\n[redis]\nurl = \"redis://localhost:6379\"\n\n[email]\nsmtp_host = \"localhost\"\nsmtp_port = 1025\nfrom = \"noreply@example.com\""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Обработка ошибок приложения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "AppError — единая ошибка"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use thiserror::Error;\n\n#[derive(Error, Debug)]\npub enum AppError {\n    #[error(\"Not found: {0}\")]\n    NotFound(String),\n\n    #[error(\"Conflict: {0}\")]\n    Conflict(String),\n\n    #[error(\"Validation failed: {0}\")]\n    Validation(String),\n\n    #[error(\"Unauthorized\")]\n    Unauthorized,\n\n    #[error(\"Forbidden\")]\n    Forbidden,\n\n    #[error(\"Internal error: {0}\")]\n    Internal(#[from] anyhow::Error),\n\n    #[error(\"Database error: {0}\")]\n    Database(#[from] sqlx::Error),\n\n    #[error(\"External service error: {0}\")]\n    External(String),\n}\n\n// Преобразование в HTTP ответ\nimpl IntoResponse for AppError {\n    fn into_response(self) -> Response {\n        let (status, message) = match self {\n            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),\n            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg),\n            AppError::Validation(msg) => (StatusCode::BAD_REQUEST, msg),\n            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, \"Unauthorized\".into()),\n            AppError::Forbidden => (StatusCode::FORBIDDEN, \"Forbidden\".into()),\n            _ => (StatusCode::INTERNAL_SERVER_ERROR, \"Internal error\".into()),\n        };\n        (status, Json(ErrorResponse { error: message })).into_response()\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Dependency Injection (DI) контейнер"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ручной DI (простой и явный)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub struct AppState {\n    pub user_repo: Arc<dyn UserRepository>,\n    pub order_repo: Arc<dyn OrderRepository>,\n    pub email_sender: Arc<dyn EmailSender>,\n    pub config: AppConfig,\n}\n\nimpl AppState {\n    pub async fn new(config: AppConfig) -> Result<Self, AppError> {\n        let pool = PgPool::connect(&config.database.url).await?;\n        let user_repo = Arc::new(SqlxUserRepository::new(pool.clone()));\n        let order_repo = Arc::new(SqlxOrderRepository::new(pool));\n        let email_sender = Arc::new(SmtpEmailSender::new(&config.email));\n\n        Ok(Self { user_repo, order_repo, email_sender, config })\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование в handlers"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "async fn create_user(\n    State(state): State<Arc<AppState>>,\n    Json(req): Json<CreateUserRequest>,\n) -> Result<Json<CreateUserResponse>, AppError> {\n    let use_case = CreateUserUseCase::new(\n        state.user_repo.clone(),\n        state.email_sender.clone(),\n    );\n    let user = use_case.execute(req.into()).await?;\n    Ok(Json(CreateUserResponse { user: user.into() }))\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Middleware и Cross-cutting concerns"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Logging middleware"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "async fn logging_middleware(\n    request: Request,\n    next: Next,\n) -> Response {\n    let start = Instant::now();\n    let method = request.method().clone();\n    let uri = request.uri().clone();\n\n    let response = next.run(request).await;\n\n    let latency = start.elapsed();\n    info!(\"{} {} - {} - {:?}\", method, uri, response.status(), latency);\n    response\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Auth middleware"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "async fn auth_middleware(\n    State(state): State<Arc<AppState>>,\n    mut request: Request,\n    next: Next,\n) -> Result<Response, AppError> {\n    let token = request\n        .headers()\n        .get(\"Authorization\")\n        .and_then(|h| h.to_str().ok())\n        .and_then(|h| h.strip_prefix(\"Bearer \"));\n\n    let user_id = token\n        .ok_or(AppError::Unauthorized)?\n        .verify(&state.config.jwt_secret)?;\n\n    request.extensions_mut().insert(user_id);\n    Ok(next.run(request).await)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Тестируемость архитектуры"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unit тесты сервисов (с моками)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[cfg(test)]\nmod tests {\n    use super::*;\n    use mockall::predicate::*;\n    use mockall::mock;\n\n    mock! {\n        UserRepo {}\n        #[async_trait]\n        impl UserRepository for UserRepo {\n            async fn find_by_email(&self, email: &str) -> Result<Option<User>, RepoError>;\n            async fn save(&self, user: &User) -> Result<(), RepoError>;\n        }\n    }\n\n    #[tokio::test]\n    async fn test_create_user_duplicate_email() {\n        let mut mock_repo = MockUserRepo::new();\n        mock_repo\n            .expect_find_by_email()\n            .with(eq(\"test@example.com\"))\n            .returning(|_| Ok(Some(User::new(...))));\n\n        let use_case = CreateUserUseCase::new(mock_repo, MockEmailSender::new());\n        let result = use_case.execute(CreateUserCommand { ... }).await;\n\n        assert!(matches!(result, Err(AppError::Conflict(_))));\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Integration тесты"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[tokio::test]\nasync fn test_full_user_flow() {\n    let state = test_app_state().await; // Создаёт testcontainers Postgres\n    let client = TestClient::new(state);\n\n    let resp = client.post(\"/users\", &CreateUserRequest { ... }).await;\n    assert_eq!(resp.status(), 201);\n\n    let user: UserDto = resp.json();\n    let resp = client.get(&format(\"/users/{}\", user.id)).await;\n    assert_eq!(resp.status(), 200);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Миграции и версионирование схемы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SQLx migrations"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "sqlx migrate add create_users_table"
+    },
+    {
+      "type": "code",
+      "language": "sql",
+      "content": "-- migrations/20240115_create_users_table.sql\nCREATE TABLE users (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    email VARCHAR(255) NOT NULL UNIQUE,\n    name VARCHAR(100) NOT NULL,\n    password_hash VARCHAR(255) NOT NULL,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n    version BIGINT NOT NULL DEFAULT 1\n);\n\nCREATE INDEX idx_users_email ON users(email);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Реализовать OrderService"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Domain\npub struct Order { id: OrderId, user_id: UserId, items: Vec<OrderItem>, status: OrderStatus }\n\n// Repository trait\n#[async_trait]\npub trait OrderRepository { ... }\n\n// Service\npub struct OrderService<R: OrderRepository, U: UserRepository> {\n    order_repo: R,\n    user_repo: U,\n}\n\nimpl<R, U> OrderService<R, U> {\n    pub async fn place_order(&self, user_id: UserId, items: Vec<OrderItem>) -> Result<Order, AppError> {\n        // 1. Проверить пользователя\n        // 2. Проверить склад (InventoryService)\n        // 3. Создать заказ\n        // 4. Резервировать товары\n        // 5. Отправить уведомление\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Feature Flags"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[derive(Deserialize)]\npub struct FeatureFlags {\n    pub new_checkout: bool,\n    pub beta_dashboard: bool,\n}\n\nimpl FeatureFlags {\n    pub fn is_enabled(&self, feature: &str) -> bool {\n        match feature {\n            \"new_checkout\" => self.new_checkout,\n            \"beta_dashboard\" => self.beta_dashboard,\n            _ => false,\n        }\n    }\n}\n\n// В handler\nif state.config.features.is_enabled(\"new_checkout\") {\n    // новый код\n} else {\n    // старый код\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Типичные ошибки архитектуры"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "God Object",
+          "Один сервис делает всё"
+        ],
+        [
+          "Anemic Domain",
+          "Сущности — просто данные"
+        ],
+        [
+          "Leaky Abstraction",
+          "SQL в Service layer"
+        ],
+        [
+          "Tight Coupling",
+          "Конкретные типы в сигнатурах"
+        ],
+        [
+          "Untestable",
+          "Прямые вызовы DB/HTTP в коде"
+        ],
+        [
+          "Config sprawl",
+          "`std::env::var` по всему коду"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Слоистая архитектура: Domain, Application, Infrastructure, Presentation",
+        "Repository Pattern — абстракция над хранилищем",
+        "Service Layer / Use Cases — бизнес-логика",
+        "DTO — разделение внутренних и внешних моделей",
+        "Конфигурация через `config` crate + TOML + ENV",
+        "Единая обработка ошибок `AppError` с `thiserror`",
+        "Dependency Injection через трейты + `Arc<dyn Trait>`",
+        "Middleware для cross-cutting concerns (logging, auth)",
+        "Тестируемость: моки репозиториев, интеграционные тесты",
+        "Миграции БД через SQLx"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "God Object",
+      "correct": "Один сервис делает всё"
+    },
+    {
+      "mistake": "Anemic Domain",
+      "correct": "Сущности — просто данные"
+    },
+    {
+      "mistake": "Leaky Abstraction",
+      "correct": "SQL в Service layer"
+    },
+    {
+      "mistake": "Tight Coupling",
+      "correct": "Конкретные типы в сигнатурах"
+    },
+    {
+      "mistake": "Untestable",
+      "correct": "Прямые вызовы DB/HTTP в коде"
+    },
+    {
+      "mistake": "Config sprawl",
+      "correct": "`std::env::var` по всему коду"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 16
+}

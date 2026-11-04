@@ -1,0 +1,359 @@
+{
+  "title": "Урок 13: ООП и дизайн — interfaces, abstract classes, polymorphism, composition, generics",
+  "slug": "oop-i-dizayn-interfaces-abstract-classes-polymorphism-composition-generics",
+  "short_description": "interfaces, abstract classes, polymorphism, composition, generics",
+  "goals": [
+    "Понимать разницу между интерфейсами и абстрактными классами",
+    "Применять полиморфизм и принцип подстановки Лисков (LSP)",
+    "Использовать композицию вместо наследования",
+    "Работать с обобщениями (generics) и constraints",
+    "Знать принципы SOLID на практике"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать разницу между интерфейсами и абстрактными классами",
+        "Применять полиморфизм и принцип подстановки Лисков (LSP)",
+        "Использовать композицию вместо наследования",
+        "Работать с обобщениями (generics) и constraints",
+        "Знать принципы SOLID на практике"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Интерфейсы vs Абстрактные классы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Интерфейс (Interface)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Контракт без реализации (до C# 8)\npublic interface IDisposable\n{\n    void Dispose();\n}\n\n// C# 8+: default implementation\npublic interface ILogger\n{\n    void Log(string message);\n\n    // Default implementation — не ломает существующие реализации\n    void LogInfo(string message) => Log($\"[INFO] {message}\");\n    void LogError(string message) => Log($\"[ERROR] {message}\");\n}\n\n// C# 11+: static virtual members в интерфейсах (для generic math)\npublic interface INumber<T> where T : INumber<T>\n{\n    static abstract T Zero { get; }\n    static abstract T operator +(T left, T right);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Абстрактный класс (Abstract Class)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public abstract class Animal\n{\n    // Может иметь состояние\n    public string Name { get; protected set; }\n\n    // Абстрактный метод — обязательно переопределить\n    public abstract void MakeSound();\n\n    // Виртуальный метод — можно переопределить\n    public virtual void Sleep() => Console.WriteLine($\"{Name} sleeps\");\n\n    // Обычный метод\n    public void Eat() => Console.WriteLine($\"{Name} eats\");\n\n    // Конструктор (нельзя создать экземпляр Animal)\n    protected Animal(string name) => Name = name;\n}\n\npublic class Dog : Animal\n{\n    public Dog(string name) : base(name) { }\n\n    public override void MakeSound() => Console.WriteLine(\"Woof!\");\n\n    public override void Sleep() => Console.WriteLine($\"{Name} dreams of bones\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда что использовать"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Сценарий",
+        "Выбор"
+      ],
+      "rows": [
+        [
+          "Контракт для не связанных типов",
+          "`interface`"
+        ],
+        [
+          "Общая реализация + состояние",
+          "`abstract class`"
+        ],
+        [
+          "Множественная реализация",
+          "`interface` (класс — только одно наследование)"
+        ],
+        [
+          "Версионирование (добавление методов)",
+          "`interface` с default implementation"
+        ],
+        [
+          "Generic constraints с операторами",
+          "`interface` (C# 11+)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Полиморфизм и LSP (Liskov Substitution Principle)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ad-hoc полиморфизм (перегрузка)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class Calculator\n{\n    public int Add(int a, int b) => a + b;\n    public double Add(double a, double b) => a + b;\n    public string Add(string a, string b) => a + b;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Параметрический полиморфизм (Generics)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class Repository<T> where T : class\n{\n    public T GetById(int id) => default!;\n    public void Add(T entity) { }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Подтипный полиморфизм (Subtyping) + LSP"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ПЛОХО: нарушение LSP\npublic class Rectangle\n{\n    public virtual int Width { get; set; }\n    public virtual int Height { get; set; }\n}\n\npublic class Square : Rectangle\n{\n    public override int Width\n    {\n        set { base.Width = base.Height = value; }\n    }\n    public override int Height\n    {\n        set { base.Width = base.Height = value; }\n    }\n}\n\n// Использование — неожиданное поведение\nvoid Resize(Rectangle r, int w, int h)\n{\n    r.Width = w;\n    r.Height = h;\n    // Если r — Square, Width и Height будут = h!\n}\n\n// ХОРОШО: композиция или отдельные типы\npublic interface IShape { int Area(); }\npublic readonly record struct Rectangle(int Width, int Height) : IShape\n{\n    public int Area() => Width * Height;\n}\npublic readonly record struct Square(int Size) : IShape\n{\n    public int Area() => Size * Size;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Covariance и Contravariance (in/out)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// out — ковариантность (возврат) — \"производный можно вернуть как базовый\"\npublic interface IReadOnlyRepository<out T>\n{\n    T GetById(int id);\n    IEnumerable<T> GetAll();\n}\n\n// in — контрвариантность (параметр) — \"базовый можно передать вместо производного\"\npublic interface IWriteOnlyRepository<in T>\n{\n    void Add(T entity);\n    void Remove(T entity);\n}\n\n// Пример\nIReadOnlyRepository<Animal> animals = new DogRepository(); // OK (Dog -> Animal)\n// IWriteOnlyRepository<Animal> animalWriter = new DogWriter(); // Ошибка!\nIWriteOnlyRepository<Dog> dogWriter = new AnimalWriter(); // OK (Animal -> Dog)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Композиция вместо наследования (Composition over Inheritance)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема глубокого наследования"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Сложная иерархия — трудно менять\npublic abstract class Vehicle { }\npublic class Car : Vehicle { }\npublic class FlyingCar : Car { } // что если не все машины летают?\npublic class AmphibiousCar : Car { }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Решение: Композиция через интерфейсы"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Поведения как отдельные компоненты\npublic interface IEngine { void Start(); void Stop(); }\npublic interface IFlyable { void Fly(); float Altitude { get; } }\npublic interface ISwimmable { void Swim(); float Depth { get; } }\n\n// Реализации\npublic class ElectricEngine : IEngine { /* ... */ }\npublic class JetEngine : IEngine, IFlyable { /* ... */ }\npublic class Propeller : IFlyable { /* ... */ }\npublic class PropellerDrive : ISwimmable { /* ... */ }\n\n// Композиция\npublic class Vehicle\n{\n    public IEngine Engine { get; }\n    public IFlyable? FlyBehavior { get; }\n    public ISwimmable? SwimBehavior { get; }\n\n    public Vehicle(IEngine engine, IFlyable? fly = null, ISwimmable? swim = null)\n    {\n        Engine = engine;\n        FlyBehavior = fly;\n        SwimBehavior = swim;\n    }\n\n    public void Fly() => FlyBehavior?.Fly();\n    public void Swim() => SwimBehavior?.Swim();\n}\n\n// Использование\nvar flyingCar = new Vehicle(new ElectricEngine(), new Propeller());\nvar submarine = new Vehicle(new ElectricEngine(), swim: new PropellerDrive());"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Strategy Pattern (стратегия)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public interface IPaymentStrategy\n{\n    void Pay(decimal amount);\n}\n\npublic class CreditCardPayment : IPaymentStrategy { /* ... */ }\npublic class PayPalPayment : IPaymentStrategy { /* ... */ }\npublic class CryptoPayment : IPaymentStrategy { /* ... */ }\n\npublic class OrderService\n{\n    private readonly IPaymentStrategy _payment;\n\n    public OrderService(IPaymentStrategy payment) => _payment = payment;\n\n    public void Checkout(decimal amount) => _payment.Pay(amount);\n}\n\n// Runtime swap\nvar service = new OrderService(new CreditCardPayment());\n// Позже можно сменить: service = new OrderService(new PayPalPayment());"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Generics (Обобщения) — продвинутый уровень"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Constraints (Ограничения)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// where T : class — reference type\n// where T : struct — value type (не nullable)\n// where T : new() — public parameterless constructor\n// where T : BaseClass — наследование\n// where T : IInterface — реализация интерфейса\n// where T : unmanaged — без указателей/ссылок (blittable)\n// where T : notnull — не nullable (C# 8+)\n// where T : default — для default(T) в generic коде\n// where T : allows ref struct — C# 11+ для ref struct\n\npublic class GenericRepository<T>\n    where T : class, IEntity, new()\n{\n    public T Create() => new T();\n    public void Save(T entity) { }\n}\n\n// Multiple constraints\npublic void Process<TFirst, TSecond>(TFirst a, TSecond b)\n    where TFirst : IComparable<TFirst>\n    where TSecond : struct, IEquatable<TSecond>\n{ }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Generic Math (C# 11+ / .NET 7+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Numerics;\n\n// Работает с любым числовым типом\npublic T Add<T>(T a, T b) where T : INumber<T>\n{\n    return a + b;\n}\n\n// Сложный пример: статистика\npublic StatisticsResult<T> CalculateStats<T>(IEnumerable<T> values)\n    where T : INumber<T>, IComparisonOperators<T, T, bool>\n{\n    var list = values.ToList();\n    T sum = T.Zero;\n    T min = list[0];\n    T max = list[0];\n\n    foreach (var v in list)\n    {\n        sum += v;\n        if (v < min) min = v;\n        if (v > max) max = v;\n    }\n\n    return new StatisticsResult<T>(sum, min, max, list.Count);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Variance в delegates и func"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Func<in T, out TResult> — вход контравариантен, выход ковариантен\nFunc<Dog, Animal> func1 = d => d; // Dog -> Animal (OK)\n// Func<Animal, Dog> func2 = a => new Dog(); // Ошибка!\n\n// Action<in T> — только контрвариантность\nAction<Animal> act1 = a => Console.WriteLine(a);\nAction<Dog> act2 = act1; // OK: Action<Animal> можно использовать как Action<Dog>"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Паттерны проектирования в C#"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Factory Method"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public abstract class Document\n{\n    public abstract void Open();\n    public abstract void Save();\n}\n\npublic class WordDocument : Document { /* ... */ }\npublic class PdfDocument : Document { /* ... */ }\n\npublic abstract class DocumentCreator\n{\n    public abstract Document CreateDocument();\n\n    public void Process()\n    {\n        var doc = CreateDocument();\n        doc.Open();\n        doc.Save();\n    }\n}\n\npublic class WordCreator : DocumentCreator\n{\n    public override Document CreateDocument() => new WordDocument();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Builder Pattern"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class HttpClientBuilder\n{\n    private string _baseUrl = \"\";\n    private TimeSpan _timeout = TimeSpan.FromSeconds(30);\n    private Dictionary<string, string> _headers = new();\n\n    public HttpClientBuilder WithBaseUrl(string url) { _baseUrl = url; return this; }\n    public HttpClientBuilder WithTimeout(TimeSpan t) { _timeout = t; return this; }\n    public HttpClientBuilder AddHeader(string k, string v) { _headers[k] = v; return this; }\n\n    public HttpClient Build()\n    {\n        var client = new HttpClient { BaseAddress = new Uri(_baseUrl), Timeout = _timeout };\n        foreach (var (k, v) in _headers) client.DefaultRequestHeaders.Add(k, v);\n        return client;\n    }\n}\n\n// Использование\nvar client = new HttpClientBuilder()\n    .WithBaseUrl(\"https://api.example.com\")\n    .WithTimeout(TimeSpan.FromSeconds(10))\n    .AddHeader(\"Authorization\", \"Bearer token\")\n    .Build();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Decorator Pattern"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public interface INotifier\n{\n    void Send(string message);\n}\n\npublic class EmailNotifier : INotifier\n{\n    public void Send(string message) => Console.WriteLine($\"Email: {message}\");\n}\n\n// Декоратор\npublic class SmsNotifierDecorator : INotifier\n{\n    private readonly INotifier _inner;\n    public SmsNotifierDecorator(INotifier inner) => _inner = inner;\n\n    public void Send(string message)\n    {\n        _inner.Send(message);\n        Console.WriteLine($\"SMS: {message}\");\n    }\n}\n\n// Цепочка\nINotifier notifier = new SmsNotifierDecorator(new EmailNotifier());\nnotifier.Send(\"Hello\"); // Email + SMS"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. SOLID принципы на примерах"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Принцип",
+        "Суть",
+        "C# пример"
+      ],
+      "rows": [
+        [
+          "**S**ingle Responsibility",
+          "Класс — одна причина для изменения",
+          "`UserService` не отправляет email, использует `IEmailService`"
+        ],
+        [
+          "**O**pen/Closed",
+          "Открыт для расширения, закрыт для изменения",
+          "`IPaymentStrategy` + новые реализации без изменения `OrderService`"
+        ],
+        [
+          "**L**iskov Substitution",
+          "Подтип заменяет базовый тип",
+          "`Square` не наследует `Rectangle`"
+        ],
+        [
+          "**I**nterface Segregation",
+          "Мелкие интерфейсы лучше одного большого",
+          "`IReadable`, `IWritable` вместо `IRepository`"
+        ],
+        [
+          "**D**ependency Inversion",
+          "Зависимость от абстракций, не конретных классов",
+          "`OrderService` зависит от `IPaymentStrategy`, не `CreditCardPayment`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Глубокое наследование (3+ уровней)",
+          "Композиция, интерфейсы"
+        ],
+        [
+          "`abstract class` там, где нужен `interface`",
+          "`interface` для контрактов"
+        ],
+        [
+          "Игнорирование LSP",
+          "Проверяйте: \"можно ли подтип использовать везде, где базовый?\""
+        ],
+        [
+          "God Object (один класс делает всё)",
+          "Разбивайте на маленькие сервисы с DI"
+        ],
+        [
+          "Generic без constraints там, где нужны методы",
+          "`where T : IInterface`"
+        ],
+        [
+          "`new()` constraint для struct",
+          "`struct` уже имеет default constructor"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Глубокое наследование (3+ уровней)",
+      "correct": "Композиция, интерфейсы"
+    },
+    {
+      "mistake": "`abstract class` там, где нужен `interface`",
+      "correct": "`interface` для контрактов"
+    },
+    {
+      "mistake": "Игнорирование LSP",
+      "correct": "Проверяйте: \"можно ли подтип использовать везде, где базовый?\""
+    },
+    {
+      "mistake": "God Object (один класс делает всё)",
+      "correct": "Разбивайте на маленькие сервисы с DI"
+    },
+    {
+      "mistake": "Generic без constraints там, где нужны методы",
+      "correct": "`where T : IInterface`"
+    },
+    {
+      "mistake": "`new()` constraint для struct",
+      "correct": "`struct` уже имеет default constructor"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 13
+}

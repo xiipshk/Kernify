@@ -1,0 +1,336 @@
+{
+  "title": "Урок 3.11: Проект — Complex App/Library with Architecture, Tests, Profiling, Docs, Maintenance",
+  "slug": "proekt-complex-applibrary-with-architecture-tests-profiling-docs-maintenance",
+  "short_description": "Complex App/Library with Architecture, Tests, Profiling, Docs, Maintenance",
+  "goals": [
+    "Проектировать и строить production-ready .NET приложение/библиотеку",
+    "Применять все изученные паттерны: Clean Architecture, CQRS, DDD, Resilience",
+    "Настроить полный CI/CD: build, test, security, performance, deploy",
+    "Внедрить observability: logging, metrics, tracing, health checks",
+    "Документировать: OpenAPI,架构决策记录 (ADR), runbooks",
+    "Настроить maintenance: dependency updates, profiling, capacity planning"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Проектировать и строить production-ready .NET приложение/библиотеку",
+        "Применять все изученные паттерны: Clean Architecture, CQRS, DDD, Resilience",
+        "Настроить полный CI/CD: build, test, security, performance, deploy",
+        "Внедрить observability: logging, metrics, tracing, health checks",
+        "Документировать: OpenAPI,架构决策记录 (ADR), runbooks",
+        "Настроить maintenance: dependency updates, profiling, capacity planning"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Project Structure — Reference Architecture"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "MyProject/\n├── .github/\n│   ├── workflows/           # CI/CD pipelines\n│   └── dependabot.yml       # Dependency updates\n├── docs/\n│   ├── adr/                 # Architecture Decision Records\n│   ├── api/                 # OpenAPI specs\n│   ├── runbooks/            # Operational procedures\n│   └── architecture.md      # System overview\n├── src/\n│   ├── MyProject.Domain/           # Domain Layer (no dependencies)\n│   │   ├── Entities/\n│   │   ├── ValueObjects/\n│   │   ├── Events/\n│   │   ├── Exceptions/\n│   │   └── Interfaces/\n│   ├── MyProject.Application/      # Application Layer\n│   │   ├── Commands/\n│   │   ├── Queries/\n│   │   ├── Handlers/\n│   │   ├── DTOs/\n│   │   ├── Validators/\n│   │   ├── Behaviors/\n│   │   └── Interfaces/\n│   ├── MyProject.Infrastructure/   # Infrastructure Layer\n│   │   ├── Persistence/\n│   │   │   ├── Configurations/\n│   │   │   ├── Repositories/\n│   │   │   ├── Migrations/\n│   │   │   └── Interceptors/\n│   │   ├── Services/\n│   │   │   ├── Email/\n│   │   │   ├── Payment/\n│   │   │   └── Storage/\n│   │   ├── Messaging/\n│   │   └── Identity/\n│   ├── MyProject.Api/              # Presentation Layer\n│   │   ├── Endpoints/\n│   │   ├── Filters/\n│   │   ├── Middleware/\n│   │   ├── Extensions/\n│   │   └── Program.cs\n│   ├── MyProject.Worker/           # Background Services\n│   │   ├── Jobs/\n│   │   ├── Consumers/\n│   │   └── Program.cs\n│   └── MyProject.Contracts/        # Shared Contracts (nuget)\n│       ├── Events/\n│       ├── DTOs/\n│       └── Interfaces/\n├── tests/\n│   ├── MyProject.UnitTests/\n│   ├── MyProject.IntegrationTests/\n│   ├── MyProject.ContractTests/\n│   ├── MyProject.PerformanceTests/\n│   └── MyProject.ArchitectureTests/  # NetArchTest\n├── build/\n│   ├── Directory.Build.props\n│   ├── Directory.Packages.props\n│   ├── Directory.Build.targets\n│   └── nuget.config\n├── docker/\n│   ├── Dockerfile.api\n│   ├── Dockerfile.worker\n│   └── docker-compose.yml\n├── helm/                          # Kubernetes deployment\n│   └── myproject/\n├── .editorconfig\n├── .gitignore\n├── global.json\n├── MyProject.sln\n└── README.md"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Domain Layer — Rich Domain Model"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Domain/Entities/Order.cs\npublic class Order : AggregateRoot<Guid>, IAuditable\n{\n    private readonly List<OrderItem> _items = new();\n    private readonly List<IDomainEvent> _domainEvents = new();\n\n    public CustomerId CustomerId { get; private set; }\n    public OrderStatus Status { get; private set; }\n    public ShippingAddress ShippingAddress { get; private set; }\n    public Money Total => _items.Sum(i => i.LineTotal);\n    public IReadOnlyCollection<OrderItem> Items => _items.AsReadOnly();\n    public IReadOnlyCollection<IDomainEvent> DomainEvents => _domainEvents.AsReadOnly();\n\n    // EF Core\n    private Order() { }\n\n    public static Order Create(CustomerId customerId, ShippingAddress address, IEnumerable<OrderItemData> items)\n    {\n        var order = new Order\n        {\n            Id = Guid.NewGuid(),\n            CustomerId = customerId,\n            ShippingAddress = address,\n            Status = OrderStatus.Pending,\n            CreatedAt = DateTimeOffset.UtcNow\n        };\n\n        foreach (var item in items)\n            order.AddItem(item.ProductId, item.Quantity, item.UnitPrice);\n\n        order.RaiseEvent(new OrderCreatedEvent(order.Id, order.CustomerId, order.Total));\n        return order;\n    }\n\n    public void AddItem(ProductId productId, int quantity, Money unitPrice)\n    {\n        if (quantity <= 0) throw new DomainException(\"Quantity must be positive\");\n        if (unitPrice.Amount <= 0) throw new DomainException(\"Price must be positive\");\n\n        var existing = _items.FirstOrDefault(i => i.ProductId == productId);\n        if (existing != null)\n            existing.IncreaseQuantity(quantity);\n        else\n            _items.Add(new OrderItem(productId, quantity, unitPrice));\n    }\n\n    public void Confirm()\n    {\n        if (Status != OrderStatus.Pending)\n            throw new DomainException($\"Cannot confirm order in {Status} status\");\n        if (!_items.Any())\n            throw new DomainException(\"Order must have at least one item\");\n\n        Status = OrderStatus.Confirmed;\n        RaiseEvent(new OrderConfirmedEvent(Id));\n    }\n\n    public void Ship(TrackingNumber trackingNumber)\n    {\n        if (Status != OrderStatus.Confirmed)\n            throw new DomainException(\"Only confirmed orders can be shipped\");\n\n        Status = OrderStatus.Shipped;\n        RaiseEvent(new OrderShippedEvent(Id, trackingNumber));\n    }\n\n    public void Cancel(string reason)\n    {\n        if (Status is OrderStatus.Shipped or OrderStatus.Delivered)\n            throw new DomainException(\"Cannot cancel shipped/delivered order\");\n\n        Status = OrderStatus.Cancelled;\n        RaiseEvent(new OrderCancelledEvent(Id, reason));\n    }\n\n    public void ClearDomainEvents() => _domainEvents.Clear();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Application Layer — CQRS with MediatR"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Application/Commands/CreateOrderCommand.cs\npublic record CreateOrderCommand(\n    Guid CustomerId,\n    ShippingAddressDto ShippingAddress,\n    List<OrderItemDto> Items\n) : IRequest<Result<Guid>>;\n\n// Application/Validators/CreateOrderValidator.cs\npublic class CreateOrderValidator : AbstractValidator<CreateOrderCommand>\n{\n    public CreateOrderValidator()\n    {\n        RuleFor(x => x.CustomerId).NotEmpty();\n        RuleFor(x => x.ShippingAddress).NotNull().SetValidator(new ShippingAddressValidator());\n        RuleFor(x => x.Items).NotEmpty().ForEach(i => i.SetValidator(new OrderItemValidator()));\n    }\n}\n\n// Application/Handlers/CreateOrderHandler.cs\npublic class CreateOrderHandler : IRequestHandler<CreateOrderCommand, Result<Guid>>\n{\n    private readonly IOrderRepository _orders;\n    private readonly IProductRepository _products;\n    private readonly IUnitOfWork _unitOfWork;\n    private readonly IDomainEventDispatcher _dispatcher;\n\n    public CreateOrderHandler(IOrderRepository orders, IProductRepository products,\n        IUnitOfWork unitOfWork, IDomainEventDispatcher dispatcher)\n    {\n        _orders = orders;\n        _products = products;\n        _unitOfWork = unitOfWork;\n        _dispatcher = dispatcher;\n    }\n\n    public async Task<Result<Guid>> Handle(CreateOrderCommand request, CancellationToken ct)\n    {\n        // Validate products exist and get prices\n        var productIds = request.Items.Select(i => i.ProductId).Distinct().ToList();\n        var products = await _products.GetByIdsAsync(productIds, ct);\n        if (products.Count != productIds.Count)\n            return Result.Failure<Guid>(Error.NotFound(\"Product.NotFound\", \"One or more products not found\"));\n\n        // Build order items with current prices\n        var items = request.Items.Select(i =>\n        {\n            var product = products.First(p => p.Id == i.ProductId);\n            return new OrderItemData(product.Id, i.Quantity, product.Price);\n        });\n\n        var order = Order.Create(\n            new CustomerId(request.CustomerId),\n            request.ShippingAddress.ToDomain(),\n            items);\n\n        await _orders.AddAsync(order, ct);\n        await _unitOfWork.SaveChangesAsync(ct);\n        await _dispatcher.DispatchAsync(order.DomainEvents, ct);\n\n        return Result.Success(order.Id);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Infrastructure — EF Core with Performance"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Infrastructure/Persistence/Configurations/OrderConfiguration.cs\npublic class OrderConfiguration : IEntityTypeConfiguration<Order>\n{\n    public void Configure(EntityTypeBuilder<Order> builder)\n    {\n        builder.ToTable(\"Orders\");\n        builder.HasKey(o => o.Id);\n\n        builder.Property(o => o.Id).ValueGeneratedNever();\n        builder.Property(o => o.Status).HasConversion<string>().HasMaxLength(20);\n        builder.Property(o => o.CreatedAt).IsRequired();\n\n        builder.OwnsOne(o => o.ShippingAddress, sa =>\n        {\n            sa.Property(a => a.Street).HasMaxLength(200);\n            sa.Property(a => a.City).HasMaxLength(100);\n            sa.Property(a => a.PostalCode).HasMaxLength(20);\n            sa.Property(a => a.Country).HasMaxLength(2);\n        });\n\n        builder.HasMany(o => o.Items)\n            .WithOne()\n            .HasForeignKey(\"OrderId\")\n            .OnDelete(DeleteBehavior.Cascade);\n\n        builder.Navigation(o => o.Items).UsePropertyAccessMode(PropertyAccessMode.Field);\n    }\n}\n\n// Infrastructure/Persistence/Interceptors/AuditingInterceptor.cs\npublic class AuditingInterceptor : SaveChangesInterceptor\n{\n    private readonly ICurrentUserService _currentUser;\n\n    public AuditingInterceptor(ICurrentUserService currentUser) => _currentUser = currentUser;\n\n    public override InterceptionResult<int> SavingChanges(\n        DbContextEventData eventData, InterceptionResult<int> result)\n    {\n        UpdateAuditableEntities(eventData.Context);\n        return base.SavingChanges(eventData, result);\n    }\n\n    private void UpdateAuditableEntities(DbContext? context)\n    {\n        if (context == null) return;\n\n        var userId = _currentUser.UserId ?? \"system\";\n        var now = DateTimeOffset.UtcNow;\n\n        foreach (var entry in context.ChangeTracker.Entries<IAuditable>())\n        {\n            if (entry.State == EntityState.Added)\n            {\n                entry.Entity.CreatedAt = now;\n                entry.Entity.CreatedBy = userId;\n            }\n            else if (entry.State == EntityState.Modified)\n            {\n                entry.Entity.UpdatedAt = now;\n                entry.Entity.UpdatedBy = userId;\n            }\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. API Layer — Minimal APIs with OpenAPI"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Api/Endpoints/OrdersEndpoints.cs\npublic static class OrdersEndpoints\n{\n    public static void MapOrdersEndpoints(this IEndpointRouteBuilder app)\n    {\n        var group = app.MapGroup(\"/api/v1/orders\")\n            .RequireAuthorization()\n            .WithTags(\"Orders\")\n            .WithOpenApi();\n\n        group.MapGet(\"/\", async (IMediator mediator, [AsParameters] GetOrdersQuery query, CancellationToken ct) =>\n        {\n            var result = await mediator.Send(query, ct);\n            return result.IsSuccess ? Results.Ok(result.Value) : result.ToProblemDetails();\n        })\n        .Produces<PagedResult<OrderDto>>(200)\n        .Produces(400);\n\n        group.MapGet(\"/{id:guid}\", async (Guid id, IMediator mediator, CancellationToken ct) =>\n        {\n            var result = await mediator.Send(new GetOrderQuery(id), ct);\n            return result.IsSuccess ? Results.Ok(result.Value) : result.ToProblemDetails();\n        })\n        .Produces<OrderDto>(200)\n        .Produces(404);\n\n        group.MapPost(\"/\", async (CreateOrderCommand command, IMediator mediator, CancellationToken ct) =>\n        {\n            var result = await mediator.Send(command, ct);\n            return result.IsSuccess\n                ? Results.Created($\"/api/v1/orders/{result.Value}\", result.Value)\n                : result.ToProblemDetails();\n        })\n        .Produces<Guid>(201)\n        .Produces(400)\n        .AddEndpointFilter<ValidationFilter<CreateOrderCommand>>();\n\n        group.MapPost(\"/{id:guid}/confirm\", async (Guid id, IMediator mediator, CancellationToken ct) =>\n        {\n            var result = await mediator.Send(new ConfirmOrderCommand(id), ct);\n            return result.IsSuccess ? Results.Ok() : result.ToProblemDetails();\n        })\n        .Produces(200)\n        .Produces(400)\n        .Produces(404);\n    }\n}\n\n// Api/Extensions/ResultExtensions.cs\npublic static class ResultExtensions\n{\n    public static IResult ToProblemDetails(this Result result)\n    {\n        return result.Error?.Code switch\n        {\n            \"Validation\" => Results.ValidationProblem(result.Error.ToDictionary()),\n            \"NotFound\" => Results.NotFound(result.Error.Message),\n            \"Conflict\" => Results.Conflict(result.Error.Message),\n            _ => Results.Problem(result.Error?.Message, statusCode: 500)\n        };\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Program.cs — Composition Root"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Api/Program.cs\nvar builder = WebApplication.CreateBuilder(args);\n\n// ===== SERVICES =====\nbuilder.Services.AddProblemDetails();\nbuilder.Services.AddEndpointsApiExplorer();\nbuilder.Services.AddSwaggerGen(c =>\n{\n    c.SwaggerDoc(\"v1\", new OpenApiInfo { Title = \"MyProject API\", Version = \"v1\" });\n    c.AddSecurityDefinition(\"Bearer\", new OpenApiSecurityScheme\n    {\n        Type = SecuritySchemeType.Http,\n        Scheme = \"bearer\",\n        BearerFormat = \"JWT\"\n    });\n    c.OperationFilter<SecurityRequirementsOperationFilter>();\n});\n\n// MediatR + Pipeline Behaviors\nbuilder.Services.AddMediatR(cfg =>\n{\n    cfg.RegisterServicesFromAssembly(typeof(CreateOrderHandler).Assembly);\n    cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));\n    cfg.AddOpenBehavior(typeof(LoggingBehavior<,>));\n    cfg.AddOpenBehavior(typeof(PerformanceBehavior<,>));\n});\n\n// FluentValidation\nbuilder.Services.AddValidatorsFromAssembly(typeof(CreateOrderValidator).Assembly);\n\n// EF Core\nbuilder.Services.AddDbContextPool<AppDbContext>((sp, options) =>\n{\n    options.UseNpgsql(builder.Configuration.GetConnectionString(\"Default\"),\n        npgsql => npgsql.MigrationsAssembly(\"MyProject.Infrastructure\"))\n        .AddInterceptors(sp.GetRequiredService<AuditingInterceptor>())\n        .EnableSensitiveDataLogging(builder.Environment.IsDevelopment());\n});\n\n// Repositories\nbuilder.Services.AddScoped<IOrderRepository, OrderRepository>();\nbuilder.Services.AddScoped<IProductRepository, ProductRepository>();\nbuilder.Services.AddScoped<IUnitOfWork, UnitOfWork>();\n\n// External Services with Resilience\nbuilder.Services.AddHttpClient<IEmailService, EmailService>()\n    .AddStandardResilienceHandler();\n\nbuilder.Services.AddHttpClient<IPaymentGateway, StripePaymentGateway>()\n    .AddStandardResilienceHandler();\n\n// Domain Events\nbuilder.Services.AddScoped<IDomainEventDispatcher, DomainEventDispatcher>();\n\n// Health Checks\nbuilder.Services.AddHealthChecks()\n    .AddDbContextCheck<AppDbContext>()\n    .AddNpgSql(builder.Configuration.GetConnectionString(\"Default\")!)\n    .AddRedis(builder.Configuration.GetConnectionString(\"Redis\")!)\n    .AddUrlGroup(new Uri(\"https://api.stripe.com/health\"), \"stripe\");\n\n// OpenTelemetry\nbuilder.Services.AddOpenTelemetry()\n    .ConfigureResource(r => r.AddService(\"MyProject.Api\"))\n    .WithTracing(t => t\n        .AddAspNetCoreInstrumentation()\n        .AddHttpClientInstrumentation()\n        .AddEntityFrameworkCoreInstrumentation()\n        .AddSource(\"MyProject.*\")\n        .AddOtlpExporter())\n    .WithMetrics(m => m\n        .AddAspNetCoreInstrumentation()\n        .AddHttpClientInstrumentation()\n        .AddRuntimeInstrumentation()\n        .AddOtlpExporter());\n\n// ===== BUILD =====\nvar app = builder.Build();\n\nif (app.Environment.IsDevelopment())\n{\n    app.UseSwagger();\n    app.UseSwaggerUI();\n    app.ApplyMigrations(); // Extension method\n}\n\napp.UseHttpsRedirection();\napp.UseAuthentication();\napp.UseAuthorization();\napp.UseRateLimiter();\n\n// Map Endpoints\napp.MapOrdersEndpoints();\napp.MapProductsEndpoints();\napp.MapUsersEndpoints();\napp.MapHealthChecks(\"/health\");\napp.MapHealthChecks(\"/health/ready\", new() { Predicate = c => c.Tags.Contains(\"ready\") });\n\n// Global Exception Handler\napp.UseExceptionHandler();\n\napp.Run();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Testing Strategy"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// tests/MyProject.ArchitectureTests/ArchitectureTests.cs\n[TestFixture]\npublic class ArchitectureTests\n{\n    private static readonly Assembly DomainAssembly = typeof(Order).Assembly;\n    private static readonly Assembly ApplicationAssembly = typeof(CreateOrderHandler).Assembly;\n    private static readonly Assembly InfrastructureAssembly = typeof(OrderRepository).Assembly;\n    private static readonly Assembly ApiAssembly = typeof(Program).Assembly;\n\n    [Test]\n    public void Domain_ShouldNotReferenceOtherLayers()\n    {\n        var types = Types.InAssembly(DomainAssembly);\n        types.ShouldNot()\n            .HaveDependencyOn(ApplicationAssembly.GetName().Name!)\n            .And.ShouldNot()\n            .HaveDependencyOn(InfrastructureAssembly.GetName().Name!)\n            .And.ShouldNot()\n            .HaveDependencyOn(ApiAssembly.GetName().Name!);\n    }\n\n    [Test]\n    public void Application_ShouldNotReferenceInfrastructureOrApi()\n    {\n        Types.InAssembly(ApplicationAssembly)\n            .ShouldNot()\n            .HaveDependencyOn(InfrastructureAssembly.GetName().Name!)\n            .And.ShouldNot()\n            .HaveDependencyOn(ApiAssembly.GetName().Name!);\n    }\n\n    [Test]\n    public void Handlers_ShouldBeInApplicationLayer()\n    {\n        Types.InAssembly(ApplicationAssembly)\n            .That().ImplementInterface(typeof(IRequestHandler<,>))\n            .Should().ResideInNamespace(\"MyProject.Application\");\n    }\n\n    [Test]\n    public void Entities_ShouldBeSealedOrHaveProtectedConstructor()\n    {\n        Types.InAssembly(DomainAssembly)\n            .That().Inherit(typeof(AggregateRoot<>))\n            .Should().HaveProtectedConstructor();\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. CI/CD Pipeline"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Observability — Complete Setup"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Infrastructure/Observability/CustomMetrics.cs\npublic static class CustomMetrics\n{\n    private static readonly Meter Meter = new(\"MyProject.Orders\");\n\n    public static readonly Counter<long> OrdersCreated = Meter.CreateCounter<long>(\n        \"orders.created\", description: \"Total orders created\");\n\n    public static readonly Histogram<double> OrderValue = Meter.CreateHistogram<double>(\n        \"orders.value\", unit: \"USD\", description: \"Order value distribution\");\n\n    public static readonly UpDownCounter<long> ActiveOrders = Meter.CreateUpDownCounter<long>(\n        \"orders.active\", description: \"Currently active orders\");\n\n    public static readonly Counter<long> OrdersFailed = Meter.CreateCounter<long>(\n        \"orders.failed\", description: \"Failed order operations\");\n}\n\n// Infrastructure/Observability/ActivitySources.cs\npublic static class ActivitySources\n{\n    public static readonly ActivitySource Orders = new(\"MyProject.Orders\");\n    public static readonly ActivitySource Payments = new(\"MyProject.Payments\");\n    public static readonly ActivitySource Notifications = new(\"MyProject.Notifications\");\n}\n\n// Usage in Handler\npublic class CreateOrderHandler : IRequestHandler<CreateOrderCommand, Result<Guid>>\n{\n    public async Task<Result<Guid>> Handle(CreateOrderCommand request, CancellationToken ct)\n    {\n        using var activity = ActivitySources.Orders.StartActivity(\"CreateOrder\",\n            ActivityKind.Internal, parentContext: default,\n            tags: new[] { new KeyValuePair<string, object?>(\"customer.id\", request.CustomerId) });\n\n        try\n        {\n            // ... business logic ...\n            CustomMetrics.OrdersCreated.Add(1);\n            CustomMetrics.OrderValue.Record((double)order.Total.Amount);\n            CustomMetrics.ActiveOrders.Add(1);\n\n            activity?.SetStatus(ActivityStatusCode.Ok);\n            return Result.Success(order.Id);\n        }\n        catch (Exception ex)\n        {\n            CustomMetrics.OrdersFailed.Add(1);\n            activity?.RecordException(ex);\n            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);\n            throw;\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Documentation — ADR Template"
+    },
+    {
+      "type": "code",
+      "language": "markdown",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Context"
+    },
+    {
+      "type": "text",
+      "content": "Need to decide on architectural pattern for new order management system."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Decision"
+    },
+    {
+      "type": "text",
+      "content": "Adopt Clean Architecture with Domain, Application, Infrastructure, API layers."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Consequences"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Positive**: Testability, separation of concerns, framework independence",
+        "**Negative**: More boilerplate, steeper learning curve",
+        "**Mitigation**: Use templates, code generators, team training"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Symptoms"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Orders stuck in \"Pending\" status",
+        "Increased `orders.failed` metric",
+        "Alert: OrderProcessingFailureRate > 5%"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Diagnosis"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Check logs: `kubectl logs -l app=myproject-worker -n production`",
+        "Check queue depth: `redis-cli LLEN orders:pending`",
+        "Check database locks: `SELECT * FROM pg_locks WHERE relation = 'orders'`"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Resolution"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Transient DB error**: Restart worker pods",
+        "**Payment gateway down**: Enable fallback mode, alert on-call",
+        "**Deadlock**: Kill blocking queries, investigate indexes"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Prevention"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Add circuit breaker for payment gateway",
+        "Implement idempotency keys",
+        "Add distributed lock for order processing"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Maintenance Strategy"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dependency Updates"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Profiling in Production"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Capacity Planning"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Infrastructure/Metrics/CapacityMetrics.cs\npublic class CapacityMetrics : BackgroundService\n{\n    private readonly IMetricsCollector _metrics;\n    private readonly ILogger<CapacityMetrics> _logger;\n\n    protected override async Task ExecuteAsync(CancellationToken ct)\n    {\n        while (!ct.IsCancellationRequested)\n        {\n            var cpu = _metrics.GetCpuUsage();\n            var memory = _metrics.GetMemoryUsage();\n            var threadPool = _metrics.GetThreadPoolStats();\n            var dbConnections = _metrics.GetDbConnectionPoolUsage();\n\n            _logger.LogInformation(\n                \"Capacity: CPU={Cpu}% Mem={Memory}MB Threads={Threads} DB={Db}%\",\n                cpu, memory, threadPool.AvailableThreads, dbConnections.UsagePercent);\n\n            if (cpu > 80 || memory > 85 || dbConnections.UsagePercent > 90)\n            {\n                _logger.LogWarning(\"Capacity threshold exceeded!\");\n                // Alert via webhook\n            }\n\n            await Task.Delay(TimeSpan.FromMinutes(5), ct);\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Чек-лист Production Readiness"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Проверка"
+      ],
+      "rows": [
+        [
+          "**Architecture**",
+          "Clean Architecture слои, нет циклических зависимостей"
+        ],
+        [
+          "**Code Quality**",
+          "0 warnings, CA rules, SonarCloud quality gate"
+        ],
+        [
+          "**Testing**",
+          "Unit > 80%, Integration critical paths, Contract tests"
+        ],
+        [
+          "**Performance**",
+          "Baseline benchmarks, load testing, profiling"
+        ],
+        [
+          "**Security**",
+          "SAST/DAST, dependency scanning, secrets management"
+        ],
+        [
+          "**Observability**",
+          "Structured logs, metrics, traces, health checks, alerts"
+        ],
+        [
+          "**Reliability**",
+          "Retry, circuit breaker, timeout, bulkhead, fallback"
+        ],
+        [
+          "**Deployment**",
+          "Blue-green/canary, rollback < 5min, DB migrations safe"
+        ],
+        [
+          "**Documentation**",
+          "ADR, API specs, runbooks, onboarding guide"
+        ],
+        [
+          "**Operations**",
+          "Capacity planning, DR plan, on-call rotation"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "14. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 33
+}

@@ -1,0 +1,727 @@
+{
+  "title": "Урок 23: Язык и компиляция — translation phases, ODR, linkage, lifetime, undefined behavior, стандарт",
+  "slug": "yazyk-i-kompilyatsiya-translation-phases-odr-linkage-lifetime-undefined-behavior-standart",
+  "short_description": "translation phases, ODR, linkage, lifetime, undefined behavior, стандарт",
+  "goals": [
+    "Понять фазы трансляции C++ и как препроцессор взаимодействует с компилятором",
+    "Освоить правило одного определения (ODR) и его нарушения",
+    "Разобраться в linkage (внутренний, внешний, отсутствие) и storage duration",
+    "Изучить lifetime объектов и правила доступа к памяти",
+    "Понять undefined behavior (UB), его классификацию и последствия",
+    "Научиться читать стандарт C++ (ISO/IEC 14882) и использовать cppreference"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять фазы трансляции C++ и как препроцессор взаимодействует с компилятором",
+        "Освоить правило одного определения (ODR) и его нарушения",
+        "Разобраться в linkage (внутренний, внешний, отсутствие) и storage duration",
+        "Изучить lifetime объектов и правила доступа к памяти",
+        "Понять undefined behavior (UB), его классификацию и последствия",
+        "Научиться читать стандарт C++ (ISO/IEC 14882) и использовать cppreference"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Фазы трансляции (Translation Phases)"
+    },
+    {
+      "type": "text",
+      "content": "Стандарт C++ (ISO/IEC 14882) определяет <strong>9 фаз трансляции</strong> (C++23: [lex.phases]). Они выполняются последовательно:"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаза 1: Маппинг физических символов"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Исходный файл считывается как последовательность бит",
+        "Преобразуется в базовый набор символов (basic source character set)",
+        "Trigraphs заменяются (устарело в C++17, удалено в C++23)",
+        "Universal character names (UCN) `\\uXXXX` / `\\UXXXXXXXX` распознаются"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаза 2: Сшивка строк (Line splicing)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Обратный слэш `\\` в конце строки удаляется вместе с `\\n`",
+        "Физические строки объединяются в логические"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаза 3: Токенизация (Tokenization)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Исходник разбивается на препроцессинговые токены:",
+        "идентификаторы, ключевые слова, литерулы, операторы, пунктуация",
+        "Комментарии заменяются на один пробел",
+        "Директивы препроцессора распознаются"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаза 4: Препроцессинг (Preprocessing)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`#include` — рекурсивное включение файлов (фазы 1–4 повторяются)",
+        "`#define` / `#undef` — макросы",
+        "`#if` / `#ifdef` / `#else` / `#endif` — условная компиляция",
+        "`__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`, `__cplusplus`, `__has_include`, `__has_cpp_attribute`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаза 5: Escape-последовательности в символьных и строковых литерулах"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`\\n`, `\\t`, `\\\"`, `\\'`, `\\\\`, `\\xNN`, `\\uNNNN`, `\\UNNNNNNNN` преобразуются"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаза 6: Конкатенация строковых литерулов"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Соседние строковые литерулы объединяются: `\"Hello\" \"World\"` → `\"HelloWorld\"`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаза 7: Компиляция (Parsing + Semantic Analysis)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Препроцессинговые токены → токены C++",
+        "Синтаксический анализ (parsing)",
+        "Семантический анализ: проверка типов, разрешение имен, overload resolution, template instantiation",
+        "Генерация AST"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаза 8: Инстанцирование шаблонов (Template Instantiation)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Неявное инстанцирование при использовании",
+        "Явное инстанцирование: `template class MyClass<int>;`",
+        "Экспорт шаблонов (export — удалён в C++11, модули заменяют)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаза 9: Линковка (Linking)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Объединение объектных файлов (.obj/.o) в исполняемый модуль",
+        "Разрешение внешних символов (external linkage)",
+        "Устранение неиспользуемых символов (COMDAT folding, ICF)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. ODR — One Definition Rule (Правило одного определения)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основное правило ([basic.def.odr])"
+    },
+    {
+      "type": "blockquote",
+      "content": "В каждой единице трансляции (TU) каждое имя должно иметь **ровно одно определение**. В всей программе — не более одного определения для сущностей с внешним связыванием."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что считается определением:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Функция с телом: `void foo() {}`",
+        "Переменная с инициализатором (не `extern`): `int x = 42;`",
+        "Класс/структура/перечисление: `struct S {};`",
+        "Шаблон: `template <typename T> void f() {}`",
+        "Статический член класса с инициализатором (C++17 inline variables)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что НЕ является определением:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Объявление функции: `void foo();`",
+        "`extern int x;`",
+        "forward declaration класса: `class Foo;`",
+        "Шаблон без тела (forward declaration)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ODR для inline-функций и переменных (C++17)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// header.h\ninline int global_counter = 0;           // OK: одно определение во всей программе\ninline void log(const char* msg) {       // OK: inline function\n    std::cout << msg << '\\n';\n}\n\ntemplate <typename T>\ninline constexpr T pi = T(3.1415926535897932385); // C++17 inline variable template"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Нарушения ODR (UB):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// file1.cpp\nstruct S { int a; void f() { std::cout << \"file1\\n\"; } };\nvoid use() { S s; s.f(); }\n\n// file2.cpp\nstruct S { int b; void f() { std::cout << \"file2\\n\"; } }; // ODR violation!\nvoid use2() { S s; s.f(); }"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Последствие</strong>: поведение не определено. Линкер может выбрать любое определение."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ODR и шаблоны"
+    },
+    {
+      "type": "text",
+      "content": "Шаблоны должны быть <strong>идентичны</strong> во всех TU (token-for-token после препроцессинга, за исключением невидимых различий)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инструменты диагностики ODR:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`-Wodr` (GCC/Clang)",
+        "`/d1reportSingleClassLayout` (MSVC)",
+        "`ldd --verify` / `dumpbin /exports` — проверка символов",
+        "AddressSanitizer: `-fsanitize=odr` (GCC 12+, Clang)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Linkage (Связывание) и Storage Duration"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Виды связывания ([basic.link])"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Linkage",
+        "Ключевые слова",
+        "Видимость",
+        "Примеры"
+      ],
+      "rows": [
+        [
+          "**External**",
+          "(default для функций, переменных в namespace)",
+          "Вся программа",
+          "`int x; void f();`"
+        ],
+        [
+          "**Internal**",
+          "`static` (в namespace), `constexpr` (C++17), `const` (C++98/03)",
+          "Только TU",
+          "`static int x; constexpr int Y = 1;`"
+        ],
+        [
+          "**No linkage**",
+          "Локальные переменные, параметры, лямбды без capture",
+          "Только блок",
+          "`void f() { int x; }`"
+        ],
+        [
+          "**Module linkage** (C++20)",
+          "`export` в модулях",
+          "Внутри модуля",
+          "`export module M; export int x;`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// namespace scope\nint a;              // external linkage\nstatic int b;       // internal linkage\nconst int c = 1;    // internal linkage (C++98-17), external в C++20 без inline\ninline int d = 2;   // external linkage, ODR-safe\nconstexpr int e = 3; // internal linkage (implicit inline since C++17)\nextern const int f; // external linkage (declaration)\n\nthread_local int tls_var; // external linkage, per-thread storage"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Storage Duration (Время хранения) ([basic.stc])"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Duration",
+        "Ключевые слова",
+        "Инициализация",
+        "Уничтожение"
+      ],
+      "rows": [
+        [
+          "**Static**",
+          "`static` (namespace), `thread_local`, globals",
+          "До `main()` (constant init) / до первого использования (dynamic init)",
+          "После `main()` / при выгрузке DLL"
+        ],
+        [
+          "**Thread**",
+          "`thread_local`",
+          "При старте потока",
+          "При завершении потока"
+        ],
+        [
+          "**Automatic**",
+          "Локальные переменные",
+          "При входе в блок",
+          "При выходе из блока (деструктор)"
+        ],
+        [
+          "**Dynamic**",
+          "`new` / `malloc`",
+          "При вызове `new`",
+          "При `delete` / `free` (ручное)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Порядок инициализации (Static Initialization Order Fiasco):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// a.cpp\n#include \"b.h\"\nint a = get_b() + 1; // UB: b может быть неинициализирован\n\n// b.cpp\nint b = 42;\nint get_b() { return b; }"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Решение</strong>: Construct On First Use Idiom / <code>inline</code> переменные / модули C++20."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Lifetime (Время жизни объектов) ([basic.life])"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Начало lifetime:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Для объектов со static/thread storage duration — после инициализации",
+        "Для automatic — при входе в блок (после инициализации)",
+        "Для dynamic — после завершения конструктора в `new`",
+        "Для subobjects — после инициализации полного объекта"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конец lifetime:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Вызов деструктора (явный или неявный)",
+        "`free` / `delete` / переиспользование памяти (`std::launder`)",
+        "Выход из области видимости (automatic)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Доступ вне lifetime (UB):"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct A { int x; ~A() { std::cout << \"dtor\\n\"; } };\n\nvoid foo() {\n    A a;        // lifetime begins\n    a.~A();     // lifetime ends\n    a.x = 42;   // UB! доступ к мёртвому объекту\n}\n\nvoid bar() {\n    alignas(A) char buf[sizeof(A)];\n    A* p = new (buf) A(); // placement new\n    p->~A();              // explicit dtor call\n    // p всё ещё указывает на память, но объект мёртв\n    // std::launder(p) — получить указатель на новый объект в той же памяти\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::launder` (C++17) — получение валидного указателя после переиспользования памяти:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <new>\n#include <memory>\n\nstruct Node { int value; Node* next; };\n\nvoid replace(Node* p, int new_val) {\n    p->~Node();                    // destroy old\n    new (p) Node{new_val, nullptr}; // construct new in same storage\n    // p теперь указывает на старую память, но новый объект!\n    // Для доступа нужно:\n    Node* valid = std::launder(p); // OK\n    valid->value = 99;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила строгого алиасинга (Strict Aliasing) — см. Урок 25."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Undefined Behavior (UB) — Классификация и последствия"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое UB ([intro.defs]):"
+    },
+    {
+      "type": "blockquote",
+      "content": "Поведение, для которого стандарт накладывает **никаких требований**. Программа может: работать \"правильно\", падать, выдавать неверные результаты, весить себя из памяти, форматировать диск."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Классификация UB:"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Примеры"
+      ],
+      "rows": [
+        [
+          "**Memory**",
+          "Buffer overflow, use-after-free, double-free, dangling pointer, unaligned access"
+        ],
+        [
+          "**Type**",
+          "Strict aliasing violation, type punning через union (до C++20), `reinterpret_cast` abuse"
+        ],
+        [
+          "**Lifetime**",
+          "Access outside lifetime, virtual call in ctor/dtor, `delete` без virtual dtor"
+        ],
+        [
+          "**Integer**",
+          "Signed overflow, shift ≥ width, shift negative, div by zero"
+        ],
+        [
+          "**Pointer**",
+          "Dereference null, pointer arithmetic past one-past-end, compare unrelated pointers"
+        ],
+        [
+          "**Concurrency**",
+          "Data race (не atomic, не mutex), double-checked locking без atomics"
+        ],
+        [
+          "**Control flow**",
+          "Infinite loop без side effects (C++26: `[[assume]]`), `noreturn` возвращает"
+        ],
+        [
+          "**Library**",
+          "Invalid iterator, modifying const via `const_cast`, `std::function` от moved-from"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "UB vs Implementation-Defined vs Unspecified:"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Описание",
+        "Пример"
+      ],
+      "rows": [
+        [
+          "**Undefined Behavior**",
+          "Никаких гарантий",
+          "`int* p = nullptr; *p = 1;`"
+        ],
+        [
+          "**Implementation-Defined**",
+          "Компилятор должен задокументировать",
+          "`sizeof(int)`, order of evaluation (mostly)"
+        ],
+        [
+          "**Unspecified Behavior**",
+          "Допустимы варианты, недокументированы",
+          "Порядок вычисления аргументов функции (до C++17)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инструменты обнаружения UB:"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Некоторые \"惊人\" UB примеры:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// 1. Signed overflow\nint x = INT_MAX;\nx += 1; // UB! (не wrap-around)\n\n// 2. Null dereference в constexpr (C++20)\nconstexpr int f() { return *nullptr; } // UB даже в constexpr\n\n// 3. Infinite loop без side effects\nwhile (true) { } // UB в C++26 (может быть оптимизирован в nop)\n\n// 4. Type punning через union (до C++20)\nunion { float f; int i; } u;\nu.f = 1.0f;\nint bits = u.i; // UB до C++20, OK в C++20 (std::bit_cast предпочтительнее)\n\n// 5. Modify string literal\nchar* p = \"hello\";\np[0] = 'H'; // UB\n\n// 6. Virtual call в конструкторе\nstruct Base { virtual void f() {} Base() { f(); } }; // вызывает Base::f, не Derived::f\nstruct Derived : Base { void f() override {} };"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Работа со стандартом C++"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура стандарта (ISO/IEC 14882):"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Clause 1–3**: Scope, Normative references, Terms",
+        "**Clause 4–16**: Language (lex, basic, expr, stmt, dcl, class, temp, etc.)",
+        "**Clause 17–33**: Library (containers, algorithms, iterators, ranges, threads, etc.)",
+        "**Annex A–B**: Grammar summary, Compatibility"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Номенклатура разделов:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`[lex.phases]` — фазы трансляции",
+        "`[basic.def.odr]` — ODR",
+        "`[basic.link]` — linkage",
+        "`[basic.life]` — lifetime",
+        "`[intro.defs]` — определения (UB, IDB, unspecified)",
+        "`[expr.add]` — pointer arithmetic",
+        "`[class.cdtor]` — ctor/dtor semantics"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как читать стандарт:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Начните с **cppreference.com** — читаемая версия с примерами",
+        "Ищите по разделу: `https://eel.is/c++draft/basic.life`",
+        "Используйте **latest draft** (N4950 для C++23, N4980 для C++26)",
+        "Комментарии в стандарте — не нормативны, но полезны"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Полезные ресурсы:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**C++ Standard Draft** — https://eel.is/c++draft/",
+        "**cppreference** — https://en.cppreference.com/",
+        "**C++ Core Guidelines** — https://isocpp.github.io/CppCoreGuidelines/",
+        "**Compiler Explorer** — https://godbolt.org/ (проверка кодогенерации)",
+        "**C++ Insights** — https://cppinsights.io/ (template instantiation, implicit code)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Фазы трансляции"
+    },
+    {
+      "type": "text",
+      "content": "Создайте файл <code>phases.cpp</code> и проследите путь токена <code>FOO</code> через фазы:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#define FOO 42\n#define STR(x) #x\n#define EXPAND(x) STR(x)\nconst char* s = EXPAND(FOO); // Что получится после каждой фазы?"
+    },
+    {
+      "type": "text",
+      "content": "Проверьте: <code>g++ -E phases.cpp</code> (после фазы 4), <code>g++ -C -E phases.cpp</code> (с комментариями)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: ODR Violation"
+    },
+    {
+      "type": "text",
+      "content": "Создайте два <code>.cpp</code> файла с разными определениями <code>struct Config { int x; };</code>. Слинкуйте. Что происходит? Добавьте <code>-fsanitize=odr</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Static Initialization Order"
+    },
+    {
+      "type": "text",
+      "content": "Воспроизведите fiasco с двумя TU. Исправьте через:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Function-local static (Meyers singleton)",
+        "`inline` переменную (C++17)",
+        "Модуль C++20"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Lifetime и `std::launder`"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте пул объектов с placement new и повторным использованием памяти. Используйте <code>std::launder</code> для корректного доступа."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: UB Hunt"
+    },
+    {
+      "type": "text",
+      "content": "Найдите UB в коде:"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int* create_array(int n) {\n    int arr[n]; // VLA — не стандартный C++!\n    return arr; // возвращает указатель на automatic storage\n}\n\nint main() {\n    int* p = create_array(10);\n    p[0] = 42; // UB!\n}"
+    },
+    {
+      "type": "text",
+      "content": "Исправьте с использованием <code>std::vector</code> или <code>std::unique_ptr<int[]></code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Sanitizers"
+    },
+    {
+      "type": "text",
+      "content": "Скомпилируйте программу с UB под <code>-fsanitize=address,undefined</code>. Проанализируйте отчёт."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**C++23 Standard Draft (N4950)** — https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/n4950.pdf",
+        "**C++ Reference: Translation Phases** — https://en.cppreference.com/w/cpp/language/translation_phases",
+        "**C++ Reference: ODR** — https://en.cppreference.com/w/cpp/language/definition",
+        "**C++ Reference: Lifetime** — https://en.cppreference.com/w/cpp/language/lifetime",
+        "**Undefined Behavior Sanitizer Docs** — https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html",
+        "**Jason Turner: \"C++ Weekly\" (YouTube)** — эпизоды про ODR, UB, linkage",
+        "**CppCon: \"Undefined Behavior is Not an Error\" (Chandler Carruth)**",
+        "**Effective Modern C++, Item 4** (Scott Meyers) — `noexcept` и UB"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [
+    "**C++23 Standard Draft (N4950)** — https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/n4950.pdf",
+    "**C++ Reference: Translation Phases** — https://en.cppreference.com/w/cpp/language/translation_phases",
+    "**C++ Reference: ODR** — https://en.cppreference.com/w/cpp/language/definition",
+    "**C++ Reference: Lifetime** — https://en.cppreference.com/w/cpp/language/lifetime",
+    "**Undefined Behavior Sanitizer Docs** — https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html",
+    "**Jason Turner: \"C++ Weekly\" (YouTube)** — эпизоды про ODR, UB, linkage",
+    "**CppCon: \"Undefined Behavior is Not an Error\" (Chandler Carruth)**",
+    "**Effective Modern C++, Item 4** (Scott Meyers) — `noexcept` и UB"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 23
+}

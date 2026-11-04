@@ -1,0 +1,366 @@
+{
+  "title": "Урок 26: Resource semantics — move/forwarding, exception safety, API design",
+  "slug": "resource-semantics-moveforwarding-exception-safety-api-design",
+  "short_description": "move/forwarding, exception safety, API design",
+  "goals": [
+    "Глубоко понять move semantics и perfect forwarding",
+    "Освоить exception safety guarantees (basic, strong, noexcept)",
+    "Научиться проектировать API с правильной семантикой ресурсов",
+    "Изучить rule of 5/0 и современные паттерны управления ресурсами"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубоко понять move semantics и perfect forwarding",
+        "Освоить exception safety guarantees (basic, strong, noexcept)",
+        "Научиться проектировать API с правильной семантикой ресурсов",
+        "Изучить rule of 5/0 и современные паттерны управления ресурсами"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Move Semantics — Deep Dive"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Value Categories (C++11)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// lvalue — имеет имя, адрес, живёт до конца scope\nint x = 42;\nint& lref = x;\n\n// prvalue (pure rvalue) — временный, materializes в объект\nint prvalue() { return 42; }\nint&& rref = prvalue(); // materialization\n\n// xvalue (expiring lvalue) — объект, который скоро умрёт (move из него)\nstd::string s = \"hello\";\nstd::string&& xval = std::move(s); // xvalue"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Move Constructor / Assignment"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "class Buffer {\n    char* data_;\n    size_t size_;\n    size_t capacity_;\npublic:\n    // Move constructor\n    Buffer(Buffer&& other) noexcept\n        : data_(other.data_), size_(other.size_), capacity_(other.capacity_) {\n        other.data_ = nullptr;\n        other.size_ = 0;\n        other.capacity_ = 0;\n    }\n\n    // Move assignment\n    Buffer& operator=(Buffer&& other) noexcept {\n        if (this != &other) {\n            delete[] data_;\n            data_ = other.data_;\n            size_ = other.size_;\n            capacity_ = other.capacity_;\n            other.data_ = nullptr;\n            other.size_ = 0;\n            other.capacity_ = 0;\n        }\n        return *this;\n    }\n\n    // Destructor\n    ~Buffer() { delete[] data_; }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`noexcept` и Move"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Контейнеры используют move ТОЛЬКО если noexcept!\nstd::vector<Buffer> v;\nv.push_back(Buffer{100}); // Если Buffer move не noexcept — будет copy!\n\n// Правило: move operations ДОЛЖНЫ быть noexcept\n// Если нет — контейнеры фоллбэкают на copy (strong exception safety)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Perfect Forwarding"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Universal References (Forwarding References)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "template <typename T>\nvoid func(T&& param) { // T&& — forwarding reference (только в шаблоне с auto/Т)\n    // param — lvalue или rvalue в зависимости от аргумента\n    process(std::forward<T>(param)); // сохраняет value category\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::forward` Mechanics"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "template <typename T>\nT&& forward(std::remove_reference_t<T>& t) noexcept {\n    return static_cast<T&&>(t);\n}\n\ntemplate <typename T>\nT&& forward(std::remove_reference_t<T>&& t) noexcept {\n    static_assert(!std::is_lvalue_reference_v<T>);\n    return static_cast<T&&>(t);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Примеры Forwarding"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Factory function\ntemplate <typename T, typename... Args>\nstd::unique_ptr<T> make_unique(Args&&... args) {\n    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));\n}\n\n// Emplace-like\ntemplate <typename Container, typename... Args>\nvoid emplace_back(Container& c, Args&&... args) {\n    c.emplace_back(std::forward<Args>(args)...);\n}\n\n// Reference collapsing rules:\n// T&  &  -> T&\n// T&  && -> T&\n// T&& &  -> T&\n// T&& && -> T&&"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Exception Safety Guarantees"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Уровни гарантий (Abrahams Guarantees)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Уровень",
+        "Описание",
+        "Пример"
+      ],
+      "rows": [
+        [
+          "**No-throw (nothrow)**",
+          "Никогда не бросает, всегда успешен",
+          "`swap`, `move` (noexcept), деструкторы"
+        ],
+        [
+          "**Strong**",
+          "Транзакционность: либо успех, либо rollback к исходному состоянию",
+          "`std::vector::push_back` (при reallocation)"
+        ],
+        [
+          "**Basic**",
+          "Нет утечек ресурсов, инварианты класса сохранены, но состояние может измениться",
+          "Большинство операций"
+        ],
+        [
+          "**No guarantee**",
+          "UB, утечки, сломанные инварианты",
+          "Неправильный код"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Strong Exception Safety — Copy-and-Swap"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "class Widget {\n    std::unique_ptr<int[]> data_;\n    size_t size_;\npublic:\n    Widget& operator=(Widget other) noexcept { // copy or move\n        swap(*this, other);\n        return *this;\n    }\n\n    friend void swap(Widget& a, Widget& b) noexcept {\n        using std::swap;\n        swap(a.data_, b.data_);\n        swap(a.size_, b.size_);\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Exception Safety в Конструкторах"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "class ResourceHolder {\n    Resource* r1_;\n    Resource* r2_;\npublic:\n    ResourceHolder() {\n        r1_ = acquire_resource1(); // может бросить\n        try {\n            r2_ = acquire_resource2(); // может бросить\n        } catch (...) {\n            release(r1_); // cleanup!\n            throw;\n        }\n    }\n    ~ResourceHolder() { release(r1_); release(r2_); }\n};\n\n// Лучше: RAII members\nclass ResourceHolder {\n    std::unique_ptr<Resource, Deleter> r1_;\n    std::unique_ptr<Resource, Deleter> r2_;\npublic:\n    ResourceHolder() : r1_(acquire_resource1()), r2_(acquire_resource2()) {}\n    // Автоматический cleanup при исключении в конструкторе\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`noexcept` Specification"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Явный noexcept\nvoid func() noexcept;           // никогда не бросает\nvoid func() noexcept(true);     // то же самое\nvoid func() noexcept(false);    // может бросать (default)\n\n// Условный noexcept\ntemplate <typename T>\nvoid swap(T& a, T& b) noexcept(std::is_nothrow_move_constructible_v<T> &&\n                               std::is_nothrow_move_assignable_v<T>) {\n    T tmp = std::move(a);\n    a = std::move(b);\n    b = std::move(tmp);\n}\n\n// noexcept operator (compile-time check)\nstatic_assert(noexcept(std::swap(int{}, int{})));"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. API Design с Правильной Resource Semantics"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Parameter Passing Guidelines"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// 1. Входные параметры (read-only)\nvoid process(const Widget& w);           // lvalue, не владеет\nvoid process(Widget&& w);                // rvalue, может потреблять (sink)\n\n// 2. Universal reference для forwarding\ntemplate <typename T>\nvoid process(T&& w);                     // perfect forwarding\n\n// 3. Output параметры\nvoid get_result(Widget& out);            // out-parameter\nvoid get_result(Widget* out);            // optional out (nullable)\nstd::optional<Widget> get_result();      // современный способ (C++17)\n\n// 4. Sink параметры (потребляют ресурс)\nvoid sink(Widget&& w);                   // caller gives up ownership\nvoid sink(std::unique_ptr<Widget> p);    // explicit ownership transfer"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Return Value Optimization (RVO/NRVO)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "Widget make_widget() {\n    Widget w; // NRVO candidate\n    // ... настройка w\n    return w; // guaranteed copy elision (C++17)\n}\n\nWidget make_widget_param(bool flag) {\n    if (flag) return Widget{}; // RVO\n    else return Widget{42};    // RVO\n}\n\n// C++17: guaranteed copy elision для prvalue\nWidget make() { return Widget{}; } // НЕТ move, прямой конструирование в caller's storage"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ownership Types в API"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Non-owning reference (observer)\nvoid observe(const Widget& w);\nvoid observe(Widget* w);                 // nullable observer\n\n// Shared ownership\nvoid share(std::shared_ptr<Widget> w);   // caller condivides ownership\n\n// Unique ownership transfer (sink)\nvoid take(std::unique_ptr<Widget> w);    // caller gives up ownership\nvoid take(Widget&& w);                   // move sink (если Widget movable)\n\n// Factory возвращает unique_ptr (explicit ownership)\nstd::unique_ptr<Widget> create_widget();\n\n// In-place construction (emplace)\ntemplate <typename... Args>\nWidget& emplace_widget(Args&&... args);  // construct in-place"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Rule of 5 / Rule of 0"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Rule of 5"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "class ResourceManager {\n    Resource* ptr_;\npublic:\n    // 1. Destructor\n    ~ResourceManager() { release(ptr_); }\n\n    // 2. Copy constructor\n    ResourceManager(const ResourceManager& other)\n        : ptr_(other.ptr_ ? acquire_copy(other.ptr_) : nullptr) {}\n\n    // 3. Copy assignment\n    ResourceManager& operator=(const ResourceManager& other) {\n        if (this != &other) {\n            Resource* new_ptr = other.ptr_ ? acquire_copy(other.ptr_) : nullptr;\n            release(ptr_);\n            ptr_ = new_ptr;\n        }\n        return *this;\n    }\n\n    // 4. Move constructor\n    ResourceManager(ResourceManager&& other) noexcept\n        : ptr_(other.ptr_) {\n        other.ptr_ = nullptr;\n    }\n\n    // 5. Move assignment\n    ResourceManager& operator=(ResourceManager&& other) noexcept {\n        if (this != &other) {\n            release(ptr_);\n            ptr_ = other.ptr_;\n            other.ptr_ = nullptr;\n        }\n        return *this;\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Rule of 0 (Preferable)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Используй RAII типы — компилятор сгенерирует правильные операции\nclass ResourceManager {\n    std::unique_ptr<Resource, Deleter> ptr_; // управляет ресурсом\n    std::vector<int> data_;                   // управляет памятью\n    std::string name_;                        // управляет строкой\npublic:\n    // НЕ НУЖНО объявлять dtor, copy, move — все правильно по умолчанию!\n    // = default для всех 5 операций неявно\n};\n\n// Если НУЖНО запретить копирование:\nclass NonCopyable {\n    std::unique_ptr<Resource> ptr_;\npublic:\n    NonCopyable() = default;\n    NonCopyable(const NonCopyable&) = delete;\n    NonCopyable& operator=(const NonCopyable&) = delete;\n    NonCopyable(NonCopyable&&) = default;\n    NonCopyable& operator=(NonCopyable&&) = default;\n};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Advanced Patterns"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::optional` для Optional Resources"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "class Cache {\n    std::optional<ExpensiveResource> resource_;\npublic:\n    const ExpensiveResource& get() {\n        if (!resource_) resource_.emplace(load_resource());\n        return *resource_;\n    }\n    void clear() { resource_.reset(); } // explicit destruction\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::expected` (C++23) для Error Handling без Exceptions"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <expected>\n\nstd::expected<Widget, ErrorCode> create_widget(Config cfg) {\n    if (!cfg.valid()) return std::unexpected(ErrorCode::InvalidConfig);\n    return Widget{cfg};\n}\n\n// Использование\nauto result = create_widget(cfg);\nif (result) {\n    use(*result);\n} else {\n    handle_error(result.error());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Polymorphic Resource Management"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Type-erased deleter для unique_ptr\nusing ResourcePtr = std::unique_ptr<Resource, void(*)(Resource*)>;\n\nResourcePtr make_resource(int type) {\n    if (type == 1) return ResourcePtr(new ResourceA, [](Resource* p){ delete static_cast<ResourceA*>(p); });\n    return ResourcePtr(new ResourceB, [](Resource* p){ delete static_cast<ResourceB*>(p); });\n}\n\n// Или через virtual destructor (если polymorphic)\nstruct IResource { virtual ~IResource() = default; };\nusing PolyResourcePtr = std::unique_ptr<IResource>;"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Move-only Type"
+    },
+    {
+      "type": "text",
+      "content": "Напишите класс <code>FileHandle</code> — move-only обёртка над <code>FILE*</code> / file descriptor. Реализуйте все 5 операций. Проверьте, что <code>std::vector<FileHandle></code> компилируется и работает."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Perfect Forwarding Factory"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте <code>template <typename T, typename... Args> std::unique<em>ptr<T> make</em>unique(Args&&... args)</code> с perfect forwarding. Протестируйте с lvalue/rvalue аргументами."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Exception Safe Assignment"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте <code>operator=</code> для класса с двумя ресурсами (heap memory + file handle) с <strong>strong exception safety</strong> через copy-and-swap."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: `noexcept` Analysis"
+    },
+    {
+      "type": "text",
+      "content": "Дан класс с move constructor. Определите, будет ли <code>std::vector<YourClass></code> использовать move или copy при reallocation. Добавьте <code>noexcept</code> и проверьте."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: API Design"
+    },
+    {
+      "type": "text",
+      "content": "Проектируйте интерфейс <code>BufferPool</code>:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`acquire()` — возвращает буфер (unique ownership)",
+        "`release(Buffer&&)` — возвращает буфер в пул",
+        "`try_acquire()` — `std::optional<Buffer>` (non-blocking)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Обеспечьте exception safety и правильную ownership semantics."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Rule of 0 Refactoring"
+    },
+    {
+      "type": "text",
+      "content": "Возьмите класс с ручным управлением памятью (Rule of 5). Рефакторьте на Rule of 0 используя <code>std::unique_ptr</code>, <code>std::vector</code>, <code>std::string</code>. Убедитесь, что поведение идентично."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**C++ Core Guidelines: Resource Management** — https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rr-resource-management",
+        "**Effective Modern C++, Items 14-25** (Scott Meyers) — move, forwarding, noexcept",
+        "**Exception-Safe Coding** (Herb Sutter) — https://herbsutter.com/exceptional-cpp/",
+        "**C++ Reference: Exception Safety** — https://en.cppreference.com/w/cpp/language/exceptions",
+        "**CppCon: \"Move Semantics and Performance\" (Nico Josuttis)**",
+        "**P0788R3** — `std::expected` proposal"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [
+    "**C++ Core Guidelines: Resource Management** — https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rr-resource-management",
+    "**Effective Modern C++, Items 14-25** (Scott Meyers) — move, forwarding, noexcept",
+    "**Exception-Safe Coding** (Herb Sutter) — https://herbsutter.com/exceptional-cpp/",
+    "**C++ Reference: Exception Safety** — https://en.cppreference.com/w/cpp/language/exceptions",
+    "**CppCon: \"Move Semantics and Performance\" (Nico Josuttis)**",
+    "**P0788R3** — `std::expected` proposal"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 26
+}

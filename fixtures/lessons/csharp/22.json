@@ -1,0 +1,336 @@
+{
+  "title": "Урок 22: Проект — многослойное приложение с БД, API, тестами, логированием и обработкой ошибок",
+  "slug": "proekt-mnogosloynoe-prilozhenie-s-bd-api-testami-logirovaniem-i-obrabotkoy-oshibok",
+  "short_description": "многослойное приложение с БД, API, тестами, логированием и обработкой ошибок",
+  "goals": [
+    "Собрать все знания среднего уровня в полноценное приложение",
+    "Применить Clean Architecture / Vertical Slice Architecture",
+    "Реализовать полноценный REST API с EF Core, миграциями",
+    "Настроить логирование, обработку ошибок, валидацию",
+    "Написать unit и integration тесты",
+    "Подготовить к деплою (Docker, health checks)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Собрать все знания среднего уровня в полноценное приложение",
+        "Применить Clean Architecture / Vertical Slice Architecture",
+        "Реализовать полноценный REST API с EF Core, миграциями",
+        "Настроить логирование, обработку ошибок, валидацию",
+        "Написать unit и integration тесты",
+        "Подготовить к деплою (Docker, health checks)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Архитектура решения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура папок (Clean Architecture)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "MyApp.sln\n├── src/\n│   ├── MyApp.Domain/              # Enterprise Business Rules\n│   │   ├── Entities/\n│   │   ├── ValueObjects/\n│   │   ├── Events/\n│   │   ├── Interfaces/            # Repository interfaces\n│   │   └── Exceptions/\n│   ├── MyApp.Application/         # Application Business Rules\n│   │   ├── Commands/              # Write operations (CQRS)\n│   │   ├── Queries/               # Read operations\n│   │   ├── DTOs/\n│   │   ├── Validators/\n│   │   ├── Behaviors/             # MediatR pipeline behaviors\n│   │   └── Interfaces/            # External services (email, etc.)\n│   ├── MyApp.Infrastructure/      # Frameworks & Drivers\n│   │   ├── Persistence/\n│   │   │   ├── Configurations/    # EF Core mappings\n│   │   │   ├── Repositories/\n│   │   │   └── Migrations/\n│   │   ├── Services/              # Email, FileStorage, etc.\n│   │   └── Identity/              # Auth, tokens\n│   └── MyApp.Api/                 # Interface Adapters (Web)\n│       ├── Endpoints/             # Minimal API endpoints\n│       ├── Filters/\n│       ├── Middleware/\n│       ├── Extensions/\n│       └── Program.cs\n├── tests/\n│   ├── MyApp.UnitTests/\n│   ├── MyApp.IntegrationTests/\n│   └── MyApp.ArchitectureTests/\n├── docker-compose.yml\n├── Dockerfile\n└── Directory.Build.props"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Зависимости (внутренние)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "MyApp.Api\n    └── MyApp.Application\n    └── MyApp.Infrastructure\n\nMyApp.Application\n    └── MyApp.Domain\n\nMyApp.Infrastructure\n    └── MyApp.Domain\n    └── MyApp.Application (interfaces)\n\nMyApp.Domain\n    └── (нет зависимостей от внешних проектов)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Domain Layer (Ядро бизнеса)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Entity с Domain Events"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Domain/Entities/Order.cs\npublic class Order : BaseEntity, IAggregateRoot\n{\n    public OrderId Id { get; private set; }\n    public CustomerId CustomerId { get; private set; }\n    public OrderStatus Status { get; private set; }\n    private readonly List<OrderItem> _items = new();\n    public IReadOnlyCollection<OrderItem> Items => _items.AsReadOnly();\n    public decimal Total => _items.Sum(i => i.Price * i.Quantity);\n\n    private Order() { } // EF Core\n\n    public static Order Create(CustomerId customerId, IEnumerable<OrderItemData> items)\n    {\n        var order = new Order\n        {\n            Id = OrderId.New(),\n            CustomerId = customerId,\n            Status = OrderStatus.Pending\n        };\n        foreach (var item in items)\n            order.AddItem(item.ProductId, item.Quantity, item.UnitPrice);\n\n        order.AddDomainEvent(new OrderCreatedEvent(order.Id, order.CustomerId, order.Total));\n        return order;\n    }\n\n    public void AddItem(ProductId productId, int quantity, decimal unitPrice)\n    {\n        if (Status != OrderStatus.Pending) throw new InvalidOperationException(\"Cannot modify confirmed order\");\n        _items.Add(new OrderItem(productId, quantity, unitPrice));\n    }\n\n    public void Confirm()\n    {\n        if (Status != OrderStatus.Pending) throw new InvalidOperationException(\"Only pending orders can be confirmed\");\n        if (!_items.Any()) throw new InvalidOperationException(\"Order must have items\");\n        Status = OrderStatus.Confirmed;\n        AddDomainEvent(new OrderConfirmedEvent(Id, CustomerId, Total));\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Value Objects"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Domain/ValueObjects/OrderId.cs\npublic readonly record struct OrderId(Guid Value)\n{\n    public static OrderId New() => new(Guid.CreateVersion7()); // UUID v7 (time-ordered)\n    public static implicit operator Guid(OrderId id) => id.Value;\n    public static explicit operator OrderId(Guid guid) => new(guid);\n    public override string ToString() => Value.ToString();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Domain Exceptions"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Domain/Exceptions/DomainException.cs\npublic abstract class DomainException : Exception\n{\n    public string Code { get; }\n    protected DomainException(string code, string message) : base(message) => Code = code;\n}\n\npublic class InsufficientStockException : DomainException\n{\n    public InsufficientStockException(ProductId productId, int requested, int available)\n        : base(\"INSUFFICIENT_STOCK\", $\"Product {productId}: requested {requested}, available {available}\") { }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Application Layer (Use Cases / CQRS)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MediatR Setup"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "dotnet add package MediatR\ndotnet add package FluentValidation\ndotnet add package FluentValidation.DependencyInjectionExtensions"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Commands (Write)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Application/Commands/CreateOrder/CreateOrderCommand.cs\npublic record CreateOrderCommand(CustomerId CustomerId, List<OrderItemDto> Items) : IRequest<Result<OrderDto>>;\n\npublic record OrderItemDto(ProductId ProductId, int Quantity);\n\n// Handler\npublic class CreateOrderHandler : IRequestHandler<CreateOrderCommand, Result<OrderDto>>\n{\n    private readonly IOrderRepository _orders;\n    private readonly IProductRepository _products;\n    private readonly IUnitOfWork _unitOfWork;\n    private readonly ILogger<CreateOrderHandler> _log;\n\n    public CreateOrderHandler(IOrderRepository orders, IProductRepository products, IUnitOfWork uow, ILogger<CreateOrderHandler> log)\n        => (_orders, _products, _unitOfWork, _log) = (orders, products, uow, log);\n\n    public async Task<Result<OrderDto>> Handle(CreateOrderCommand request, CancellationToken ct)\n    {\n        // Проверка товаров и резервирование\n        foreach (var item in request.Items)\n        {\n            var product = await _products.GetByIdAsync(item.ProductId, ct)\n                ?? throw new NotFoundException($\"Product {item.ProductId} not found\");\n            if (product.Stock < item.Quantity)\n                throw new InsufficientStockException(item.ProductId, item.Quantity, product.Stock);\n            product.ReserveStock(item.Quantity);\n        }\n\n        var order = Order.Create(request.CustomerId, request.Items);\n        await _orders.AddAsync(order, ct);\n        await _unitOfWork.SaveChangesAsync(ct);\n\n        _log.LogInformation(\"Order {OrderId} created for customer {CustomerId}\", order.Id, request.CustomerId);\n        return Result.Success(order.ToDto());\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Queries (Read) — оптимизированные DTO проекции"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Application/Queries/GetOrder/GetOrderQuery.cs\npublic record GetOrderQuery(OrderId Id) : IRequest<Result<OrderDetailDto>>;\n\npublic class GetOrderHandler : IRequestHandler<GetOrderQuery, Result<OrderDetailDto>>\n{\n    private readonly IReadOnlyOrderRepository _orders; // отдельный read-only репозиторий\n\n    public GetOrderHandler(IReadOnlyOrderRepository orders) => _orders = orders;\n\n    public async Task<Result<OrderDetailDto>> Handle(GetOrderQuery request, CancellationToken ct)\n    {\n        var order = await _orders.GetDetailAsync(request.Id, ct);\n        return order == null ? Result.Failure<OrderDetailDto>(Error.NotFound) : Result.Success(order);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pipeline Behaviors (Cross-cutting concerns)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Validation Behavior\npublic class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>\n    where TRequest : IRequest<TResponse>\n{\n    private readonly IEnumerable<IValidator<TRequest>> _validators;\n    public ValidationBehavior(IEnumerable<IValidator<TRequest>> validators) => _validators = validators;\n\n    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)\n    {\n        var context = new ValidationContext<TRequest>(request);\n        var failures = _validators.Select(v => v.Validate(context))\n            .SelectMany(r => r.Errors).Where(f => f != null).ToList();\n\n        if (failures.Any()) throw new ValidationException(failures);\n        return await next(ct);\n    }\n}\n\n// Logging Behavior\npublic class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>\n{\n    private readonly ILogger<LoggingBehavior<TRequest, TResponse>> _log;\n    public LoggingBehavior(ILogger<LoggingBehavior<TRequest, TResponse>> log) => _log = log;\n\n    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)\n    {\n        _log.LogInformation(\"Handling {RequestType}\", typeof(TRequest).Name);\n        var response = await next(ct);\n        _log.LogInformation(\"Handled {RequestType}\", typeof(TRequest).Name);\n        return response;\n    }\n}\n\n// Transaction Behavior (для команд)\npublic class TransactionBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>\n    where TRequest : IRequest<TResponse>\n{\n    private readonly IUnitOfWork _uow;\n    public TransactionBehavior(IUnitOfWork uow) => _uow = uow;\n\n    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)\n    {\n        if (request is not ICommand) return await next(ct); // только для команд\n\n        var strategy = _uow.CreateExecutionStrategy();\n        return await strategy.ExecuteAsync(async () =>\n        {\n            await using var tx = await _uow.BeginTransactionAsync(ct);\n            try\n            {\n                var response = await next(ct);\n                await tx.CommitAsync(ct);\n                return response;\n            }\n            catch\n            {\n                await tx.RollbackAsync(ct);\n                throw;\n            }\n        });\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Регистрация в DI"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Application/DependencyInjection.cs\npublic static class ApplicationServiceExtensions\n{\n    public static IServiceCollection AddApplication(this IServiceCollection services)\n    {\n        var assembly = Assembly.GetExecutingAssembly();\n        services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(assembly));\n        services.AddValidatorsFromAssembly(assembly);\n\n        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));\n        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(LoggingBehavior<,>));\n        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(TransactionBehavior<,>));\n\n        return services;\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Infrastructure Layer"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "EF Core Configuration"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Infrastructure/Persistence/Configurations/OrderConfiguration.cs\npublic class OrderConfiguration : IEntityTypeConfiguration<Order>\n{\n    public void Configure(EntityTypeBuilder<Order> builder)\n    {\n        builder.HasKey(o => o.Id);\n        builder.Property(o => o.Id).HasConversion(v => v.Value, v => new OrderId(v));\n        builder.Property(o => o.CustomerId).HasConversion(v => v.Value, v => new CustomerId(v));\n        builder.OwnsMany(o => o.Items, item =>\n        {\n            item.WithOwner().HasForeignKey(\"OrderId\");\n            item.Property(i => i.ProductId).HasConversion(v => v.Value, v => new ProductId(v));\n        });\n        builder.Property(o => o.Status).HasConversion<string>();\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "DbContext"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Infrastructure/Persistence/AppDbContext.cs\npublic class AppDbContext : DbContext, IUnitOfWork\n{\n    public DbSet<Order> Orders => Set<Order>();\n    public DbSet<Product> Products => Set<Product>();\n    public DbSet<Customer> Customers => Set<Customer>();\n\n    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }\n\n    protected override void OnModelCreating(ModelBuilder model)\n    {\n        model.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());\n        base.OnModelCreating(model);\n    }\n\n    public async Task<int> SaveChangesAsync(CancellationToken ct = default)\n    {\n        // Dispatch domain events before save\n        var entities = ChangeTracker.Entries<BaseEntity>()\n            .Where(e => e.Entity.DomainEvents.Any()).Select(e => e.Entity).ToList();\n\n        var result = await base.SaveChangesAsync(ct);\n\n        foreach (var entity in entities)\n        {\n            var events = entity.DomainEvents.ToList();\n            entity.ClearDomainEvents();\n            // Publish events (через MediatR или отдельный publisher)\n        }\n        return result;\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Repository Implementation"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Infrastructure/Persistence/Repositories/OrderRepository.cs\npublic class OrderRepository : IOrderRepository\n{\n    private readonly AppDbContext _ctx;\n    public OrderRepository(AppDbContext ctx) => _ctx = ctx;\n\n    public async Task AddAsync(Order order, CancellationToken ct) => await _ctx.Orders.AddAsync(order, ct);\n    public Task<Order?> GetByIdAsync(OrderId id, CancellationToken ct) => _ctx.Orders.FindAsync([id], ct).AsTask();\n    public Task<Order?> GetWithItemsAsync(OrderId id, CancellationToken ct) =>\n        _ctx.Orders.Include(o => o.Items).FirstOrDefaultAsync(o => o.Id == id, ct);\n}\n\n// Read-only repository (AsNoTracking, проекции)\npublic class ReadOnlyOrderRepository : IReadOnlyOrderRepository\n{\n    private readonly AppDbContext _ctx;\n    public ReadOnlyOrderRepository(AppDbContext ctx) => _ctx = ctx;\n\n    public async Task<OrderDetailDto?> GetDetailAsync(OrderId id, CancellationToken ct)\n        => await _ctx.Orders.AsNoTracking()\n            .Where(o => o.Id == id)\n            .Select(o => new OrderDetailDto(\n                o.Id, o.CustomerId, o.Status, o.Total,\n                o.Items.Select(i => new OrderItemDto(i.ProductId, i.Quantity, i.Price)).ToList()))\n            .FirstOrDefaultAsync(ct);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. API Layer (Minimal APIs)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Endpoints"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Api/Endpoints/OrdersEndpoints.cs\npublic static class OrdersEndpoints\n{\n    public static void MapOrdersEndpoints(this IEndpointRouteBuilder app)\n    {\n        var group = app.MapGroup(\"/api/orders\").WithTags(\"Orders\").RequireAuthorization();\n\n        group.MapGet(\"/\", async (ISender sender, [AsParameters] GetOrdersQuery query) =>\n            await sender.Send(query))\n            .Produces<PagedResult<OrderSummaryDto>>();\n\n        group.MapGet(\"/{id}\", async (OrderId id, ISender sender) =>\n        {\n            var result = await sender.Send(new GetOrderQuery(id));\n            return result.IsSuccess ? Results.Ok(result.Value) : Results.NotFound(result.Error);\n        })\n        .Produces<OrderDetailDto>()\n        .Produces(StatusCodes.Status404NotFound);\n\n        group.MapPost(\"/\", async (CreateOrderCommand command, ISender sender) =>\n        {\n            var result = await sender.Send(command);\n            return result.IsSuccess\n                ? Results.Created($\"/api/orders/{result.Value.Id}\", result.Value)\n                : Results.BadRequest(result.Error);\n        })\n        .Produces<OrderDto>(StatusCodes.Status201Created)\n        .ProducesValidationProblem()\n        .AddEndpointFilter<ValidationFilter<CreateOrderCommand>>();\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Global Error Handling"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Api/Middleware/ExceptionHandlingMiddleware.cs\npublic class ExceptionHandlingMiddleware\n{\n    private readonly RequestDelegate _next;\n    private readonly ILogger<ExceptionHandlingMiddleware> _log;\n\n    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> log)\n        => (_next, _log) = (next, log);\n\n    public async Task InvokeAsync(HttpContext context)\n    {\n        try\n        {\n            await _next(context);\n        }\n        catch (Exception ex)\n        {\n            _log.LogError(ex, \"Unhandled exception\");\n            await HandleExceptionAsync(context, ex);\n        }\n    }\n\n    private static async Task HandleExceptionAsync(HttpContext context, Exception ex)\n    {\n        var (status, error) = ex switch\n        {\n            ValidationException v => (StatusCodes.Status400BadRequest, new { Errors = v.Errors.Select(e => e.ErrorMessage) }),\n            NotFoundException => (StatusCodes.Status404NotFound, new { Message = ex.Message }),\n            DomainException d => (StatusCodes.Status400BadRequest, new { Code = d.Code, Message = ex.Message }),\n            _ => (StatusCodes.Status500InternalServerError, new { Message = \"Internal server error\" })\n        };\n\n        context.Response.StatusCode = status;\n        context.Response.ContentType = \"application/json\";\n        await context.Response.WriteAsJsonAsync(new { Error = error });\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Program.cs (Composition Root)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.Api/Program.cs\nvar builder = WebApplication.CreateBuilder(args);\n\n// Configuration\nbuilder.Configuration.AddUserSecrets<Program>(optional: true);\n\n// Services\nbuilder.Services.AddDomain();           // Domain services (если есть)\nbuilder.Services.AddApplication();      // MediatR, Validators, Behaviors\nbuilder.Services.AddInfrastructure(builder.Configuration); // EF Core, Repositories, External services\n\nbuilder.Services.AddEndpointsApiExplorer();\nbuilder.Services.AddSwaggerGen(c =>\n{\n    c.SwaggerDoc(\"v1\", new() { Title = \"MyApp API\", Version = \"v1\" });\n    c.AddSecurityDefinition(\"Bearer\", new() { Type = SecuritySchemeType.Http, Scheme = \"bearer\" });\n});\n\nbuilder.Host.UseSerilog((ctx, cfg) => cfg.ReadFrom.Configuration(ctx.Configuration));\n\nvar app = builder.Build();\n\n// Pipeline\nif (app.Environment.IsDevelopment())\n{\n    app.UseSwagger();\n    app.UseSwaggerUI();\n}\n\napp.UseMiddleware<ExceptionHandlingMiddleware>();\napp.UseSerilogRequestLogging();\napp.UseHttpsRedirection();\napp.UseAuthentication();\napp.UseAuthorization();\n\napp.MapOrdersEndpoints();\napp.MapProductsEndpoints();\napp.MapHealthChecks(\"/health\");\n\napp.Run();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Testing"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unit Tests (Domain/Application)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.UnitTests/Orders/CreateOrderTests.cs\npublic class CreateOrderTests\n{\n    private readonly Mock<IOrderRepository> _orders = new();\n    private readonly Mock<IProductRepository> _products = new();\n    private readonly Mock<IUnitOfWork> _uow = new();\n    private readonly CreateOrderHandler _handler;\n\n    public CreateOrderTests()\n    {\n        _handler = new CreateOrderHandler(_orders.Object, _products.Object, _uow.Object, Mock.Of<ILogger<CreateOrderHandler>>());\n    }\n\n    [Fact]\n    public async Task Handle_ValidCommand_CreatesOrder()\n    {\n        // Arrange\n        var productId = ProductId.New();\n        _products.Setup(p => p.GetByIdAsync(productId, It.IsAny<CancellationToken>()))\n            .ReturnsAsync(new Product(productId, \"Widget\", 10.00m, 100));\n\n        var command = new CreateOrderCommand(CustomerId.New(), new[] { new OrderItemDto(productId, 2) });\n\n        // Act\n        var result = await _handler.Handle(command, CancellationToken.None);\n\n        // Assert\n        result.IsSuccess.Should().BeTrue();\n        result.Value.Items.Should().HaveCount(1);\n        _orders.Verify(o => o.AddAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()), Times.Once);\n        _uow.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Integration Tests (Testcontainers)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.IntegrationTests/OrdersEndpointsTests.cs\npublic class OrdersEndpointsTests : IAsyncLifetime\n{\n    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder().Build();\n    private WebApplicationFactory<Program> _factory;\n    private HttpClient _client;\n\n    public async Task InitializeAsync()\n    {\n        await _db.StartAsync();\n        _factory = new WebApplicationFactory<Program>()\n            .WithWebHostBuilder(b => b.ConfigureServices(s =>\n            {\n                s.RemoveAll<DbContextOptions<AppDbContext>>();\n                s.AddDbContext<AppDbContext>(o => o.UseNpgsql(_db.GetConnectionString()));\n            }));\n        _client = _factory.CreateClient();\n        // Apply migrations\n        using var scope = _factory.Services.CreateScope();\n        await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();\n    }\n\n    [Fact]\n    public async Task CreateOrder_ReturnsCreated()\n    {\n        var cmd = new { CustomerId = Guid.NewGuid(), Items = new[] { new { ProductId = Guid.NewGuid(), Quantity = 1 } } };\n        var response = await _client.PostAsJsonAsync(\"/api/orders\", cmd);\n        response.StatusCode.Should().Be(HttpStatusCode.Created);\n    }\n\n    public Task DisposeAsync() => _factory.DisposeAsync().AsTask();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Architecture Tests (NetArchTest)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyApp.ArchitectureTests/LayeringTests.cs\npublic class LayeringTests\n{\n    [Fact]\n    public void Domain_ShouldNotReference_ExternalProjects()\n    {\n        var result = Types.InAssembly(typeof(BaseEntity).Assembly)\n            .ShouldNot().HaveDependencyOn(\"MyApp.Application\")\n            .And().ShouldNot().HaveDependencyOn(\"MyApp.Infrastructure\")\n            .And().ShouldNot().HaveDependencyOn(\"MyApp.Api\")\n            .GetResult();\n\n        result.IsSuccessful.Should().BeTrue();\n    }\n\n    [Fact]\n    public void Application_ShouldNotReference_InfrastructureOrApi()\n    {\n        var result = Types.InAssembly(typeof(CreateOrderHandler).Assembly)\n            .ShouldNot().HaveDependencyOn(\"MyApp.Infrastructure\")\n            .And().ShouldNot().HaveDependencyOn(\"MyApp.Api\")\n            .GetResult();\n\n        result.IsSuccessful.Should().BeTrue();\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Docker & Deployment"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dockerfile"
+    },
+    {
+      "type": "code",
+      "language": "dockerfile",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "docker-compose.yml"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "version: '3.8'\nservices:\n  api:\n    build: .\n    ports:\n      - \"8080:8080\"\n    environment:\n      - ASPNETCORE_ENVIRONMENT=Production\n      - ConnectionStrings__Default=Host=db;Database=myapp;Username=postgres;Password=postgres\n    depends_on:\n      db:\n        condition: service_healthy\n    healthcheck:\n      test: [\"CMD\", \"curl\", \"-f\", \"http://localhost:8080/health\"]\n      interval: 10s\n      timeout: 5s\n      retries: 5\n\n  db:\n    image: postgres:16\n    environment:\n      - POSTGRES_DB=myapp\n      - POSTGRES_USER=postgres\n      - POSTGRES_PASSWORD=postgres\n    volumes:\n      - postgres_data:/var/lib/postgresql/data\n    ports:\n      - \"5432:5432\"\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]\n      interval: 5s\n      timeout: 5s\n      retries: 5\n\nvolumes:\n  postgres_data:"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Чек-лист готовности к продакшену"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Проверки"
+      ],
+      "rows": [
+        [
+          "**Security**",
+          "HTTPS, CORS, Rate limiting, Auth/Z, Input validation, Secrets в Key Vault"
+        ],
+        [
+          "**Reliability**",
+          "Health checks, Graceful shutdown, Retry policies, Circuit breaker, Timeouts"
+        ],
+        [
+          "**Observability**",
+          "Structured logs, Correlation IDs, Metrics (latency, errors, throughput), Distributed tracing"
+        ],
+        [
+          "**Performance**",
+          "Connection pooling, Caching, Pagination, Async all the way, DB indexes"
+        ],
+        [
+          "**Data**",
+          "Migrations applied, Backup strategy, PII encryption, GDPR compliance"
+        ],
+        [
+          "**Testing**",
+          "Unit > 80%, Integration для critical paths, Contract tests, Load tests"
+        ],
+        [
+          "**Deployment**",
+          "Zero-downtime deploy, Rollback plan, Feature flags, DB migration strategy"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 22
+}

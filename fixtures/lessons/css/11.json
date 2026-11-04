@@ -1,0 +1,479 @@
+{
+  "title": "Урок 11: Архитектура каскада CSS — Specificity, Cascade Layers, :is/:where/:not/:has, Custom Properties",
+  "slug": "arhitektura-kaskada-css-specificity-cascade-layers-iswherenothas-custom-properties",
+  "short_description": "Specificity, Cascade Layers, :is/:where/:not/:has, Custom Properties",
+  "goals": [
+    "Глубоко понять механизм каскада и специфичности селекторов",
+    "Освоить Cascade Layers (@layer) для управления приоритетами",
+    "Изучить современные псевдоклассы :is(), :where(), :not(), :has()",
+    "Понять мощь CSS Custom Properties (переменных) и их наследование"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубоко понять механизм каскада и специфичности селекторов",
+        "Освоить Cascade Layers (@layer) для управления приоритетами",
+        "Изучить современные псевдоклассы :is(), :where(), :not(), :has()",
+        "Понять мощь CSS Custom Properties (переменных) и их наследование"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Специфичность (Specificity) — математика каскада"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как считается специфичность"
+    },
+    {
+      "type": "text",
+      "content": "Специфичность — это 4-значное число (a, b, c, d):"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**a** — инлайн стили (style=\"\")",
+        "**b** — ID селекторы (#id)",
+        "**c** — классы, атрибуты, псевдоклассы (.class, [attr], :hover)",
+        "**d** — элементы и псевдоэлементы (div, ::before)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Специфичность: 0,0,0,1 */\ndiv { color: red; }\n\n/* Специфичность: 0,0,1,0 */\n.my-class { color: blue; }\n\n/* Специфичность: 0,1,0,0 */\n#my-id { color: green; }\n\n/* Специфичность: 1,0,0,0 */\n<div style=\"color: purple;\"> <!-- инлайн стиль */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Важные правила"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Чем больше специфичность, тем выше приоритет**",
+        "**При равной специфичности побеждает последний в коде**",
+        "**!important ломает каскад** — используй только в крайних случаях"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Плохо:arms race специфичности */\nbody main article section div p span { color: red; }\n#content .article .text .highlight { color: blue; }\n\n/* Хорошо: низкая специфичность, понятная архитектура */\n.text { color: red; }\n.text--highlight { color: blue; }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Cascade Layers (@layer) — контроль приоритетов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Определение слоёв (порядок важен!) */\n@layer reset, base, components, utilities;\n\n/* Или с явным упорядочиванием */\n@layer reset {\n  * { margin: 0; padding: 0; box-sizing: border-box; }\n}\n\n@layer base {\n  body { font-family: system-ui; line-height: 1.5; }\n}\n\n@layer components {\n  .button { padding: 0.5rem 1rem; border-radius: 4px; }\n}\n\n@layer utilities {\n  .sr-only { position: absolute; width: 1px; height: 1px; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Приоритет слоёв"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer framework, theme, app;\n\n/* Внутри слоя — обычная специфичность */\n@layer app {\n  .header { background: blue; }  /* Побеждает theme.header */\n}\n\n@layer theme {\n  .header { background: red; }\n}\n\n/* Неименованные стили (без @layer) имеют наивысший приоритет */\n.header { background: green; }  /* Побеждает всё выше */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Импорт с слоями"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@import url('normalize.css') layer(reset);\n@import url('theme.css') layer(theme);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Вложенные слои"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components {\n  @layer card {\n    .card { padding: 1rem; }\n    .card__title { font-size: 1.25rem; }\n  }\n\n  @layer button {\n    .btn { padding: 0.5rem 1rem; }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Анонимные слои"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer {\n  /* Этот слой не имеет имени, но ниже именованных */\n  .fallback { color: gray; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Современные псевдоклассы-селекторы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ":is() — «любой из» (берёт максимальную специфичность)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Вместо: */\nheader h1, main h1, footer h1,\nheader h2, main h2, footer h2 {\n  color: var(--heading-color);\n}\n\n/* Пишем: */\n:is(header, main, footer) :is(h1, h2, h3) {\n  color: var(--heading-color);\n}\n\n/* Специфичность :is() = максимальная специфичность из аргументов */\n:is(#id, .class, div) { }  /* Специфичность = 1,0,0 (как #id) */\n\n/* :is() не прощает невалидные селекторы */\n:is(:valid, :invalid) { }  /* Работает */\n:is(.class, :fake-pseudo) { }  /* Игнорируется целиком! */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ":where() — «любой из» (специфичность = 0)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Специфичность всегда 0,0,0,0 */\n:where(header, main, footer) h1 {\n  color: var(--heading-color);\n}\n\n/* Идеально для сбросов и библиотек */\n:where(table) {\n  border-collapse: collapse;\n}\n\n/* Позволяет легко переопределить */\n:where(.reset) { margin: 0; }\n.my-component { margin: 1rem; }  /* Легко побеждает */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ":not() — отрицание (современный синтаксис с списком)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Старый синтаксис (1 аргумент) */\n:not(.disabled) { opacity: 1; }\n\n/* Новый синтаксис (список селекторов) */\n:not(.disabled, .loading, [aria-hidden]) {\n  opacity: 1;\n}\n\n/* Специфичность = максимальная из аргументов */\n:not(#id, .class) { }  /* Специфичность 1,0,0 */\n\n/* Комбинации */\nbutton:not(:disabled):not([aria-busy=\"true\"]) { }\n.card:not(:has(img)) { }  /* Карточки без изображений */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ":has() — родительский селектор (революция 2023!)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Родитель, имеющий потомка */\n.card:has(img) {\n  display: grid;\n  grid-template-columns: auto 1fr;\n}\n\n/* Родитель с конкретным потомком */\n.form:has(input:invalid) .submit-btn {\n  opacity: 0.5;\n  pointer-events: none;\n}\n\n/* Соседние элементы */\nh2:has(+ p) { margin-bottom: 0; }\n\n/* Комбинации с :not() */\n.section:not(:has(h2)) { padding-top: 0; }\n\n/* Количественные запросы (quantity queries) */\nul:has(> li:nth-child(5)) {\n  /* Список с 5+ элементами */\n  columns: 2;\n}\n\n/* Формы: показывать ошибку только если поле заполнено */\n.field:has(input:not(:placeholder-shown):invalid) .error {\n  display: block;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Поддержка :has() (2024)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "✅ Chrome 105+, Firefox 121+, Safari 15.4+, Edge 105+",
+        "⚠️ Не работает в старых браузерах — используй progressive enhancement"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. CSS Custom Properties (переменные) — продвинутый уровень"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис и наследование"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ":root {\n  --color-primary: #2563eb;\n  --color-secondary: #64748b;\n  --spacing-unit: 8px;\n  --font-size-base: 1rem;\n  --radius: 4px;\n}\n\n.component {\n  /* Использование с fallback */\n  background: var(--color-primary, blue);\n  padding: calc(var(--spacing-unit) * 2);\n  border-radius: var(--radius);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Наследование и переопределение"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ":root {\n  --theme-color: blue;\n}\n\n.card {\n  --theme-color: red;  /* Локальное переопределение */\n  background: var(--theme-color);  /* red */\n}\n\n.card__title {\n  color: var(--theme-color);  /* Наследует red от .card */\n}\n\n.card--dark {\n  --theme-color: #1e293b;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Вычисленные значения (calc с переменными)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ":root {\n  --base-size: 16px;\n  --scale-ratio: 1.25;\n}\n\n.step-0 { font-size: var(--base-size); }\n.step-1 { font-size: calc(var(--base-size) * var(--scale-ratio)); }\n.step-2 { font-size: calc(var(--base-size) * var(--scale-ratio) * var(--scale-ratio)); }\n\n/* Fluid typography с clamp */\n:root {\n  --font-size-min: 1rem;\n  --font-size-max: 2rem;\n  --viewport-width: 100vw;\n}\n\nh1 {\n  font-size: clamp(\n    var(--font-size-min),\n    2vw + 0.5rem,\n    var(--font-size-max)\n  );\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CSS переменные в медиа-запросах (не работает напрямую!)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* ❌ НЕ РАБОТАЕТ */\n@media (min-width: var(--breakpoint-md)) { }\n\n/* ✅ РАБОТАЕТ — через контейнерные запросы или JS */\n@media (min-width: 768px) { }\n\n/* Но можно использовать в container queries */\n@container (min-width: var(--container-breakpoint)) { }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "JavaScript API"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Чтение\nconst styles = getComputedStyle(document.documentElement);\nconst primary = styles.getPropertyValue('--color-primary').trim();\n\n// Запись\ndocument.documentElement.style.setProperty('--color-primary', '#dc2626');\n\n// Удаление\ndocument.documentElement.style.removeProperty('--color-primary');\n\n// Проверка поддержки\nif (CSS.supports('color', 'var(--fake)')) { }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Паттерны проектирования с переменными"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Design Tokens система"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ":root {\n  /* Primitive tokens (примитивы) */\n  --color-blue-50: #eff6ff;\n  --color-blue-100: #dbeafe;\n  --color-blue-500: #3b82f6;\n  --color-blue-900: #1e3a5f;\n\n  /* Semantic tokens (семантические) */\n  --color-primary: var(--color-blue-500);\n  --color-primary-hover: var(--color-blue-600);\n  --color-background: var(--color-white);\n  --color-text: var(--color-slate-900);\n\n  /* Component tokens */\n  --button-padding-x: 1rem;\n  --button-padding-y: 0.5rem;\n  --button-radius: var(--radius-md);\n}\n\n@media (prefers-color-scheme: dark) {\n  :root {\n    --color-background: var(--color-slate-900);\n    --color-text: var(--color-slate-50);\n    --color-primary: var(--color-blue-400);\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Темизация через data-атрибуты"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ":root {\n  --bg: white;\n  --text: black;\n}\n\n[data-theme=\"dark\"] {\n  --bg: #1a1a2e;\n  --text: #eee;\n}\n\n[data-theme=\"high-contrast\"] {\n  --bg: black;\n  --text: yellow;\n}\n\n/* HTML: <html data-theme=\"dark\"> */"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Адаптивные переменные"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ":root {\n  --container-max: 1200px;\n  --gap: 1rem;\n}\n\n@media (max-width: 640px) {\n  :root {\n    --container-max: 100%;\n    --gap: 0.5rem;\n  }\n}\n\n.container {\n  max-width: var(--container-max);\n  gap: var(--gap);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Практическое задание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 1: Система дизайн-токенов"
+    },
+    {
+      "type": "text",
+      "content": "Создай полную систему токенов для компонента «Карточка товара»:"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Требования:\n1. Primitive tokens для цветов (5 оттенков каждого)\n2. Semantic tokens: primary, secondary, danger, success\n3. Component tokens для карточки: padding, gap, radius, shadow\n4. Поддержка dark mode через @media\n5. Поддержка high-contrast через [data-theme]\n*/"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 2: Cascade Layers архитектура"
+    },
+    {
+      "type": "text",
+      "content": "Рефакторь существующий CSS, используя слои:"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Слои в порядке приоритета:\n1. reset — normalize.css\n2. tokens — design tokens\n3. base — element styles\n4. layout — grid/flex containers\n5. components — UI components\n6. utilities — helper classes\n7. overrides — page-specific fixes\n*/"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 3: :has() селекторы для форм"
+    },
+    {
+      "type": "text",
+      "content": "Реализуй валидацию формы только на CSS:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Показывать ошибку когда поле заполнено И невалидно",
+        "Блокировать кнопку отправки если есть невалидные поля",
+        "Подсвечивать label когда input в фокусе или заполнен",
+        "Скрывать placeholder при фокусе"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 4: Специфичность аудит"
+    },
+    {
+      "type": "text",
+      "content": "Дан CSS:"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "#app .sidebar .nav .item.active a span { color: red; }\n.nav-link { color: blue; }"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Посчитай специфичность каждого",
+        "Перепиши с низкой специфичностью",
+        "Используй :where() для сбросов"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Таблица частых ошибок"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Проблема",
+        "Решение"
+      ],
+      "rows": [
+        [
+          "`#id .class element`",
+          "Слишком высокая специфичность",
+          "Используй классы: `.component__element`"
+        ],
+        [
+          "`!important` везде",
+          "Невозможно переопределить",
+          "Cascade Layers, правильная архитектура"
+        ],
+        [
+          "`:is(.class, #id)`",
+          "Специфичность = ID",
+          "Используй `:where()` для утилит"
+        ],
+        [
+          "Переменные в @media",
+          "Не работают",
+          "Container queries или JS"
+        ],
+        [
+          "`:has()` без fallback",
+          "Нет поддержки в старых браузерах",
+          "`@supports selector(:has(*))`"
+        ],
+        [
+          "Наследование переменных",
+          "Неожиданные значения",
+          "Явно задавай на :root и компонентах"
+        ],
+        [
+          "Смешивание слоёв",
+          "Путаница в приоритетах",
+          "Чёткий порядок @layer в начале файла"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Спецификации"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[CSS Cascading and Inheritance Level 4](https://www.w3.org/TR/css-cascade-4/)",
+        "[CSS Cascade Layers](https://www.w3.org/TR/css-cascade-5/#layering)",
+        "[Selectors Level 4](https://www.w3.org/TR/selectors-4/)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Статьи и гайды"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[MDN: Cascade and inheritance](https://developer.mozilla.org/en-US/docs/Web/CSS/Cascade)",
+        "[CSS-Tricks: Cascade Layers](https://css-tricks.com/css-cascade-layers/)",
+        "[Una Kravets: The Future of CSS](https://una.im/css-future/)",
+        "[Stephanie Eckles: Modern CSS](https://moderncss.dev/)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инструменты"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[Specificity Calculator](https://specificity.keegan.st/)",
+        "[CSS Specificity Visualizer](https://codepen.io/tigt/pen/mdXeYZ)",
+        "[Cascade Layers Demo](https://codepen.io/miraneb/pen/xxGvZvq)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Can I Use"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[Cascade Layers](https://caniuse.com/css-cascade-layers)",
+        "[:has()](https://caniuse.com/css-has)",
+        "[:is() / :where()](https://caniuse.com/css-matches-pseudo)",
+        "[Custom Properties](https://caniuse.com/css-variables)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 11
+}

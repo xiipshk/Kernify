@@ -1,0 +1,384 @@
+{
+  "title": "Урок 32: Large-scale architecture — library design, module boundaries, stable APIs, compiler portability",
+  "slug": "large-scale-architecture-library-design-module-boundaries-stable-apis-compiler-portability",
+  "short_description": "library design, module boundaries, stable APIs, compiler portability",
+  "goals": [
+    "Понять принципы проектирования больших C++ систем",
+    "Освоить модульные границы и управление зависимостями",
+    "Изучить stable API/ABI design и versioning",
+    "Научиться писать portable код под разные компиляторы/платформы",
+    "Разобрать паттерны архитектуры: plugins, components, layers"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять принципы проектирования больших C++ систем",
+        "Освоить модульные границы и управление зависимостями",
+        "Изучить stable API/ABI design и versioning",
+        "Научиться писать portable код под разные компиляторы/платформы",
+        "Разобрать паттерны архитектуры: plugins, components, layers"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Library Design Principles"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Physical Design (Large Scale C++ — Lakos)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Level 0:  No dependencies (leaf components)\nLevel 1:  Depends only on level 0\nLevel 2:  Depends on level 0, 1\n...\nLevel N:  Depends on lower levels only\n\nRule: No cycles! Acyclic component dependencies."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Component Organization"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "myproject/\n├── core/           # Level 0: базовые утилиты, нет внешних депсов\n│   ├── memory/\n│   ├── string/\n│   └── algorithm/\n├── infra/          # Level 1: logging, config, fs, net\n│   ├── logging/\n│   ├── config/\n│   └── filesystem/\n├── domain/         # Level 2: бизнес-логика\n│   ├── user/\n│   ├── order/\n│   └── payment/\n├── service/        # Level 3: приложения/сервисы\n│   ├── api-gateway/\n│   └── worker/\n└── app/            # Level 4: main executables"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CMake для Component-Based Architecture"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Module Boundaries & Encapsulation"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pimpl Idiom (Compilation Firewall)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// widget.h — публичный заголовок\nclass Widget {\n    struct Impl;                    // forward declaration\n    std::unique_ptr<Impl> pimpl_;   // opaque pointer\npublic:\n    Widget();\n    ~Widget();                      // нужен в .cpp для destroy\n    Widget(Widget&&) noexcept;\n    Widget& operator=(Widget&&) noexcept;\n    void do_work(int param);\n    int get_value() const;\n};\n\n// widget.cpp\n#include \"widget.h\"\n#include \"internal/detail.h\"        // приватные детали\n\nstruct Widget::Impl {\n    Detail detail_;\n    int cache_;\n};\n\nWidget::Widget() : pimpl_(std::make_unique<Impl>()) {}\nWidget::~Widget() = default;\nWidget::Widget(Widget&&) noexcept = default;\nWidget& Widget::operator=(Widget&&) noexcept = default;\n\nvoid Widget::do_work(int param) {\n    pimpl_->detail_.process(param);\n    pimpl_->cache_ = param * 2;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Interface Segregation (Abstract Base Classes)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ILogger.h — чистый интерфейс\nclass ILogger {\npublic:\n    virtual ~ILogger() = default;\n    virtual void log(Level level, std::string_view msg) = 0;\n    virtual void flush() = 0;\n};\n\n// Реализация скрыта\nclass SpdlogLogger : public ILogger {\n    std::shared_ptr<spdlog::logger> logger_;\npublic:\n    explicit SpdlogLogger(std::string name);\n    void log(Level level, std::string_view msg) override;\n    void flush() override;\n};\n\n// Factory\nstd::unique_ptr<ILogger> create_logger(std::string name);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Plugin Architecture"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// plugin_api.h — stable C API для плагинов\n#ifdef PLUGIN_EXPORTS\n#define PLUGIN_API __declspec(dllexport)\n#else\n#define PLUGIN_API __declspec(dllimport)\n#endif\n\nextern \"C\" {\n    PLUGIN_API int plugin_get_version();\n    PLUGIN_API const char* plugin_get_name();\n    PLUGIN_API bool plugin_init(PluginContext* ctx);\n    PLUGIN_API void plugin_shutdown();\n    PLUGIN_API void plugin_process(const Input* in, Output* out);\n}\n\n// PluginContext — opaque struct для passing services\nstruct PluginContext {\n    void (*log)(int level, const char* msg);\n    void* (*alloc)(size_t size);\n    void (*free)(void* ptr);\n};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Stable API / ABI Design"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Versioning Strategy"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Semantic Versioning: MAJOR.MINOR.PATCH\n// MAJOR — breaking ABI/API\n// MINOR — backward-compatible additions\n// PATCH — bug fixes, no API changes\n\n// В заголовках\n#define MYLIB_VERSION_MAJOR 2\n#define MYLIB_VERSION_MINOR 3\n#define MYLIB_VERSION_PATCH 1\n\n#define MYLIB_VERSION \\\n    (MYLIB_VERSION_MAJOR * 10000 + MYLIB_VERSION_MINOR * 100 + MYLIB_VERSION_PATCH)\n\n// Runtime version check\ninline int mylib_version() { return MYLIB_VERSION; }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "API Evolution — Backward Compatibility"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// v1.0\nstruct Config {\n    int port;\n    int timeout_ms;\n};\n\n// v1.1 — добавили поле (DEFAULT для binary compat)\nstruct Config {\n    int port;\n    int timeout_ms;\n    bool use_ssl = false;        // OK: добавление в конце с default\n    // НЕ МЕНЯТЬ порядок полей!\n};\n\n// v2.0 — breaking change\nstruct ConfigV2 {\n    std::string address;         // новое поле\n    uint16_t port;               // тип изменился\n    std::chrono::milliseconds timeout; // тип изменился\n    // ...\n};\n\n// Поддержка обеих версий\nbool parse_config_v1(const char* json, Config* out);\nbool parse_config_v2(const char* json, ConfigV2* out);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Symbol Versioning (Linux)"
+    },
+    {
+      "type": "code",
+      "language": "ld",
+      "content": "// mylib.map\nMYLIB_1.0 {\n    global:\n        mylib_init;\n        mylib_process;\n        mylib_config_v1_parse;\n    local: *;\n};\n\nMYLIB_2.0 {\n    global:\n        mylib_config_v2_parse;\n    local: *;\n} MYLIB_1.0;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Deprecation Policy"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// C++14 [[deprecated]]\n[[deprecated(\"Use process_v2() instead. Will be removed in v3.0.\")]]\nint process_v1(const Input* in, Output* out);\n\n// C++23 [[deprecated(\"reason\")]] на namespace/enum\nnamespace [[deprecated(\"Use v2 namespace\")]] v1 { ... }\n\n// Компилятор предупредит при использовании"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Compiler Portability"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Feature Test Macros"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// config.h — генерируется CMake\n#pragma once\n\n// Compiler detection\n#if defined(_MSC_VER)\n    #define MYLIB_COMPILER_MSVC 1\n    #define MYLIB_COMPILER_VERSION _MSC_VER\n#elif defined(__clang__)\n    #define MYLIB_COMPILER_CLANG 1\n    #define MYLIB_COMPILER_VERSION (__clang_major__ * 10000 + __clang_minor__ * 100 + __clang_patchlevel__)\n#elif defined(__GNUC__)\n    #define MYLIB_COMPILER_GCC 1\n    #define MYLIB_COMPILER_VERSION (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)\n#endif\n\n// Feature detection\n#if defined(__cpp_lib_format) && __cpp_lib_format >= 201907L\n    #define MYLIB_HAS_STD_FORMAT 1\n#endif\n\n#if defined(__cpp_concepts) && __cpp_concepts >= 201907L\n    #define MYLIB_HAS_CONCEPTS 1\n#endif\n\n// Workarounds\n#if MYLIB_COMPILER_MSVC\n    #pragma warning(disable: 4251)  // dll-interface\n    #define MYLIB_FORCE_INLINE __forceinline\n#elif MYLIB_COMPILER_GCC || MYLIB_COMPILER_CLANG\n    #define MYLIB_FORCE_INLINE __attribute__((always_inline)) inline\n#endif"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Portable Attributes"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Portable macros\n#if defined(__GNUC__) || defined(__clang__)\n    #define MYLIB_UNUSED __attribute__((unused))\n    #define MYLIB_NORETURN __attribute__((noreturn))\n    #define MYLIB_PURE __attribute__((pure))\n    #define MYLIB_CONST __attribute__((const))\n    #define MYLIB_FORMAT(archetype, string_index, first_to_check) \\\n        __attribute__((format(archetype, string_index, first_to_check)))\n#elif defined(_MSC_VER)\n    #define MYLIB_UNUSED\n    #define MYLIB_NORETURN __declspec(noreturn)\n    #define MYLIB_PURE\n    #define MYLIB_CONST\n    #define MYLIB_FORMAT(archetype, string_index, first_to_check)\n#else\n    #define MYLIB_UNUSED\n    #define MYLIB_NORETURN\n    #define MYLIB_PURE\n    #define MYLIB_CONST\n    #define MYLIB_FORMAT(archetype, string_index, first_to_check)\n#endif\n\n// Usage\nMYLIB_NORETURN void abort_program();\nMYLIB_PURE int pure_func(int x);\nMYLIB_FORMAT(printf, 1, 2) void log(const char* fmt, ...);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Standard Library Differences"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// std::filesystem — GCC < 8: experimental\n#if __has_include(<filesystem>)\n    #include <filesystem>\n    namespace fs = std::filesystem;\n#elif __has_include(<experimental/filesystem>)\n    #include <experimental/filesystem>\n    namespace fs = std::experimental::filesystem;\n#endif\n\n// std::optional — C++17, но может быть в experimental\n#if __cplusplus >= 201703L\n    #include <optional>\n#else\n    #include <experimental/optional>\n    namespace std { using experimental::optional; }\n#endif"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cross-Platform Abstractions"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// platform.h\n#if defined(_WIN32)\n    #define MYLIB_EXPORT __declspec(dllexport)\n    #define MYLIB_IMPORT __declspec(dllimport)\n    #define MYLIB_PATH_SEP '\\\\'\n    #define MYLIB_DYNLIB_EXT \".dll\"\n#else\n    #define MYLIB_EXPORT __attribute__((visibility(\"default\")))\n    #define MYLIB_IMPORT __attribute__((visibility(\"default\")))\n    #define MYLIB_PATH_SEP '/'\n    #define MYLIB_DYNLIB_EXT \".so\"\n#endif\n\n// Thread-local storage\n#if defined(_WIN32)\n    #define MYLIB_THREAD_LOCAL __declspec(thread)\n#else\n    #define MYLIB_THREAD_LOCAL __thread\n#endif\n\n// C++11 thread_local предпочтительнее\nthread_local int tls_var;  // C++11"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Build System Integration"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Config Package (CMake)"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "pkg-config"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Architectural Patterns"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Layered Architecture"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "┌─────────────────────────────────────┐\n│           Presentation              │  (CLI, GUI, REST API)\n├─────────────────────────────────────┤\n│            Application              │  (Use Cases, Orchestration)\n├─────────────────────────────────────┤\n│              Domain                 │  (Entities, Business Rules)\n├─────────────────────────────────────┤\n│           Infrastructure            │  (DB, Network, FS, Logging)\n└─────────────────────────────────────┘\nDependency Rule: Inner layers NOT depend on outer."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dependency Injection"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Интерфейсы\nclass IDatabase { virtual ~IDatabase() = default; virtual User get_user(int id) = 0; };\nclass IEmailService { virtual ~IEmailService() = default; virtual void send(const Email&) = 0; };\n\n// Implementation\nclass PostgresDatabase : public IDatabase { ... };\nclass SmtpEmailService : public IEmailService { ... };\n\n// Composition Root (main.cpp)\nint main() {\n    auto db = std::make_unique<PostgresDatabase>(conn_str);\n    auto email = std::make_unique<SmtpEmailService>(smtp_config);\n\n    UserService user_service(std::move(db), std::move(email));\n    user_service.run();\n}\n\n// UserService получает абстракции, не конкретные типы\nclass UserService {\n    std::unique_ptr<IDatabase> db_;\n    std::unique_ptr<IEmailService> email_;\npublic:\n    UserService(std::unique_ptr<IDatabase> db, std::unique_ptr<IEmailService> email)\n        : db_(std::move(db)), email_(std::move(email)) {}\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Event-Driven / Message Bus"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Event types\nstruct UserCreated { int user_id; std::string name; };\nstruct OrderPlaced { int order_id; int user_id; double amount; };\n\n// Message Bus\nclass EventBus {\n    std::unordered_map<std::type_index, std::vector<std::function<void(const void*)>>> handlers_;\npublic:\n    template <typename Event>\n    void subscribe(std::function<void(const Event&)> handler) {\n        handlers_[typeid(Event)].push_back(\n            [h=std::move(handler)](const void* e){ h(*static_cast<const Event*>(e)); });\n    }\n\n    template <typename Event>\n    void publish(const Event& event) {\n        auto it = handlers_.find(typeid(Event));\n        if (it != handlers_.end())\n            for (auto& h : it->second) h(&event);\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Component Architecture"
+    },
+    {
+      "type": "text",
+      "content": "Разбейте монолитный проект на компоненты (core, infra, domain, service). Настройте CMake с acyclic dependencies. Визуализируйте граф зависимостей (<code>cmake --graphviz</code>)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Stable Plugin API"
+    },
+    {
+      "type": "text",
+      "content": "Спроектируйте C-совместимый plugin API для вашей системы:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Версионирование плагинов",
+        "Opaque context для сервисов",
+        "Жизненный цикл: init/shutdown/process"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Напишите хост-приложение и пример плагина."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Pimpl Refactoring"
+    },
+    {
+      "type": "text",
+      "content": "Возьмите класс с публичными private членами (в header). Рефакторьте на Pimpl. Измерьте время компиляции до/после изменения private члена."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Cross-Compiler CI"
+    },
+    {
+      "type": "text",
+      "content": "Настройте CI (GitHub Actions) для сборки под:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "GCC 11, 12, 13",
+        "Clang 15, 16, 17",
+        "MSVC latest",
+        "Linux, Windows, macOS"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Исправьте все предупреждения и ошибки портируемости."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: API Evolution"
+    },
+    {
+      "type": "text",
+      "content": "Создайте библиотеку v1.0 с API. Выпустите v1.1 (добавление), v2.0 (breaking). Настройте symbol versioning. Напишите тесты, проверяющие binary compatibility v1.0 -> v1.1."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Dependency Injection Container"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте простой DI контейнер:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Регистрация: `container.bind<IDatabase, PostgresDatabase>()`",
+        "Разрешение: `auto db = container.resolve<IDatabase>()`",
+        "Поддержка scopes: singleton, transient, scoped"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Используйте в проекте вместо ручного wiring."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Large-Scale C++ Software Design** (John Lakos) — классика",
+        "**Large-Scale C++ Volume II & III** (Lakos et al.) — современные практики",
+        "**Clean Architecture** (Robert Martin) — слои и правила зависимостей",
+        "**C++ Core Guidelines: Interfaces** — https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Ri",
+        "**Semantic Versioning** — https://semver.org/",
+        "**Itanium C++ ABI** — https://itanium-cxx-abi.github.io/cxx-abi/",
+        "**CppCon: \"Physical Design\" (John Lakos)**",
+        "**CppCon: \"API Design for C++ Libraries\" (Titus Winters)**"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [
+    "**Large-Scale C++ Software Design** (John Lakos) — классика",
+    "**Large-Scale C++ Volume II & III** (Lakos et al.) — современные практики",
+    "**Clean Architecture** (Robert Martin) — слои и правила зависимостей",
+    "**C++ Core Guidelines: Interfaces** — https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Ri",
+    "**Semantic Versioning** — https://semver.org/",
+    "**Itanium C++ ABI** — https://itanium-cxx-abi.github.io/cxx-abi/",
+    "**CppCon: \"Physical Design\" (John Lakos)**",
+    "**CppCon: \"API Design for C++ Libraries\" (Titus Winters)**"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 32
+}

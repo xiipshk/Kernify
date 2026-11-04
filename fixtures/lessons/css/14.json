@@ -1,0 +1,528 @@
+{
+  "title": "Урок 14: Продвинутое позиционирование — Stacking Context, z-index архитектура, Anchor Positioning, Popover API",
+  "slug": "prodvinutoe-pozitsionirovanie-stacking-context-z-index-arhitektura-anchor-positioning-popover-api",
+  "short_description": "Stacking Context, z-index архитектура, Anchor Positioning, Popover API",
+  "goals": [
+    "Глубоко понять Stacking Context и порядок наложения слоёв",
+    "Освоить архитектуру z-index без \"z-index wars\"",
+    "Изучить Anchor Positioning (новый CSS) для тултипов, попапов, меню",
+    "Работать с Popover API и модальными окнами нативно",
+    "Понимать position: sticky нюансы и containment"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубоко понять Stacking Context и порядок наложения слоёв",
+        "Освоить архитектуру z-index без \"z-index wars\"",
+        "Изучить Anchor Positioning (новый CSS) для тултипов, попапов, меню",
+        "Работать с Popover API и модальными окнами нативно",
+        "Понимать position: sticky нюансы и containment"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Stacking Context — в глубину"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что создаёт Stacking Context"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Элемент создаёт НОВЫЙ stacking context, если: */\n.stacking-context {\n  /* 1. position + z-index (не auto) */\n  position: relative;\n  z-index: 1;\n\n  /* 2. opacity < 1 */\n  opacity: 0.99;\n\n  /* 3. transform / filter / perspective / clip-path */\n  transform: translateZ(0);\n  filter: blur(0);\n  perspective: 1000px;\n  clip-path: circle(50%);\n\n  /* 4. isolation: isolate */\n  isolation: isolate;\n\n  /* 5. will-change: transform/opacity/filter */\n  will-change: transform;\n\n  /* 6. contain: layout/paint/strict/content */\n  contain: layout paint;\n\n  /* 7. mix-blend-mode (не normal) */\n  mix-blend-mode: multiply;\n\n  /* 8. mask / mask-image / mask-border */\n  mask-image: url(mask.png);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Порядок наложения (Stacking Order) внутри контекста"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "ВНИЗ (дальше от зрителя)\n1. Фон и границы корневого элемента\n2. Дети с отрицательным z-index (по порядку в DOM)\n3. Блочные потомки в обычном потоке\n4. Float'ы и их потомки\n5. Inline/inline-block потомки в обычном потоке\n6. Дети с z-index: 0 / auto (создают свой контекст)\n7. Дети с положительным z-index (по порядку в DOM)\nВЕРХ (ближе к зрителю)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Главная ловушка: z-index работает ТОЛЬКО внутри своего контекста"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- ПРОБЛЕМА: .modal имеет z-index: 9999, но .header создаёт контекст с z-index: 10 -->\n<div class=\"header\" style=\"z-index: 10;\">\n  <nav>...</nav>\n</div>\n<div class=\"modal\" style=\"z-index: 9999;\">Модалка</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* .modal НЕ перекроет .header, если .header создаёт stacking context! */\n/* Решение: вынести модалку в DOM на уровень выше или использовать портал */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Isolation для принудительного контекста"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Создаёт stacking context БЕЗ визуальных изменений */\n.isolated {\n  isolation: isolate;\n  /* Эквивалентно: */\n  /* transform: translateZ(0); но без side-effects */\n}\n\n/* Практический кейс: изолированная карточка */\n.card {\n  isolation: isolate;  /* Тени/блендинг не \"утекают\" наружу */\n}\n.card::before {\n  content: \"\";\n  position: absolute;\n  inset: -10px;\n  background: conic-gradient(...);\n  z-index: -1;  /* Работает ТОЛЬКО благодаря isolation на родителе! */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Архитектура z-index — система, а не хаки"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Токены z-index (Design Tokens подход)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ":root {\n  /* Базовые слои */\n  --z-index-base: 0;\n  --z-index-dropdown: 100;\n  --z-index-sticky: 200;\n  --z-index-fixed: 300;\n  --z-index-modal-backdrop: 400;\n  --z-index-modal: 500;\n  --z-index-popover: 600;\n  --z-index-tooltip: 700;\n  --z-index-toast: 800;\n  --z-index-max: 9999;  /* Для критичных случаев */\n}\n\n/* Использование */\n.header { z-index: var(--z-index-sticky); }\n.dropdown { z-index: var(--z-index-dropdown); }\n.modal { z-index: var(--z-index-modal); }\n.tooltip { z-index: var(--z-index-tooltip); }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Управление через CSS Layers"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer base, layout, components, overlays, popovers;\n\n@layer overlays {\n  .modal-backdrop { z-index: var(--z-index-modal-backdrop); }\n  .modal { z-index: var(--z-index-modal); }\n}\n\n@layer popovers {\n  .popover { z-index: var(--z-index-popover); }\n  .tooltip { z-index: var(--z-index-tooltip); }\n  .toast { z-index: var(--z-index-toast); }\n}\n\n/* Внутри слоя — обычный z-index, но слои гарантируют порядок */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контекстные z-index (scoped)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Компонент сам управляет своими внутренними слоями */\n.dropdown {\n  --z-index-dropdown-trigger: 1;\n  --z-index-dropdown-menu: 2;\n  --z-index-dropdown-backdrop: 0;\n  isolation: isolate;  /* Свой контекст! */\n}\n\n.dropdown__trigger { z-index: var(--z-index-dropdown-trigger); }\n.dropdown__menu { z-index: var(--z-index-dropdown-menu); }\n.dropdown__backdrop { z-index: var(--z-index-dropdown-backdrop); }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Anchor Positioning — нативное позиционирование (CSS Anchor Positioning API)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис (Chrome 125+, за флагом)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Якорный элемент */\n.anchor {\n  anchor-name: --my-anchor;\n}\n\n/* Позиционируемый элемент */\n.positioned {\n  position: absolute;\n  position-anchor: --my-anchor;\n  position-try-options: flip-block, flip-inline;\n}\n\n/* Положение относительно якоря */\n.tooltip {\n  position: absolute;\n  position-anchor: --button;\n  top: anchor(bottom);        /* Под якорем */\n  left: anchor(center);       /* По центру якоя */\n  transform: translateX(-50%);\n  position-try-options: flip-block;  /* Перевернуть если не помещается */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Position Try Options — умное переключение"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".dropdown {\n  position: absolute;\n  position-anchor: --trigger;\n  top: anchor(bottom);\n  left: anchor(left);\n  position-try-options:\n    --bottom-start,  /* Вниз, слева */\n    --bottom-end,    /* Вниз, справа */\n    --top-start,     /* Вверх, слева */\n    --top-end;       /* Вверх, справа */\n}\n\n@position-try --bottom-start {\n  top: anchor(bottom);\n  left: anchor(left);\n}\n@position-try --bottom-end {\n  top: anchor(bottom);\n  right: anchor(right);\n}\n@position-try --top-start {\n  bottom: anchor(top);\n  left: anchor(left);\n}\n@position-try --top-end {\n  bottom: anchor(top);\n  right: anchor(right);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Anchor Functions — мощные вычисления"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  position: absolute;\n  position-anchor: --trigger;\n\n  /* Размеры якоря */\n  width: calc(anchor-size(width) * 2);\n  max-height: anchor-size(height);\n\n  /* Положение */\n  top: anchor(bottom);\n  left: anchor(center);\n  transform: translateX(-50%);\n\n  /* Margin от якоря */\n  margin-top: 8px;\n}\n\n/* Несколько якорей */\n.tooltip {\n  position-anchor: --primary;\n  /* Фоллбэк якоря */\n  position-try-fallback: --secondary;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Polyfill для Anchor Positioning"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// anchor-positioning-polyfill или ручная реализация\nfunction positionAnchor(anchorEl, positionedEl, options = {}) {\n  const anchorRect = anchorEl.getBoundingClientRect();\n  const positionedRect = positionedEl.getBoundingClientRect();\n  const viewport = {\n    width: window.innerWidth,\n    height: window.innerHeight\n  };\n\n  let { top, left } = options.defaultPosition(anchorRect, positionedRect);\n\n  // Flip logic\n  if (options.flipBlock && top + positionedRect.height > viewport.height) {\n    top = anchorRect.top - positionedRect.height - options.offset;\n  }\n  if (options.flipInline && left + positionedRect.width > viewport.width) {\n    left = anchorRect.right - positionedRect.width;\n  }\n\n  positionedEl.style.top = `${top}px`;\n  positionedEl.style.left = `${left}px`;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Popover API — нативные попапы без библиотек"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый Popover (Chrome 114+, Firefox 125+, Safari 17+)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Автоматическое закрытие по клику вне, ESC, потере фокуса -->\n<button popovertarget=\"my-popover\">Открыть</button>\n\n<div id=\"my-popover\" popover>\n  <h3>Заголовок попапа</h3>\n  <p>Контент попапа</p>\n  <button popovertarget=\"my-popover\" popovertargetaction=\"hide\">Закрыть</button>\n</div>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Popover Types"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Auto popover (default) — закрывается по клику вне, ESC -->\n<div popover=\"auto\" id=\"auto-popover\">...</div>\n\n<!-- Manual popover — НЕ закрывается автоматически, нужен JS -->\n<div popover=\"manual\" id=\"manual-popover\">...</div>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CSS стилизация Popover"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Базовые стили */\n[popover] {\n  position: fixed;\n  inset: 0;\n  margin: auto;\n  border: none;\n  background: var(--color-bg);\n  border-radius: var(--radius-lg);\n  box-shadow: var(--shadow-xl);\n  padding: 1.5rem;\n  max-width: 90vw;\n  max-height: 90vh;\n  overflow: auto;\n\n  /* Анимация появления */\n  transition:\n    opacity 0.2s ease,\n    transform 0.2s ease,\n    display 0.2s allow-discrete,\n    overlay 0.2s allow-discrete;\n}\n\n/* Состояния */\n[popover]:popover-open {\n  opacity: 1;\n  transform: scale(1);\n}\n\n[popover] {\n  opacity: 0;\n  transform: scale(0.95);\n}\n\n/* Backdrop */\n[popover]::backdrop {\n  background: rgba(0, 0, 0, 0.5);\n  backdrop-filter: blur(4px);\n  transition: opacity 0.2s ease;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "JavaScript API"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const popover = document.getElementById('my-popover');\n\n// Открытие\npopover.showPopover();           // auto\npopover.showPopover({ source: button });  // с привязкой к элементу\n\n// Закрытие\npopover.hidePopover();\n\n// Toggle\npopover.togglePopover(force);\n\n// События\npopover.addEventListener('beforetoggle', (e) => {\n  if (e.newState === 'open') {\n    // Подготовка контента\n    loadContent();\n  }\n});\n\npopover.addEventListener('toggle', (e) => {\n  console.log('Popover:', e.newState);  // 'open' или 'closed'\n});\n\n// Проверка поддержки\nif (!HTMLDivElement.prototype.showPopover) {\n  // Fallback: custom modal implementation\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Popover + Anchor Positioning = идеальные тултипы"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<button id=\"tooltip-trigger\" popovertarget=\"tooltip\">Наведи</button>\n<div id=\"tooltip\" popover=\"auto\" role=\"tooltip\">\n  Текст подсказки\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "#tooltip {\n  position: absolute;\n  position-anchor: --tooltip-trigger;\n  top: anchor(bottom);\n  left: anchor(center);\n  transform: translateX(-50%);\n  position-try-options: flip-block;\n  margin-top: 8px;\n  padding: 0.5rem 1rem;\n  background: var(--color-gray-900);\n  color: white;\n  border-radius: var(--radius);\n  font-size: 0.875rem;\n  white-space: nowrap;\n}\n\n#tooltip-trigger {\n  anchor-name: --tooltip-trigger;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Position: Sticky — продвинутые кейсы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Sticky внутри Scroll Container"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Sticky работает относительно ближайшего scroll container */\n.scroll-container {\n  height: 400px;\n  overflow-y: auto;\n}\n\n.sticky-header {\n  position: sticky;\n  top: 0;\n  background: var(--color-bg);\n  z-index: var(--z-index-sticky);\n  border-bottom: 1px solid var(--color-border);\n}\n\n/* Важно: родитель НЕ должен иметь overflow: hidden/clipping */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Sticky с несколькими порогами"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".sticky-nav {\n  position: sticky;\n  top: 0;\n}\n\n.sticky-nav__item--secondary {\n  position: sticky;\n  top: 48px;  /* Высота основной навигации */\n}\n\n.sticky-nav__item--tertiary {\n  position: sticky;\n  top: 96px;  /* Сумма высот вышестоящих */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Sticky Footer Pattern"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".page {\n  display: flex;\n  flex-direction: column;\n  min-height: 100vh;\n}\n\n.content {\n  flex: 1;\n}\n\n.footer {\n  position: sticky;\n  bottom: 0;\n  /* Прижимается к низу при коротком контенте,\n     уходит вниз при длинном — нативно! */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Sticky + IntersectionObserver для индикаторов"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const observer = new IntersectionObserver((entries) => {\n  entries.forEach(entry => {\n    if (!entry.isIntersecting) {\n      // Элемент \"прилип\" — показываем индикатор\n      document.body.classList.add('has-stuck-header');\n    } else {\n      document.body.classList.remove('has-stuck-header');\n    }\n  });\n}, {\n  threshold: 0,\n  rootMargin: '-1px 0px 0px 0px'  // Срабатывает ровно на границе\n});\n\nobserver.observe(document.querySelector('.sticky-header'));"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Практическое задание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 1: z-index Architecture System"
+    },
+    {
+      "type": "text",
+      "content": "Создай полную систему z-index для приложения:"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Требования:\n1. Design tokens для всех слоёв\n2. CSS Layers для гарантии порядка\n3. Isolation contexts для компонентов\n4. Документация: таблица слоёв с описанием\n5. Тесты: модалка поверх попапа поверх тултипа\n*/"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 2: Anchor Positioning Tooltip Library"
+    },
+    {
+      "type": "text",
+      "content": "Напиши библиотеку тултипов на Anchor Positioning:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Автоматическое позиционирование (top/bottom/left/right)",
+        "Flip при нехватке места",
+        "Анимация появления через ::backdrop",
+        "Доступность: role=\"tooltip\", aria-describedby",
+        "Fallback для браузеров без поддержки"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 3: Popover-based Modal System"
+    },
+    {
+      "type": "text",
+      "content": "Реализуй систему модалок на Popover API:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Stack модалок (одна над другой)",
+        "Focus trap внутри модалки",
+        "Анимации через @starting-style",
+        "Esc для закрытия, клик по backdrop",
+        "Portal pattern для вложенных модалок"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 4: Sticky Layouts Playground"
+    },
+    {
+      "type": "text",
+      "content": "Создай интерактивный демо:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Holy Grail layout с sticky header/sidebar",
+        "Table с sticky header И first column",
+        "Nested sticky контейнеры",
+        "Визуализация stacking contexts",
+        "Debug панель: показать текущие z-index и контексты"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Таблица поддержки (2024)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Фича",
+        "Chrome",
+        "Firefox",
+        "Safari",
+        "Edge"
+      ],
+      "rows": [
+        [
+          "Stacking Context",
+          "1+",
+          "1+",
+          "1+",
+          "12+"
+        ],
+        [
+          "isolation: isolate",
+          "61+",
+          "52+",
+          "13+",
+          "79+"
+        ],
+        [
+          "Anchor Positioning",
+          "125+ (flag)",
+          "Behind flag",
+          "Behind flag",
+          "125+ (flag)"
+        ],
+        [
+          "Popover API (auto)",
+          "114+",
+          "125+",
+          "17+",
+          "114+"
+        ],
+        [
+          "Popover API (manual)",
+          "114+",
+          "125+",
+          "17+",
+          "114+"
+        ],
+        [
+          "::backdrop",
+          "69+",
+          "64+",
+          "15.4+",
+          "79+"
+        ],
+        [
+          "@starting-style",
+          "117+",
+          "Behind flag",
+          "17+",
+          "117+"
+        ],
+        [
+          "position: sticky",
+          "56+",
+          "32+",
+          "6.1+",
+          "79+"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Таблица частых ошибок"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Проблема",
+        "Решение"
+      ],
+      "rows": [
+        [
+          "z-index: 9999 везде",
+          "\"Z-index wars\", непредсказуемость",
+          "Система токенов + CSS Layers + isolation"
+        ],
+        [
+          "z-index на static элементе",
+          "Не работает",
+          "Нужен position: relative/absolute/fixed/sticky"
+        ],
+        [
+          "Родитель с overflow: hidden режет sticky",
+          "Sticky не работает",
+          "Убери overflow или используй containment"
+        ],
+        [
+          "Popover не закрывается по ESC",
+          "popover=\"manual\"",
+          "Используй popover=\"auto\" или обработай ESC в JS"
+        ],
+        [
+          "Anchor Positioning без HTTPS",
+          "Не работает в небезопасных контекстах",
+          "Требуется HTTPS или localhost"
+        ],
+        [
+          "::backdrop не стилизуется",
+          "Псевдоэлемент не наследует",
+          "Стилизуй явно: [popover]::backdrop { }"
+        ],
+        [
+          "position-try-options игнорируется",
+          "Нет флага/поддержки",
+          "Проверь @supports, используй polyfill"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Спецификации"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[CSS Positioned Layout Level 3](https://www.w3.org/TR/css-position-3/)",
+        "[CSS Anchor Positioning](https://www.w3.org/TR/css-anchor-position-1/)",
+        "[Popover API](https://developer.mozilla.org/en-US/docs/Web/API/Popover_API)",
+        "[CSS Containment](https://www.w3.org/TR/css-contain-3/)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Статьи"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[Understanding Stacking Contexts](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Positioning/Understanding_z_index/The_stacking_context)",
+        "[Anchor Positioning Explainer](https://github.com/microsoft/anchor-positioning)",
+        "[Popover API Guide](https://web.dev/popover-api/)",
+        "[Modern CSS Tooltips](https://www.bram.us/2023/11/16/css-anchor-positioning/)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инструменты"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[Chrome DevTools] — Layers панель для визуализации stacking contexts",
+        "[Firefox DevTools] — 3D View для stacking contexts",
+        "[Anchor Positioning Playground](https://anchor-positioning.vercel.app/)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 14
+}

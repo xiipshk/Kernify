@@ -1,0 +1,318 @@
+{
+  "title": "Урок 21: Разработка приложений — configuration, logging, dependency injection, APIs, ASP.NET Core basics",
+  "slug": "razrabotka-prilozheniy-configuration-logging-dependency-injection-apis-aspnet-core-basics",
+  "short_description": "configuration, logging, dependency injection, APIs, ASP.NET Core basics",
+  "goals": [
+    "Настроить конфигурацию (appsettings, environment variables, user secrets)",
+    "Использовать структурированное логирование (Serilog, built-in)",
+    "Освоить Dependency Injection (DI) контейнер",
+    "Создавать REST API на ASP.NET Core Minimal APIs / Controllers",
+    "Понимать middleware pipeline, routing, model binding, validation"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Настроить конфигурацию (appsettings, environment variables, user secrets)",
+        "Использовать структурированное логирование (Serilog, built-in)",
+        "Освоить Dependency Injection (DI) контейнер",
+        "Создавать REST API на ASP.NET Core Minimal APIs / Controllers",
+        "Понимать middleware pipeline, routing, model binding, validation"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Configuration (Конфигурация)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Источники конфигурации (порядок приоритета — последний побеждает)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var builder = WebApplication.CreateBuilder(args);\n\n// По умолчанию загружаются:\n// 1. appsettings.json\n// 2. appsettings.{Environment}.json (Development/Production)\n// 3. User Secrets (Development) — секреты вне репо\n// 4. Environment Variables (переменные окружения)\n// 5. Command Line args\n\n// Кастомные источники\nbuilder.Configuration\n    .AddJsonFile(\"custom.json\", optional: true, reloadOnChange: true)\n    .AddXmlFile(\"config.xml\", optional: true)\n    .AddInMemoryCollection(new Dictionary<string, string> { [\"Key\"] = \"Value\" })\n    .AddCommandLine(args)\n    .AddEnvironmentVariables(prefix: \"MYAPP_\");"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Strongly-typed Configuration (Options Pattern)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// appsettings.json\n{\n  \"Database\": {\n    \"ConnectionString\": \"Server=...\",\n    \"MaxRetryCount\": 3,\n    \"CommandTimeout\": 30\n  },\n  \"ExternalApi\": {\n    \"BaseUrl\": \"https://api.example.com\",\n    \"ApiKey\": \"secret\"\n  }\n}\n\n// Класс настроек\npublic class DatabaseOptions\n{\n    public string ConnectionString { get; set; } = \"\";\n    public int MaxRetryCount { get; set; } = 3;\n    public int CommandTimeout { get; set; } = 30;\n}\n\n// Регистрация\nbuilder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(\"Database\"));\nbuilder.Services.AddOptions<DatabaseOptions>()\n    .Bind(builder.Configuration.GetSection(\"Database\"))\n    .ValidateDataAnnotations()\n    .ValidateOnStart(); // fail fast при старте\n\n// Использование через IOptions<T> / IOptionsSnapshot<T> / IOptionsMonitor<T>\npublic class MyService\n{\n    private readonly DatabaseOptions _options;\n    public MyService(IOptions<DatabaseOptions> options) => _options = options.Value; // singleton\n    public MyService(IOptionsSnapshot<DatabaseOptions> options) => _options = options.Value; // scoped (reload на запрос)\n    public MyService(IOptionsMonitor<DatabaseOptions> options) => _options = options.CurrentValue; // singleton + OnChange\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "User Secrets (Development)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "dotnet user-secrets init\ndotnet user-secrets set \"Database:ConnectionString\" \"Server=...;Password=realpassword;\""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Logging (Логирование)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Built-in Logging"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "builder.Logging.ClearProviders();\nbuilder.Logging.AddConsole();\nbuilder.Logging.AddDebug();\nbuilder.Logging.AddEventLog(); // Windows\nbuilder.Logging.AddFilter(\"Microsoft\", LogLevel.Warning); // отключить шум\nbuilder.Logging.AddFilter(\"System\", LogLevel.Warning);\nbuilder.Logging.AddFilter(\"MyApp\", LogLevel.Debug);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Serilog — структурированное, богатое (рекомендуется для продакшена)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "dotnet add package Serilog.AspNetCore\ndotnet add package Serilog.Sinks.Console\ndotnet add package Serilog.Sinks.File\ndotnet add package Serilog.Sinks.Seq # или Elasticsearch, Datadog"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Program.cs\nusing Serilog;\n\nLog.Logger = new LoggerConfiguration()\n    .MinimumLevel.Debug()\n    .MinimumLevel.Override(\"Microsoft\", LogEventLevel.Warning)\n    .Enrich.FromLogContext()\n    .Enrich.WithProperty(\"Application\", \"MyApp\")\n    .Enrich.WithThreadId()\n    .WriteTo.Console(outputTemplate: \"[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}\")\n    .WriteTo.File(\"logs/app-.txt\", rollingInterval: RollingInterval.Day, retainedFileCountLimit: 30)\n    .WriteTo.Seq(\"http://localhost:5341\")\n    .CreateLogger();\n\nbuilder.Host.UseSerilog(); // заменяет built-in\n\n// Использование\npublic class OrderService\n{\n    private readonly ILogger<OrderService> _log;\n    public OrderService(ILogger<OrderService> log) => _log = log;\n\n    public async Task Process(Order order)\n    {\n        using (_log.BeginScope(\"OrderId={OrderId}\", order.Id)) // scope properties\n        {\n            _log.LogInformation(\"Processing order {OrderId} for {Customer}\", order.Id, order.Customer);\n            try { await DoWork(); }\n            catch (Exception ex) { _log.LogError(ex, \"Failed to process {OrderId}\", order.Id); throw; }\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Structured Logging — всегда используйте параметры, не интерполирование!"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ПЛОХО: string interpolation — не структурированные данные\n_log.LogInformation($\"Processing order {order.Id}\");\n\n// ХОРОШО: параметры — поиск в Seq/ELK по полям\n_log.LogInformation(\"Processing order {OrderId} for {Customer}\", order.Id, order.Customer);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Dependency Injection (DI)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Регистрация сервисов (Service Lifetime)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "builder.Services.AddTransient<IEmailSender, EmailSender>();     // новый экземпляр каждый раз\nbuilder.Services.AddScoped<DbContext, AppDbContext>();          // один на запрос (scope)\nbuilder.Services.AddSingleton<ICache, MemoryCache>();           // один на всё приложение\n\n// Фабрики\nbuilder.Services.AddTransient<Func<EmailType, IEmailSender>>(sp => type =>\n{\n    return type switch\n    {\n        EmailType.Marketing => sp.GetRequiredService<MarketingEmailSender>(),\n        EmailType.Transactional => sp.GetRequiredService<TransactionalEmailSender>(),\n        _ => throw new ArgumentOutOfRangeException(nameof(type))\n    };\n});\n\n// Декораторы (Scrutor library)\nbuilder.Services.Decorate<IRepository<User>, CachingRepository<User>>();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Внедрение зависимостей"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Constructor Injection (рекомендуется)\npublic class OrderController : ControllerBase\n{\n    private readonly IOrderService _orders;\n    private readonly ILogger<OrderController> _log;\n\n    public OrderController(IOrderService orders, ILogger<OrderController> log)\n    {\n        _orders = orders;\n        _log = log;\n    }\n}\n\n// Method Injection (редко) — [FromServices]\n[HttpGet]\npublic async Task<IActionResult> Get([FromServices] IOrderService orders) { ... }\n\n// Property Injection — не рекомендуется (скрытые зависимости)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "IServiceScopeFactory — создание scope вручную"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class BackgroundWorker : BackgroundService\n{\n    private readonly IServiceScopeFactory _scopeFactory;\n    public BackgroundWorker(IServiceScopeFactory scopeFactory) => _scopeFactory = scopeFactory;\n\n    protected override async Task ExecuteAsync(CancellationToken ct)\n    {\n        while (!ct.IsCancellationRequested)\n        {\n            using var scope = _scopeFactory.CreateScope();\n            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n            await ProcessPendingOrders(db);\n            await Task.Delay(TimeSpan.FromMinutes(5), ct);\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. ASP.NET Core — Minimal APIs (современный подход)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое приложение"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var builder = WebApplication.CreateBuilder(args);\nbuilder.Services.AddEndpointsApiExplorer();\nbuilder.Services.AddSwaggerGen();\n\nvar app = builder.Build();\n\nif (app.Environment.IsDevelopment())\n{\n    app.UseSwagger();\n    app.UseSwaggerUI();\n}\n\napp.UseHttpsRedirection();\n\n// Endpoints\napp.MapGet(\"/\", () => \"Hello World!\")\n   .WithName(\"GetRoot\")\n   .WithTags(\"General\");\n\napp.MapGet(\"/api/users\", async (AppDbContext db) =>\n    await db.Users.AsNoTracking().ToListAsync())\n   .WithName(\"GetUsers\")\n   .Produces<List<User>>(StatusCodes.Status200OK);\n\napp.MapGet(\"/api/users/{id:int}\", async (int id, AppDbContext db) =>\n    await db.Users.FindAsync(id) is User user ? Results.Ok(user) : Results.NotFound())\n   .WithName(\"GetUserById\");\n\napp.MapPost(\"/api/users\", async (UserDto dto, AppDbContext db, IValidator<UserDto> validator) =>\n{\n    var validation = await validator.ValidateAsync(dto);\n    if (!validation.IsValid) return Results.ValidationProblem(validation.ToDictionary());\n\n    var user = new User { Name = dto.Name, Email = dto.Email };\n    db.Users.Add(user);\n    await db.SaveChangesAsync();\n    return Results.Created($\"/api/users/{user.Id}\", user);\n})\n.WithName(\"CreateUser\")\n.Accepts<UserDto>(\"application/json\")\n.Produces<User>(StatusCodes.Status201Created)\n.ProducesValidationProblem();\n\napp.Run();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Route Groups и Filters"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var api = app.MapGroup(\"/api\").WithTags(\"API\");\n\nvar users = api.MapGroup(\"/users\").RequireAuthorization();\n\nusers.MapGet(\"/\", GetAllUsers);\nusers.MapGet(\"/{id}\", GetUser);\nusers.MapPost(\"/\", CreateUser).AddEndpointFilter<ValidationFilter<UserDto>>();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Endpoint Filters (validation, logging, etc.)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class ValidationFilter<T> : IEndpointFilter where T : class\n{\n    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)\n    {\n        var validator = context.HttpContext.RequestServices.GetService<IValidator<T>>();\n        if (validator == null) return await next(context);\n\n        var dto = context.GetArgument<T>(0);\n        var result = await validator.ValidateAsync(dto);\n        if (!result.IsValid)\n            return Results.ValidationProblem(result.ToDictionary());\n\n        return await next(context);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Controllers (классический MVC стиль)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "[ApiController]\n[Route(\"api/[controller]\")]\npublic class UsersController : ControllerBase\n{\n    private readonly IUserService _users;\n    public UsersController(IUserService users) => _users = users;\n\n    [HttpGet]\n    public async Task<ActionResult<IEnumerable<UserDto>>> GetAll()\n        => Ok(await _users.GetAllAsync());\n\n    [HttpGet(\"{id:int}\")]\n    public async Task<ActionResult<UserDto>> Get(int id)\n    {\n        var user = await _users.GetByIdAsync(id);\n        return user == null ? NotFound() : Ok(user);\n    }\n\n    [HttpPost]\n    public async Task<ActionResult<UserDto>> Create([FromBody] CreateUserDto dto)\n    {\n        var user = await _users.CreateAsync(dto);\n        return CreatedAtAction(nameof(Get), new { id = user.Id }, user);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Model Binding и Validation"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class CreateUserDto\n{\n    [Required, StringLength(100)]\n    public string Name { get; set; } = \"\";\n\n    [Required, EmailAddress]\n    public string Email { get; set; } = \"\";\n\n    [Range(18, 120)]\n    public int Age { get; set; }\n}\n\n// В контроллере: [ApiController] автоматически возвращает 400 при невалидном ModelState\n// Или вручную:\nif (!ModelState.IsValid) return ValidationProblem(ModelState);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Middleware Pipeline"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Порядок middleware (важен!)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var app = builder.Build();\n\n// 1. Exception handling (самый первый — ловит всё ниже)\napp.UseExceptionHandler(\"/error\"); // или app.UseDeveloperExceptionPage() в Dev\n\n// 2. HSTS / HTTPS\napp.UseHsts();\napp.UseHttpsRedirection();\n\n// 3. Static files\napp.UseStaticFiles();\n\n// 4. Routing\napp.UseRouting();\n\n// 5. CORS (перед Auth)\napp.UseCors(\"AllowAll\");\n\n// 6. Authentication / Authorization\napp.UseAuthentication();\napp.UseAuthorization();\n\n// 7. Custom middleware\napp.UseMiddleware<RequestLoggingMiddleware>();\n\n// 8. Endpoints (последний)\napp.MapControllers();\napp.Run();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кастомный Middleware"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class RequestLoggingMiddleware\n{\n    private readonly RequestDelegate _next;\n    private readonly ILogger<RequestLoggingMiddleware> _log;\n\n    public RequestLoggingMiddleware(RequestDelegate next, ILogger<RequestLoggingMiddleware> log)\n    {\n        _next = next;\n        _log = log;\n    }\n\n    public async Task InvokeAsync(HttpContext context)\n    {\n        var sw = Stopwatch.StartNew();\n        try\n        {\n            await _next(context);\n        }\n        finally\n        {\n            sw.Stop();\n            _log.LogInformation(\"HTTP {Method} {Path} -> {StatusCode} in {Elapsed}ms\",\n                context.Request.Method, context.Request.Path, context.Response.StatusCode, sw.ElapsedMilliseconds);\n        }\n    }\n}\n\n// Extension method для удобства\npublic static class MiddlewareExtensions\n{\n    public static IApplicationBuilder UseRequestLogging(this IApplicationBuilder app)\n        => app.UseMiddleware<RequestLoggingMiddleware>();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Health Checks"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "builder.Services.AddHealthChecks()\n    .AddDbContextCheck<AppDbContext>()\n    .AddUrlGroup(new Uri(\"https://api.external.com/health\"), \"external-api\")\n    .AddCheck(\"disk-space\", () =>\n    {\n        var free = new DriveInfo(\"/\").AvailableFreeSpace;\n        return free > 1_000_000_000 ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy(\"Low disk\");\n    });\n\napp.MapHealthChecks(\"/health\", new HealthCheckOptions\n{\n    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`IOptions<T>` для настроек, которые меняются в рантайме",
+          "`IOptionsSnapshot<T>` / `IOptionsMonitor<T>`"
+        ],
+        [
+          "Хардкод connection strings в коде",
+          "Configuration + User Secrets / Key Vault"
+        ],
+        [
+          "`Console.WriteLine` вместо `ILogger`",
+          "Структурированное логирование (Serilog)"
+        ],
+        [
+          "Singleton сервис с Scoped зависимостью",
+          "Правильные lifetimes, или `IServiceScopeFactory`"
+        ],
+        [
+          "Middleware в неправильном порядке",
+          "Изучите pipeline: Exception → HTTPS → Static → Routing → Auth → Endpoints"
+        ],
+        [
+          "Отсутствие валидации входных данных",
+          "FluentValidation + Endpoint Filters / ModelState"
+        ],
+        [
+          "Блокирующие вызовы в async контроллерах",
+          "Только `await`, нет `.Result` / `.Wait()`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`IOptions<T>` для настроек, которые меняются в рантайме",
+      "correct": "`IOptionsSnapshot<T>` / `IOptionsMonitor<T>`"
+    },
+    {
+      "mistake": "Хардкод connection strings в коде",
+      "correct": "Configuration + User Secrets / Key Vault"
+    },
+    {
+      "mistake": "`Console.WriteLine` вместо `ILogger`",
+      "correct": "Структурированное логирование (Serilog)"
+    },
+    {
+      "mistake": "Singleton сервис с Scoped зависимостью",
+      "correct": "Правильные lifetimes, или `IServiceScopeFactory`"
+    },
+    {
+      "mistake": "Middleware в неправильном порядке",
+      "correct": "Изучите pipeline: Exception → HTTPS → Static → Routing → Auth → Endpoints"
+    },
+    {
+      "mistake": "Отсутствие валидации входных данных",
+      "correct": "FluentValidation + Endpoint Filters / ModelState"
+    },
+    {
+      "mistake": "Блокирующие вызовы в async контроллерах",
+      "correct": "Только `await`, нет `.Result` / `.Wait()`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 21
+}

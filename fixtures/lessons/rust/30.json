@@ -1,0 +1,509 @@
+{
+  "title": "Урок 30: Systems Programming (Системное программирование)",
+  "slug": "systems-programming-sistemnoe-programmirovanie",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Data Layout (Размещение данных в памяти)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[repr(C)]` — C-совместимое размещение"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(C)]\nstruct CCompatible {\n    a: u8,      // offset 0\n    b: u32,     // offset 4 (padding 3 bytes)\n    c: u16,     // offset 8\n    // size = 12, align = 4\n}\n\n// Порядок полей гарантирован, padding вставляется как в C"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[repr(transparent)]` — нулевая стоимость обёртки"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(transparent)]\nstruct NewType(u32); // Тот же layout, что и u32\n\n#[repr(transparent)]\nstruct Wrapper<T>(T); // Layout = layout of T\n\n// Можно безопасно transmute между Wrapper<T> и T"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[repr(packed)]` — упакованные структуры"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(packed)]\nstruct Packed {\n    a: u8,\n    b: u32, // offset 1, нет padding!\n    c: u16, // offset 5\n}\n// size = 7, align = 1\n\n// ⚠️ Небезопасное чтение/запись невыровненных полей:\n// let b = unsafe { std::ptr::read_unaligned(&packed.b) };"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[repr(align(N))]` — принудительное выравнивание"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(align(64))]\nstruct CacheLine {\n    data: [u8; 64],\n}\n// Гарантированно выровнено на 64 байта (cache line)\n// Полезно для избежания false sharing"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[repr(u8)]` для enum — фиксированный дискриминант"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(u8)]\nenum Status {\n    Ok = 0,\n    Error = 1,\n    Pending = 255,\n}\n// Размер = 1 байт, discriminant = u8"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. C FFI (Foreign Function Interface)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый `extern \"C\"`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Объявление внешней C-функции\nextern \"C\" {\n    fn malloc(size: usize) -> *mut u8;\n    fn free(ptr: *mut u8);\n    fn strlen(s: *const u8) -> usize;\n    static mut errno: i32;\n}\n\n// Вызов\nunsafe {\n    let ptr = malloc(100);\n    if !ptr.is_null() {\n        free(ptr);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Экспорт Rust-функций для C"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[no_mangle]\npub extern \"C\" fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n// В C: extern int add(int a, int b);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Безопасная обёртка над FFI"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ffi::{CStr, CString};\nuse std::os::raw::c_char;\n\n/// Безопасная обёртка над C-функцией\npub fn c_strlen(s: &str) -> Result<usize, NulError> {\n    let c_str = CString::new(s)?;\n    unsafe { Ok(strlen(c_str.as_ptr()) as usize) }\n}\n\n/// Приём C-строки\npub unsafe fn from_c_str(ptr: *const c_char) -> Result<&'static str, Utf8Error> {\n    if ptr.is_null() {\n        return Err(/* ... */);\n    }\n    CStr::from_ptr(ptr).to_str()\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`bindgen` — автоматическая генерация bindings"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cxx` — безопасный FFI для C++"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[dependencies]\ncxx = \"1.0\"\ncxx-build = \"1.0\""
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// bridge.rs\n#[cxx::bridge]\nmod ffi {\n    unsafe extern \"C++\" {\n        include!(\"my_cpp.h\");\n        fn cpp_function(x: i32) -> i32;\n\n        type MyCppClass;\n        fn create_cpp() -> UniquePtr<MyCppClass>;\n        fn method(self: &MyCppClass) -> i32;\n    }\n\n    extern \"Rust\" {\n        fn rust_callback(x: i32) -> i32;\n    }\n}\n\n// Реализация Rust callback\nfn rust_callback(x: i32) -> i32 {\n    x * 2\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. System Calls (Системные вызовы)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Linux: `libc` и `nix`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use libc::{c_int, c_void, size_t, off_t};\nuse std::os::unix::io::AsRawFd;\n\n/// Читаем файл через syscall read\nunsafe fn read_raw(fd: c_int, buf: *mut c_void, count: size_t) -> isize {\n    libc::read(fd, buf, count) as isize\n}\n\n/// Использование nix (безопасная обёртка)\nuse nix::unistd::{read, write, close};\nuse nix::fcntl::{open, OFlag};\nuse nix::sys::stat::Mode;\n\nfn read_file_nix(path: &str) -> Result<Vec<u8>, nix::Error> {\n    let fd = open(path, OFlag::O_RDONLY, Mode::empty())?;\n    let mut buf = vec![0u8; 4096];\n    let n = read(fd, &mut buf)?;\n    buf.truncate(n);\n    close(fd)?;\n    Ok(buf)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Windows: `windows-rs`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use windows::Win32::Foundation::{HANDLE, GENERIC_READ, FILE_SHARE_READ};\nuse windows::Win32::Storage::FileSystem::{\n    CreateFileW, ReadFile, CloseHandle, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL\n};\nuse windows::core::PCWSTR;\n\nfn read_file_windows(path: &str) -> windows::core::Result<Vec<u8>> {\n    let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();\n\n    unsafe {\n        let handle = CreateFileW(\n            PCWSTR(wide.as_ptr()),\n            GENERIC_READ.0,\n            FILE_SHARE_READ,\n            None,\n            OPEN_EXISTING,\n            FILE_ATTRIBUTE_NORMAL,\n            None,\n        )?;\n\n        let mut buf = vec![0u8; 4096];\n        let mut bytes_read = 0u32;\n        ReadFile(handle, Some(&mut buf), Some(&mut bytes_read), None)?;\n        CloseHandle(handle)?;\n\n        buf.truncate(bytes_read as usize);\n        Ok(buf)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Прямые syscall через `syscall!` (Linux, nightly)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#![feature(asm_experimental_arch)]\n\n// x86_64 Linux syscall numbers\nconst SYS_WRITE: u64 = 1;\nconst SYS_EXIT: u64 = 60;\n\nunsafe fn sys_write(fd: u64, buf: *const u8, count: u64) -> i64 {\n    let mut ret: i64;\n    core::arch::asm!(\n        \"syscall\",\n        in(\"rax\") SYS_WRITE,\n        in(\"rdi\") fd,\n        in(\"rsi\") buf,\n        in(\"rdx\") count,\n        lateout(\"rax\") ret,\n        out(\"rcx\") _, out(\"r11\") _,\n    );\n    ret\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Embedded Development (`no_std`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Минимальный `no_std` проект"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[panic_handler]` и `#[alloc_error_handler]`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#![no_std]\n\nuse core::alloc::Layout;\nuse core::panic::PanicInfo;\n\n#[panic_handler]\nfn panic(info: &PanicInfo) -> ! {\n    // Можно использовать UART, ITM, semihosting\n    if let Some(loc) = info.location() {\n        // log::error!(\"Panic at {}:{}:{}\", loc.file(), loc.line(), loc.column());\n    }\n    loop {}\n}\n\n#[alloc_error_handler]\nfn alloc_error(layout: Layout) -> ! {\n    // OOM в embedded — обычно фатально\n    loop {}\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Работа с памятью и периферией"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use core::ptr::{read_volatile, write_volatile};\n\n/// Memory-mapped register\n#[repr(transparent)]\nstruct Register<T> {\n    value: T,\n}\n\nimpl<T> Register<T> {\n    fn read(&self) -> T {\n        unsafe { read_volatile(&self.value) }\n    }\n\n    fn write(&mut self, value: T) {\n        unsafe { write_volatile(&mut self.value, value) }\n    }\n\n    fn modify<F>(&mut self, f: F) where F: FnOnce(T) -> T {\n        self.write(f(self.read()));\n    }\n}\n\n// Использование\nconst GPIO_BASE: *mut Register<u32> = 0x4002_0000 as _;\n\nfn set_pin_high(pin: u8) {\n    let gpio = unsafe { &mut *GPIO_BASE };\n    gpio.modify(|v| v | (1 << pin));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cortex-m` и `cortex-m-rt`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use cortex_m::asm;\nuse cortex_m_rt::entry;\n\n#[entry]\nfn main() -> ! {\n    // Настройка тактирования, GPIO, прерываний\n    let dp = cortex_m::Peripherals::take().unwrap();\n\n    // Включаем тактирование GPIOA\n    dp.RCC.ahb1enr.modify(|_, w| w.gpioaen().enabled());\n\n    // Настраиваем PA5 как выход\n    dp.GPIOA.moder.modify(|_, w| w.moder5().output());\n\n    loop {\n        dp.GPIOA.odr.modify(|_, w| w.odr5().high());\n        asm::delay(8_000_000);\n        dp.GPIOA.odr.modify(|_, w| w.odr5().low());\n        asm::delay(8_000_000);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. SIMD и `std::arch`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Платформозависимые интринсики"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[cfg(target_arch = \"x86_64\")]\nuse core::arch::x86_64::*;\n\n#[cfg(target_arch = \"aarch64\")]\nuse core::arch::aarch64::*;\n\n/// Пример: векторное сложение f32 (SSE/AVX)\n#[cfg(target_arch = \"x86_64\")]\nfn add_f32_simd(a: &[f32], b: &[f32], dst: &mut [f32]) {\n    unsafe {\n        // Проверка поддержки AVX\n        if is_x86_feature_detected!(\"avx\") {\n            let mut i = 0;\n            while i + 8 <= a.len() {\n                let va = _mm256_loadu_ps(a.as_ptr().add(i));\n                let vb = _mm256_loadu_ps(b.as_ptr().add(i));\n                let vr = _mm256_add_ps(va, vb);\n                _mm256_storeu_ps(dst.as_mut_ptr().add(i), vr);\n                i += 8;\n            }\n            // Остаток скалярно\n            while i < a.len() {\n                dst[i] = a[i] + b[i];\n                i += 1;\n            }\n        } else {\n            // Fallback на SSE или скалярный\n            add_f32_scalar(a, b, dst);\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Портативный SIMD (`std::simd` — nightly)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#![feature(portable_simd)]\nuse core::simd::{f32x8, SimdFloat};\n\nfn add_f32_portable(a: &[f32], b: &[f32], dst: &mut [f32]) {\n    let mut i = 0;\n    while i + 8 <= a.len() {\n        let va = f32x8::from_slice(&a[i..]);\n        let vb = f32x8::from_slice(&b[i..]);\n        let vr = va + vb;\n        vr.copy_to_slice(&mut dst[i..]);\n        i += 8;\n    }\n    // Остаток\n    while i < a.len() {\n        dst[i] = a[i] + b[i];\n        i += 1;\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Raw Pointers и адресная арифметика"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`*const T`, `*mut T`, `NonNull<T>`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use core::ptr::NonNull;\n\n/// Безопасная обёртка над raw pointer\nstruct MyBox<T> {\n    ptr: NonNull<T>,\n}\n\nimpl<T> MyBox<T> {\n    fn new(value: T) -> Self {\n        let ptr = Box::into_raw(Box::new(value));\n        Self { ptr: NonNull::new(ptr).unwrap() }\n    }\n\n    fn as_ref(&self) -> &T {\n        unsafe { self.ptr.as_ref() }\n    }\n\n    fn as_mut(&mut self) -> &mut T {\n        unsafe { self.ptr.as_mut() }\n    }\n}\n\nimpl<T> Drop for MyBox<T> {\n    fn drop(&mut self) {\n        unsafe { drop(Box::from_raw(self.ptr.as_ptr())) }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`addr_of!` и `addr_of_mut!` (Rust 1.73+)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct UnsafeCell<T> {\n    value: T,\n}\n\nimpl<T> UnsafeCell<T> {\n    fn get(&self) -> *mut T {\n        // Создаёт указатель БЕЗ создания промежуточной ссылки\n        core::ptr::addr_of_mut!(self.value)\n    }\n}\n\n// Старый способ (UB если value невалиден):\n// &self.value as *const T as *mut T\n\n// Новый способ (безопасен):\n// addr_of_mut!(self.value)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`offset`, `add`, `sub`, `wrapping_*`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn pointer_arithmetic(ptr: *mut u8, len: usize) {\n    unsafe {\n        // Проверенная арифметика (panic при overflow в debug)\n        let end = ptr.add(len);\n\n        // Непроверенная (wrap-around)\n        let end_wrapped = ptr.wrapping_add(len);\n\n        // Offset в байтах\n        let offset_ptr = ptr.byte_add(10);\n\n        // Разница указателей\n        let diff = end.offset_from(ptr); // isize\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Memory Mapping (Отображение памяти)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`mmap` на Unix"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::fs::File;\nuse std::os::unix::io::AsRawFd;\nuse libc::{mmap, munmap, MAP_SHARED, PROT_READ, PROT_WRITE, MAP_FAILED};\n\nstruct MmapRegion {\n    ptr: *mut u8,\n    len: usize,\n}\n\nimpl MmapRegion {\n    fn new(file: &File, len: usize) -> Result<Self, std::io::Error> {\n        let ptr = unsafe {\n            mmap(\n                core::ptr::null_mut(),\n                len,\n                PROT_READ | PROT_WRITE,\n                MAP_SHARED,\n                file.as_raw_fd(),\n                0,\n            )\n        };\n\n        if ptr == MAP_FAILED {\n            return Err(std::io::Error::last_os_error());\n        }\n\n        Ok(Self { ptr: ptr as *mut u8, len })\n    }\n\n    fn as_slice(&self) -> &[u8] {\n        unsafe { core::slice::from_raw_parts(self.ptr, self.len) }\n    }\n\n    fn as_mut_slice(&mut self) -> &mut [u8] {\n        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len) }\n    }\n}\n\nimpl Drop for MmapRegion {\n    fn drop(&mut self) {\n        unsafe { munmap(self.ptr as *mut _, self.len) };\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`memmap2` крейт (кроссплатформенно)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use memmap2::{Mmap, MmapMut, MmapOptions};\nuse std::fs::OpenOptions;\n\nfn map_file(path: &str) -> std::io::Result<Mmap> {\n    let file = OpenOptions::new().read(true).open(path)?;\n    unsafe { Mmap::map(&file) }\n}\n\nfn map_file_mut(path: &str) -> std::io::Result<MmapMut> {\n    let file = OpenOptions::new().read(true).write(true).open(path)?;\n    unsafe { MmapMut::map_mut(&file) }\n}\n\n// Использование\nlet mmap = map_file(\"large_file.dat\")?;\nprintln!(\"First 10 bytes: {:?}\", &mmap[..10]);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Безопасные абстракции над `unsafe`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Паттерн: \"Encapsulate Unsafety\""
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "/// Небезопасная низкоуровневая операция\nmod raw {\n    pub unsafe fn dangerous_operation(ptr: *mut u8, len: usize) -> i32 {\n        // Реальная небезопасная работа\n        0\n    }\n}\n\n/// Безопасная обёртка\npub struct SafeBuffer {\n    data: Vec<u8>,\n}\n\nimpl SafeBuffer {\n    pub fn new(size: usize) -> Self {\n        Self { data: vec![0; size] }\n    }\n\n    pub fn perform_operation(&mut self) -> Result<i32, Error> {\n        if self.data.is_empty() {\n            return Err(Error::Empty);\n        }\n\n        // UNSAFE БЛОК ИЗОЛИРОВАН, инварианты проверены\n        let result = unsafe {\n            raw::dangerous_operation(self.data.as_mut_ptr(), self.data.len())\n        };\n\n        Ok(result)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Pin<P>` для самореференциальных структур"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\nuse std::marker::PhantomPinned;\n\nstruct SelfRef {\n    data: String,\n    // Указатель на data внутри этой же структуры\n    self_ptr: *const String,\n    _pin: PhantomPinned,\n}\n\nimpl SelfRef {\n    fn new(data: String) -> Pin<Box<Self>> {\n        let mut boxed = Box::pin(SelfRef {\n            data,\n            self_ptr: core::ptr::null(),\n            _pin: PhantomPinned,\n        });\n\n        // Безопасно: мы закрепили boxed, адрес не изменится\n        let self_ptr: *const String = &boxed.data;\n        unsafe {\n            let mut_ref: Pin<&mut SelfRef> = Pin::as_mut(&mut boxed);\n            Pin::get_unchecked_mut(mut_ref).self_ptr = self_ptr;\n        }\n\n        boxed\n    }\n\n    fn print_self(&self) {\n        println!(\"Data: {}\", unsafe { &*self.self_ptr });\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: FFI обёртка над C библиотекой"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Создайте безопасную обёртку над libz (zlib)\n// 1. Используйте bindgen для генерации bindings\n// 2. Напишите safe wrapper: compress/decompress\n// 3. Обработайте ошибки через Result\n// 4. Реализуйте Drop для очистки z_stream\n\n// build.rs\n// extern crate bindgen;\n// ...\n\n// lib.rs\nuse std::ffi::CString;\nuse std::os::raw::{c_int, c_ulong};\n\n#[link(name = \"z\")]\nextern \"C\" {\n    fn compress(dest: *mut u8, dest_len: *mut c_ulong,\n                source: *const u8, source_len: c_ulong) -> c_int;\n    fn uncompress(dest: *mut u8, dest_len: *mut c_ulong,\n                  source: *const u8, source_len: c_ulong) -> c_int;\n}\n\npub fn compress_data(data: &[u8]) -> Result<Vec<u8>, CompressError> {\n    // Реализуйте безопасную обёртку\n    todo!()\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: `no_std` драйвер UART"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#![no_std]\n\nuse core::ptr::{read_volatile, write_volatile};\n\n/// UART регистры (упрощённый пример для STM32)\n#[repr(C)]\nstruct UartRegisters {\n    sr: u32,      // Status register\n    dr: u32,      // Data register\n    brr: u32,     // Baud rate register\n    cr1: u32,     // Control register 1\n    cr2: u32,     // Control register 2\n    cr3: u32,     // Control register 3\n    gtpr: u32,    // Guard time and prescaler\n}\n\nconst UART1_BASE: *mut UartRegisters = 0x4001_1000 as _;\n\npub struct Uart {\n    regs: &'static mut UartRegisters,\n}\n\nimpl Uart {\n    pub fn new() -> Self {\n        let regs = unsafe { &mut *UART1_BASE };\n        // Настройка: 115200 baud, 8N1\n        regs.brr.write_volatile(0x1D4C); // Пример для 72MHz\n        regs.cr1.write_volatile(0x200C); // UE | TE | RE\n        Self { regs }\n    }\n\n    pub fn write_byte(&mut self, byte: u8) {\n        // Ждём пока TXE (transmit data register empty)\n        while (self.regs.sr.read_volatile() & (1 << 7)) == 0 {}\n        self.regs.dr.write_volatile(byte as u32);\n    }\n\n    pub fn read_byte(&mut self) -> Option<u8> {\n        if (self.regs.sr.read_volatile() & (1 << 5)) != 0 {\n            Some(self.regs.dr.read_volatile() as u8)\n        } else {\n            None\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Memory-mapped файл с синхронизацией"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use memmap2::{MmapMut, MmapOptions};\nuse std::fs::OpenOptions;\nuse std::sync::atomic::{AtomicU64, Ordering};\nuse std::os::unix::io::AsRawFd;\n\n/// Shared memory counter для IPC\nstruct SharedCounter {\n    mmap: MmapMut,\n    counter: *mut AtomicU64,\n}\n\nimpl SharedCounter {\n    fn new(path: &str) -> std::io::Result<Self> {\n        let file = OpenOptions::new()\n            .read(true).write(true).create(true)\n            .open(path)?;\n\n        file.set_len(8)?; // Размер AtomicU64\n\n        let mut mmap = unsafe { MmapOptions::new().map_mut(&file)? };\n        let counter = mmap.as_mut_ptr() as *mut AtomicU64;\n\n        // Инициализация при первом создании\n        unsafe { (*counter).store(0, Ordering::Relaxed) };\n\n        Ok(Self { mmap, counter })\n    }\n\n    fn increment(&self) -> u64 {\n        unsafe { (*self.counter).fetch_add(1, Ordering::SeqCst) + 1 }\n    }\n\n    fn get(&self) -> u64 {\n        unsafe { (*self.counter).load(Ordering::SeqCst) }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`unaligned reference`",
+          "Доступ к packed полю через ссылку"
+        ],
+        [
+          "`dangling pointer`",
+          "Использование после `drop`/`free`"
+        ],
+        [
+          "`data race`",
+          "Несинхронизированный доступ из FFI"
+        ],
+        [
+          "`ABI mismatch`",
+          "Несовпадение calling convention"
+        ],
+        [
+          "`panic in FFI`",
+          "Unwind через C границу"
+        ],
+        [
+          "`use after free`",
+          "C код хранит указатель на Rust память"
+        ],
+        [
+          "`stack overflow`",
+          "Рекурсия в `no_std` без guard page"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Шпаргалка: Systems Programming"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Задача",
+        "Инструмент/Крейт",
+        "Ключевые типы"
+      ],
+      "rows": [
+        [
+          "C FFI",
+          "`bindgen`, `cxx`, `libc`",
+          "`extern \"C\"`, `c_char`, `c_int`"
+        ],
+        [
+          "System calls",
+          "`nix`, `windows-rs`, `libc`",
+          "`RawFd`, `HANDLE`, `ioctl`"
+        ],
+        [
+          "Embedded",
+          "`cortex-m`, `embassy`, `rtic`",
+          "`no_std`, `#[panic_handler]`"
+        ],
+        [
+          "SIMD",
+          "`std::arch`, `std::simd`",
+          "`__m256`, `f32x8`, `i32x4`"
+        ],
+        [
+          "Memory map",
+          "`memmap2`, `mmap`",
+          "`Mmap`, `MmapMut`"
+        ],
+        [
+          "Raw pointers",
+          "`NonNull`, `addr_of!`",
+          "`*const T`, `*mut T`"
+        ],
+        [
+          "Layout control",
+          "`#[repr(...)]`",
+          "`C`, `transparent`, `packed`, `align`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Data layout**: `#[repr(C)]`, `transparent`, `packed`, `align`, enum discriminants",
+        "**C FFI**: `extern \"C\"`, `bindgen` для генерации bindings, `cxx` для C++",
+        "**System calls**: `libc`/`nix` (Linux), `windows-rs` (Windows), прямые syscall",
+        "**Embedded**: `no_std`, `#[panic_handler]`, `#[alloc_error_handler]`, MMIO",
+        "**SIMD**: `std::arch` (платформозависимое), `std::simd` (переносимое, nightly)",
+        "**Raw pointers**: `*const`/`*mut`, `NonNull`, `addr_of!`, pointer arithmetic",
+        "**Memory mapping**: `mmap`/`VirtualAlloc`, `memmap2` кроссплатформенно",
+        "**Безопасность**: инкапсуляция `unsafe`, `Pin` для self-referential, ABI границы"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`unaligned reference`",
+      "correct": "Доступ к packed полю через ссылку"
+    },
+    {
+      "mistake": "`dangling pointer`",
+      "correct": "Использование после `drop`/`free`"
+    },
+    {
+      "mistake": "`data race`",
+      "correct": "Несинхронизированный доступ из FFI"
+    },
+    {
+      "mistake": "`ABI mismatch`",
+      "correct": "Несовпадение calling convention"
+    },
+    {
+      "mistake": "`panic in FFI`",
+      "correct": "Unwind через C границу"
+    },
+    {
+      "mistake": "`use after free`",
+      "correct": "C код хранит указатель на Rust память"
+    },
+    {
+      "mistake": "`stack overflow`",
+      "correct": "Рекурсия в `no_std` без guard page"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 30
+}

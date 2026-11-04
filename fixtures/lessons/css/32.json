@@ -1,0 +1,648 @@
+{
+  "title": "Урок 32: Проект — масштабируемая дизайн-система",
+  "slug": "proekt-masshtabiruemaya-dizayn-sistema",
+  "short_description": "масштабируемая дизайн-система",
+  "goals": [
+    "Создать полноценную дизайн-систему с токенами, темами и компонентами",
+    "Реализовать мультибрендовую поддержку (разные бренды на одной кодовой базе)",
+    "Обеспечить доступность (WCAG AA): контраст, фокус, ARIA, skip-links, фокус-ловушка",
+    "Обеспечить производительность: contain, will-change, оптимизация конвейера рендеринга",
+    "Сделать адаптивную вёрстку: контейнерные запросы, логические свойства, RTL",
+    "Провести аудит доступности и производительности",
+    "Создать документацию и чек-лист готовности (Definition of Done)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Создать полноценную дизайн-систему с токенами, темами и компонентами",
+        "Реализовать мультибрендовую поддержку (разные бренды на одной кодовой базе)",
+        "Обеспечить доступность (WCAG AA): контраст, фокус, ARIA, skip-links, фокус-ловушка",
+        "Обеспечить производительность: contain, will-change, оптимизация конвейера рендеринга",
+        "Сделать адаптивную вёрстку: контейнерные запросы, логические свойства, RTL",
+        "Провести аудит доступности и производительности",
+        "Создать документацию и чек-лист готовности (Definition of Done)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Архитектура проекта"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура файлов"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "design-system/\n├── docs/                    # Документация\n│   ├── tokens.md            # Токены дизайна\n│   ├── components.md        # Компоненты и их использование\n│   ├── themes.md            # Темы и бренды\n│   └── a11y.md              # Рекомендации по доступности\n├── src/\n│   ├── tokens/\n│   │   ├── primitives.css   # Примитивные токены (цвета, отступы, шрифты)\n│   │   ├── semantic.css     # Семантические токены\n│   │   └── component.css    # Компонентные токены\n│   ├── themes/\n│   │   ├── light.css        # Светлая тема\n│   │   ├── dark.css         # Темная тема\n│   │   ├── brand-a.css      # Бренд A токены\n│   │   └── brand-b.css      # Бренд B токены\n│   ├── components/\n│   │   ├── button/\n│   │   │   ├── button.css\n│   │   │   └── button.demo.html\n│   │   ├── card/\n│   │   │   ├── card.css\n│   │   │   └── card.demo.html\n│   │   ├── modal/\n│   │   │   ├── modal.css\n│   │   │   └── modal.js\n│   │   ├── nav/\n│   │   │   ├── nav.css\n│   │   │   └── nav.js\n│   │   └── input/\n│   │       ├── input.css\n│   │       └── input.js\n│   ├── utils/\n│   │   ├── theme-toggle.js  # Переключатель темы\n│   │   └── focus-trap.js    # Фокус-ловушка\n│   └── main.css             # Импорт всех стилей\n├── index.html               # Демо-страница\n├── index-a11y.html          # Страница тестирования доступности\n├── index-perf.html          # Страница тестирования производительности\n├── package.json\n├── postcss.config.js\n└── README.md"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "postcss.config.js"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "module.exports = {\n  plugins: [\n    require('postcss-import'),\n    require('postcss-nesting'),\n    require('autoprefixer'),\n    process.env.NODE_ENV === 'production' ? require('cssnano')({ preset: 'default' }) : null,\n  ].filter(Boolean),\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Токены дизайна"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/tokens/primitives.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer primitives;\n\n/* Цвета — примитивы (OKLCH) */\n:root {\n  /* Серые оттенки */\n  --primitive-color-slate-50: oklch(0.98 0.001 285);\n  --primitive-color-slate-100: oklch(0.96 0.003 285);\n  --primitive-color-slate-200: oklch(0.92 0.006 285);\n  --primitive-color-slate-300: oklch(0.87 0.008 285);\n  --primitive-color-slate-400: oklch(0.70 0.01 285);\n  --primitive-color-slate-500: oklch(0.55 0.01 285);\n  --primitive-color-slate-600: oklch(0.45 0.01 285);\n  --primitive-color-slate-700: oklch(0.32 0.006 285);\n  --primitive-color-slate-800: oklch(0.24 0.006 285);\n  --primitive-color-slate-900: oklch(0.21 0.006 285);\n  --primitive-color-slate-950: oklch(0.12 0.003 285);\n\n  /* Основные цвета */\n  --primitive-color-blue-50: oklch(0.96 0.03 264);\n  --primitive-color-blue-100: oklch(0.92 0.06 264);\n  --primitive-color-blue-500: oklch(0.62 0.22 264);\n  --primitive-color-blue-600: oklch(0.55 0.22 264);\n  --primitive-color-blue-700: oklch(0.48 0.20 264);\n\n  --primitive-color-green-50: oklch(0.97 0.02 150);\n  --primitive-color-green-100: oklch(0.94 0.04 150);\n  --primitive-color-green-500: oklch(0.75 0.18 150);\n  --primitive-color-green-600: oklch(0.68 0.18 150);\n\n  --primitive-color-red-50: oklch(0.97 0.01 20);\n  --primitive-color-red-100: oklch(0.94 0.02 20);\n  --primitive-color-red-500: oklch(0.65 0.22 20);\n  --primitive-color-red-600: oklch(0.58 0.22 20);\n\n  /* Отступы */\n  --primitive-space-0: 0;\n  --primitive-space-xs: 0.25rem;\n  --primitive-space-sm: 0.5rem;\n  --primitive-space-md: 1rem;\n  --primitive-space-lg: 1.5rem;\n  --primitive-space-xl: 2rem;\n  --primitive-space-2xl: 3rem;\n  --primitive-space-3xl: 4rem;\n\n  /* Размеры шрифтов */\n  --primitive-fs-xs: 0.75rem;\n  --primitive-fs-sm: 0.875rem;\n  --primitive-fs-base: 1rem;\n  --primitive-fs-lg: 1.125rem;\n  --primitive-fs-xl: 1.25rem;\n  --primitive-fs-2xl: 1.5rem;\n  --primitive-fs-3xl: 2rem;\n  --primitive-fs-4xl: 2.5rem;\n\n  /* Радиусы */\n  --primitive-radius-sm: 0.25rem;\n  --primitive-radius-md: 0.5rem;\n  --primitive-radius-lg: 1rem;\n  --primitive-radius-xl: 1.5rem;\n  --primitive-radius-full: 9999px;\n\n  /* Тени */\n  --primitive-shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);\n  --primitive-shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);\n  --primitive-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);\n  --primitive-shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);\n\n  /* Длительности анимации */\n  --primitive-duration-fast: 150ms;\n  --primitive-duration-base: 250ms;\n  --primitive-duration-slow: 350ms;\n\n  /* Функции easing */\n  --primitive-ease-base: cubic-bezier(0.4, 0, 0.2, 1);\n  --primitive-ease-in: cubic-bezier(0.4, 0, 1, 1);\n  --primitive-ease-out: cubic-bezier(0, 0, 0.2, 1);\n  --primitive-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/tokens/semantic.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer semantic;\n\n/* Семантические цвета */\n:root {\n  --color-bg: var(--primitive-color-slate-50);\n  --color-bg-inverted: var(--primitive-color-slate-950);\n  --color-surface: white;\n  --color-surface-inverted: var(--primitive-color-slate-900);\n\n  --color-text: var(--primitive-color-slate-900);\n  --color-text-inverted: var(--primitive-color-slate-50);\n  --color-text-secondary: var(--primitive-color-slate-600);\n  --color-text-muted: var(--primitive-color-slate-500);\n\n  --color-border: var(--primitive-color-slate-200);\n  --color-border-hover: var(--primitive-color-slate-300);\n  --color-border-focused: var(--primitive-color-blue-500);\n\n  --color-primary: var(--primitive-color-blue-600);\n  --color-primary-hover: var(--primitive-color-blue-500);\n  --color-primary-active: var(--primitive-color-blue-700);\n  --color-primary-subtle: color-mix(in oklch, var(--primitive-color-blue-600), white 92%);\n\n  --color-success: var(--primitive-color-green-500);\n  --color-success-subtle: color-mix(in oklch, var(--primitive-color-green-500), white 92%);\n\n  --color-error: var(--primitive-color-red-500);\n  --color-error-subtle: color-mix(in oklch, var(--primitive-color-red-500), white 92%);\n\n  --color-warning: oklch(0.80 0.15 60);\n  --color-warning-subtle: color-mix(in oklch, oklch(0.80 0.15 60), white 92%);\n\n  /* Семантические отступы */\n  --space-xs: var(--primitive-space-xs);\n  --space-sm: var(--primitive-space-sm);\n  --space-md: var(--primitive-space-md);\n  --space-lg: var(--primitive-space-lg);\n  --space-xl: var(--primitive-space-xl);\n  --space-2xl: var(--primitive-space-2xl);\n  --space-3xl: var(--primitive-space-3xl);\n\n  /* Семантические размеры шрифтов */\n  --fs-xs: var(--primitive-fs-xs);\n  --fs-sm: var(--primitive-fs-sm);\n  --fs-base: var(--primitive-fs-base);\n  --fs-lg: var(--primitive-fs-lg);\n  --fs-xl: var(--primitive-fs-xl);\n  --fs-2xl: var(--primitive-fs-2xl);\n  --fs-3xl: var(--primitive-fs-3xl);\n  --fs-4xl: var(--primitive-fs-4xl);\n\n  /* Семантические радиусы */\n  --radius-sm: var(--primitive-radius-sm);\n  --radius-md: var(--primitive-radius-md);\n  --radius-lg: var(--primitive-radius-lg);\n  --radius-xl: var(--primitive-radius-xl);\n  --radius-full: var(--primitive-radius-full);\n\n  /* Семантические тени */\n  --shadow-xs: var(--primitive-shadow-xs);\n  --shadow-sm: var(--primitive-shadow-sm);\n  --shadow-md: var(--primitive-shadow-md);\n  --shadow-lg: var(--primitive-shadow-lg);\n\n  /* Семантические длительности */\n  --duration-fast: var(--primitive-duration-fast);\n  --duration-base: var(--primitive-duration-base);\n  --duration-slow: var(--primitive-duration-slow);\n\n  /* Семантические easing */\n  --ease-base: var(--primitive-ease-base);\n  --ease-in: var(--primitive-ease-in);\n  --ease-out: var(--primitive-ease-out);\n  --ease-in-out: var(--primitive-ease-in-out);\n\n  /* Семантические line-height */\n  --line-height-tight: 1.25;\n  --line-height-base: 1.6;\n  --line-height-relaxed: 1.75;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/tokens/component.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components-tokens;\n\n/* Компонентные токены — кнопка */\n:root {\n  --btn-height-sm: 32px;\n  --btn-height-md: 40px;\n  --btn-height-lg: 48px;\n  --btn-padding-sm: var(--space-xs) var(--space-sm);\n  --btn-padding-md: var(--space-sm) var(--space-md);\n  --btn-padding-lg: var(--space-md) var(--space-lg);\n  --btn-font-size-sm: var(--fs-xs);\n  --btn-font-size-md: var(--fs-sm);\n  --btn-font-size-lg: var(--fs-base);\n  --btn-radius: var(--radius-md);\n  --btn-font-weight: 600;\n}\n\n/* Компонентные токены — карточка */\n:root {\n  --card-padding: var(--space-lg);\n  --card-radius: var(--radius-lg);\n  --card-border: 1px solid var(--color-border);\n  --card-shadow: var(--shadow-md);\n  --card-gap: var(--space-md);\n}\n\n/* Компонентные токены — модалка */\n:root {\n  --modal-max-width: 560px;\n  --modal-padding: var(--space-xl);\n  --modal-radius: var(--radius-lg);\n  --modal-shadow: var(--shadow-lg);\n  --modal-backdrop: rgb(0 0 0 / 0.5);\n}\n\n/* Компонентные токены — навигация */\n:root {\n  --nav-height: 64px;\n  --nav-item-padding: var(--space-xs) 0;\n  --nav-gap: var(--space-md);\n}\n\n/* Компонентные токены — инпут */\n:root {\n  --input-height: 40px;\n  --input-padding: var(--space-sm) var(--space-md);\n  --input-radius: var(--radius-md);\n  --input-border: 1px solid var(--color-border);\n  --input-border-focused: 2px solid var(--color-primary);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Темы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/themes/light.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer themes;\n\n[data-theme=\"light\"] {\n  --color-bg: var(--primitive-color-slate-50);\n  --color-bg-inverted: var(--primitive-color-slate-950);\n  --color-surface: white;\n  --color-surface-inverted: var(--primitive-color-slate-900);\n\n  --color-text: var(--primitive-color-slate-900);\n  --color-text-inverted: var(--primitive-color-slate-50);\n  --color-text-secondary: var(--primitive-color-slate-600);\n  --color-text-muted: var(--primitive-color-slate-500);\n\n  --color-border: var(--primitive-color-slate-200);\n  --color-border-hover: var(--primitive-color-slate-300);\n\n  /* Автоматически подтягиваются из semantic.css */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/themes/dark.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "[data-theme=\"dark\"] {\n  --color-bg: var(--primitive-color-slate-950);\n  --color-bg-inverted: var(--primitive-color-slate-50);\n  --color-surface: var(--primitive-color-slate-900);\n  --color-surface-inverted: var(--primitive-color-slate-50);\n\n  --color-text: var(--primitive-color-slate-50);\n  --color-text-inverted: var(--primitive-color-slate-950);\n  --color-text-secondary: var(--primitive-color-slate-400);\n  --color-text-muted: var(--primitive-color-slate-500);\n\n  --color-border: var(--primitive-color-slate-800);\n  --color-border-hover: var(--primitive-color-slate-700);\n\n  /* Тени темнее в темной теме */\n  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.3);\n  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);\n  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/themes/brand-a.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "[data-brand=\"brand-a\"] {\n  --color-primary: var(--primitive-color-blue-600);\n  --color-primary-hover: var(--primitive-color-blue-500);\n  --color-primary-active: var(--primitive-color-blue-700);\n  --color-success: var(--primitive-color-green-500);\n  --color-error: var(--primitive-color-red-500);\n  --font-family: 'Inter', system-ui, -apple-system, sans-serif;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/themes/brand-b.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "[data-brand=\"brand-b\"] {\n  --color-primary: oklch(0.65 0.18 150);\n  --color-primary-hover: oklch(0.58 0.18 150);\n  --color-primary-active: oklch(0.50 0.18 150);\n  --color-success: oklch(0.70 0.15 140);\n  --color-error: oklch(0.60 0.20 25);\n  --font-family: 'Roboto', system-ui, -apple-system, sans-serif;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Компоненты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/components/button/button.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components;\n\n/* Базовые стили кнопки */\n.c-btn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  gap: var(--space-xs);\n  min-height: var(--btn-height-md);\n  padding: var(--btn-padding-md);\n  font-size: var(--btn-font-size-md);\n  font-weight: var(--btn-font-weight);\n  font-family: var(--font-family, inherit);\n  border: none;\n  border-radius: var(--btn-radius);\n  cursor: pointer;\n  background: transparent;\n  color: var(--color-text);\n  transition:\n    background var(--duration-base) var(--ease-base),\n    border-color var(--duration-base) var(--ease-base),\n    color var(--duration-base) var(--ease-base),\n    transform var(--duration-fast) var(--ease-base);\n  contain: paint;\n}\n\n/• Варианты */\n.c-btn--primary {\n  background: var(--color-primary);\n  color: var(--color-text-inverted);\n}\n\n.c-btn--primary:hover {\n  background: var(--color-primary-hover);\n}\n\n.c-btn--primary:active {\n  background: var(--color-primary-active);\n}\n\n.c-btn--secondary {\n  background: transparent;\n  color: var(--color-primary);\n  border: 1px solid var(--color-primary);\n}\n\n.c-btn--secondary:hover {\n  background: var(--color-primary-subtle);\n}\n\n.c-btn--ghost {\n  background: transparent;\n  color: var(--color-text);\n}\n\n.c-btn--ghost:hover {\n  background: var(--color-bg);\n}\n\n.c-btn--danger {\n  background: var(--color-error);\n  color: var(--color-text-inverted);\n}\n\n.c-btn--danger:hover {\n  background: var(--color-error-subtle);\n}\n\n/• Размеры */\n.c-btn--sm {\n  min-height: var(--btn-height-sm);\n  padding: var(--btn-padding-sm);\n  font-size: var(--btn-font-size-sm);\n}\n\n.c-btn--md {\n  min-height: var(--btn-height-md);\n  padding: var(--btn-padding-md);\n  font-size: var(--btn-font-size-md);\n}\n\n.c-btn--lg {\n  min-height: var(--btn-height-lg);\n  padding: var(--btn-padding-lg);\n  font-size: var(--btn-font-size-lg);\n}\n\n/• Состояния */\n.c-btn:disabled {\n  opacity: 0.5;\n  cursor: not-allowed;\n  pointer-events: none;\n}\n\n.c-btn.is-loading {\n  opacity: 0.7;\n  cursor: not-allowed;\n  pointer-events: none;\n}\n\n.c-btn:focus-visible {\n  outline: 3px solid var(--color-border-focused);\n  outline-offset: 3px;\n  box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-primary), white 60%);\n}\n\n.c-btn:focus:not(:focus-visible) {\n  outline: none;\n}\n\n/• Контейнерные запросы */\n@container (max-width: 200px) {\n  .c-btn {\n    min-height: 36px;\n    padding: var(--space-xs) var(--space-sm);\n    font-size: var(--fs-xs);\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/components/card/card.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components;\n\n.c-card {\n  container-type: inline-size;\n  display: flex;\n  flex-direction: column;\n  gap: var(--card-gap);\n  padding: var(--card-padding);\n  border: var(--card-border);\n  border-radius: var(--card-radius);\n  background: var(--color-surface);\n  box-shadow: var(--card-shadow);\n  transition:\n    box-shadow var(--duration-base) var(--ease-base),\n    border-color var(--duration-base) var(--ease-base);\n  contain: paint;\n}\n\n.c-card--featured {\n  border: 2px solid var(--color-primary);\n  background: color-mix(in oklch, var(--color-primary), white 95%);\n}\n\n.c-card__media {\n  aspect-ratio: 16 / 9;\n  width: 100%;\n  background: var(--color-bg);\n  border-radius: var(--radius-md);\n  overflow: hidden;\n  position: relative;\n}\n\n.c-card__img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  object-position: center;\n  display: block;\n}\n\n.c-card__badge {\n  position: absolute;\n  inset-block-start: var(--space-xs);\n  inset-inline-start: var(--space-xs);\n  font-size: var(--fs-xs);\n  font-weight: 600;\n  padding: 2px 8px;\n  border-radius: var(--radius-full);\n  background: var(--color-error);\n  color: var(--color-text-inverted);\n}\n\n.c-card__body {\n  display: flex;\n  flex-direction: column;\n  gap: var(--space-sm);\n  flex: 1;\n}\n\n.c-card__title {\n  font-size: var(--fs-lg);\n  font-weight: 600;\n  color: var(--color-text);\n  margin: 0;\n  line-height: var(--line-height-tight);\n}\n\n.c-card__text {\n  font-size: var(--fs-sm);\n  color: var(--color-text-secondary);\n  line-height: var(--line-height-base);\n  margin: 0;\n}\n\n.c-card__price {\n  font-size: var(--fs-xl);\n  font-weight: 700;\n  color: var(--color-text);\n  margin-top: auto;\n}\n\n.c-card__footer {\n  display: flex;\n  gap: var(--space-sm);\n  margin-top: auto;\n}\n\n@container (max-width: 320px) {\n  .c-card {\n    padding: var(--space-md);\n  }\n\n  .c-card__title {\n    font-size: var(--fs-base);\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/components/modal/modal.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components;\n\n.c-modal__overlay {\n  position: fixed;\n  inset: 0;\n  background: var(--modal-backdrop);\n  z-index: 100;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  opacity: 0;\n  visibility: hidden;\n  transition:\n    opacity var(--duration-base) var(--ease-base),\n    visibility var(--duration-base);\n}\n\n.c-modal__overlay.is-open {\n  opacity: 1;\n  visibility: visible;\n}\n\n.c-modal {\n  position: relative;\n  width: 90%;\n  max-width: var(--modal-max-width);\n  padding: var(--modal-padding);\n  border-radius: var(--modal-radius);\n  background: var(--color-surface);\n  color: var(--color-text);\n  box-shadow: var(--modal-shadow);\n  transform: scale(0.95);\n  transition:\n    transform var(--duration-base) var(--ease-base),\n    opacity var(--duration-base) var(--ease-base);\n  opacity: 0;\n  visibility: hidden;\n  contain: layout paint style;\n}\n\n.c-modal__overlay.is-open .c-modal {\n  transform: scale(1);\n  opacity: 1;\n  visibility: visible;\n}\n\n.c-modal__close {\n  position: absolute;\n  inset-block-start: var(--space-sm);\n  inset-inline-end: var(--space-sm);\n  background: none;\n  border: none;\n  font-size: var(--fs-lg);\n  cursor: pointer;\n  color: var(--color-text-muted);\n  line-height: 1;\n  padding: var(--space-xs);\n  border-radius: var(--radius-full);\n  transition: background var(--duration-fast), color var(--duration-fast);\n}\n\n.c-modal__close:hover {\n  background: var(--color-bg);\n  color: var(--color-text);\n}\n\n.c-modal__close:focus-visible {\n  outline: 3px solid var(--color-border-focused);\n  outline-offset: 2px;\n}\n\n.c-modal__title {\n  font-size: var(--fs-2xl);\n  font-weight: 600;\n  color: var(--color-text);\n  margin: 0 0 var(--space-md) 0;\n}\n\n.c-modal__body {\n  font-size: var(--fs-base);\n  line-height: var(--line-height-base);\n  color: var(--color-text-secondary);\n  margin-bottom: var(--space-xl);\n}\n\n.c-modal__actions {\n  display: flex;\n  gap: var(--space-sm);\n  justify-content: flex-end;\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .c-modal__overlay,\n  .c-modal {\n    transition-duration: 0.01ms;\n    transform: none;\n    opacity: 1;\n    visibility: visible;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/components/modal/modal.js"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Фокус-ловушка и управление модалкой\nclass Modal {\n  constructor(selector) {\n    this.modal = document.querySelector(selector);\n    this.overlay = this.modal.querySelector('.c-modal__overlay');\n    this.closeBtn = this.modal.querySelector('.c-modal__close');\n    this.isOpen = false;\n    this.previousFocus = null;\n\n    this.init();\n  }\n\n  init() {\n    this.closeBtn.addEventListener('click', () => this.close());\n\n    this.overlay.addEventListener('click', (e) => {\n      if (e.target === this.overlay) this.close();\n    });\n\n    document.addEventListener('keydown', (e) => {\n      if (e.key === 'Escape' && this.isOpen) this.close();\n    });\n  }\n\n  open() {\n    this.previousFocus = document.activeElement;\n    this.isOpen = true;\n    this.overlay.classList.add('is-open');\n    document.body.style.overflow = 'hidden';\n\n    // Переместить фокус в модалку\n    const firstFocusable = this.modal.querySelector(\n      'button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])'\n    );\n    if (firstFocusable) firstFocusable.focus();\n\n    this.trapFocus();\n  }\n\n  close() {\n    this.isOpen = false;\n    this.overlay.classList.remove('is-open');\n    document.body.style.overflow = '';\n\n    // Вернуть фокус\n    if (this.previousFocus) this.previousFocus.focus();\n    this.previousFocus = null;\n  }\n\n  trapFocus() {\n    const focusableElements = this.modal.querySelectorAll(\n      'button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])'\n    );\n    const first = focusableElements[0];\n    const last = focusableElements[focusableElements.length - 1];\n\n    const handler = (e) => {\n      if (!this.isOpen) return;\n      if (e.key !== 'Tab') return;\n\n      if (e.shiftKey) {\n        if (document.activeElement === first) {\n          e.preventDefault();\n          last.focus();\n        }\n      } else {\n        if (document.activeElement === last) {\n          e.preventDefault();\n          first.focus();\n        }\n      }\n    };\n\n    this.modal.addEventListener('keydown', handler);\n    this._trapHandler = handler;\n  }\n\n  destroy() {\n    this.close();\n    if (this._trapHandler) {\n      this.modal.removeEventListener('keydown', this._trapHandler);\n    }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/components/nav/nav.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components;\n\n.c-nav {\n  height: var(--nav-height);\n  border-inline-end: 1px solid var(--color-border);\n  background: var(--color-surface);\n  contain: paint;\n}\n\n.c-nav__list {\n  display: flex;\n  gap: var(--nav-gap);\n  padding-inline-start: 0;\n  margin: 0;\n  list-style: none;\n  height: 100%;\n  align-items: center;\n}\n\n.c-nav__link {\n  display: inline-flex;\n  align-items: center;\n  padding-inline-start: var(--space-sm);\n  padding-inline-end: var(--space-sm);\n  color: var(--color-text-secondary);\n  text-decoration: none;\n  font-size: var(--fs-sm);\n  font-weight: 500;\n  border-radius: var(--radius-md);\n  transition: color var(--duration-fast), background var(--duration-fast);\n}\n\n.c-nav__link:hover {\n  color: var(--color-text);\n  background: var(--color-bg);\n}\n\n.c-nav__link:focus-visible {\n  outline: 3px solid var(--color-border-focused);\n  outline-offset: 2px;\n  color: var(--color-primary);\n  background: color-mix(in oklch, var(--color-primary), white 95%);\n}\n\n.c-nav__link[aria-current=\"page\"] {\n  color: var(--color-primary);\n  font-weight: 600;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/components/nav/nav.js"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class NavToggle {\n  constructor(toggleSelector, menuSelector) {\n    this.toggle = document.querySelector(toggleSelector);\n    this.menu = document.querySelector(menuSelector);\n    this.isOpen = false;\n\n    this.init();\n  }\n\n  init() {\n    this.toggle.addEventListener('click', () => this.toggleMenu());\n\n    document.addEventListener('keydown', (e) => {\n      if (e.key === 'Escape' && this.isOpen) this.close();\n    });\n  }\n\n  toggleMenu() {\n    if (this.isOpen) this.close();\n    else this.open();\n  }\n\n  open() {\n    this.isOpen = true;\n    this.toggle.setAttribute('aria-expanded', 'true');\n    this.menu.hidden = false;\n\n    const firstLink = this.menu.querySelector('a');\n    if (firstLink) firstLink.focus();\n  }\n\n  close() {\n    this.isOpen = false;\n    this.toggle.setAttribute('aria-expanded', 'false');\n    this.menu.hidden = true;\n    this.toggle.focus();\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/components/input/input.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components;\n\n.c-input__field {\n  display: flex;\n  flex-direction: column;\n  gap: var(--space-xs);\n}\n\n.c-input__label {\n  font-size: var(--fs-sm);\n  font-weight: 600;\n  color: var(--color-text);\n}\n\n.c-input__control {\n  width: 100%;\n  min-height: var(--input-height);\n  padding: var(--input-padding);\n  font-size: var(--fs-base);\n  font-family: inherit;\n  border: var(--input-border);\n  border-radius: var(--input-radius);\n  background: var(--color-surface);\n  color: var(--color-text);\n  transition:\n    border-color var(--duration-fast),\n    box-shadow var(--duration-fast);\n}\n\n.c-input__control::placeholder {\n  color: var(--color-text-muted);\n}\n\n.c-input__control:focus-visible {\n  outline: none;\n  border: var(--input-border-focused);\n  box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-primary), white 60%);\n}\n\n.c-input__control[aria-invalid=\"true\"] {\n  border-color: var(--color-error);\n}\n\n.c-input__control[aria-invalid=\"true\"]:focus-visible {\n  border-color: var(--color-error);\n  box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-error), white 70%);\n}\n\n.c-input__hint {\n  font-size: var(--fs-xs);\n  color: var(--color-text-muted);\n}\n\n.c-input__error {\n  font-size: var(--fs-xs);\n  color: var(--color-error);\n  margin-block-start: var(--space-xs);\n}\n\n/* Валидация через :has() */\n.c-input__field:has(.c-input__control:invalid:not(:focus-visible)) .c-input__error {\n  display: block;\n}\n\n.c-input__field:has(.c-input__control:valid) .c-input__control {\n  border-color: var(--color-success);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/components/input/input.js"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class InputValidator {\n  constructor(inputSelector) {\n    this.input = document.querySelector(inputSelector);\n    this.init();\n  }\n\n  init() {\n    this.input.addEventListener('blur', () => this.validate());\n    this.input.addEventListener('input', () => this.clearError());\n  }\n\n  validate() {\n    const isValid = this.input.checkValidity();\n    this.input.setAttribute('aria-invalid', !isValid);\n    return isValid;\n  }\n\n  clearError() {\n    if (this.input.getAttribute('aria-invalid') === 'true') {\n      this.input.removeAttribute('aria-invalid');\n    }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Утилиты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/utils/theme-toggle.js"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class ThemeToggle {\n  constructor(toggleSelector) {\n    this.toggle = document.querySelector(toggleSelector);\n    this.html = document.documentElement;\n    this.init();\n  }\n\n  init() {\n    const savedTheme = localStorage.getItem('theme') || 'light';\n    this.setTheme(savedTheme);\n    this.toggle.checked = savedTheme === 'dark';\n\n    this.toggle.addEventListener('change', () => {\n      const newTheme = this.toggle.checked ? 'dark' : 'light';\n      this.setTheme(newTheme);\n      localStorage.setItem('theme', newTheme);\n    });\n  }\n\n  setTheme(theme) {\n    this.html.setAttribute('data-theme', theme);\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/utils/focus-trap.js"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function trapFocus(element) {\n  const focusable = element.querySelectorAll(\n    'button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])'\n  );\n  const first = focusable[0];\n  const last = focusable[focusable.length - 1];\n\n  element.addEventListener('keydown', (e) => {\n    if (e.key !== 'Tab') return;\n    if (e.shiftKey) {\n      if (document.activeElement === first) {\n        e.preventDefault();\n        last.focus();\n      }\n    } else {\n      if (document.activeElement === last) {\n        e.preventDefault();\n        first.focus();\n      }\n    }\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Основные стили и импорт"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "src/main.css"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer base, themes, primitives, semantic, components-tokens, components;\n\n@import 'tokens/primitives.css';\n@import 'tokens/semantic.css';\n@import 'tokens/component.css';\n@import 'themes/light.css';\n@import 'themes/dark.css';\n@import 'themes/brand-a.css';\n@import 'themes/brand-b.css';\n@import 'components/button/button.css';\n@import 'components/card/card.css';\n@import 'components/modal/modal.css';\n@import 'components/nav/nav.css';\n@import 'components/input/input.css';\n\n@layer base {\n  * {\n    box-sizing: border-box;\n  }\n\n  html {\n    scroll-behavior: smooth;\n    font-family: var(--font-family, system-ui, -apple-system, sans-serif);\n  }\n\n  body {\n    margin: 0;\n    padding: 0;\n    font-size: var(--fs-base);\n    line-height: var(--line-height-base);\n    color: var(--color-text);\n    background: var(--color-bg);\n  }\n\n  a {\n    color: var(--color-primary);\n    text-decoration: none;\n  }\n\n  a:hover {\n    text-decoration: underline;\n  }\n\n  a:focus-visible {\n    outline: 3px solid var(--color-border-focused);\n    outline-offset: 2px;\n  }\n\n  /* Skip link */\n  .skip-link {\n    position: absolute;\n    top: -100px;\n    left: 0;\n    background: var(--color-primary);\n    color: var(--color-text-inverted);\n    padding: var(--space-sm) var(--space-md);\n    z-index: 1000;\n    text-decoration: none;\n    border-radius: 0 0 var(--radius-md) 0;\n  }\n\n  .skip-link:focus {\n    top: 0;\n  }\n\n  /* Reduced motion */\n  @media (prefers-reduced-motion: reduce) {\n    *,\n    *::before,\n    *::after {\n      animation-duration: 0.01ms !important;\n      animation-iteration-count: 1 !important;\n      transition-duration: 0.01ms !important;\n      scroll-behavior: auto !important;\n    }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Демо-страница (index.html)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!DOCTYPE html>\n<html lang=\"ru\" dir=\"ltr\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Дизайн-система — демо</title>\n  <link rel=\"stylesheet\" href=\"dist/main.css\">\n</head>\n<body data-theme=\"light\" data-brand=\"brand-a\">\n  <!-- Skip link -->\n  <a href=\"#main\" class=\"skip-link\">Перейти к основному содержимому</a>\n\n  <header class=\"c-header\">\n    <nav class=\"c-nav\" aria-label=\"Основная навигация\">\n      <ul class=\"c-nav__list\">\n        <li class=\"c-nav__item\">\n          <a href=\"#\" class=\"c-nav__link\" aria-current=\"page\">Главная</a>\n        </li>\n        <li class=\"c-nav__item\">\n          <a href=\"#\" class=\"c-nav__link\">Каталог</a>\n        </li>\n        <li class=\"c-nav__item\">\n          <a href=\"#\" class=\"c-nav__link\">О нас</a>\n        </li>\n        <li class=\"c-nav__item\">\n          <a href=\"#\" class=\"c-nav__link\">Контакты</a>\n        </li>\n      </ul>\n    </nav>\n  </header>\n\n  <main id=\"main\" class=\"l-container\">\n    <section class=\"c-section\">\n      <h1>Демо компонентов дизайн-системы</h1>\n\n      <div class=\"c-grid c-grid--3\">\n        <article class=\"c-card c-card--featured\">\n          <div class=\"c-card__media\">\n            <img src=\"https://picsum.photos/400/300\" alt=\"Товар 1\" class=\"c-card__img\">\n            <span class=\"c-card__badge\">Новинка</span>\n          </div>\n          <div class=\"c-card__body\">\n            <h2 class=\"c-card__title\">Товар 1</h2>\n            <p class=\"c-card__text\">Описание товара...</p>\n            <div class=\"c-card__price\">29 990 ₽</div>\n          </div>\n          <footer class=\"c-card__footer\">\n            <button class=\"c-btn c-btn--primary c-btn--sm\">В корзину</button>\n          </footer>\n        </article>\n\n        <article class=\"c-card\">\n          <div class=\"c-card__media\">\n            <img src=\"https://picsum.photos/400/300\" alt=\"Товар 2\" class=\"c-card__img\">\n          </div>\n          <div class=\"c-card__body\">\n            <h2 class=\"c-card__title\">Товар 2</h2>\n            <p class=\"c-card__text\">Описание товара...</p>\n            <div class=\"c-card__price\">19 990 ₽</div>\n          </div>\n          <footer class=\"c-card__footer\">\n            <button class=\"c-btn c-btn--secondary c-btn--sm\">В корзину</button>\n          </footer>\n        </article>\n      </div>\n\n      <div class=\"c-mt-xl\">\n        <button class=\"c-btn c-btn--primary c-btn--lg js-modal-open\">Открыть модалку</button>\n      </div>\n    </section>\n  </main>\n\n  <!-- Модалка -->\n  <div class=\"c-modal\" id=\"modal-demo\" role=\"dialog\" aria-modal=\"false\" aria-labelledby=\"modal-title\">\n    <div class=\"c-modal__overlay\">\n      <div class=\"c-modal\">\n        <button class=\"c-modal__close\" aria-label=\"Закрыть\">×</button>\n        <h2 id=\"modal-title\" class=\"c-modal__title\">Заголовок модалки</h2>\n        <div class=\"c-modal__body\">\n          <p>Содержимое модального окна с формой:</p>\n          <div class=\"c-input__field\">\n            <label for=\"modal-input\" class=\"c-input__label\">Ваше имя</label>\n            <input type=\"text\" id=\"modal-input\" class=\"c-input__control\" required>\n            <span class=\"c-input__error\">Пожалуйста, введите имя</span>\n          </div>\n        </div>\n        <div class=\"c-modal__actions\">\n          <button class=\"c-btn c-btn--secondary js-modal-close\">Отмена</button>\n          <button class=\"c-btn c-btn--primary js-modal-close\">Сохранить</button>\n        </div>\n      </div>\n    </div>\n  </div>\n\n  <script src=\"dist/main.js\"></script>\n</body>\n</html>"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Аудит доступности"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проверка контраста"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Элемент",
+        "Цвет текста",
+        "Фон",
+        "Контраст",
+        "Статус"
+      ],
+      "rows": [
+        [
+          "Основной текст",
+          "#1a1a1a (oklch 0.21)",
+          "#fafafa (oklch 0.98)",
+          "~13:1",
+          "✅ AA/AAA"
+        ],
+        [
+          "Вторичный текст",
+          "#5f6368 (oklch 0.55)",
+          "#fafafa",
+          "~4.8:1",
+          "✅ AA"
+        ],
+        [
+          "Кнопка primary",
+          "#ffffff",
+          "#2563eb",
+          "~5.3:1",
+          "✅ AA"
+        ],
+        [
+          "Кнопка secondary",
+          "#2563eb",
+          "transparent",
+          "—",
+          "✅ (граница)"
+        ],
+        [
+          "Текст ошибки",
+          "#ef4444",
+          "#fafafa",
+          "~3.8:1",
+          "⚠️ Только крупный текст"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проверка фокуса"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Элемент",
+        ":focus-visible стиль",
+        "Статус"
+      ],
+      "rows": [
+        [
+          "Кнопка",
+          "outline 3px + shadow",
+          "✅"
+        ],
+        [
+          "Инпут",
+          "border + shadow",
+          "✅"
+        ],
+        [
+          "Ссылка",
+          "outline 3px",
+          "✅"
+        ],
+        [
+          "Модалка (закрыть)",
+          "outline 3px",
+          "✅"
+        ],
+        [
+          "Навигация",
+          "outline + фон",
+          "✅"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проверка ARIA"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Элемент",
+        "ARIA атрибуты",
+        "Статус"
+      ],
+      "rows": [
+        [
+          "Навигация",
+          "aria-label=\"Основная навигация\"",
+          "✅"
+        ],
+        [
+          "Модалка",
+          "role=\"dialog\", aria-modal=\"true\"",
+          "✅"
+        ],
+        [
+          "Кнопка закрытия",
+          "aria-label=\"Закрыть\"",
+          "✅"
+        ],
+        [
+          "Инпут ошибка",
+          "aria-invalid=\"true/false\"",
+          "✅"
+        ],
+        [
+          "Текущая страница",
+          "aria-current=\"page\"",
+          "✅"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проверка клавиатуры"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Действие",
+        "Ожидание",
+        "Статус"
+      ],
+      "rows": [
+        [
+          "Tab по странице",
+          "Фокус перемещается по порядку",
+          "✅"
+        ],
+        [
+          "Shift+Tab",
+          "Направление обратное",
+          "✅"
+        ],
+        [
+          "Enter на кнопке",
+          "Активация",
+          "✅"
+        ],
+        [
+          "Space на кнопке",
+          "Активация",
+          "✅"
+        ],
+        [
+          "ESC на модалке",
+          "Закрытие",
+          "✅"
+        ],
+        [
+          "Tab в модалке",
+          "Фокус не выходит за границы",
+          "✅"
+        ],
+        [
+          "Skip-link",
+          "Появляется при первом Tab",
+          "✅"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Аудит производительности"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Метрики (цели)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Метрика",
+        "Целевое значение",
+        "Инструмент"
+      ],
+      "rows": [
+        [
+          "First Contentful Paint",
+          "< 1.5с",
+          "Lighthouse"
+        ],
+        [
+          "Largest Contentful Paint",
+          "< 2.5с",
+          "Lighthouse"
+        ],
+        [
+          "Cumulative Layout Shift",
+          "< 0.1",
+          "Lighthouse"
+        ],
+        [
+          "Interaction to Next Paint",
+          "< 200мс",
+          "Lighthouse"
+        ],
+        [
+          "FPS анимации",
+          "~60",
+          "DevTools Performance"
+        ],
+        [
+          "Размер CSS",
+          "< 50КБ (gzipped)",
+          "webpack-bundle-analyzer"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Оптимизации применённые"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**contain: paint** на карточках, модалках, навигации",
+        "**will-change** включается только во время анимации, сбрасывается после",
+        "**Анимации только на transform и opacity** (нет width/height/top/left)",
+        "**Явные размеры изображений** (width, height) — нет CLS",
+        "**font-display: swap** для шрифтов",
+        "**CSS Modules** — нет мёртвого CSS",
+        "**cssnano** — минификация в продакшене",
+        "**postcss-import** — нет лишних HTTP-запросов"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проверка в DevTools"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] Performance панель — FPS стабильно 60 при анимациях",
+        "[ ] Animations панель — бейдж GPU на анимациях",
+        "[ ] Rendering → Paint flashing — минимальное перерисование",
+        "[ ] Layers панель — разумное количество compositing слоёв",
+        "[ ] Lighthouse — Accessibility ≥ 90, Performance ≥ 90"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Definition of Done (чек-лист готовности)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Критерии",
+        "Статус"
+      ],
+      "rows": [
+        [
+          "**Токены**",
+          "Примитивы, семантические, компонентные токены определены",
+          "☐"
+        ],
+        [
+          "**Темы**",
+          "Светлая/тёмная тема, переключатель, localStorage",
+          "☐"
+        ],
+        [
+          "**Мультибренд**",
+          "brand-a и brand-b с разными цветами и шрифтами",
+          "☐"
+        ],
+        [
+          "**Кнопка**",
+          "Варианты, размеры, состояния, :focus-visible",
+          "☐"
+        ],
+        [
+          "**Карточка**",
+          "Вариант featured, контейнерные запросы, contain",
+          "☐"
+        ],
+        [
+          "**Модалка**",
+          "Фокус-ловушка, ESC, возврат фокуса, overlay",
+          "☐"
+        ],
+        [
+          "**Навигация**",
+          "aria-label, aria-current, фокус, логические свойства",
+          "☐"
+        ],
+        [
+          "**Инпут**",
+          "label, aria-invalid, ошибки, :has() валидация",
+          "☐"
+        ],
+        [
+          "**Доступность**",
+          "Контраст ≥ 4.5:1, фокус, skip-link, reduced motion",
+          "☐"
+        ],
+        [
+          "**Производительность**",
+          "contain, will-change, transform/opacity анимации",
+          "☐"
+        ],
+        [
+          "**RTL**",
+          "[dir=\"rtl\"] работает с логическими свойствами",
+          "☐"
+        ],
+        [
+          "**Зум**",
+          "200% зум не ломает вёрстку",
+          "☐"
+        ],
+        [
+          "**Инструменты**",
+          "PostCSS, stylelint, prettier, cssnano",
+          "☐"
+        ],
+        [
+          "**Документация**",
+          "tokens.md, components.md, themes.md, a11y.md",
+          "☐"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 32
+}

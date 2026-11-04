@@ -1,0 +1,511 @@
+{
+  "title": "Урок 19: Code Quality — Линтеры, Форматтеры, Тесты, CI/CD, Документация",
+  "slug": "code-quality-lintery-formattery-testy-cicd-dokumentatsiya",
+  "short_description": "Линтеры, Форматтеры, Тесты, CI/CD, Документация",
+  "goals": [
+    "Настроить ESLint + Prettier для единого стиля кода",
+    "Понять виды тестов: unit, integration, e2e",
+    "Написать тесты на Vitest + Testing Library",
+    "Настроить Git Hooks (Husky + lint-staged)",
+    "Понять основы CI/CD (GitHub Actions)",
+    "Научиться документировать код (JSDoc, TypeDoc)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Настроить ESLint + Prettier для единого стиля кода",
+        "Понять виды тестов: unit, integration, e2e",
+        "Написать тесты на Vitest + Testing Library",
+        "Настроить Git Hooks (Husky + lint-staged)",
+        "Понять основы CI/CD (GitHub Actions)",
+        "Научиться документировать код (JSDoc, TypeDoc)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. ESLint — статический анализ кода"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка и базовая настройка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm init -y\nnpm install -D eslint @eslint/js globals\nnpx eslint --init"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Современный flat config (eslint.config.js, ESLint 9+)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// eslint.config.js\nimport js from '@eslint/js';\nimport globals from 'globals';\n\nexport default [\n  // Игнорируемые файлы\n  { ignores: ['dist/', 'node_modules/', '*.config.js'] },\n\n  // Базовые рекомендации\n  js.configs.recommended,\n\n  // Настройки для браузера + Node.js + ES2022\n  {\n    languageOptions: {\n      ecmaVersion: 2022,\n      sourceType: 'module',\n      globals: {\n        ...globals.browser,\n        ...globals.node,\n        ...globals.es2022\n      }\n    },\n    rules: {\n      // Строгость\n      'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],\n      'no-undef': 'error',\n      'no-console': ['warn', { allow: ['warn', 'error'] }],\n\n      // Best practices\n      'prefer-const': 'error',\n      'no-var': 'error',\n      'prefer-arrow-callback': 'error',\n      'prefer-template': 'error',\n      'object-shorthand': 'error',\n      'array-callback-return': 'error',\n\n      // Сложность\n      'max-depth': ['warn', 4],\n      'max-lines-per-function': ['warn', 50],\n      'complexity': ['warn', 10],\n\n      // Стиль\n      'quotes': ['error', 'single', { avoidEscape: true }],\n      'semi': ['error', 'always'],\n      'comma-dangle': ['error', 'always-multiline']\n    }\n  },\n\n  // Тестовые файлы — другие globals\n  {\n    files: ['**/*.test.js', '**/*.spec.js'],\n    languageOptions: {\n      globals: { ...globals.browser, ...globals.node, ...globals.jest }\n    }\n  }\n];"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Запуск"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Prettier — форматирование"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D prettier eslint-config-prettier eslint-plugin-prettier"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфиг (.prettierrc)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"semi\": true,\n  \"singleQuote\": true,\n  \"trailingComma\": \"es5\",\n  \"printWidth\": 100,\n  \"tabWidth\": 2,\n  \"useTabs\": false,\n  \"bracketSpacing\": true,\n  \"arrowParens\": \"avoid\",\n  \"endOfLine\": \"lf\"\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Игнор (.prettierignore)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "dist/\nnode_modules/\n*.md\n*.yml\n*.yaml\npackage-lock.json"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Интеграция с ESLint (flat config)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// eslint.config.js (добавить в массив)\nimport pluginPrettier from 'eslint-plugin-prettier';\nimport configPrettier from 'eslint-config-prettier';\n\nexport default [\n  // ... предыдущие конфиги\n  {\n    plugins: { prettier: pluginPrettier },\n    rules: {\n      'prettier/prettier': 'error'\n    }\n  },\n  configPrettier // отключает конфликтующие правила\n];"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. TypeScript + ESLint (если используете TS)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D typescript @typescript-eslint/eslint-plugin @typescript-eslint/parser"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// eslint.config.js\nimport tseslint from 'typescript-eslint';\n\nexport default tseslint.config(\n  { ignores: ['dist/'] },\n  ...tseslint.configs.recommended,\n  {\n    rules: {\n      '@typescript-eslint/no-explicit-any': 'warn',\n      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }]\n    }\n  }\n);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Тестирование"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Виды тестов"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тип",
+        "Область",
+        "Скорость",
+        "Инструменты"
+      ],
+      "rows": [
+        [
+          "**Unit**",
+          "Функция/модуль",
+          "Очень быстро",
+          "Vitest, Jest"
+        ],
+        [
+          "**Integration**",
+          "Несколько модулей",
+          "Быстро",
+          "Vitest, Testing Library"
+        ],
+        [
+          "**E2E**",
+          "Весь пользовательский флоу",
+          "Медленно",
+          "Playwright, Cypress"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Vitest — современный тест-раннер"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D vitest @testing-library/dom jsdom @vitest/coverage-v8"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// vitest.config.js\nimport { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    environment: 'jsdom',\n    globals: true,\n    include: ['src/**/*.test.{js,ts}'],\n    coverage: {\n      provider: 'v8',\n      reporter: ['text', 'json', 'html'],\n      thresholds: {\n        lines: 80,\n        functions: 80,\n        branches: 70,\n        statements: 80\n      }\n    }\n  }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Примеры тестов"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// utils/math.test.js\nimport { describe, it, expect, vi, beforeEach } from 'vitest';\nimport { sum, multiply, asyncDivide } from './math.js';\n\ndescribe('math utilities', () => {\n  describe('sum', () => {\n    it('adds two numbers', () => {\n      expect(sum(2, 3)).toBe(5);\n    });\n\n    it('handles negative numbers', () => {\n      expect(sum(-1, 1)).toBe(0);\n    });\n\n    it('returns 0 for empty args', () => {\n      expect(sum()).toBe(0);\n    });\n  });\n\n  describe('asyncDivide', () => {\n    it('resolves with result', async () => {\n      const result = await asyncDivide(10, 2);\n      expect(result).toBe(5);\n    });\n\n    it('rejects on division by zero', async () => {\n      await expect(asyncDivide(10, 0)).rejects.toThrow('Division by zero');\n    });\n  });\n});\n\n// Mocking\nvi.mock('./api.js', () => ({\n  fetchUser: vi.fn()\n}));\n\nimport { fetchUser } from './api.js';\n\nit('calls api with correct id', async () => {\n  fetchUser.mockResolvedValue({ id: 1, name: 'Alex' });\n  const user = await fetchUser(1);\n  expect(fetchUser).toHaveBeenCalledWith(1);\n  expect(user.name).toBe('Alex');\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Testing Library (DOM компоненты)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D @testing-library/dom @testing-library/user-event"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// components/Counter.test.js\nimport { render, screen, fireEvent } from '@testing-library/dom';\nimport { Counter } from './Counter.js';\n\nit('increments on click', () => {\n  render(<Counter initial={0} />);\n\n  expect(screen.getByText('Count: 0')).toBeInTheDocument();\n\n  fireEvent.click(screen.getByRole('button', { name: /increment/i }));\n\n  expect(screen.getByText('Count: 1')).toBeInTheDocument();\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Git Hooks — Husky + lint-staged"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D husky lint-staged\nnpx husky install\nnpx husky add .husky/pre-commit \"npx lint-staged\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "package.json"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"lint-staged\": {\n    \"*.{js,ts,jsx,tsx}\": [\n      \"eslint --fix\",\n      \"prettier --write\"\n    ],\n    \"*.{json,md,css,html}\": [\n      \"prettier --write\"\n    ]\n  },\n  \"scripts\": {\n    \"prepare\": \"husky install\"\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "pre-commit хуки"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ".husky/\n└── pre-commit     → npx lint-staged"
+    },
+    {
+      "type": "text",
+      "content": "Теперь при <code>git commit</code>:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Запускается `lint-staged`",
+        "Проверяет/исправляет только **staged** файлы",
+        "Если есть ошибки — коммит отменяется"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. CI/CD — GitHub Actions"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый workflow (.github/workflows/ci.yml)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "name: CI\n\non:\n  push:\n    branches: [main, develop]\n  pull_request:\n    branches: [main]\n\njobs:\n  lint-and-test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Setup Node.js\n        uses: actions/setup-node@v4\n        with:\n          node-version: '20'\n          cache: 'npm'\n\n      - name: Install dependencies\n        run: npm ci\n\n      - name: Run linter\n        run: npm run lint\n\n      - name: Run tests\n        run: npm run test -- --run\n\n      - name: Build\n        run: npm run build\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Статус-бейджи в README"
+    },
+    {
+      "type": "code",
+      "language": "markdown",
+      "content": "![CI](https://github.com/user/repo/workflows/CI/badge.svg)\n![Coverage](https://img.shields.io/codecov/c/github/user/repo)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Документация — JSDoc + TypeDoc"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "JSDoc примеры"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "/**\n * Суммирует числа.\n * @param {...number} numbers - Числа для суммирования\n * @returns {number} Сумма\n * @throws {TypeError} Если аргумент не число\n * @example\n * sum(1, 2, 3) // 6\n */\nfunction sum(...numbers) {\n  return numbers.reduce((a, b) => a + b, 0);\n}\n\n/**\n * Пользователь системы.\n * @typedef {Object} User\n * @property {string} id - UUID\n * @property {string} name - Имя\n * @property {string} [email] - Email (опционально)\n * @property {'admin'|'user'} role - Роль\n */\n\n/**\n * Создаёт пользователя.\n * @param {Omit<User, 'id'>} data - Данные без ID\n * @returns {User} Новый пользователь\n */\nfunction createUser(data) {\n  return { id: crypto.randomUUID(), ...data };\n}\n\n/**\n * Асинхронно загружает пользователя.\n * @param {string} id\n * @returns {Promise<User|null>} Пользователь или null\n * @async\n */\nasync function loadUser(id) {\n  const res = await fetch(`/api/users/${id}`);\n  return res.ok ? res.json() : null;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генерация документации (TypeDoc)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D typedoc\nnpx typedoc --out docs src/"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "// typedoc.json\n{\n  \"entryPoints\": [\"src/index.ts\"],\n  \"out\": \"docs\",\n  \"theme\": \"default\",\n  \"name\": \"My Library\",\n  \"readme\": \"README.md\",\n  \"excludePrivate\": true,\n  \"excludeProtected\": true\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Полный чек-лист качества кода"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pre-commit (локально)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] `npm run lint` — проходит без ошибок",
+        "[ ] `npm run test` — все тесты зелёные",
+        "[ ] `npm run build` — сборка успешна"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "PR проверки (CI)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] Линт проходит",
+        "[ ] Тесты проходят (coverage > 80%)",
+        "[ ] Типы валидны (`tsc --noEmit`)",
+        "[ ] Сборка успешна",
+        "[ ] E2E тесты проходят (опционально)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Архитектурные правила"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] Нет циклических зависимостей (madge, depcruise)",
+        "[ ] Размер бандла в норме (webpack-bundle-analyzer)",
+        "[ ] Нет `any` без необходимости",
+        "[ ] Публичный API задокументирован"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инструменты для анализа"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Конфигурация редактора (VS Code)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ".vscode/settings.json"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"editor.formatOnSave\": true,\n  \"editor.defaultFormatter\": \"esbenp.prettier-vscode\",\n  \"editor.codeActionsOnSave\": {\n    \"source.fixAll.eslint\": \"explicit\"\n  },\n  \"eslint.validate\": [\"javascript\", \"typescript\", \"javascriptreact\", \"typescriptreact\"],\n  \"typescript.tsdk\": \"node_modules/typescript/lib\"\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ".vscode/extensions.json (рекомендуемые расширения)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"recommendations\": [\n    \"esbenp.prettier-vscode\",\n    \"dbaeumer.vscode-eslint\",\n    \"vitest.explorer\",\n    \"bradlc.vscode-tailwindcss\"\n  ]\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практика"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Настройте проект с нуля**: `npm init` → ESLint + Prettier + Vitest + Husky",
+        "**Добавьте coverage threshold**: 80% lines, 70% branches",
+        "**Напишите unit-тесты** для утилит из уроков 5-9",
+        "**Настройте GitHub Actions** для репозитория",
+        "**Документируйте** 5 функций JSDoc, сгенерируйте TypeDoc",
+        "**Добавьте dependabot** для обновлений зависимостей (`.github/dependabot.yml`)"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "ESLint и Prettier конфликтуют",
+          "`eslint-config-prettier` отключает конфликтующие правила"
+        ],
+        [
+          "Тесты падают в CI, но проходят локально",
+          "Разное окружение — проверьте Node версия, `npm ci`"
+        ],
+        [
+          "Husky не работает",
+          "`npm run prepare` после клонирования, проверьте `.husky/pre-commit` исполняемый"
+        ],
+        [
+          "Coverage низкий, но код работает",
+          "Покройте edge cases, не стремитесь к 100% фанатично"
+        ],
+        [
+          "Линтер ругается на сгенерированный код",
+          "Добавьте в `ignores` или `/* eslint-disable */`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Контрольные вопросы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "В чём разница между `eslint:recommended` и `eslint:all`?",
+        "Зачем нужен `eslint-config-prettier`?",
+        "Что делает `lint-staged` и почему лучше, чем линтить весь проект?",
+        "В чём разница между unit, integration, e2e тестами?",
+        "Что такое `vi.mock` и когда он нужен?",
+        "Зачем нужен `jsdom` environment в Vitest?",
+        "Как настроить coverage thresholds?"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Дополнительное чтение"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ESLint Flat Config](https://eslint.org/docs/latest/use/configure/configuration-files-new)",
+        "[Prettier Options](https://prettier.io/docs/en/options.html)",
+        "[Vitest Guide](https://vitest.dev/guide/)",
+        "[Testing Library](https://testing-library.com/docs/)",
+        "[Husky](https://typicode.github.io/husky/)",
+        "[GitHub Actions](https://docs.github.com/en/actions)",
+        "[JSDoc](https://jsdoc.app/)",
+        "[TypeDoc](https://typedoc.org/)",
+        "[Conventional Commits](https://www.conventionalcommits.org/) — для авто-генерации changelog"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "ESLint и Prettier конфликтуют",
+      "correct": "`eslint-config-prettier` отключает конфликтующие правила"
+    },
+    {
+      "mistake": "Тесты падают в CI, но проходят локально",
+      "correct": "Разное окружение — проверьте Node версия, `npm ci`"
+    },
+    {
+      "mistake": "Husky не работает",
+      "correct": "`npm run prepare` после клонирования, проверьте `.husky/pre-commit` исполняемый"
+    },
+    {
+      "mistake": "Coverage низкий, но код работает",
+      "correct": "Покройте edge cases, не стремитесь к 100% фанатично"
+    },
+    {
+      "mistake": "Линтер ругается на сгенерированный код",
+      "correct": "Добавьте в `ignores` или `/* eslint-disable */`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 19
+}

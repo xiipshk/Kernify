@@ -1,0 +1,373 @@
+{
+  "title": "Урок 31: Advanced Patterns — Архитектурные паттерны, Метапрограммирование, Компиляторы",
+  "slug": "advanced-patterns-arhitekturnye-patterny-metaprogrammirovanie-kompilyatory",
+  "short_description": "Архитектурные паттерны, Метапрограммирование, Компиляторы",
+  "goals": [
+    "Освоить продвинутые архитектурные паттерны: CQRS, Event Sourcing, DDD",
+    "Понять метапрограммирование: Proxy, Reflect, Decorators, Symbols",
+    "Изучить компиляцию и трансформацию кода: Babel, SWC, TypeScript Compiler API",
+    "Разобраться с кодогенерацией: OpenAPI, GraphQL Codegen, tRPC",
+    "Научиться проектировать расширяемые системы: Plugin Architecture, Microkernels"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Освоить продвинутые архитектурные паттерны: CQRS, Event Sourcing, DDD",
+        "Понять метапрограммирование: Proxy, Reflect, Decorators, Symbols",
+        "Изучить компиляцию и трансформацию кода: Babel, SWC, TypeScript Compiler API",
+        "Разобраться с кодогенерацией: OpenAPI, GraphQL Codegen, tRPC",
+        "Научиться проектировать расширяемые системы: Plugin Architecture, Microkernels"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Domain-Driven Design (DDD) в JavaScript"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.1 Strategic Design: Bounded Contexts"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Контексты не должны знать друг о друге напрямую\n// Коммуникация через Domain Events / Anti-Corruption Layer\n\n// Order Context\nnamespace OrderContext {\n  export interface Order {\n    id: OrderId;\n    customerId: CustomerId;\n    items: OrderItem[];\n    status: OrderStatus;\n    total: Money;\n  }\n\n  export class OrderService {\n    constructor(\n      private orders: OrderRepository,\n      private eventBus: EventBus\n    ) {}\n\n    async placeOrder(cmd: PlaceOrderCommand): Promise<OrderId> {\n      const order = Order.create(cmd);\n      await this.orders.save(order);\n      await this.eventBus.publish(new OrderPlaced(order));\n      return order.id;\n    }\n  }\n}\n\n// Payment Context — свой язык (Ubiquitous Language)\nnamespace PaymentContext {\n  export interface Payment {\n    id: PaymentId;\n    orderId: OrderId; // Shared kernel или переведённый ID\n    amount: Money;\n    status: PaymentStatus;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.2 Tactical Design: Aggregates, Entities, Value Objects"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Value Object — иммутабелен, сравнивается по значению\nclass Money {\n  constructor(\n    public readonly amount: number,\n    public readonly currency: Currency = 'USD'\n  ) {\n    if (amount < 0) throw new Error('Negative amount');\n    if (!Number.isInteger(amount * 100)) throw new Error('Precision > 2 decimals');\n  }\n\n  add(other: Money): Money {\n    if (this.currency !== other.currency) throw new Error('Currency mismatch');\n    return new Money(this.amount + other.amount, this.currency);\n  }\n\n  equals(other: Money): boolean {\n    return this.amount === other.amount && this.currency === other.currency;\n  }\n}\n\n// Entity — имеет идентичность, изменяется\nclass OrderItem {\n  constructor(\n    public readonly id: OrderItemId,\n    public readonly productId: ProductId,\n    public quantity: number,\n    public readonly unitPrice: Money\n  ) {}\n\n  changeQuantity(qty: number) {\n    if (qty <= 0) throw new Error('Quantity must be positive');\n    this.quantity = qty;\n  }\n\n  getTotal(): Money {\n    return new Money(this.unitPrice.amount * this.quantity, this.unitPrice.currency);\n  }\n}\n\n// Aggregate Root — точка входа, гарантирует инварианты\nclass Order {\n  private constructor(\n    public readonly id: OrderId,\n    public readonly customerId: CustomerId,\n    private _items: OrderItem[] = [],\n    private _status: OrderStatus = 'draft',\n    private _domainEvents: DomainEvent[] = []\n  ) {}\n\n  static create(cmd: PlaceOrderCommand): Order {\n    const order = new Order(\n      OrderId.generate(),\n      cmd.customerId,\n      cmd.items.map(i => new OrderItem(...))\n    );\n    order.addDomainEvent(new OrderCreated(order.id));\n    return order;\n  }\n\n  addItem(item: OrderItem) {\n    if (this._status !== 'draft') throw new Error('Cannot modify confirmed order');\n    this._items.push(item);\n  }\n\n  confirm() {\n    if (this._items.length === 0) throw new Error('Empty order');\n    this._status = 'confirmed';\n    this.addDomainEvent(new OrderConfirmed(this.id));\n  }\n\n  get domainEvents(): DomainEvent[] {\n    return [...this._domainEvents];\n  }\n\n  clearEvents() { this._domainEvents = []; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.3 CQRS (Command Query Responsibility Segregation)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Commands — изменяют состояние\ninterface Command { type: string; payload: any; metadata?: Record<string, any>; }\n\nclass CommandBus {\n  private handlers = new Map<string, (cmd: Command) => Promise<void>>();\n\n  register<T extends Command>(type: string, handler: (cmd: T) => Promise<void>) {\n    this.handlers.set(type, handler as any);\n  }\n\n  async dispatch(cmd: Command) {\n    const handler = this.handlers.get(cmd.type);\n    if (!handler) throw new Error(`No handler for ${cmd.type}`);\n    await handler(cmd);\n  }\n}\n\n// Queries — только чтение, оптимизированы под чтение\ninterface Query<TResult> { type: string; payload: any; }\n\nclass QueryBus {\n  private handlers = new Map<string, (query: Query<any>) => Promise<any>>();\n\n  register<TResult>(type: string, handler: (q: Query<TResult>) => Promise<TResult>) {\n    this.handlers.set(type, handler);\n  }\n\n  async ask<TResult>(query: Query<TResult>): Promise<TResult> {\n    const handler = this.handlers.get(query.type);\n    if (!handler) throw new Error(`No handler for ${query.type}`);\n    return handler(query);\n  }\n}\n\n// Read Models (Projections) — денормализованные представления\nclass OrderSummaryProjection {\n  constructor(private readModel: OrderSummaryReadModel) {}\n\n  @EventHandler(OrderConfirmed)\n  async onOrderConfirmed(event: OrderConfirmed) {\n    await this.readModel.upsert({\n      orderId: event.orderId,\n      customerId: event.customerId,\n      total: event.total,\n      status: 'confirmed',\n      createdAt: event.timestamp\n    });\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.4 Event Sourcing"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Event Store — append-only логи событий\ninterface EventStore {\n  append(streamId: string, events: DomainEvent[], expectedVersion: number): Promise<void>;\n  getStream(streamId: string): Promise<DomainEvent[]>;\n  subscribe(streamId: string, handler: (event: DomainEvent) => void): () => void;\n}\n\n// Aggregate восстанавливается из событий\nclass Order {\n  private _version = 0;\n\n  static async reconstruct(eventStore: EventStore, orderId: OrderId): Promise<Order> {\n    const events = await eventStore.getStream(`order-${orderId}`);\n    const order = new Order(orderId, ...);\n    events.forEach(e => order.apply(e));\n    return order;\n  }\n\n  private apply(event: DomainEvent) {\n    switch (event.type) {\n      case 'OrderCreated': this.customerId = event.customerId; break;\n      case 'ItemAdded': this._items.push(reconstructItem(event.item)); break;\n      case 'OrderConfirmed': this._status = 'confirmed'; break;\n    }\n    this._version++;\n  }\n\n  // Новые события накапливаются для сохранения\n  private _pendingEvents: DomainEvent[] = [];\n\n  confirm() {\n    if (this._status !== 'draft') throw new Error('Already confirmed');\n    this._status = 'confirmed';\n    this._pendingEvents.push(new OrderConfirmed(this.id, this._version + 1));\n  }\n\n  get pendingEvents() { return this._pendingEvents; }\n  markEventsCommitted() { this._pendingEvents = []; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Метапрограммирование"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.1 Proxy — перехват операций"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Реактивность (как в Vue 3)\nfunction reactive<T extends object>(target: T): T {\n  const handlers: ProxyHandler<T> = {\n    get(target, prop, receiver) {\n      track(target, prop); // Dependency tracking\n      const value = Reflect.get(target, prop, receiver);\n      return typeof value === 'object' && value !== null ? reactive(value) : value;\n    },\n    set(target, prop, value, receiver) {\n      const oldValue = target[prop];\n      const result = Reflect.set(target, prop, value, receiver);\n      if (oldValue !== value) trigger(target, prop); // Notify subscribers\n      return result;\n    },\n    deleteProperty(target, prop) {\n      const had = prop in target;\n      const result = Reflect.deleteProperty(target, prop);\n      if (had) trigger(target, prop);\n      return result;\n    },\n    ownKeys(target) {\n      track(target, Symbol.iterator);\n      return Reflect.ownKeys(target);\n    }\n  };\n  return new Proxy(target, handlers);\n}\n\n// Валидация через Proxy\nfunction validated<T extends object>(target: T, schema: Record<string, (v: any) => boolean>): T {\n  return new Proxy(target, {\n    set(obj, prop, value) {\n      const validator = schema[prop as string];\n      if (validator && !validator(value)) {\n        throw new Error(`Invalid value for ${String(prop)}: ${value}`);\n      }\n      return Reflect.set(obj, prop, value);\n    }\n  });\n}\n\nconst user = validated({ age: 25, email: 'a@b.c' }, {\n  age: v => Number.isInteger(v) && v >= 0 && v <= 150,\n  email: v => /^[^@]+@[^@]+\\.[^@]+$/.test(v)\n});\nuser.age = 30; // OK\nuser.age = -5; // Error!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.2 Reflect — низкоуровневые операции"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Reflect — безопасные аналоги операторов\nReflect.get(obj, 'prop', receiver);        // obj[prop]\nReflect.set(obj, 'prop', value, receiver); // obj[prop] = value\nReflect.has(obj, 'prop');                  // 'prop' in obj\nReflect.deleteProperty(obj, 'prop');       // delete obj.prop\nReflect.construct(Class, args, newTarget); // new Class(...args)\nReflect.apply(fn, thisArg, args);          // fn.apply(thisArg, args)\nReflect.defineProperty(obj, prop, desc);   // Object.defineProperty\nReflect.getOwnPropertyDescriptor(obj, prop);\nReflect.ownKeys(obj);                      // Object.getOwnPropertyNames + Symbols\nReflect.preventExtensions(obj);            // Object.preventExtensions\nReflect.isExtensible(obj);                 // Object.isExtensible\n\n// Пример: Generic Wrapper\nfunction traceMethodCalls<T>(obj: T): T {\n  return new Proxy(obj, {\n    get(target, prop, receiver) {\n      const value = Reflect.get(target, prop, receiver);\n      if (typeof value === 'function') {\n        return function(...args: any[]) {\n          console.log(`→ ${String(prop)}(${args.join(', ')})`);\n          const result = Reflect.apply(value, target, args);\n          console.log(`← ${String(prop)} =>`, result);\n          return result;\n        };\n      }\n      return value;\n    }\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.3 Decorators (Stage 3 / TypeScript)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Class decorator\nfunction sealed(constructor: Function) {\n  Object.seal(constructor.prototype);\n  Object.seal(constructor);\n}\n\n@sealed\nclass UserService {}\n\n// Method decorator\nfunction logged(target: Object, key: string | Symbol, descriptor: PropertyDescriptor) {\n  const original = descriptor.value;\n  descriptor.value = function(...args: any[]) {\n    console.log(`Calling ${String(key)} with`, args);\n    return original.apply(this, args);\n  };\n}\n\nclass Calculator {\n  @logged\n  add(a: number, b: number) { return a + b; }\n}\n\n// Property decorator (TC39 Stage 3 — другой синтаксис)\nfunction range(min: number, max: number) {\n  return function(target: Object, propertyKey: string) {\n    let value: number;\n    Object.defineProperty(target, propertyKey, {\n      get() { return value; },\n      set(v: number) {\n        if (v < min || v > max) throw new Error(`Value ${v} not in [${min}, ${max}]`);\n        value = v;\n      }\n    });\n  };\n}\n\nclass Thermostat {\n  @range(0, 100)\n  celsius: number = 20;\n}\n\n// Parameter decorator\nfunction validate(schema: any) {\n  return function(target: Object, key: string, parameterIndex: number) {\n    // Сохраняем метаданные для runtime проверки\n  };\n}\n\nfunction createUser(@validate(userSchema) userData: UserData) {}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.4 Symbols — уникальные ключи и well-known symbols"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Приватные \"символьные\" свойства\nconst PRIVATE = Symbol('private');\nconst METADATA = Symbol('metadata');\n\nclass SecureStore {\n  [PRIVATE] = new Map();\n\n  set(key: string, value: any) { this[PRIVATE].set(key, value); }\n  get(key: string) { return this[PRIVATE].get(key); }\n}\n\n// Well-known Symbols\nclass MyArray extends Array {\n  // Переопределение Symbol.iterator\n  *[Symbol.iterator]() {\n    for (let i = this.length - 1; i >= 0; i--) yield this[i];\n  }\n\n  // Symbol.species — конструктор для производных методов (map, filter...)\n  static get [Symbol.species]() { return Array; }\n\n  // Symbol.toStringTag — Object.prototype.toString\n  get [Symbol.toStringTag]() { return 'MyArray'; }\n\n  // Symbol.hasInstance — instanceof\n  static [Symbol.hasInstance](instance: any) {\n    return Array.isArray(instance) && instance.every(Number.isInteger);\n  }\n}\n\nconst arr = new MyArray(1, 2, 3);\n[...arr]; // [3, 2, 1]\narr.map(x => x * 2) instanceof MyArray; // false — вернёт обычный Array!\nObject.prototype.toString.call(arr); // \"[object MyArray]\"\n[1,2,3] instanceof MyArray; // true!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Компиляция и трансформация кода"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.1 Babel Plugin Development"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// babel-plugin-auto-bind.js\n// Автоматически биндит методы класса в конструкторе\n\nexport default function ({ types: t }) {\n  return {\n    visitor: {\n      ClassMethod(path) {\n        if (path.node.kind !== 'method') return;\n        if (path.node.static) return;\n        if (path.node.decorators?.some(d => t.isIdentifier(d.expression, { name: 'nobind' }))) return;\n\n        const className = path.findParent(p => p.isClassDeclaration())?.node.id?.name;\n        if (!className) return;\n\n        // Находим или создаём конструктор\n        let constructor = path.getSibling(path.key).get('body').get('body').find(\n          p => p.isClassMethod({ kind: 'constructor' })\n        );\n\n        if (!constructor) {\n          // Создаём конструктор\n          constructor = t.classMethod('constructor', t.identifier('constructor'), [], t.blockStatement([]));\n          path.getSibling(path.key).get('body').unshiftContainer('body', constructor);\n        }\n\n        // Добавляем this.method = this.method.bind(this)\n        const bindStmt = t.expressionStatement(\n          t.assignmentExpression(\n            '=',\n            t.memberExpression(t.thisExpression(), t.identifier(path.node.key.name)),\n            t.callExpression(\n              t.memberExpression(\n                t.memberExpression(t.thisExpression(), t.identifier(path.node.key.name)),\n                t.identifier('bind')\n              ),\n              [t.thisExpression()]\n            )\n          )\n        );\n        constructor.get('body').pushContainer('body', bindStmt);\n      }\n    }\n  };\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.2 TypeScript Compiler API"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// ts-transformer.ts — кастомный трансформер для TypeScript\nimport * as ts from 'typescript';\n\nfunction createTransformer(program: ts.Program): ts.TransformerFactory<ts.SourceFile> {\n  return (context) => (sourceFile) => {\n    const visitor: ts.Visitor = (node) => {\n      // Заменяем console.log в production на noop\n      if (ts.isCallExpression(node) &&\n          ts.isPropertyAccessExpression(node.expression) &&\n          node.expression.expression.getText() === 'console' &&\n          node.expression.name.getText() === 'log') {\n\n        if (process.env.NODE_ENV === 'production') {\n          return ts.createVoidZero();\n        }\n      }\n\n      // Автоматическое добавление __filename / __dirname\n      if (ts.isIdentifier(node) && (node.text === '__filename' || node.text === '__dirname')) {\n        return ts.createStringLiteral(sourceFile.fileName);\n      }\n\n      return ts.visitEachChild(node, visitor, context);\n    };\n    return ts.visitNode(sourceFile, visitor);\n  };\n}\n\n// Использование в программе компиляции\nconst program = ts.createProgram(['src/index.ts'], {\n  target: ts.ScriptTarget.ES2022,\n  module: ts.ModuleKind.ESNext\n});\n\nconst emitResult = program.emit(undefined, undefined, undefined, undefined, {\n  before: [createTransformer(program)]\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.3 SWC / esbuild плагины"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// esbuild-plugin-inline-constants.js\n// Инлайнит константы из отдельного файла\n\nconst plugin = {\n  name: 'inline-constants',\n  setup(build) {\n    build.onLoad({ filter: /constants\\.js$/ }, async (args) => {\n      const fs = await import('fs/promises');\n      const content = await fs.readFile(args.path, 'utf-8');\n\n      // Парсим и извлекаем экспортируемые константы\n      const exports = {};\n      // Упрощённый парсинг...\n\n      return {\n        contents: `export const CONSTANTS = ${JSON.stringify(exports)};`,\n        loader: 'js'\n      };\n    });\n  }\n};\n\nrequire('esbuild').build({\n  entryPoints: ['app.js'],\n  bundle: true,\n  plugins: [plugin],\n  outfile: 'out.js'\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Кодогенерация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.1 OpenAPI → TypeScript Client"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.2 GraphQL Codegen"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.3 tRPC — End-to-End Typesafety"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// server/router.ts\nimport { initTRPC, TRPCError } from '@trpc/server';\nimport { z } from 'zod';\n\nconst t = initTRPC.create();\n\nexport const appRouter = t.router({\n  user: t.router({\n    getById: t.procedure\n      .input(z.object({ id: z.string().uuid() }))\n      .query(async ({ input }) => {\n        const user = await db.user.findUnique({ where: { id: input.id } });\n        if (!user) throw new TRPCError({ code: 'NOT_FOUND' });\n        return user;\n      }),\n    create: t.procedure\n      .input(z.object({ name: z.string().min(1), email: z.string().email() }))\n      .mutation(async ({ input }) => {\n        return db.user.create({ data: input });\n      })\n  })\n});\n\nexport type AppRouter = typeof appRouter;"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// client — полностью типизированный!\nimport { createTRPCReact } from '@trpc/react-query';\nimport type { AppRouter } from '@/server/router';\n\nconst trpc = createTRPCReact<AppRouter>();\n\nfunction UserProfile({ userId }: { userId: string }) {\n  // Полная типизация входных и выходных данных\n  const { data: user } = trpc.user.getById.useQuery({ id: userId });\n\n  const mutation = trpc.user.create.useMutation();\n  const handleCreate = () => mutation.mutate({ name: 'Alex', email: 'a@b.c' });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Plugin Architecture / Microkernel"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.1 Extensible Core"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// core/types.ts\ninterface Plugin {\n  name: string;\n  version: string;\n  init(core: CoreAPI): Promise<void> | void;\n  dispose?(): Promise<void> | void;\n}\n\ninterface CoreAPI {\n  registerCommand(name: string, handler: CommandHandler): void;\n  registerQuery(name: string, handler: QueryHandler): void;\n  registerExtensionPoint(name: string, extension: any): void;\n  getExtensionPoint(name: string): any;\n  eventBus: EventBus;\n  config: Config;\n  logger: Logger;\n}\n\n// core/kernel.ts\nclass Kernel {\n  private plugins = new Map<string, Plugin>();\n  private api: CoreAPI;\n\n  constructor(private config: Config) {\n    this.api = this.createAPI();\n  }\n\n  async loadPlugin(plugin: Plugin) {\n    if (this.plugins.has(plugin.name)) {\n      throw new Error(`Plugin ${plugin.name} already loaded`);\n    }\n    await plugin.init(this.api);\n    this.plugins.set(plugin.name, plugin);\n  }\n\n  async unloadPlugin(name: string) {\n    const plugin = this.plugins.get(name);\n    if (!plugin) return;\n    await plugin.dispose?.();\n    this.plugins.delete(name);\n  }\n\n  async start() {\n    // Загрузка встроенных плагинов\n    await this.loadPlugin(new AuthPlugin());\n    await this.loadPlugin(new StoragePlugin());\n    // Пользовательские плагины из конфига\n    for (const pluginSpec of this.config.plugins) {\n      const plugin = await import(pluginSpec.path);\n      await this.loadPlugin(plugin.default);\n    }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.2 Пример плагина"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// plugins/analytics-plugin.ts\nexport default {\n  name: 'analytics',\n  version: '1.0.0',\n\n  async init(core) {\n    // Регистрируем команду\n    core.registerCommand('trackEvent', async ({ event, properties }) => {\n      await fetch('https://analytics.example.com/track', {\n        method: 'POST',\n        body: JSON.stringify({ event, properties, timestamp: Date.now() })\n      });\n    });\n\n    // Подписываемся на события ядра\n    core.eventBus.on('user-action', (data) => {\n      core.executeCommand('trackEvent', {\n        event: 'user_action',\n        properties: data\n      });\n    });\n\n    // Расширяем функциональность\n    core.registerExtensionPoint('analytics', {\n      identify(userId: string, traits: object) {\n        // ...\n      }\n    });\n  }\n} satisfies Plugin;"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Advanced TypeScript Patterns"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.1 Template Literal Types"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Генерация типов из строк\ntype EventName<T extends string> = `on${Capitalize<T>}`;\n// \"click\" → \"onClick\"\n\ntype HTTPMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';\ntype Endpoint = `/api/${string}`;\ntype Route = `${HTTPMethod} ${Endpoint}`;\n// \"GET /api/users\"\n\n// Рекурсивные типы для глубоких путей\ntype Path<T> = T extends object\n  ? { [K in keyof T]: K extends string\n      ? T[K] extends object\n        ? `${K}.${Path<T[K]>}`\n        : K\n      : never }[keyof T]\n  : never;\n\ntype UserPaths = Path<{ user: { profile: { name: string } } }>;\n// \"user.profile.name\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.2 Conditional Types & Infer"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Извлечение типа из Promise\ntype UnwrapPromise<T> = T extends Promise<infer U> ? U : T;\n\n// Тип возвращаемого значения функции\ntype ReturnType<T> = T extends (...args: any[]) => infer R ? R : never;\n\n// Параметры функции\ntype Parameters<T> = T extends (...args: infer P) => any ? P : never;\n\n// Constructor parameters\ntype ConstructorParameters<T> = T extends new (...args: infer P) => any ? P : never;\n\n// Instance type\ntype InstanceType<T> = T extends new (...args: any[]) => infer R ? R : never;\n\n// Distributive conditional types\ntype ToArray<T> = T extends any ? T[] : never;\ntype Result = ToArray<string | number>; // string[] | number[]\n\n// Exclude/Extract\ntype NonFunctionKeys<T> = { [K in keyof T]: T[K] extends Function ? never : K }[keyof T];"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.3 Branded Types (Nominal Typing)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "type Brand<T, B> = T & { __brand: B };\n\ntype UserId = Brand<string, 'UserId'>;\ntype PostId = Brand<string, 'PostId'>;\n\nfunction createUserId(id: string): UserId { return id as UserId; }\nfunction createPostId(id: string): PostId { return id as PostId; }\n\nfunction getUser(id: UserId) { /* ... */ }\n\n// Ошибка: PostId не совместим с UserId\ngetUser(createPostId('123')); // Type error!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практика"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**DDD**: Реализуйте Order Aggregate с Event Sourcing для мини-магазина",
+        "**Proxy**: Напишите реактивную библиотеку (mini-Vue reactivity) на Proxy",
+        "**Decorators**: Сделайте `@memoize`, `@debounce`, `@retry` декораторы",
+        "**Babel Plugin**: Плагин, удаляющий `console.log` и `debugger` в production",
+        "**Codegen**: Настройте OpenAPI → TS client + GraphQL Codegen в проекте",
+        "**Plugin System**: Создайте ядро приложения с динамической загрузкой плагинов",
+        "**Types**: Используйте Branded Types для ID сущностей в проекте урока 21"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Proxy ломает `===` проверки",
+          "Используйте `WeakMap` для хранения оригиналов"
+        ],
+        [
+          "Декораторы не работают без `experimentalDecorators`",
+          "Включите в tsconfig или используйте Stage 3 синтаксис"
+        ],
+        [
+          "Event Sourcing — сложность snapshot'ов",
+          "Делайте снапшоты каждые N событий"
+        ],
+        [
+          "CQRS — eventual consistency",
+          "Чётко документируйте задержки, используйте Optimistic UI"
+        ],
+        [
+          "Кодогенерация — устаревшие типы",
+          "Регенерируйте в CI при изменении схемы"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Контрольные вопросы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "В чём разница между Entity и Value Object в DDD?",
+        "Зачем нужен Aggregate Root и какие инварианты он защищает?",
+        "Как CQRS разделяет чтение и запись?",
+        "Что такое Event Sourcing и чем отличается от обычного CRUD?",
+        "Чем `Proxy` лучше `Object.defineProperty` для реактивности?",
+        "Зачем нужен `Reflect` если есть прямые операции?",
+        "В чём разница между TS декораторами и TC39 Stage 3 декораторами?",
+        "Как работает `infer` в Conditional Types?"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Дополнительное чтение"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[Domain-Driven Design](https://martinfowler.com/bliki/DomainDrivenDesign.html) — Eric Evans, Martin Fowler",
+        "[CQRS](https://martinfowler.com/bliki/CQRS.html) — Greg Young, Martin Fowler",
+        "[Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html)",
+        "[TypeScript Handbook: Advanced Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html)",
+        "[Babel Plugin Handbook](https://github.com/jamiebuilds/babel-handbook)",
+        "[TypeScript Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API)",
+        "[tRPC Documentation](https://trpc.io/docs)",
+        "[GraphQL Code Generator](https://the-guild.dev/graphql/codegen)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Proxy ломает `===` проверки",
+      "correct": "Используйте `WeakMap` для хранения оригиналов"
+    },
+    {
+      "mistake": "Декораторы не работают без `experimentalDecorators`",
+      "correct": "Включите в tsconfig или используйте Stage 3 синтаксис"
+    },
+    {
+      "mistake": "Event Sourcing — сложность snapshot'ов",
+      "correct": "Делайте снапшоты каждые N событий"
+    },
+    {
+      "mistake": "CQRS — eventual consistency",
+      "correct": "Чётко документируйте задержки, используйте Optimistic UI"
+    },
+    {
+      "mistake": "Кодогенерация — устаревшие типы",
+      "correct": "Регенерируйте в CI при изменении схемы"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 31
+}

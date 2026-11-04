@@ -1,0 +1,267 @@
+{
+  "title": "Урок 7: Контейнеры STL",
+  "slug": "konteynery-stl",
+  "short_description": "",
+  "goals": [
+    "Изучить `std::vector` — динамический массив (основной контейнер)",
+    "Понять `std::pair` — пара значений",
+    "Освоить основы ассоциативных контейнеров: `std::map`, `std::set`",
+    "Научиться использовать итераторы и алгоритмы с контейнерами",
+    "Разобраться с выделением памяти, `reserve`, `shrink_to_fit`"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Изучить `std::vector` — динамический массив (основной контейнер)",
+        "Понять `std::pair` — пара значений",
+        "Освоить основы ассоциативных контейнеров: `std::map`, `std::set`",
+        "Научиться использовать итераторы и алгоритмы с контейнерами",
+        "Разобраться с выделением памяти, `reserve`, `shrink_to_fit`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::vector — динамический массив"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <vector>\n#include <iostream>\n\nint main() {\n    // Создание\n    std::vector<int> v1;                    // пустой\n    std::vector<int> v2(5);                 // 5 элементов = 0\n    std::vector<int> v3(5, 42);             // 5 элементов = 42\n    std::vector<int> v4 = {1,2,3,4,5};      // список инициализации\n    std::vector v5 = {1,2,3};               // CTAD (C++17)\n\n    // Доступ\n    v4[0] = 10;              // без проверки\n    v4.at(1) = 20;           // с проверкой (out_of_range)\n    v4.front();              // первый\n    v4.back();               // последний\n    v4.data();               // указатель на массив (C API)\n\n    // Размер и ёмкость\n    v4.size();       // 5 — количество элементов\n    v4.capacity();   // >=5 — выделенная память\n    v4.empty();      // false\n    v4.max_size();   // теоретический максимум\n\n    // Изменение размера\n    v4.push_back(6);         // добавить в конец (амортизированное O(1))\n    v4.emplace_back(7);      // конструкция на месте (избегает копирования)\n    v4.pop_back();           // убрать последний\n    v4.insert(v4.begin()+2, 99); // вставить в середину O(n)\n    v4.erase(v4.begin()+2);       // удалить из середины O(n)\n    v4.clear();              // удалить все (capacity не меняется)\n\n    // Резервирование — избегает реаллокаций\n    std::vector<int> v6;\n    v6.reserve(1000);        // выделить память под 1000 элементов\n    for (int i=0; i<1000; ++i) v6.push_back(i); // никаких реаллокаций!\n\n    v6.shrink_to_fit();      // запрос освободить лишнюю память (C++11)\n\n    // Перебор\n    for (int x : v4) std::cout << x << ' ';\n    for (auto& x : v4) x *= 2;\n    for (auto it = v4.begin(); it != v4.end(); ++it) { ... }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Внутреннее устройство vector"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "[ elements ][ unused capacity ]\n size()       capacity() - size()"
+    },
+    {
+      "type": "text",
+      "content": "При <code>push_back</code> за пределами <code>capacity</code>:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Выделяется новая память (обычно ×1.5 или ×2)",
+        "Элементы копируются/перемещаются",
+        "Старая память освобождается"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "text",
+      "content": "→ <strong>Итераторы, указатели, ссылки инвалидируются!</strong>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::pair — параheterogeneous значений"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <utility>\n#include <string>\n\nstd::pair<int, std::string> p1(42, \"hello\"); // C++11: make_pair\nauto p2 = std::make_pair(3.14, true);        // тип выводится\nauto p3 = std::pair{10, \"world\"};            // CTAD (C++17)\n\n// Доступ\np1.first;   // 42\np1.second;  // \"hello\"\n\n// Structured bindings (C++17)\nauto [num, str] = p1; // num=42, str=\"hello\"\n\n// Сравнение — лексикографическое\nstd::pair<int,int> a{1,2}, b{1,3};\nstd::cout << (a < b); // true"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::map — ассоциативный массив (ключ → значение)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <map>\n#include <string>\n\nint main() {\n    // Ключи уникальны, отсортированы (красно-чёрное дерево, O(log n))\n    std::map<std::string, int> ages;\n    ages[\"Alice\"] = 25;\n    ages[\"Bob\"] = 30;\n    ages.emplace(\"Charlie\", 35); // эффективнее для сложных типов\n\n    // Доступ\n    ages[\"Alice\"];     // 25 (создаёт запись, если нет!)\n    ages.at(\"Alice\");  // 25 (бросает out_of_range, если нет)\n    // ages[\"Unknown\"] = 0; // создаст запись!\n\n    // Поиск\n    auto it = ages.find(\"Bob\");\n    if (it != ages.end()) {\n        std::cout << it->first << \": \" << it->second; // \"Bob: 30\"\n    }\n\n    // Проверка наличия (C++20)\n    if (ages.contains(\"Alice\")) { ... } // true\n\n    // Перебор (отсортирован по ключу)\n    for (const auto& [name, age] : ages) {\n        std::cout << name << \" -> \" << age << '\\n';\n    }\n\n    // Удаление\n    ages.erase(\"Bob\");\n    ages.clear();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::set — упорядоченное множество уникальных ключей"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <set>\n#include <string>\n\nstd::set<int> s = {3, 1, 4, 1, 5}; // {1, 3, 4, 5} — дубликаты удалены, отсортировано\ns.insert(2);    // {1, 2, 3, 4, 5}\ns.erase(3);     // {1, 2, 4, 5}\ns.count(4);     // 1 (есть)\ns.count(99);    // 0 (нет)\ns.contains(4);  // C++20: true\n\n// Перебор в отсортированном порядке\nfor (int x : s) std::cout << x << ' '; // 1 2 4 5"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::unordered_map / unordered_set — хеш-таблицы (O(1) среднее)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <unordered_map>\n#include <string>\n\nstd::unordered_map<std::string, int> umap;\numap[\"key\"] = 42;\n// Не упорядочены, быстрее для поиска, но нет итерации в сортированном порядке\n// Требуют хеш-функцию и operator== для ключа"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Адаптеры контейнеров"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <stack>\n#include <queue>\n\nstd::stack<int> st;       // LIFO: push, pop, top\nstd::queue<int> q;        // FIFO: push, pop, front, back\nstd::priority_queue<int> pq; // max-heap: push, pop, top (больший сверху)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Алгоритмы (перебор, поиск, сортировка)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <algorithm>\n#include <vector>\n\nstd::vector<int> v = {5, 2, 8, 1, 9};\n\nstd::sort(v.begin(), v.end());           // {1,2,5,8,9}\nstd::reverse(v.begin(), v.end());        // {9,8,5,2,1}\nauto it = std::find(v.begin(), v.end(), 5); // итератор на 5\nbool has = std::binary_search(v.begin(), v.end(), 5); // true (требует сортировки)\nstd::for_each(v.begin(), v.end(), [](int& x){ x *= 2; });"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Динамический массив"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте простой вектор вручную: <code>MyVector<int></code> с <code>push<em>back</code>, <code>pop</em>back</code>, <code>size</code>, <code>capacity</code>, <code>operator[]</code>, итераторами. Сравните с <code>std::vector</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Частота слов"
+    },
+    {
+      "type": "text",
+      "content": "Прочитайте текст из <code>std::cin</code> до EOF. Посчитайте частоту каждого слова (<code>std::map<std::string, int></code>). Выведите топ-10 самых частых."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Телефонная книга"
+    },
+    {
+      "type": "text",
+      "content": "<code>std::map<std::string, std::vector<std::string>></code> — имя → список телефонов. Команды: add имя телефон, find имя, delete имя, list (все в алфавитном порядке)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Уникальные слова"
+    },
+    {
+      "type": "text",
+      "content": "Введите N строк. Выведите все уникальные слова в алфавитном порядке (<code>std::set</code>)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: reserve vs без"
+    },
+    {
+      "type": "text",
+      "content": "Замерьте время <code>push_back</code> 1 млн элементов с <code>reserve(1'000'000)</code> и без. Объясните разницу."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Pair и structured bindings"
+    },
+    {
+      "type": "text",
+      "content": "Напишите функцию, возвращающую <code>std::pair<std::string, int></code> (имя, длина). Используйте structured bindings при вызове."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки новичка"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Итератор инвалидирован после `push_back`",
+          "Реаллокация памяти"
+        ],
+        [
+          "`map[key]` создаёт элемент",
+          "Нужно только проверить наличие"
+        ],
+        [
+          "`vector` копируется при передаче в функцию",
+          "Дорого!"
+        ],
+        [
+          "`std::set` не позволяет дубликаты",
+          "По дизайну"
+        ],
+        [
+          "`unordered_map` с пользовательским ключом не работает",
+          "Нет специализации `std::hash`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "cppreference: [std::vector](https://en.cppreference.com/w/cpp/container/vector), [std::map](https://en.cppreference.com/w/cpp/container/map), [std::set](https://en.cppreference.com/w/cpp/container/set), [Algorithms](https://en.cppreference.com/w/cpp/algorithm)",
+        "C++ Core Guidelines: [SL containers](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#sl-containers)",
+        "[Big-O Cheat Sheet](https://www.bigocheatsheet.com/) — сложность операций"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Итератор инвалидирован после `push_back`",
+      "correct": "Реаллокация памяти"
+    },
+    {
+      "mistake": "`map[key]` создаёт элемент",
+      "correct": "Нужно только проверить наличие"
+    },
+    {
+      "mistake": "`vector` копируется при передаче в функцию",
+      "correct": "Дорого!"
+    },
+    {
+      "mistake": "`std::set` не позволяет дубликаты",
+      "correct": "По дизайну"
+    },
+    {
+      "mistake": "`unordered_map` с пользовательским ключом не работает",
+      "correct": "Нет специализации `std::hash`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 7
+}

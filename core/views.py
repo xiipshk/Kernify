@@ -155,9 +155,6 @@ class LessonDetailView(DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         lesson = self.object
-        # Increment view count
-        Lesson.objects.filter(pk=lesson.pk).update(views_count=models.F('views_count') + 1)
-        lesson.refresh_from_db()
 
         # Next/Previous lessons
         context['prev_lesson'] = Lesson.objects.filter(

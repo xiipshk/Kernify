@@ -1,0 +1,441 @@
+{
+  "title": "Урок 33: Изучение языка — PEP, CPython source, C API, version compatibility + Продвинутый проект",
+  "slug": "izuchenie-yazyka-pep-cpython-source-c-api-version-compatibility-prodvinutyy-proekt",
+  "short_description": "PEP, CPython source, C API, version compatibility + Продвинутый проект",
+  "goals": [
+    "Читать и понимать PEP (Python Enhancement Proposals)",
+    "Навигироваться в исходном коде CPython",
+    "Писать C-расширения (C API, Cython, pybind11)",
+    "Обеспечивать совместимость версий Python",
+    "Создать итоговый продвинутый проект"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Читать и понимать PEP (Python Enhancement Proposals)",
+        "Навигироваться в исходном коде CPython",
+        "Писать C-расширения (C API, Cython, pybind11)",
+        "Обеспечивать совместимость версий Python",
+        "Создать итоговый продвинутый проект"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. PEP — процесс развития Python"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Категории PEP"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тип",
+        "Примеры",
+        "Назначение"
+      ],
+      "rows": [
+        [
+          "**Standards Track**",
+          "PEP 8, 20, 257, 484, 572, 636",
+          "Изменения языка/стандартной библиотеки"
+        ],
+        [
+          "**Informational**",
+          "PEP 20 (Zen), PEP 257 (docstrings)",
+          "Рекомендации, гайдлайны"
+        ],
+        [
+          "**Process**",
+          "PEP 1, 12",
+          "Мета-процессы"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ключевые PEP для знать"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как читать PEP"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. CPython Source Code — устройство интерпретатора"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура репозитория"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "cpython/\n├── Python/           # Основной интерпретатор (ceval.c, compile.c)\n├── Objects/          # Встроенные типы (listobject.c, dictobject.c, unicodeobject.c)\n├── Modules/          # C-модули стандартной библиотеки (_json, _sqlite3, etc.)\n├── Parser/           # Парсер (PEG parser в 3.9+)\n├── Include/          # Публичные C API заголовки\n├── Internal/         # Внутренние заголовки\n├── Programs/         # python.exe, pythonw.exe\n├── Lib/              # Стандартная библиотека (на Python)\n├── Tools/            # Инструменты (freeze, gdb, benchmark)\n└── Doc/              # Документация (RST)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ключевые файлы для изучения"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Файл",
+        "Что внутри"
+      ],
+      "rows": [
+        [
+          "`Python/ceval.c`",
+          "Главный цикл интерпретатора (eval loop)"
+        ],
+        [
+          "`Python/compile.c`",
+          "Компилятор AST → bytecode"
+        ],
+        [
+          "`Objects/typeobject.c`",
+          "Реализация классов, MRO, дескрипторов"
+        ],
+        [
+          "`Objects/listobject.c` / `dictobject.c`",
+          "Реализация list/dict"
+        ],
+        [
+          "`Objects/unicodeobject.c`",
+          "Строги (compact representation, PEP 393)"
+        ],
+        [
+          "`Include/cpython/*.h`",
+          "Публичный C API"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сборка CPython для отладки"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Отладка C кода в gdb"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "gdb --args ./python script.py\n(gdb) break PyEval_EvalFrameDefault\n(gdb) run\n(gdb) py-bt          # Python backtrace (нужен python-gdb.py)\n(gdb) py-list        # Исходник Python функции"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. C API — написание расширений"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Минимальное расширение (ручное)"
+    },
+    {
+      "type": "code",
+      "language": "c",
+      "content": "// mymodule.c\n#define PY_SSIZE_T_CLEAN\n#include <Python.h>\n\nstatic PyObject* my_add(PyObject* self, PyObject* args) {\n    long a, b;\n    if (!PyArg_ParseTuple(args, \"ll\", &a, &b)) {\n        return NULL;\n    }\n    return PyLong_FromLong(a + b);\n}\n\nstatic PyMethodDef MyMethods[] = {\n    {\"add\", my_add, METH_VARARGS, \"Add two integers.\"},\n    {NULL, NULL, 0, NULL}\n};\n\nstatic struct PyModuleDef mymodule = {\n    PyModuleDef_HEAD_INIT,\n    \"mymodule\",\n    \"Example module\",\n    -1,\n    MyMethods\n};\n\nPyMODINIT_FUNC PyInit_mymodule(void) {\n    return PyModule_Create(&mymodule);\n}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cython — Python-подобный синтаксис для C-расширений"
+    },
+    {
+      "type": "code",
+      "language": "cython",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "pybind11 — современный C++ биндинг"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// bind.cpp\n#include <pybind11/pybind11.h>\n\nint add(int a, int b) { return a + b; }\n\nnamespace py = pybind11;\n\nPYBIND11_MODULE(mycpp, m) {\n    m.def(\"add\", &add, \"Add two integers\");\n}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Совместимость версий Python"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стратегии поддержки"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Матрица поддержки (пример pyproject.toml)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[project]\nrequires-python = \">=3.10\"\nclassifiers = [\n    \"Programming Language :: Python :: 3.10\",\n    \"Programming Language :: Python :: 3.11\",\n    \"Programming Language :: Python :: 3.12\",\n    \"Programming Language :: Python :: 3.13\",\n]\n\n[tool.tox]\nenv_list = [\"py310\", \"py311\", \"py312\", \"py313\"]\n\n[tool.nox]\nsessions = [\"tests-3.10\", \"tests-3.11\", \"tests-3.12\", \"tests-3.13\"]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Тестирование на матрице версий"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Устаревшие модули (stdlib removals)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Модуль",
+        "Удалён в",
+        "Замена"
+      ],
+      "rows": [
+        [
+          "`distutils`",
+          "3.12",
+          "`setuptools`, `packaging`"
+        ],
+        [
+          "`imp`",
+          "3.12",
+          "`importlib`"
+        ],
+        [
+          "`optparse`",
+          "3.12",
+          "`argparse`"
+        ],
+        [
+          "`cgi`",
+          "3.13",
+          "`urllib.parse`, `html`"
+        ],
+        [
+          "`cgitb`",
+          "3.13",
+          "`traceback`"
+        ],
+        [
+          "`msilib`",
+          "3.13",
+          "—"
+        ],
+        [
+          "`telnetlib`",
+          "3.13",
+          "—"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Продвинутый итоговый проект: Архитектура библиотеки"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Требования к проекту"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "my_library/\n├── pyproject.toml          # полная конфигурация (PEP 621)\n├── README.md               # badges, quickstart, links\n├── LICENSE                 # MIT/Apache-2.0\n├── src/\n│   └── my_library/\n│       ├── __init__.py     # публичный API, __version__\n│       ├── core.py         # основная логика\n│       ├── models.py       # Pydantic модели / dataclasses\n│       ├── exceptions.py   # иерархия исключений\n│       ├── utils.py        # хелперы\n│       └── _c_ext/         # опционально: Cython/pybind11 расширения\n├── tests/\n│   ├── conftest.py         # pytest fixtures\n│   ├── test_core.py\n│   ├── test_models.py\n│   └── test_integration.py\n├── docs/\n│   ├── conf.py             # Sphinx config\n│   └── *.rst / *.md\n├── examples/\n│   └── basic_usage.py\n├── .github/\n│   ├── workflows/\n│   │   ├── ci.yml          # lint, typecheck, test matrix\n│   │   └── release.yml     # build + publish to PyPI\n│   └── dependabot.yml\n├── .pre-commit-config.yaml\n├── .ruff.toml / pyproject.toml (tool.ruff)\n├── .mypy.ini / pyproject.toml (tool.mypy)\n└── CHANGELOG.md            # Keep a Changelog format"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Чек-лист качества (Definition of Done)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] `ruff check .` — 0 ошибок",
+        "[ ] `ruff format --check .` — проходит",
+        "[ ] `mypy src/` — strict mode, 0 ошибок",
+        "[ ] `pytest --cov=my_library --cov-fail-under=85` — проходит",
+        "[ ] `pip-audit` — 0 уязвимостей",
+        "[ ] `bandit -r src/` — 0 высоких рисков",
+        "[ ] Сборка: `python -m build` → `twine check dist/*`",
+        "[ ] Документация собирается: `sphinx-build -b html docs docs/_build`",
+        "[ ] Примеры запускаются: `python examples/basic_usage.py`",
+        "[ ] Тесты проходят на 3.10–3.13 (matrix CI)",
+        "[ ] Версия соответствует SemVer, CHANGELOG обновлён"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Публикация и поддержка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Полезные навыки для глубокого погружения"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Навык",
+        "Ресурсы"
+      ],
+      "rows": [
+        [
+          "**Чтение C кода CPython**",
+          "`Python/ceval.c`, `Objects/typeobject.c`, Real Python \"CPython Internals\""
+        ],
+        [
+          "**Написание C-расширений**",
+          "CPython \"Extending and Embedding\", Cython docs, pybind11 docs"
+        ],
+        [
+          "**Профилирование C уровня**",
+          "`perf`, `py-spy --native`, `gdb` + `python-gdb.py`"
+        ],
+        [
+          "**Участие в разработке Python**",
+          "devguide.python.org, bpo / GitHub issues, core-mentorship"
+        ],
+        [
+          "**PEP процесс**",
+          "peps.python.org, PEP 1 (process)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Игнорировать DeprecationWarning",
+          "`python -W default` / `pytest -W error::DeprecationWarning`"
+        ],
+        [
+          "Пиннить верхние границы зависимостей (`<4.0`)",
+          "Только нижние (`>=`), upper bounds ломают resolver"
+        ],
+        [
+          "C-расширение без GIL management",
+          "`nogil` в Cython / `Py_BEGIN_ALLOW_THREADS` в C API"
+        ],
+        [
+          "Нет тестов на минимальных версиях зависимостей",
+          "`pip install -e \".[dev] --constraint=constraints-min.txt`"
+        ],
+        [
+          "Документация устарела относительно кода",
+          "`doctest` / `pytest --doctest-modules` / автогенерация из docstrings"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Игнорировать DeprecationWarning",
+      "correct": "`python -W default` / `pytest -W error::DeprecationWarning`"
+    },
+    {
+      "mistake": "Пиннить верхние границы зависимостей (`<4.0`)",
+      "correct": "Только нижние (`>=`), upper bounds ломают resolver"
+    },
+    {
+      "mistake": "C-расширение без GIL management",
+      "correct": "`nogil` в Cython / `Py_BEGIN_ALLOW_THREADS` в C API"
+    },
+    {
+      "mistake": "Нет тестов на минимальных версиях зависимостей",
+      "correct": "`pip install -e \".[dev] --constraint=constraints-min.txt`"
+    },
+    {
+      "mistake": "Документация устарела относительно кода",
+      "correct": "`doctest` / `pytest --doctest-modules` / автогенерация из docstrings"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 33
+}

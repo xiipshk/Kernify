@@ -1,0 +1,227 @@
+{
+  "title": "Урок 10: LINQ basics — фильтрация, проекция, сортировка, запрос коллекций",
+  "slug": "linq-basics-filtratsiya-proektsiya-sortirovka-zapros-kollektsiy",
+  "short_description": "фильтрация, проекция, сортировка, запрос коллекций",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "text",
+      "content": "<strong>Целевая версия:</strong> C# 12 / .NET 8"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Что такое LINQ"
+    },
+    {
+      "type": "text",
+      "content": "<strong>LINQ</strong> (Language Integrated Query) — встроенный в C# язык запросов к данным. Позволяет декларативно описывать «ЧТО» нужно получить, а не «КАК» это сделать."
+    },
+    {
+      "type": "text",
+      "content": "Работает с любыми коллекциями, реализующими <code>IEnumerable<T></code>: массивы, <code>List<T></code>, <code>Dictionary</code>, XML, базы данных (Entity Framework)."
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Linq;\n\nvar numbers = new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };\n\n// Два синтаксиса: Method Syntax (через методы) и Query Syntax (SQL-подобный)\n\n// Method Syntax (рекомендуется для большинства случаев)\nvar evens = numbers.Where(n => n % 2 == 0).ToList();  // [2, 4, 6, 8, 10]\n\n// Query Syntax (похож на SQL)\nvar evens2 = from n in numbers\n             where n % 2 == 0\n             select n;"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Важно:</strong> LINQ использует <strong>отложенное выполнение</strong> (deferred execution) — запрос выполняется только при перечислении (foreach, ToList, ToArray, Count и т.д.)."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Основные операторы — фильтрация (Where)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var people = new[]\n{\n    new { Name = \"Анна\", Age = 25, City = \"Москва\" },\n    new { Name = \"Борис\", Age = 30, City = \"СПб\" },\n    new { Name = \"Виктор\", Age = 17, City = \"Москва\" },\n    new { Name = \"Галина\", Age = 22, City = \"Казань\" },\n};\n\n// Простое условие\nvar adults = people.Where(p => p.Age >= 18);\n\n// Несколько условий (И)\nvar moscowAdults = people.Where(p => p.Age >= 18 && p.City == \"Москва\");\n\n// Сложные условия\nvar selected = people.Where(p =>\n    (p.City == \"Москва\" || p.City == \"СПб\") &&\n    p.Age > 20\n);\n\n// Where с индексом (перегрузка)\nvar firstThree = people.Where((p, i) => i < 3);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Проекция (Select, SelectMany)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Select — преобразование каждого элемента\nvar names = people.Select(p => p.Name);                    // IEnumerable<string>\nvar ages = people.Select(p => p.Age);                      // IEnumerable<int>\nvar upperNames = people.Select(p => p.Name.ToUpper());     // преобразование\n\n// Анонимные типы — создание новых объектов на лету\nvar shortInfo = people.Select(p => new\n{\n    p.Name,\n    IsAdult = p.Age >= 18,\n    City = p.City\n});\n\n// Select с индексом\nvar numbered = people.Select((p, i) => $\"{i + 1}. {p.Name}\");\n\n// SelectMany — развертывание вложенных коллекций (flattening)\nvar departments = new[]\n{\n    new { Name = \"IT\", Employees = new[] { \"Алекс\", \"Мария\" } },\n    new { Name = \"HR\", Employees = new[] { \"Ольга\" } },\n};\n\nvar allEmployees = departments.SelectMany(d => d.Employees);  // \"Алекс\", \"Мария\", \"Ольга\"\n// С доступом к родителю\nvar withDept = departments.SelectMany(d => d.Employees, (d, e) => new { Department = d.Name, Employee = e });"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Сортировка (OrderBy, ThenBy, OrderByDescending)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = new[] { 5, 2, 8, 1, 9, 3 };\n\nvar asc = numbers.OrderBy(n => n);           // 1, 2, 3, 5, 8, 9\nvar desc = numbers.OrderByDescending(n => n); // 9, 8, 5, 3, 2, 1\n\n// Многоуровневая сортировка\nvar people = new[]\n{\n    new { Name = \"Анна\", Age = 25, City = \"Москва\" },\n    new { Name = \"Борис\", Age = 30, City = \"СПб\" },\n    new { Name = \"Виктор\", Age = 25, City = \"Казань\" },\n};\n\n// Сначала по городу, потом по возрасту\nvar sorted = people\n    .OrderBy(p => p.City)\n    .ThenBy(p => p.Age);\n\n// Убывание на втором уровне\nvar sorted2 = people\n    .OrderBy(p => p.City)\n    .ThenByDescending(p => p.Age);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Группировка (GroupBy)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var people = new[]\n{\n    new { Name = \"Анна\", Age = 25, City = \"Москва\" },\n    new { Name = \"Борис\", Age = 30, City = \"СПб\" },\n    new { Name = \"Виктор\", Age = 25, City = \"Москва\" },\n    new { Name = \"Галина\", Age = 22, City = \"Казань\" },\n    new { Name = \"Дмитрий\", Age = 30, City = \"СПб\" },\n};\n\n// Группировка по одному полю\nvar byCity = people.GroupBy(p => p.City);\n\n// Результат: IEnumerable<IGrouping<string, Person>>\n// IGrouping<Key, Element> — имеет Key и реализует IEnumerable<Element>\n\nforeach (var group in byCity)\n{\n    Console.WriteLine($\"Город: {group.Key}, Количество: {group.Count()}\");\n    foreach (var person in group)\n        Console.WriteLine($\"  {person.Name}, {person.Age}\");\n}\n\n// Группировка с проекцией результата\nvar stats = people\n    .GroupBy(p => p.City)\n    .Select(g => new\n    {\n        City = g.Key,\n        Count = g.Count(),\n        AvgAge = g.Average(p => p.Age),\n        MaxAge = g.Max(p => p.Age)\n    });\n\n// Группировка по сложному ключу (анонимный тип)\nvar byCityAndAgeGroup = people.GroupBy(p => new\n{\n    p.City,\n    AgeGroup = p.Age < 25 ? \"Молодой\" : \"Взрослый\"\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Агрегация (Count, Sum, Average, Min, Max, Aggregate)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };\n\nint count = numbers.Count();           // 10\nint sum = numbers.Sum();               // 55\ndouble avg = numbers.Average();        // 5.5\nint min = numbers.Min();               // 1\nint max = numbers.Max();               // 10\n\n// С селектором\nvar people = new[] { new { Name = \"А\", Age = 25 }, new { Name = \"Б\", Age = 30 } };\ndouble avgAge = people.Average(p => p.Age);  // 27.5\n\n// Aggregate — общий случай (fold/reduce)\nint product = numbers.Aggregate(1, (acc, n) => acc * n);  // 10! = 3628800\nstring concatenated = numbers.Aggregate(\"\", (s, n) => s + n + \" \");  // \"1 2 3 ... \""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Кванторы (All, Any, Contains)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = new[] { 1, 2, 3, 4, 5 };\n\nbool allPositive = numbers.All(n => n > 0);        // true\nbool anyEven = numbers.Any(n => n % 2 == 0);       // true\nbool contains3 = numbers.Contains(3);              // true\n\n// На коллекциях объектов\nvar people = new[] { new { Name = \"Анна\", Age = 25 } };\nbool hasAnna = people.Any(p => p.Name == \"Анна\");  // true\nbool allAdults = people.All(p => p.Age >= 18);     // true"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Операции с множествами (Distinct, Union, Intersect, Except)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var set1 = new[] { 1, 2, 3, 4, 5 };\nvar set2 = new[] { 4, 5, 6, 7, 8 };\n\nvar distinct = set1.Distinct();              // убрать дубликаты\nvar union = set1.Union(set2);                // 1,2,3,4,5,6,7,8 (без дублей)\nvar intersect = set1.Intersect(set2);        // 4,5\nvar except = set1.Except(set2);              // 1,2,3 (в set1, но не в set2)\n\n// Для объектов — нужен IEqualityComparer или переопределение Equals/GetHashCode"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Элементы (First, Last, Single, ElementAt, DefaultIfEmpty)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = new[] { 10, 20, 30, 40, 50 };\n\n// First / Last — исключение, если коллекция пуста\nint first = numbers.First();                    // 10\nint firstEven = numbers.First(n => n % 2 == 0); // 10 (все чётные, первый)\nint last = numbers.Last();                      // 50\n\n// FirstOrDefault / LastOrDefault — возвращают default(T) если пусто\nint firstOrDefault = numbers.FirstOrDefault(n => n > 100); // 0 (default(int))\n\n// Single / SingleOrDefault — ровно ОДИН элемент, иначе исключение\nvar single = new[] { 42 };\nint only = single.Single();     // 42\n// single.Single() на пустом или с 2+ элементами — InvalidOperationException\n\n// ElementAt / ElementAtOrDefault — по индексу\nint third = numbers.ElementAt(2);           // 30\nint safe = numbers.ElementAtOrDefault(10);  // 0\n\n// DefaultIfEmpty — если пусто, вернуть коллекцию с одним default значением\nvar empty = new int[0];\nvar withDefault = empty.DefaultIfEmpty(-1);  // [-1]"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Пропуск и взятие (Skip, Take, SkipWhile, TakeWhile)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = Enumerable.Range(1, 20);  // 1..20\n\nvar page2 = numbers.Skip(10).Take(10);      // 11..20 (пагинация)\nvar first5 = numbers.Take(5);               // 1..5\nvar skipWhile = numbers.SkipWhile(n => n < 5);  // 5..20 (пропускаем ПОКА условие true)\nvar takeWhile = numbers.TakeWhile(n => n < 5);  // 1..4 (берём ПОКА условие true)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Преобразование типов (ToList, ToArray, ToDictionary, ToLookup, OfType, Cast)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = new[] { 1, 2, 3 };\n\nList<int> list = numbers.ToList();\nint[] array = numbers.ToArray();\n\n// ToDictionary — ключ должен быть уникальным\nvar people = new[]\n{\n    new { Id = 1, Name = \"Анна\" },\n    new { Id = 2, Name = \"Борис\" }\n};\nvar dict = people.ToDictionary(p => p.Id, p => p.Name);  // Dictionary<int, string>\n\n// ToLookup — как Dictionary, но ключ может повторяться (группировка)\nvar byFirstLetter = people.ToLookup(p => p.Name[0]);  // Lookup<char, Person>\n\n// OfType<T> — фильтрация по типу (для нетипизированных коллекций)\nobject[] mixed = { 1, \"two\", 3, \"four\", 5 };\nvar ints = mixed.OfType<int>();      // 1, 3, 5\nvar strings = mixed.OfType<string>(); // \"two\", \"four\"\n\n// Cast<T> — приведение (бросает исключение, если не тот тип)\nArrayList oldList = new ArrayList { 1, 2, 3 };\nvar newList = oldList.Cast<int>().ToList();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Генерация последовательностей (Range, Repeat, Empty)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Linq;\n\nvar range = Enumerable.Range(1, 10);        // 1, 2, ..., 10\nvar rangeStep = Enumerable.Range(0, 10).Select(i => i * 2);  // 0, 2, 4, ..., 18\n\nvar repeat = Enumerable.Repeat(\"Hello\", 3); // \"Hello\", \"Hello\", \"Hello\"\n\nvar empty = Enumerable.Empty<int>();        // пустая последовательность int"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Zip — объединение двух последовательностей попарно"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var names = new[] { \"Анна\", \"Борис\", \"Виктор\" };\nvar ages = new[] { 25, 30, 17 };\n\nvar combined = names.Zip(ages, (name, age) => $\"{name} — {age} лет\");\n// \"Анна — 25 лет\", \"Борис — 30 лет\", \"Виктор — 17 лет\"\n\n// Zip с тремя последовательностями (C# 10+)\nvar cities = new[] { \"Москва\", \"СПб\", \"Казань\" };\nvar triple = names.Zip(ages, cities, (n, a, c) => new { n.Name = n, Age = a, City = c });"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "14. Chunk — разбиение на куски (C# 10 / .NET 6+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = Enumerable.Range(1, 100);\n\nforeach (var chunk in numbers.Chunk(10))\n{\n    Console.WriteLine($\"Chunk: {string.Join(\", \", chunk)}\");\n    // 10 элементов в каждом chunk\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "15. LINQ и производительность — материализация"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = Enumerable.Range(1, 1_000_000);\n\n// КАЖДЫЙ вызов ToList() — НОВЫЙ проход по коллекции!\nvar evens = numbers.Where(n => n % 2 == 0);\nvar list1 = evens.ToList();    // проход 1\nvar list2 = evens.ToList();    // проход 2 (снова вычисляет Where!)\n\n// Правильно: материализуйте ОДИН РАЗ\nvar materialized = numbers.Where(n => n % 2 == 0).ToList();\nvar listA = materialized;\nvar listB = materialized;  // тот же список, пересчёта нет"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "16. Query Syntax vs Method Syntax"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Query Syntax (SQL-like)\nvar query = from p in people\n            where p.Age >= 18\n            orderby p.Name\n            select new { p.Name, p.Age };\n\n// Method Syntax (fluent)\nvar method = people\n    .Where(p => p.Age >= 18)\n    .OrderBy(p => p.Name)\n    .Select(p => new { p.Name, p.Age });\n\n// Эквивалентны! Query Syntax компилируется в Method Syntax.\n// Query Syntax удобен для: join, group by, let (переменные внутри запроса)\n// Method Syntax — для всего остального, короче и гибче"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "let в Query Syntax — промежуточные переменные"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var result = from p in people\n             let fullName = p.FirstName + \" \" + p.LastName\n             let isAdult = p.Age >= 18\n             where isAdult\n             select new { fullName, p.Age };"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "17. Домашнее задание"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Дан `List<int>` чисел 1-100. Используя LINQ: найдите сумму чётных, произведение нечётных (Aggregate), среднее всех чисел",
+        "Создайте список студентов (Name, Group, Grades — List<int>). Найдите: студентов с средней оценкой > 4.0; лучшего студента по средней оценке; сгруппируйте по группам с подсчётом средней по группе",
+        "Даны два массива строк. Найдите: пересечение, объединение, разность (в первом, но не во втором), уникальные значения",
+        "Реализуйте пагинацию: метод `GetPage<T>(IEnumerable<T> source, int pageNumber, int pageSize)` используя Skip/Take",
+        "*Напишите LINQ-запрос, который из списка слов находит все анаграммы (слова из одних букв) и группирует их. Подсказка: ключ группировки — отсортированные буквы слова*"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "18. Краткая шпаргалка"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Фильтрация:\n  Where(predicate)\n  Where((x, i) => ...)  // с индексом\n\nПроекция:\n  Select(selector)\n  Select((x, i) => ...)\n  SelectMany(selector)  // flatten\n\nСортировка:\n  OrderBy(keySelector)\n  OrderByDescending(keySelector)\n  ThenBy(keySelector)\n  ThenByDescending(keySelector)\n\nГруппировка:\n  GroupBy(keySelector)\n  GroupBy(keySelector, elementSelector)\n  GroupBy(keySelector, elementSelector, resultSelector)\n\nАгрегация:\n  Count(), Sum(), Average(), Min(), Max()\n  Aggregate(seed, func)\n\nКванторы:\n  All(predicate), Any(), Any(predicate)\n  Contains(value)\n\nМножества:\n  Distinct(), Union(), Intersect(), Except()\n\nЭлементы:\n  First/OrDefault, Last/OrDefault\n  Single/OrDefault\n  ElementAt/OrDefault\n\nПропуск/взятие:\n  Skip(n), Take(n)\n  SkipWhile, TakeWhile\n\nПреобразование:\n  ToList(), ToArray()\n  ToDictionary(keySel, valSel)\n  ToLookup(keySel)\n  OfType<T>(), Cast<T>()\n\nГенерация:\n  Enumerable.Range(start, count)\n  Enumerable.Repeat(value, count)\n  Enumerable.Empty<T>()\n\nZip:\n  seq1.Zip(seq2, (a,b) => result)\n\nChunk (NET 6+):\n  source.Chunk(size)"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 10
+}

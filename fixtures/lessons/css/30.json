@@ -1,0 +1,645 @@
+{
+  "title": "Урок 30: Доступность и интернационализация — контраст, focus, reduced motion, RTL, логические свойства, зум текста",
+  "slug": "dostupnost-i-internatsionalizatsiya-kontrast-focus-reduced-motion-rtl-logicheskie-svoystva-zum-teksta",
+  "short_description": "контраст, focus, reduced motion, RTL, логические свойства, зум текста",
+  "goals": [
+    "Понять WCAG 2.1/2.2 требования к цветовому контрасту (4.5:1 обычный текст, 3:1 крупный текст)",
+    "Научиться стилизовать фокус клавиатуры (:focus-visible, focus-visible, skip-links)",
+    "Применять prefers-reduced-motion для анимаций и микро-взаимодействий",
+    "Создавать RTL-интерфейсы с логическими свойствами (margin-inline-start, padding-block-end)",
+    "Поддерживать зум текста (200%+) без сломанной вёрстки",
+    "Создавать доступные формы, модалки, навигацию с ARIA и семантическим HTML"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять WCAG 2.1/2.2 требования к цветовому контрасту (4.5:1 обычный текст, 3:1 крупный текст)",
+        "Научиться стилизовать фокус клавиатуры (:focus-visible, focus-visible, skip-links)",
+        "Применять prefers-reduced-motion для анимаций и микро-взаимодействий",
+        "Создавать RTL-интерфейсы с логическими свойствами (margin-inline-start, padding-block-end)",
+        "Поддерживать зум текста (200%+) без сломанной вёрстки",
+        "Создавать доступные формы, модалки, навигацию с ARIA и семантическим HTML"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. WCAG контраст цветов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Требования WCAG 2.1 AA"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Элемент",
+        "Минимальный контраст",
+        "Уровень"
+      ],
+      "rows": [
+        [
+          "Обычный текст (< 18pt или < 14pt жирный)",
+          "4.5:1",
+          "AA"
+        ],
+        [
+          "Крупный текст (≥ 18pt или ≥ 14pt жирный)",
+          "3:1",
+          "AA"
+        ],
+        [
+          "Графика, элементы интерфейса",
+          "3:1",
+          "AA"
+        ],
+        [
+          "Обычный текст (AAA)",
+          "7:1",
+          "AAA"
+        ],
+        [
+          "Крупный текст (AAA)",
+          "4.5:1",
+          "AAA"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как проверить контраст"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Хорошо — темный текст на светлом фоне */\n.good-text {\n  color: oklch(0.21 0.006 285);   /* тёмно-серый */\n  background: oklch(0.98 0.001 285); /* светло-серый фон */\n  /* Контраст ~13:1 — проходит AA и AAA */\n}\n\n/* Плохо — светло-серый на белом */\n.bad-text {\n  color: oklch(0.70 0.01 285);    /* слишком светло-серый */\n  background: white;\n  /* Контраст ~1.5:1 — не проходит даже A */\n}\n\n/* Погранично */\n.borderline {\n  color: oklch(0.45 0.01 285);    /* средне-серый */\n  background: white;\n  /* Контраст ~5.5:1 — проходит AA для обычного текста */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инструменты проверки контраста"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**DevTools**: Элементы → Styles → цвет → иконка контраста (показывает соотношение)",
+        "**WebAIM Contrast Checker**: https://webaim.org/resources/contrastchecker/",
+        "**Stark** — плагин для Figma/Sketch/Adobe XD",
+        "**Colour Contrast Analyser** — десктоп приложение",
+        "**Lighthouse** — аудит доступности (доступность → цветовой контраст)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Не цвет единственный носитель информации"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Плохо — только цвет показывает ошибку -->\n<span style=\"color: red;\">Поле заполнено неверно</span>\n\n<!-- Хорошо — цвет + иконка + текст -->\n<div class=\"alert alert--error\" role=\"alert\">\n  <svg class=\"alert__icon\" aria-hidden=\"true\">...</svg>\n  <span class=\"alert__text\">Поле заполнено неверно</span>\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".alert--error {\n  border-left: 4px solid var(--color-error);\n  background: color-mix(in oklch, var(--color-error), white 92%);\n  color: var(--color-text);\n}\n\n.alert__icon {\n  /* Иконка ошибки — дополнительный индикатор */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Фокус клавиатуры и :focus-visible"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ":focus vs :focus-visible"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Плохо — убирает outline для всех, включая клавиатуру */\ninput:focus {\n  outline: none;\n}\n\n/* Хорошо — показывает outline только при навигации клавиатурой */\ninput:focus-visible {\n  outline: 3px solid var(--color-primary);\n  outline-offset: 2px;\n}\n\n/* При фокусе мышкой — незаметный, при клавиатуре — заметный */\ninput:focus:not(:focus-visible) {\n  outline: none;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кастомный фокус-стиль"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".btn {\n  /* Базовые стили */\n  padding: var(--space-sm) var(--space-md);\n  border-radius: var(--radius-md);\n  border: 2px solid transparent;\n}\n\n/* Фокус для клавиатуры */\n.btn:focus-visible {\n  outline: 3px solid var(--color-primary);\n  outline-offset: 3px;\n  box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-primary), white 50%);\n}\n\n/* Фокус внутри компонента */\n.c-card:focus-within {\n  border-color: var(--color-primary);\n  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary), white 40%);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Skip-link (перейти к контенту)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<a href=\"#main-content\" class=\"skip-link\">Перейти к основному содержимому</a>\n\n<header>...</header>\n<main id=\"main-content\">...</main>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".skip-link {\n  position: absolute;\n  top: -100px;  /* Скрыто за пределами экрана */\n  left: 0;\n  background: var(--color-primary);\n  color: white;\n  padding: var(--space-sm) var(--space-md);\n  z-index: 1000;\n  text-decoration: none;\n  border-radius: 0 0 var(--radius-md) 0;\n  transition: top 0.2s;\n}\n\n.skip-link:focus {\n  top: 0;  /* Появляется при фокусе клавиатурой */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фокус-ловушка (focus trap) для модалок"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Модалка с фокус-ловушкой -->\n<div class=\"c-modal is-open\" role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"modal-title\">\n  <button class=\"c-modal__close\" aria-label=\"Закрыть\">×</button>\n  <h2 id=\"modal-title\">Заголовок модалки</h2>\n  <p>Содержимое модалки...</p>\n  <div class=\"c-modal__actions\">\n    <button class=\"c-btn c-btn--primary\">Сохранить</button>\n    <button class=\"c-btn c-btn--secondary\">Отмена</button>\n  </div>\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// app.js — фокус-ловушка для модалки\nfunction trapFocus(element) {\n  const focusableElements = element.querySelectorAll(\n    'button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])'\n  );\n  const firstElement = focusableElements[0];\n  const lastElement = focusableElements[focusableElements.length - 1];\n\n  element.addEventListener('keydown', (e) => {\n    if (e.key !== 'Tab') return;\n\n    if (e.shiftKey) {\n      // Shift+Tab — переход назад\n      if (document.activeElement === firstElement) {\n        e.preventDefault();\n        lastElement.focus();\n      }\n    } else {\n      // Tab — переход вперёд\n      if (document.activeElement === lastElement) {\n        e.preventDefault();\n        firstElement.focus();\n      }\n    }\n  });\n\n  // ESC закрывает модалку\n  element.addEventListener('keydown', (e) => {\n    if (e.key === 'Escape') {\n      closeModal(element);\n    }\n  });\n}\n\nfunction openModal(modal) {\n  modal.classList.add('is-open');\n  modal.setAttribute('aria-modal', 'true');\n  document.body.style.overflow = 'hidden';\n\n  // Переместить фокус в модалку\n  const firstFocusable = modal.querySelector('button, [href], input, select, textarea');\n  if (firstFocusable) firstFocusable.focus();\n\n  trapFocus(modal);\n}\n\nfunction closeModal(modal) {\n  modal.classList.remove('is-open');\n  modal.setAttribute('aria-modal', 'false');\n  document.body.style.overflow = '';\n\n  // Вернуть фокус на элемент, который открыл модалку\n  const trigger = document.querySelector('[aria-controls=\"' + modal.id + '\"]');\n  if (trigger) trigger.focus();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. prefers-reduced-motion"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Медиа-запрос для уменьшения движения"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Базовые анимации */\n.btn {\n  transition: transform 0.2s, background 0.2s;\n}\n\n.btn:hover {\n  transform: translateY(-2px);\n}\n\n/* Для пользователей с preferring reduced motion — убираем анимации */\n@media (prefers-reduced-motion: reduce) {\n  *, *::before, *::after {\n    animation-duration: 0.01ms !important;\n    animation-iteration-count: 1 !important;\n    transition-duration: 0.01ms !important;\n    scroll-behavior: auto !important;\n  }\n}\n\n/* Конкретные компоненты — более точный контроль */\n@media (prefers-reduced-motion: reduce) {\n  .carousel {\n    animation: none;\n    transition: none;\n  }\n\n  .modal {\n    transform: none;\n    opacity: 1;\n    visibility: visible;\n  }\n\n  .loading-spinner {\n    animation: none;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "JavaScript проверка prefers-reduced-motion"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');\n\nif (prefersReducedMotion.matches) {\n  // Отключить JS-анимации, карусели, параллакс\n  disableAnimations();\n}\n\nprefersReducedMotion.addEventListener('change', (e) => {\n  if (e.matches) {\n    disableAnimations();\n  } else {\n    enableAnimations();\n  }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что уменьшать при reduced motion"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Элемент",
+        "Базовый вариант",
+        "При reduced motion"
+      ],
+      "rows": [
+        [
+          "Появление элементов",
+          "fade-in + slide-up",
+          "просто появление"
+        ],
+        [
+          "Карусель",
+          "автопрокрутка",
+          "статичные слайды, кнопки навигации"
+        ],
+        [
+          "Модалка",
+          "скольжение появления",
+          "мгновенное появление"
+        ],
+        [
+          "Кнопка ховер",
+          "сдвиг вверх",
+          "только смена цвета"
+        ],
+        [
+          "Загрузка",
+          "спиннер анимация",
+          "статичный индикатор"
+        ],
+        [
+          "Прокрутка",
+          "smooth scroll",
+          "мгновенный переход"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. RTL/LTR и логические свойства"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Направление текста"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- LTR (по умолчанию) -->\n<html lang=\"ru\" dir=\"ltr\">\n\n<!-- RTL (арабский, иврит) -->\n<html lang=\"ar\" dir=\"rtl\">"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Логические свойства — замена физических"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Физическое (LTR)",
+        "Логическое",
+        "RTL эквивалент"
+      ],
+      "rows": [
+        [
+          "`margin-left`",
+          "`margin-inline-start`",
+          "`margin-right` в RTL"
+        ],
+        [
+          "`margin-right`",
+          "`margin-inline-end`",
+          "`margin-left` в RTL"
+        ],
+        [
+          "`padding-left`",
+          "`padding-inline-start`",
+          "`padding-right` в RTL"
+        ],
+        [
+          "`padding-right`",
+          "`padding-inline-end`",
+          "`padding-left` в RTL"
+        ],
+        [
+          "`text-align: left`",
+          "`text-align: start`",
+          "`right` в RTL"
+        ],
+        [
+          "`text-align: right`",
+          "`text-align: end`",
+          "`left` в RTL"
+        ],
+        [
+          "`border-left`",
+          "`border-inline-start`",
+          "`border-right` в RTL"
+        ],
+        [
+          "`float: left`",
+          "`float: inline-start`",
+          "`right` в RTL"
+        ],
+        [
+          "`top`",
+          "`inset-block-start`",
+          "без изменений"
+        ],
+        [
+          "`bottom`",
+          "`inset-block-end`",
+          "без изменений"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример — карточка с логическими свойствами"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".c-card {\n  /* Вместо padding-left/right */\n  padding-inline-start: var(--space-md);\n  padding-inline-end: var(--space-md);\n  padding-block-start: var(--space-lg);\n  padding-block-end: var(--space-lg);\n\n  /* Вместо margin-left/right */\n  margin-inline-start: auto;\n\n  /* Вместо border-left */\n  border-inline-start: 4px solid var(--color-primary);\n\n  /* Вместо text-align */\n  text-align: start;\n\n  direction: ltr;  /* или rtl, или inherit */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример — навигация с RTL support"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<nav class=\"c-nav\" dir=\"ltr\">\n  <ul class=\"c-nav__list\">\n    <li class=\"c-nav__item\"><a href=\"#\" class=\"c-nav__link\">Главная</a></li>\n    <li class=\"c-nav__item\"><a href=\"#\" class=\"c-nav__link\">О нас</a></li>\n    <li class=\"c-nav__item\"><a href=\"#\" class=\"c-nav__link\">Контакты</a></li>\n  </ul>\n</nav>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".c-nav__list {\n  display: flex;\n  gap: var(--space-md);\n  padding-inline-start: 0;  /* Вместо padding-left: 0 */\n  list-style: none;\n}\n\n.c-nav__link {\n  padding-inline-start: var(--space-sm);  /* Вместо padding-left */\n  padding-inline-end: var(--space-sm);    /* Вместо padding-right */\n}\n\n.c-nav__link::before {\n  content: '';\n  margin-inline-end: var(--space-xs);  /* Вместо margin-right */\n  display: inline-block;\n  width: 4px;\n  height: 4px;\n  background: var(--color-primary);\n  border-radius: 50%;\n}\n\n/* RTL вариант — через [dir=\"rtl\"] */\n[dir=\"rtl\"] .c-nav__link::before {\n  margin-inline-end: 0;\n  margin-inline-start: var(--space-xs);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Writing modes"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Горизонтальный текст (по умолчанию) */\n.writing-mode-horizontal {\n  writing-mode: horizontal-tb;\n}\n\n/* Вертикальный текст, справа налево (японский традиционный) */\n.writing-mode-vertical-rl {\n  writing-mode: vertical-rl;\n}\n\n/* Вертикальный текст, слева направо */\n.writing-mode-vertical-lr {\n  writing-mode: vertical-lr;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Зум текста (200%+)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Требование WCAG 1.4.4"
+    },
+    {
+      "type": "text",
+      "content": "Текст должен масштабироваться до 200% без потери contenта и функциональности."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Не блокировать зум"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Плохо — блокирует зум на мобильных -->\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">\n\n<!-- Хорошо — разрешает зум -->\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Единицы измерения для зума"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Плохо — фиксированные пиксели не масштабируются хорошо */\n.bad-text {\n  font-size: 16px;\n  line-height: 24px;\n  padding: 20px;\n}\n\n/* Хорошо — rem, em, % масштабируются с настройками браузера */\n.good-text {\n  font-size: 1rem;           /* = 16px по умолчанию, масштабируется */\n  line-height: 1.6;          /* без единиц — пропорционально */\n  padding: 1rem;             /* масштабируется с текстом */\n  max-width: 60ch;           /* символы — оптимальная длина строки */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контейнеры для зума"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".c-card {\n  /* Мини- и максимальные размеры позволяют контейнеру расти с текстом */\n  min-width: 200px;\n  max-width: 100%;\n  width: 100%;\n\n  /* padding в rem — масштабируется */\n  padding: 1.5rem;\n\n  /* overflow — не скрывает текст при увеличении */\n  overflow: visible;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Изображения и зум"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "img {\n  max-width: 100%;\n  height: auto;\n  /* Изображение не выйдет за границы контейнера при зуме */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Доступные формы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Семантический HTML + ARIA"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<form class=\"c-form\" novalidate>\n  <fieldset class=\"c-form__fieldset\">\n    <legend class=\"c-form__legend\">Личные данные</legend>\n\n    <div class=\"c-form__field\">\n      <label for=\"name\" class=\"c-form__label\">Имя</label>\n      <input\n        type=\"text\"\n        id=\"name\"\n        name=\"name\"\n        class=\"c-form__input\"\n        required\n        aria-required=\"true\"\n        aria-describedby=\"name-hint\"\n      >\n      <span id=\"name-hint\" class=\"c-form__hint\">Введите ваше полное имя</span>\n    </div>\n\n    <div class=\"c-form__field\">\n      <label for=\"email\" class=\"c-form__label\">Email</label>\n      <input\n        type=\"email\"\n        id=\"email\"\n        name=\"email\"\n        class=\"c-form__input\"\n        required\n        aria-invalid=\"false\"\n      >\n      <span id=\"email-error\" class=\"c-form__error\" role=\"alert\" aria-live=\"polite\"></span>\n    </div>\n\n    <div class=\"c-form__field\">\n      <label class=\"c-form__label\">Пол</label>\n      <div class=\"c-form__radiogroup\" role=\"radiogroup\" aria-label=\"Пол\">\n        <label class=\"c-form__radio\">\n          <input type=\"radio\" name=\"gender\" value=\"male\">\n          Мужской\n        </label>\n        <label class=\"c-form__radio\">\n          <input type=\"radio\" name=\"gender\" value=\"female\">\n          Женский\n        </label>\n      </div>\n    </div>\n  </fieldset>\n\n  <button type=\"submit\" class=\"c-btn c-btn--primary\">Отправить</button>\n</form>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стили формы с фокусом и валидацией"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".c-form__label {\n  display: block;\n  margin-block-end: var(--space-xs);\n  font-size: var(--fs-sm);\n  font-weight: 600;\n  color: var(--color-text);\n}\n\n.c-form__input {\n  width: 100%;\n  padding: var(--space-sm) var(--space-md);\n  font-size: var(--fs-base);\n  border: 1px solid var(--color-border);\n  border-radius: var(--radius-md);\n  background: var(--color-bg);\n  color: var(--color-text);\n\n  /* Фокус — заметный для клавиатуры */\n  &:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n    border-color: var(--color-primary);\n  }\n\n  /* Состояние ошибки */\n  &[aria-invalid=\"true\"] {\n    border-color: var(--color-error);\n  }\n\n  &[aria-invalid=\"true\"]:focus-visible {\n    outline-color: var(--color-error);\n  }\n}\n\n.c-form__hint {\n  font-size: var(--fs-xs);\n  color: var(--color-muted);\n  margin-block-start: var(--space-xs);\n}\n\n.c-form__error {\n  font-size: var(--fs-xs);\n  color: var(--color-error);\n  margin-block-start: var(--space-xs);\n}\n\n.c-form__radio {\n  display: inline-flex;\n  align-items: center;\n  margin-inline-end: var(--space-md);\n  cursor: pointer;\n}\n\n.c-form__radio input {\n  margin-inline-end: var(--space-xs);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Валидация через :has() (урок 25)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Показываем ошибку когда инпут невалидный и не в фокусе */\n.c-form__field:has(input:invalid:not(:focus-visible)) .c-form__error {\n  display: block;\n}\n\n/* Зеленая граница когда валидно */\n.c-form__field:has(input:valid) .c-form__input {\n  border-color: var(--color-success);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Доступная навигация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Семантическая навигация"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<nav class=\"c-nav\" aria-label=\"Основная навигация\">\n  <ul class=\"c-nav__list\">\n    <li class=\"c-nav__item\">\n      <a href=\"#\" class=\"c-nav__link\" aria-current=\"page\">Главная</a>\n    </li>\n    <li class=\"c-nav__item\">\n      <a href=\"#\" class=\"c-nav__link\">Каталог</a>\n    </li>\n    <li class=\"c-nav__item\">\n      <a href=\"#\" class=\"c-nav__link\">О нас</a>\n    </li>\n    <li class=\"c-nav__item\">\n      <a href=\"#\" class=\"c-nav__link\">Контакты</a>\n    </li>\n  </ul>\n</nav>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Hamburget menu с ARIA"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<button\n  class=\"c-nav__toggle\"\n  aria-expanded=\"false\"\n  aria-controls=\"nav-menu\"\n  aria-label=\"Открыть навигацию\"\n>\n  <span class=\"c-nav__toggle-icon\" aria-hidden=\"true\"></span>\n</button>\n\n<nav id=\"nav-menu\" class=\"c-nav__menu\" hidden>\n  <ul class=\"c-nav__list\">...</ul>\n</nav>"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const toggle = document.querySelector('.c-nav__toggle');\nconst menu = document.querySelector('#nav-menu');\n\ntoggle.addEventListener('click', () => {\n  const expanded = toggle.getAttribute('aria-expanded') === 'true';\n  toggle.setAttribute('aria-expanded', !expanded);\n  menu.hidden = !menu.hidden;\n\n  if (!expanded) {\n    // Переместить фокус в первое место навигации\n    const firstLink = menu.querySelector('a');\n    if (firstLink) firstLink.focus();\n  }\n});\n\n// Закрытие по ESC\ndocument.addEventListener('keydown', (e) => {\n  if (e.key === 'Escape' && !menu.hidden) {\n    toggle.setAttribute('aria-expanded', 'false');\n    menu.hidden = true;\n    toggle.focus();\n  }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Чек-лист доступности (a11y)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Критерий",
+        "Как проверить",
+        "Инструмент"
+      ],
+      "rows": [
+        [
+          "Контраст текста ≥ 4.5:1 (обычный), ≥ 3:1 (крупный)",
+          "DevTools цвет → контраст",
+          "DevTools / WebAIM"
+        ],
+        [
+          "Конtrast графики ≥ 3:1",
+          "Проверка иконок, границ",
+          "DevTools"
+        ],
+        [
+          "Цвет не единственный носитель информации",
+          "Иконки + текст + цвет",
+          "Код review"
+        ],
+        [
+          ":focus-visible стили на всех интерактивных элементах",
+          "Tab по странице",
+          "Ручное тестирование"
+        ],
+        [
+          "Outline не удалён глобально",
+          "Поиск `outline: none`",
+          "Код review"
+        ],
+        [
+          "Skip-link при загрузке страницы",
+          "Tab с первой клавиши",
+          "Ручное тестирование"
+        ],
+        [
+          "Фокус-ловушка в модалках",
+          "Tab внутри модалки не уходит",
+          "Ручное тестирование"
+        ],
+        [
+          "ESC закрывает модалки",
+          "Нажатие ESC",
+          "Ручное тестирование"
+        ],
+        [
+          "prefers-reduced-motion respected",
+          "Отключить анимации в ОС",
+          "Ручное тестирование"
+        ],
+        [
+          "RTL поддерживает логические свойства",
+          "[dir=\"rtl\"] тестирование",
+          "Ручное тестирование"
+        ],
+        [
+          "Зум 200% не ломает вёрстку",
+          "Ctrl/+ в браузере",
+          "Ручное тестирование"
+        ],
+        [
+          "Формы имеют label / aria-label",
+          "Проверка полей",
+          "DevTools Accessibility"
+        ],
+        [
+          "ARIA-live для динамических ошибок",
+          "Обновление ошибок без перезагрузки",
+          "Ручное тестирование"
+        ],
+        [
+          "alt текст на изображениях",
+          "Проверка img",
+          "DevTools / axe"
+        ],
+        [
+          "Семантический HTML (nav, main, header, footer)",
+          "Структура страницы",
+          "Код review"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Чек-лист интернационализации (i18n)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Критерий",
+        "Как проверить"
+      ],
+      "rows": [
+        [
+          "`lang` атрибут на `<html>`",
+          "`<html lang=\"ru\">`"
+        ],
+        [
+          "`dir` атрибут для RTL языков",
+          "`<html dir=\"rtl\">`"
+        ],
+        [
+          "Логические свойства вместо физических",
+          "`margin-inline-start` вместо `margin-left`"
+        ],
+        [
+          "Текст не вшит в CSS",
+          "kein `content: 'Русский текст'` в CSS"
+        ],
+        [
+          "flex-direction: row-reverse не используется для RTL",
+          "Логические свойства обращают порядок"
+        ],
+        [
+          "Шрифты поддерживают кириллицу/арабскую вёрстку",
+          "font-family с fallback"
+        ],
+        [
+          "Форматы дат/чисел локализованы",
+          "Intl API в JS"
+        ],
+        [
+          "Медиа-запросы для writing modes",
+          "`writing-mode: vertical-rl` при 필요"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Комплексный пример: доступная карточка товара с RTL"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!DOCTYPE html>\n<html lang=\"ru\" dir=\"ltr\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Доступный интерфейс</title>\n  <link rel=\"stylesheet\" href=\"styles.css\">\n</head>\n<body>\n  <!-- Skip link -->\n  <a href=\"#main\" class=\"skip-link\">Перейти к основному содержимому</a>\n\n  <header class=\"c-header\">\n    <nav class=\"c-nav\" aria-label=\"Основная навигация\">\n      <ul class=\"c-nav__list\">\n        <li class=\"c-nav__item\"><a href=\"#\" class=\"c-nav__link\" aria-current=\"page\">Главная</a></li>\n        <li class=\"c-nav__item\"><a href=\"#\" class=\"c-nav__link\">Каталог</a></li>\n        <li class=\"c-nav__item\"><a href=\"#\" class=\"c-nav__link\">Контакты</a></li>\n      </ul>\n    </nav>\n  </header>\n\n  <main id=\"main\" class=\"c-main\">\n    <article class=\"c-card\">\n      <div class=\"c-card__media\">\n        <img src=\"product.jpg\" alt=\"Смартфон с камерой\" class=\"c-card__img\">\n        <span class=\"c-card__badge\">Новинка</span>\n      </div>\n      <div class=\"c-card__body\">\n        <h2 class=\"c-card__title\">Смартфон XYZ</h2>\n        <p class=\"c-card__text\">Описание товара с характеристиками...</p>\n        <div class=\"c-card__price\">29 990 ₽</div>\n      </div>\n      <footer class=\"c-card__footer\">\n        <button class=\"c-btn c-btn--primary c-btn--lg\">В корзину</button>\n      </footer>\n    </article>\n  </main>\n</body>\n</html>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* styles.css — доступные стили */\n@layer base, components;\n\n@layer base {\n  :root {\n    --color-bg: oklch(0.98 0.001 285);\n    --color-text: oklch(0.21 0.006 285);\n    --color-primary: oklch(0.62 0.22 264);\n    --color-border: oklch(0.88 0.006 285);\n    --space-xs: 0.25rem;\n    --space-sm: 0.5rem;\n    --space-md: 1rem;\n    --space-lg: 1.5rem;\n    --radius-md: 0.5rem;\n    --fs-base: 1rem;\n    --fs-lg: 1.25rem;\n  }\n\n  * {\n    box-sizing: border-box;\n  }\n\n  html {\n    scroll-behavior: smooth;\n  }\n\n  body {\n    font-family: system-ui, -apple-system, sans-serif;\n    font-size: var(--fs-base);\n    line-height: 1.6;\n    color: var(--color-text);\n    background: var(--color-bg);\n    margin: 0;\n  }\n\n  /* Reduced motion */\n  @media (prefers-reduced-motion: reduce) {\n    html {\n      scroll-behavior: auto;\n    }\n    *, *::before, *::after {\n      animation-duration: 0.01ms !important;\n      animation-iteration-count: 1 !important;\n      transition-duration: 0.01ms !important;\n    }\n  }\n\n  /* RTL через data-атрибут */\n  [dir=\"rtl\"] {\n    /* Логические свойства автоматически отзеркалятся */\n  }\n}\n\n@layer components {\n  .skip-link {\n    position: absolute;\n    top: -100px;\n    left: 0;\n    background: var(--color-primary);\n    color: white;\n    padding: var(--space-sm) var(--space-md);\n    z-index: 1000;\n    text-decoration: none;\n    border-radius: 0 0 var(--radius-md) 0;\n  }\n\n  .skip-link:focus {\n    top: 0;\n  }\n\n  .c-nav__list {\n    display: flex;\n    gap: var(--space-md);\n    padding-inline-start: 0;\n    margin: 0;\n    list-style: none;\n  }\n\n  .c-nav__link {\n    padding-inline-start: var(--space-sm);\n    padding-inline-end: var(--space-sm);\n    padding-block: 0.5rem;\n    color: var(--color-text);\n    text-decoration: none;\n    border-radius: var(--radius-md);\n    transition: background 0.2s;\n  }\n\n  .c-nav__link:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 2px;\n    background: color-mix(in oklch, var(--color-primary), white 90%);\n  }\n\n  .c-nav__link[aria-current=\"page\"] {\n    font-weight: 600;\n    background: var(--color-primary);\n    color: white;\n  }\n\n  .c-card {\n    display: flex;\n    flex-direction: column;\n    gap: var(--space-md);\n    padding: var(--space-lg);\n    border: 1px solid var(--color-border);\n    border-radius: var(--radius-md);\n    background: white;\n    max-width: 400px;\n    margin: var(--space-md);\n  }\n\n  .c-card__media {\n    aspect-ratio: 16 / 9;\n    width: 100%;\n    background: oklch(0.97 0.001 285);\n    border-radius: var(--radius-md);\n    overflow: hidden;\n    position: relative;\n  }\n\n  .c-card__img {\n    width: 100%;\n    height: 100%;\n    object-fit: cover;\n    display: block;\n  }\n\n  .c-card__badge {\n    position: absolute;\n    inset-block-start: var(--space-xs);\n    inset-inline-start: var(--space-xs);\n    font-size: 0.75rem;\n    font-weight: 600;\n    padding: 2px 8px;\n    border-radius: var(--radius-md);\n    background: var(--color-primary);\n    color: white;\n  }\n\n  .c-card__body {\n    display: flex;\n    flex-direction: column;\n    gap: var(--space-sm);\n    flex: 1;\n  }\n\n  .c-card__title {\n    font-size: var(--fs-lg);\n    font-weight: 600;\n    margin: 0;\n    color: var(--color-text);\n  }\n\n  .c-card__text {\n    font-size: var(--fs-base);\n    color: oklch(0.45 0.01 285);\n    margin: 0;\n  }\n\n  .c-card__price {\n    font-size: 1.25rem;\n    font-weight: 700;\n    color: var(--color-text);\n    margin-top: auto;\n  }\n\n  .c-card__footer {\n    display: flex;\n    gap: var(--space-sm);\n    margin-top: auto;\n  }\n\n  .c-btn {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    gap: var(--space-xs);\n    padding: var(--space-sm) var(--space-md);\n    font-size: var(--fs-base);\n    font-weight: 600;\n    border: none;\n    border-radius: var(--radius-md);\n    cursor: pointer;\n    min-height: 44px;\n    transition: background 0.2s, transform 0.1s;\n  }\n\n  .c-btn--primary {\n    background: var(--color-primary);\n    color: white;\n  }\n\n  .c-btn--primary:hover {\n    background: oklch(0.55 0.22 264);\n  }\n\n  .c-btn--primary:focus-visible {\n    outline: 3px solid var(--color-primary);\n    outline-offset: 3px;\n    box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-primary), white 50%);\n  }\n\n  .c-btn:disabled {\n    opacity: 0.5;\n    cursor: not-allowed;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 30
+}

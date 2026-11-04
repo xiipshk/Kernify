@@ -1,0 +1,543 @@
+{
+  "title": "Урок 25: Продвинутая система типов (Advanced Type System)",
+  "slug": "prodvinutaya-sistema-tipov-advanced-type-system",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Dynamically Sized Types (DST)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое DST"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Sized типы: известный размер на этапе компиляции\nlet x: i32 = 42;        // size = 4\nlet y: Box<i32> = Box::new(42); // size = 8 (указатель)\n\n// DST: размер известен ТОЛЬКО во время выполнения\nlet s: &str = \"hello\";        // fat pointer: (ptr, len)\nlet arr: &[i32] = &[1, 2, 3]; // fat pointer: (ptr, len)\nlet trait_obj: &dyn Debug = &42; // fat pointer: (ptr, vtable)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Thin vs Fat pointers"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Thin pointer (1 word) — Sized типы\nlet thin: &i32 = &42;\nlet thin_box: Box<i32> = Box::new(42);\n\n// Fat pointer (2 words) — DST\nlet fat_str: &str = \"hello\";        // (data_ptr, length)\nlet fat_slice: &[i32] = &[1, 2, 3]; // (data_ptr, length)\nlet fat_dyn: &dyn Debug = &42;      // (data_ptr, vtable_ptr)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`?Sized` bound"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// По умолчанию T: Sized\nfn takes_sized<T>(t: T) {}\n\n// Разрешаем DST\nfn takes_unsized<T: ?Sized>(t: &T) {}\n\nfn main() {\n    takes_sized(42);           // OK\n    takes_unsized(&42);        // OK\n    takes_unsized(\"hello\");    // OK, &str: ?Sized\n    takes_unsized(&[1,2,3]);   // OK, &[i32]: ?Sized\n    takes_unsized(&42 as &dyn Debug); // OK\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кастомные DST с `Unsize` и `CoerceUnsized`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::Unsize;\nuse std::ops::CoerceUnsized;\n\n// Thin wrapper, который становится fat при unsizing\n#[repr(transparent)]\nstruct MyWrapper<T: ?Sized> {\n    inner: T,\n}\n\n// Автоматически реализуется для #[repr(transparent)] структур\n// MyWrapper<T>: Unsize<MyWrapper<U>> если T: Unsize<U>\n\n// CoerceUnsized для умных указателей\nstruct MyBox<T: ?Sized> {\n    ptr: *mut T,\n}\n\nimpl<T: ?Sized> MyBox<T> {\n    fn new(x: T) -> Self where T: Sized {\n        MyBox { ptr: Box::into_raw(Box::new(x)) }\n    }\n}\n\n// Реализация CoerceUnsized (nightly)\n#![feature(coerce_unsized)]\nimpl<T: ?Sized, U: ?Sized> CoerceUnsized<MyBox<U>> for MyBox<T>\nwhere\n    T: Unsize<U>,\n{}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`str` и `[T]` — примитивные DST"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// str — UTF-8 строка, DST\nlet s: &str = \"hello\";        // &str = fat pointer\nlet owned: String = s.to_string(); // String = Vec<u8> (Sized!)\n\n// Срез [T] — DST\nlet slice: &[i32] = &[1, 2, 3];\nlet vec: Vec<i32> = slice.to_vec(); // Vec = Sized\n\n// Методы работают через Deref\nprintln!(\"len: {}\", s.len());      // str::len\nprintln!(\"len: {}\", slice.len());  // slice::len"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Type Erasure"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема: стирание типов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Хотим хранить разные типы в одной коллекции\n// Но Vec<T> требует одинаковый T\n\n// Решение 1: Trait Object (dyn Trait)\ntrait Draw {\n    fn draw(&self);\n}\n\nstruct Circle { r: f64 }\nimpl Draw for Circle { fn draw(&self) { println!(\"Circle {}\", self.r); } }\n\nstruct Square { s: f64 }\nimpl Draw for Square { fn draw(&self) { println!(\"Square {}\", self.s); } }\n\nfn main() {\n    let shapes: Vec<Box<dyn Draw>> = vec![\n        Box::new(Circle { r: 5.0 }),\n        Box::new(Square { s: 3.0 }),\n    ];\n    for s in shapes { s.draw(); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Type Erasure через `Any`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::any::Any;\n\nfn print_type<T: Any + 'static>(x: &T) {\n    if let Some(s) = x.downcast_ref::<String>() {\n        println!(\"String: {}\", s);\n    } else if let Some(i) = x.downcast_ref::<i32>() {\n        println!(\"i32: {}\", i);\n    } else {\n        println!(\"Unknown type: {}\", std::any::type_name::<T>());\n    }\n}\n\nfn main() {\n    print_type(&String::from(\"hello\"));\n    print_type(&42i32);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`TypeId` для сравнения типов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::any::{Any, TypeId};\n\nfn is_string<T: Any>(x: &T) -> bool {\n    TypeId::of::<T>() == TypeId::of::<String>()\n}\n\nfn main() {\n    println!(\"{}\", is_string(&\"hello\")); // false (&str != String)\n    println!(\"{}\", is_string(&String::from(\"hello\"))); // true\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Downcasting"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn process_any(x: Box<dyn Any>) {\n    if let Ok(s) = x.downcast::<String>() {\n        println!(\"Got String: {}\", s);\n    } else if let Ok(i) = x.downcast::<i32>() {\n        println!(\"Got i32: {}\", i);\n    } else {\n        println!(\"Other type\");\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. `PhantomData` — детальное использование"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Для variance"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\nuse std::cell::Cell;\n\n// Инвариантный по T\nstruct Invariant<T> {\n    _marker: PhantomData<Cell<T>>,\n}\n\n// Ковариантный по T\nstruct Covariant<T> {\n    _marker: PhantomData<fn() -> T>,\n}\n\n// Контрвариантный по T\nstruct Contravariant<T> {\n    _marker: PhantomData<fn(T)>,\n}\n\n// Бивариантный (всегда)\nstruct Bivariant<T> {\n    _marker: PhantomData<*const T>,\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Для dropck (drop check)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\nstruct Wrapper<'a, T: 'a> {\n    data: &'a T,\n    // Без PhantomData: T должен outlive 'a строго\n    // С PhantomData<&'a T>: компилятор понимает связь\n    _marker: PhantomData<&'a T>,\n}\n\nimpl<'a, T> Drop for Wrapper<'a, T> {\n    fn drop(&mut self) {\n        // Мы не используем self.data в drop!\n        // Но компилятор не знает этого без #[may_dangle]\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Для unused type parameters"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\nstruct MyIter<'a, T> {\n    ptr: *const T,\n    // T не используется в полях, но нужен для типа\n    _phantom: PhantomData<&'a T>,\n}\n\n// Без PhantomData: error[E0392]: parameter `T` is never used"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`PhantomPinned` для `!Unpin`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomPinned;\nuse std::pin::Pin;\n\nstruct SelfRef {\n    data: String,\n    ptr: *const String,\n    _pin: PhantomPinned, // Делает !Unpin\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Function Pointers"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Типы функций"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Function pointer (thin pointer, Sized)\nfn add(a: i32, b: i32) -> i32 { a + b }\n\nlet f: fn(i32, i32) -> i32 = add; // Тип: fn(i32, i32) -> i32\n\n// Замыкание БЕЗ capture — можно привести к fn pointer\nlet closure = |a, b| a + b;\nlet f: fn(i32, i32) -> i32 = closure; // OK!\n\n// Замыкание С capture — НЕЛЬЗЯ\nlet x = 10;\nlet closure = |a| a + x;\n// let f: fn(i32) -> i32 = closure; // ERROR!\n\n// Но можно через trait object\nlet f: &dyn Fn(i32) -> i32 = &closure; // fat pointer"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Coercion function pointers"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn takes_fn_ptr(f: fn(i32) -> i32) {}\n\nfn main() {\n    fn foo(x: i32) -> i32 { x }\n    takes_fn_ptr(foo); // OK\n\n    // unsafe fn -> fn (если не использует unsafe)\n    unsafe fn unsafe_foo(x: i32) -> i32 { x }\n    takes_fn_ptr(unsafe_foo); // OK, coercion\n\n    // fn с разными lifetimes\n    fn with_ref<'a>(x: &'a i32) -> &'a i32 { x }\n    takes_fn_ptr(with_ref); // OK, higher-ranked\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Function pointer vs closure traits"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тип",
+        "Size",
+        "Capture",
+        "Use case"
+      ],
+      "rows": [
+        [
+          "`fn(...)`",
+          "1 word",
+          "Нет",
+          "FFI, callbacks"
+        ],
+        [
+          "`&dyn Fn(...)`",
+          "2 words",
+          "Да",
+          "Общий случай"
+        ],
+        [
+          "`&mut dyn FnMut(...)`",
+          "2 words",
+          "Да (mut)",
+          "Mutating closures"
+        ],
+        [
+          "`Box<dyn FnOnce(...)>`",
+          "2 words",
+          "Да (once)",
+          "Передача владения"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Raw Pointers (`*const T`, `*mut T`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Создание"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let x = 42;\nlet raw_const: *const i32 = &x as *const i32;\nlet raw_mut: *mut i32 = &mut x as *mut i32;\n\n// Из Box\nlet boxed = Box::new(42);\nlet raw: *mut i32 = Box::into_raw(boxed);\n\n// Из références\nlet r: &i32 = &x;\nlet raw: *const i32 = r as *const i32;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Разыменование (unsafe)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let x = 42;\nlet raw = &x as *const i32;\n\nunsafe {\n    println!(\"{}\", *raw); // Чтение\n}\n\nlet mut y = 0;\nlet raw_mut = &mut y as *mut i32;\nunsafe {\n    *raw_mut = 10; // Запись\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pointer arithmetic"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let arr = [1, 2, 3, 4, 5];\nlet ptr = arr.as_ptr(); // *const i32\n\nunsafe {\n    let second = ptr.add(1);     // ptr + 1 * size_of::<i32>()\n    let third = ptr.add(2);\n    println!(\"{} {}\", *second, *third); // 2 3\n\n    // offset (подписанная арифметика)\n    let back = third.offset(-1);\n    println!(\"{}\", *back); // 2\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Null pointers"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let null: *const i32 = std::ptr::null();\nlet null_mut: *mut i32 = std::ptr::null_mut();\n\nif null.is_null() {\n    println!(\"Null pointer\");\n}\n\n// NonNull<T> — гарантированно не null\nuse std::ptr::NonNull;\nlet non_null = NonNull::new(ptr); // Option<NonNull<T>>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Aliasing rules ( 엄격!)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// ПРАВИЛА (UB при нарушении):\n// 1. *mut T — эксклюзивный доступ (как &mut T)\n// 2. *const T — shared доступ (как &T)\n// 3. Нельзя иметь *mut и *const одновременно на одно место\n// 4. Нельзя создавать *mut из &T (кроме UnsafeCell)\n\n// ПРАВИЛЬНО:\nlet mut x = 42;\nlet raw_mut = &mut x as *mut i32;\nlet raw_const = raw_mut as *const i32; // OK: *mut -> *const\n\n// НЕПРАВИЛЬНО:\n// let raw_const = &x as *const i32;\n// let raw_mut = raw_const as *mut i32; // UB! *const -> *mut через общий доступ"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Never Type (`!`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Divergent functions"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn forever() -> ! {\n    loop {\n        std::thread::park();\n    }\n}\n\nfn panic_fn() -> ! {\n    panic!(\"Always panics\");\n}\n\nfn exit_fn() -> ! {\n    std::process::exit(0);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование в `match`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn get_or_exit(opt: Option<i32>) -> i32 {\n    match opt {\n        Some(x) => x,\n        None => {\n            eprintln!(\"No value!\");\n            std::process::exit(1); // Тип !, совместим с любым\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`!` в типах"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Result<T, !> — не может быть Err\ntype InfallibleResult<T> = Result<T, !>;\n\nfn never_fails() -> InfallibleResult<i32> {\n    Ok(42)\n}\n\n// match на ! — exhaustiveness checking\nfn handle_infallible(r: InfallibleResult<i32>) -> i32 {\n    match r {\n        Ok(x) => x,\n        // Err(e) -> ! не нужно, невозможно\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`!` в enum"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "enum Void {} // Пустой enum = !\n\n// Option<&T> оптимизируется в nullable pointer\n// Option<&Void> = *const Void (всегда null)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. `TypeId`, `Any` — Runtime Type Information"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Any` trait"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::any::Any;\n\ntrait Plugin: Any {\n    fn name(&self) -> &str;\n    fn as_any(&self) -> &dyn Any;\n    fn as_any_mut(&mut self) -> &mut dyn Any;\n}\n\nstruct MyPlugin;\nimpl Plugin for MyPlugin {\n    fn name(&self) -> &str { \"MyPlugin\" }\n    fn as_any(&self) -> &dyn Any { self }\n    fn as_any_mut(&mut self) -> &mut dyn Any { self }\n}\n\nfn load_plugin(p: Box<dyn Plugin>) {\n    // Downcast к конкретному типу\n    if let Some(plugin) = p.as_any().downcast_ref::<MyPlugin>() {\n        println!(\"Loaded: {}\", plugin.name());\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`TypeId` для type-safe хранилищ"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::any::{Any, TypeId};\nuse std::collections::HashMap;\n\nstruct TypeMap {\n    map: HashMap<TypeId, Box<dyn Any>>,\n}\n\nimpl TypeMap {\n    fn new() -> Self {\n        TypeMap { map: HashMap::new() }\n    }\n\n    fn insert<T: Any + 'static>(&mut self, value: T) {\n        self.map.insert(TypeId::of::<T>(), Box::new(value));\n    }\n\n    fn get<T: Any + 'static>(&self) -> Option<&T> {\n        self.map.get(&TypeId::of::<T>())\n            .and_then(|b| b.downcast_ref())\n    }\n\n    fn get_mut<T: Any + 'static>(&mut self) -> Option<&mut T> {\n        self.map.get_mut(&TypeId::of::<T>())\n            .and_then(|b| b.downcast_mut())\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Advanced Type Patterns"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Type-level state machine"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Closed;\nstruct Open;\nstruct Reading;\n\nstruct File<S> {\n    handle: std::fs::File,\n    _state: PhantomData<S>,\n}\n\nimpl File<Closed> {\n    fn open(path: &str) -> std::io::Result<File<Open>> {\n        let handle = std::fs::File::open(path)?;\n        Ok(File { handle, _state: PhantomData })\n    }\n}\n\nimpl File<Open> {\n    fn read(self) -> File<Reading> {\n        File { handle: self.handle, _state: PhantomData }\n    }\n    fn close(self) -> File<Closed> {\n        File { handle: self.handle, _state: PhantomData }\n    }\n}\n\nimpl File<Reading> {\n    fn read_bytes(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {\n        self.handle.read(buf)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Branding (PhantomData для уникальности)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\nstruct UserId(PhantomData<*const ()>, u64);\nstruct PostId(PhantomData<*const ()>, u64);\n\nfn get_user(id: UserId) -> String { format!(\"User {}\", id.1) }\nfn get_post(id: PostId) -> String { format!(\"Post {}\", id.1) }\n\nfn main() {\n    let user = UserId(PhantomData, 42);\n    let post = PostId(PhantomData, 42);\n\n    // get_user(post); // ОШИБКА! Разные типы\n    get_user(user); // OK\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Heterogeneous коллекция с Any"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::any::Any;\nuse std::collections::HashMap;\n\nstruct ComponentStore {\n    components: HashMap<TypeId, Box<dyn Any>>,\n}\n\nimpl ComponentStore {\n    fn add<T: Any + 'static>(&mut self, component: T) {\n        self.components.insert(TypeId::of::<T>(), Box::new(component));\n    }\n\n    fn get<T: Any + 'static>(&self) -> Option<&T> {\n        self.components.get(&TypeId::of::<T>())\n            .and_then(|b| b.downcast_ref())\n    }\n\n    fn get_mut<T: Any + 'static>(&mut self) -> Option<&mut T> {\n        self.components.get_mut(&TypeId::of::<T>())\n            .and_then(|b| b.downcast_mut())\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Type-safe builder с PhantomData"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\nstruct HttpRequestBuilder<HasMethod, HasUrl, HasBody> {\n    method: Option<String>,\n    url: Option<String>,\n    body: Option<String>,\n    _marker: PhantomData<(HasMethod, HasUrl, HasBody)>,\n}\n\n// Состояния\nstruct Yes;\nstruct No;\n\nimpl<M, U, B> HttpRequestBuilder<M, U, B> {\n    fn new() -> HttpRequestBuilder<No, No, No> {\n        HttpRequestBuilder { method: None, url: None, body: None, _marker: PhantomData }\n    }\n}\n\nimpl<U, B> HttpRequestBuilder<No, U, B> {\n    fn method(mut self, method: &str) -> HttpRequestBuilder<Yes, U, B> {\n        self.method = Some(method.into());\n        HttpRequestBuilder { method: self.method, url: self.url, body: self.body, _marker: PhantomData }\n    }\n}\n\nimpl<M, B> HttpRequestBuilder<M, No, B> {\n    fn url(mut self, url: &str) -> HttpRequestBuilder<M, Yes, B> {\n        self.url = Some(url.into());\n        HttpRequestBuilder { method: self.method, url: self.url, body: self.body, _marker: PhantomData }\n    }\n}\n\nimpl<M, U> HttpRequestBuilder<M, U, No> {\n    fn body(mut self, body: &str) -> HttpRequestBuilder<M, U, Yes> {\n        self.body = Some(body.into());\n        HttpRequestBuilder { method: self.method, url: self.url, body: self.body, _marker: PhantomData }\n    }\n}\n\n// build только когда все поля заданы\nimpl HttpRequestBuilder<Yes, Yes, Yes> {\n    fn build(self) -> HttpRequest {\n        HttpRequest {\n            method: self.method.unwrap(),\n            url: self.url.unwrap(),\n            body: self.body.unwrap(),\n        }\n    }\n}\n\nstruct HttpRequest { method: String, url: String, body: String }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Function pointer table для плагинов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(C)]\nstruct PluginVTable {\n    name: fn() -> &'static str,\n    init: fn(*mut ()),\n    process: fn(*mut (), *const u8, usize) -> i32,\n    deinit: fn(*mut ()),\n}\n\nstruct Plugin {\n    vtable: &'static PluginVTable,\n    state: *mut (),\n}\n\nimpl Plugin {\n    unsafe fn new(vtable: &'static PluginVTable) -> Self {\n        let mut state = std::ptr::null_mut();\n        (vtable.init)(&mut state);\n        Plugin { vtable, state }\n    }\n\n    fn name(&self) -> &'static str {\n        (self.vtable.name)()\n    }\n\n    fn process(&self, data: &[u8]) -> i32 {\n        (self.vtable.process)(self.state, data.as_ptr(), data.len())\n    }\n}\n\nimpl Drop for Plugin {\n    fn drop(&mut self) {\n        unsafe { (self.vtable.deinit)(self.state); }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`the size for values of type cannot be known`",
+          "DST без указателя"
+        ],
+        [
+          "`parameter T is never used`",
+          "PhantomData отсутствует"
+        ],
+        [
+          "`cannot downcast`",
+          "Тип не `Any` или не `'static`"
+        ],
+        [
+          "`unaligned reference`",
+          "Raw pointer cast на packed struct"
+        ],
+        [
+          "`use of moved value`",
+          "`Box::into_raw` без `from_raw`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Шпаргалка: Type System"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Концепция",
+        "Ключевые типы/трейты"
+      ],
+      "rows": [
+        [
+          "DST",
+          "`str`, `[T]`, `dyn Trait`, `?Sized`"
+        ],
+        [
+          "Fat pointers",
+          "`&str`, `&[T]`, `&dyn Trait`, `Box<dyn Trait>`"
+        ],
+        [
+          "Type Erasure",
+          "`dyn Trait`, `Any`, `TypeId`"
+        ],
+        [
+          "PhantomData",
+          "`PhantomData<T>`, `PhantomPinned`"
+        ],
+        [
+          "Function pointers",
+          "`fn(Args) -> Ret`"
+        ],
+        [
+          "Raw pointers",
+          "`*const T`, `*mut T`, `NonNull<T>`"
+        ],
+        [
+          "Never type",
+          "`!`"
+        ],
+        [
+          "RTTI",
+          "`Any::downcast`, `TypeId::of`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**DST**: `str`, `[T]`, `dyn Trait` — fat pointers, `?Sized` bound, `Unsize`/`CoerceUnsized`",
+        "**Type Erasure**: `dyn Trait` для object safety, `Any`/`TypeId` для runtime type info",
+        "**PhantomData**: variance control, dropck, unused type parameters, `PhantomPinned`",
+        "**Function Pointers**: `fn(...)`, coercion, отличие от замыканий",
+        "**Raw Pointers**: создание, разыменование, арифметика, aliasing rules, `NonNull`",
+        "**Never Type (`!`)**: divergent functions, `match` exhaustiveness, `Result<T, !>`",
+        "**Advanced Patterns**: Type-level state machines, branding, vtable для плагинов"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`the size for values of type cannot be known`",
+      "correct": "DST без указателя"
+    },
+    {
+      "mistake": "`parameter T is never used`",
+      "correct": "PhantomData отсутствует"
+    },
+    {
+      "mistake": "`cannot downcast`",
+      "correct": "Тип не `Any` или не `'static`"
+    },
+    {
+      "mistake": "`unaligned reference`",
+      "correct": "Raw pointer cast на packed struct"
+    },
+    {
+      "mistake": "`use of moved value`",
+      "correct": "`Box::into_raw` без `from_raw`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 25
+}

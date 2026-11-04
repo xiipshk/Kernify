@@ -1,0 +1,300 @@
+{
+  "title": "Урок 11: Проект — консольное приложение, классы, обработка ошибок, базовые тесты",
+  "slug": "proekt-konsolnoe-prilozhenie-klassy-obrabotka-oshibok-bazovye-testy",
+  "short_description": "консольное приложение, классы, обработка ошибок, базовые тесты",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "text",
+      "content": "<strong>Целевая версия:</strong> C# 12 / .NET 8"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Цель проекта"
+    },
+    {
+      "type": "text",
+      "content": "Создать консольное приложение <strong>«Менеджер задач»</strong> (Todo List), которое демонстрирует все изученные темы:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Классы, свойства, конструкторы, методы",
+        "Инкапсуляция, наследование",
+        "Коллекции (List, Dictionary)",
+        "Исключения, валидация",
+        "Работа с файлами (сохранение/загрузка)",
+        "LINQ для фильтрации и статистики"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Структура проекта"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "TodoApp/\n├── TodoApp.csproj\n├── Program.cs              // Точка входа, меню\n├── Models/\n│   ├── TaskItem.cs         // Класс задачи\n│   ├── TaskCategory.cs     // Перечисление категорий\n│   └── Priority.cs         // Перечисление приоритетов\n├── Services/\n│   ├── TaskService.cs      // Бизнес-логика\n│   ├── FileStorage.cs      // Сохранение/загрузка JSON\n│   └── ConsoleUI.cs        // Ввод/вывод в консоль\n├── Exceptions/\n│   └── TaskNotFoundException.cs\n└── Tests/\n    └── TaskServiceTests.cs // Простые unit-тесты"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Создание проекта"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "dotnet new console -n TodoApp\ncd TodoApp"
+    },
+    {
+      "type": "text",
+      "content": "Добавим пакет для JSON (в .NET 8 встроен <code>System.Text.Json</code>):"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Модели (Models/)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "TaskCategory.cs"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "namespace TodoApp.Models;\n\npublic enum TaskCategory\n{\n    Personal,\n    Work,\n    Study,\n    Health,\n    Other\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Priority.cs"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "namespace TodoApp.Models;\n\npublic enum Priority\n{\n    Low = 1,\n    Medium = 2,\n    High = 3,\n    Critical = 4\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "TaskItem.cs"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Text.Json.Serialization;\n\nnamespace TodoApp.Models;\n\npublic class TaskItem\n{\n    // Авто-свойства\n    public int Id { get; init; }\n    public string Title { get; set; } = string.Empty;\n    public string Description { get; set; } = string.Empty;\n    public bool IsCompleted { get; set; }\n    public Priority Priority { get; set; }\n    public TaskCategory Category { get; set; }\n    public DateTime CreatedAt { get; init; }\n    public DateTime? CompletedAt { get; private set; }\n    public DateTime? DueDate { get; set; }\n\n    // Конструктор\n    public TaskItem(string title, Priority priority = Priority.Medium, TaskCategory category = TaskCategory.Other)\n    {\n        if (string.IsNullOrWhiteSpace(title))\n            throw new ArgumentException(\"Название задачи не может быть пустым\", nameof(title));\n\n        Title = title.Trim();\n        Priority = priority;\n        Category = category;\n        CreatedAt = DateTime.Now;\n    }\n\n    // Метод завершения задачи\n    public void Complete()\n    {\n        if (IsCompleted)\n            throw new InvalidOperationException(\"Задача уже завершена\");\n\n        IsCompleted = true;\n        CompletedAt = DateTime.Now;\n    }\n\n    // Метод отметки как активной\n    public void Reopen()\n    {\n        if (!IsCompleted)\n            throw new InvalidOperationException(\"Задача уже активна\");\n\n        IsCompleted = false;\n        CompletedAt = null;\n    }\n\n    // Проверка просрочки\n    public bool IsOverdue => !IsCompleted && DueDate.HasValue && DueDate.Value < DateTime.Now;\n\n    // Для отображения\n    public override string ToString()\n    {\n        var status = IsCompleted ? \"[✓]\" : \"[ ]\";\n        var priorityMark = Priority switch\n        {\n            Priority.Critical => \"!!! \",\n            Priority.High => \"!! \",\n            Priority.Medium => \"! \",\n            _ => \"\"\n        };\n        var due = DueDate.HasValue ? $\" (до: {DueDate:dd.MM.yyyy})\" : \"\";\n        var overdue = IsOverdue ? \" ⚠ ПРОСРОЧЕНО\" : \"\";\n\n        return $\"{status} {priorityMark}{Title}{due}{overdue}\";\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Исключения (Exceptions/)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "TaskNotFoundException.cs"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "namespace TodoApp.Exceptions;\n\npublic class TaskNotFoundException : Exception\n{\n    public int TaskId { get; }\n\n    public TaskNotFoundException(int taskId)\n        : base($\"Задача с ID {taskId} не найдена\")\n    {\n        TaskId = taskId;\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Сервисы (Services/)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "FileStorage.cs — сохранение/загрузка JSON"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Text.Json;\nusing TodoApp.Models;\n\nnamespace TodoApp.Services;\n\npublic static class FileStorage\n{\n    private static readonly JsonSerializerOptions Options = new()\n    {\n        WriteIndented = true,\n        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping\n    };\n\n    public static void Save(string filePath, List<TaskItem> tasks)\n    {\n        try\n        {\n            string json = JsonSerializer.Serialize(tasks, Options);\n            File.WriteAllText(filePath, json);\n        }\n        catch (UnauthorizedAccessException)\n        {\n            throw new IOException($\"Нет прав на запись в файл: {filePath}\");\n        }\n        catch (Exception ex)\n        {\n            throw new IOException($\"Ошибка сохранения: {ex.Message}\", ex);\n        }\n    }\n\n    public static List<TaskItem> Load(string filePath)\n    {\n        if (!File.Exists(filePath))\n            return new List<TaskItem>();\n\n        try\n        {\n            string json = File.ReadAllText(filePath);\n            var tasks = JsonSerializer.Deserialize<List<TaskItem>>(json, Options);\n            return tasks ?? new List<TaskItem>();\n        }\n        catch (JsonException ex)\n        {\n            throw new IOException($\"Файл повреждён или неверный формат: {ex.Message}\", ex);\n        }\n        catch (Exception ex)\n        {\n            throw new IOException($\"Ошибка загрузки: {ex.Message}\", ex);\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "TaskService.cs — бизнес-логика"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using TodoApp.Models;\nusing TodoApp.Exceptions;\n\nnamespace TodoApp.Services;\n\npublic class TaskService\n{\n    private readonly List<TaskItem> _tasks = new();\n    private int _nextId = 1;\n    private readonly string _dataFile;\n\n    public TaskService(string dataFile = \"tasks.json\")\n    {\n        _dataFile = dataFile;\n        LoadTasks();\n    }\n\n    // Создание задачи\n    public TaskItem CreateTask(string title, Priority priority = Priority.Medium,\n        TaskCategory category = TaskCategory.Other, DateTime? dueDate = null)\n    {\n        var task = new TaskItem(title, priority, category)\n        {\n            Id = _nextId++,\n            DueDate = dueDate\n        };\n        _tasks.Add(task);\n        SaveTasks();\n        return task;\n    }\n\n    // Получение задачи по ID\n    public TaskItem GetTask(int id)\n    {\n        var task = _tasks.FirstOrDefault(t => t.Id == id);\n        if (task == null)\n            throw new TaskNotFoundException(id);\n        return task;\n    }\n\n    // Получение всех задач (с фильтрацией)\n    public IEnumerable<TaskItem> GetTasks(bool? completed = null, TaskCategory? category = null)\n    {\n        var query = _tasks.AsEnumerable();\n\n        if (completed.HasValue)\n            query = query.Where(t => t.IsCompleted == completed.Value);\n\n        if (category.HasValue)\n            query = query.Where(t => t.Category == category.Value);\n\n        return query.OrderByDescending(t => t.Priority)\n                   .ThenBy(t => t.DueDate ?? DateTime.MaxValue);\n    }\n\n    // Завершение задачи\n    public void CompleteTask(int id)\n    {\n        var task = GetTask(id);\n        task.Complete();\n        SaveTasks();\n    }\n\n    // Повторное открытие задачи\n    public void ReopenTask(int id)\n    {\n        var task = GetTask(id);\n        task.Reopen();\n        SaveTasks();\n    }\n\n    // Удаление задачи\n    public void DeleteTask(int id)\n    {\n        var task = GetTask(id);\n        _tasks.Remove(task);\n        SaveTasks();\n    }\n\n    // Обновление задачи\n    public void UpdateTask(int id, Action<TaskItem> updater)\n    {\n        var task = GetTask(id);\n        updater(task);\n        SaveTasks();\n    }\n\n    // Статистика\n    public (int Total, int Completed, int Pending, int Overdue) GetStatistics()\n    {\n        int total = _tasks.Count;\n        int completed = _tasks.Count(t => t.IsCompleted);\n        int pending = total - completed;\n        int overdue = _tasks.Count(t => t.IsOverdue);\n        return (total, completed, pending, overdue);\n    }\n\n    // Поиск по тексту\n    public IEnumerable<TaskItem> Search(string query)\n    {\n        if (string.IsNullOrWhiteSpace(query))\n            return Enumerable.Empty<TaskItem>();\n\n        string lower = query.ToLower();\n        return _tasks.Where(t =>\n            t.Title.ToLower().Contains(lower) ||\n            t.Description.ToLower().Contains(lower));\n    }\n\n    // Сохранение в файл\n    private void SaveTasks() => FileStorage.Save(_dataFile, _tasks);\n\n    // Загрузка из файла\n    private void LoadTasks()\n    {\n        var loaded = FileStorage.Load(_dataFile);\n        _tasks.Clear();\n        _tasks.AddRange(loaded);\n        _nextId = _tasks.Any() ? _tasks.Max(t => t.Id) + 1 : 1;\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ConsoleUI.cs — интерфейс пользователя"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using TodoApp.Models;\nusing TodoApp.Services;\nusing TodoApp.Exceptions;\n\nnamespace TodoApp.Services;\n\npublic class ConsoleUI\n{\n    private readonly TaskService _service;\n\n    public ConsoleUI(TaskService service)\n    {\n        _service = service;\n    }\n\n    public void Run()\n    {\n        Console.WriteLine(\"=== МЕНЕДЖЕР ЗАДАЧ ===\");\n        PrintHelp();\n\n        while (true)\n        {\n            Console.Write(\"\\n> \");\n            string? input = Console.ReadLine()?.Trim().ToLower();\n\n            if (string.IsNullOrEmpty(input)) continue;\n\n            try\n            {\n                switch (input)\n                {\n                    case \"h\": case \"help\": PrintHelp(); break;\n                    case \"a\": case \"add\": AddTask(); break;\n                    case \"l\": case \"list\": ListTasks(); break;\n                    case \"c\": case \"complete\": CompleteTask(); break;\n                    case \"r\": case \"reopen\": ReopenTask(); break;\n                    case \"d\": case \"delete\": DeleteTask(); break;\n                    case \"u\": case \"update\": UpdateTask(); break;\n                    case \"s\": case \"stats\": ShowStats(); break;\n                    case \"f\": case \"find\": FindTasks(); break;\n                    case \"q\": case \"quit\": case \"exit\": return;\n                    default: Console.WriteLine(\"Неизвестная команда. Введите 'help' для справки.\"); break;\n                }\n            }\n            catch (TaskNotFoundException ex)\n            {\n                Console.WriteLine($\"Ошибка: {ex.Message}\");\n            }\n            catch (IOException ex)\n            {\n                Console.WriteLine($\"Ошибка файла: {ex.Message}\");\n            }\n            catch (Exception ex)\n            {\n                Console.WriteLine($\"Неожиданная ошибка: {ex.Message}\");\n            }\n        }\n    }\n\n    private void PrintHelp()\n    {\n        Console.WriteLine(\"\"\"\n            Команды:\n              help (h)     - Показать справку\n              add (a)      - Добавить задачу\n              list (l)     - Список задач\n              complete (c) - Завершить задачу\n              reopen (r)   - Открыть задачу снова\n              delete (d)   - Удалить задачу\n              update (u)   - Изменить задачу\n              stats (s)    - Статистика\n              find (f)     - Поиск по тексту\n              quit (q)     - Выход\n            \"\"\");\n    }\n\n    private void AddTask()\n    {\n        Console.Write(\"Название: \");\n        string title = ReadRequiredString();\n\n        Console.Write(\"Приоритет (1=Low, 2=Medium, 3=High, 4=Critical) [2]: \");\n        Priority priority = ParsePriority(Console.ReadLine()) ?? Priority.Medium;\n\n        Console.Write(\"Категория (Personal, Work, Study, Health, Other) [Other]: \");\n        TaskCategory category = ParseCategory(Console.ReadLine()) ?? TaskCategory.Other;\n\n        Console.Write(\"Дедлайн (дд.мм.гггг) [нет]: \");\n        DateTime? dueDate = ParseDate(Console.ReadLine());\n\n        Console.Write(\"Описание [нет]: \");\n        string description = Console.ReadLine() ?? \"\";\n\n        var task = _service.CreateTask(title, priority, category, dueDate);\n        task.Description = description;\n        _service.SaveTasks(); // обновим описание\n        Console.WriteLine($\"Задача создана: {task}\");\n    }\n\n    private void ListTasks()\n    {\n        Console.Write(\"Фильтр (all/active/completed) [all]: \");\n        string? filter = Console.ReadLine()?.ToLower();\n\n        bool? completed = filter switch\n        {\n            \"active\" => false,\n            \"completed\" => true,\n            _ => null\n        };\n\n        var tasks = _service.GetTasks(completed).ToList();\n\n        if (!tasks.Any())\n        {\n            Console.WriteLine(\"Задач не найдено\");\n            return;\n        }\n\n        Console.WriteLine($\"\\n--- Задач: {tasks.Count} ---\");\n        foreach (var task in tasks)\n        {\n            Console.WriteLine($\"  {task.Id}. {task}\");\n            if (!string.IsNullOrWhiteSpace(task.Description))\n                Console.WriteLine($\"      {task.Description}\");\n        }\n    }\n\n    private void CompleteTask()\n    {\n        int id = ReadInt(\"ID задачи: \");\n        _service.CompleteTask(id);\n        Console.WriteLine(\"Задача завершена!\");\n    }\n\n    private void ReopenTask()\n    {\n        int id = ReadInt(\"ID задачи: \");\n        _service.ReopenTask(id);\n        Console.WriteLine(\"Задача открыта снова!\");\n    }\n\n    private void DeleteTask()\n    {\n        int id = ReadInt(\"ID задачи: \");\n        _service.DeleteTask(id);\n        Console.WriteLine(\"Задача удалена!\");\n    }\n\n    private void UpdateTask()\n    {\n        int id = ReadInt(\"ID задачи: \");\n        var task = _service.GetTask(id);\n\n        Console.WriteLine($\"Текущее: {task}\");\n        Console.Write(\"Новое название (Enter — не менять): \");\n        string? newTitle = Console.ReadLine();\n        if (!string.IsNullOrWhiteSpace(newTitle)) task.Title = newTitle.Trim();\n\n        Console.Write(\"Новый приоритет (1-4, Enter — не менять): \");\n        Priority? newPriority = ParsePriority(Console.ReadLine());\n        if (newPriority.HasValue) task.Priority = newPriority.Value;\n\n        Console.Write(\"Новая категория (Enter — не менять): \");\n        TaskCategory? newCategory = ParseCategory(Console.ReadLine());\n        if (newCategory.HasValue) task.Category = newCategory.Value;\n\n        Console.Write(\"Новый дедлайн (дд.мм.гггг, Enter — не менять, 'clear' — убрать): \");\n        string? dueInput = Console.ReadLine()?.ToLower();\n        if (dueInput == \"clear\") task.DueDate = null;\n        else if (DateTime.TryParseExact(dueInput, \"dd.MM.yyyy\", null, System.Globalization.DateTimeStyles.None, out var due))\n            task.DueDate = due;\n\n        _service.SaveTasks();\n        Console.WriteLine(\"Задача обновлена!\");\n    }\n\n    private void ShowStats()\n    {\n        var (total, completed, pending, overdue) = _service.GetStatistics();\n        Console.WriteLine($\"\"\"\n            Статистика:\n              Всего: {total}\n              Выполнено: {completed}\n              В процессе: {pending}\n              Просрочено: {overdue}\n            \"\"\");\n    }\n\n    private void FindTasks()\n    {\n        Console.Write(\"Поиск: \");\n        string query = Console.ReadLine() ?? \"\";\n        var results = _service.Search(query).ToList();\n\n        Console.WriteLine($\"\\nНайдено: {results.Count}\");\n        foreach (var task in results)\n            Console.WriteLine($\"  {task.Id}. {task}\");\n    }\n\n    // Вспомогательные методы ввода\n    private string ReadRequiredString()\n    {\n        while (true)\n        {\n            string? s = Console.ReadLine()?.Trim();\n            if (!string.IsNullOrEmpty(s)) return s;\n            Console.Write(\"Не может быть пустым. Повторите: \");\n        }\n    }\n\n    private int ReadInt(string prompt)\n    {\n        while (true)\n        {\n            Console.Write(prompt);\n            if (int.TryParse(Console.ReadLine(), out int result)) return result;\n            Console.WriteLine(\"Введите число!\");\n        }\n    }\n\n    private Priority? ParsePriority(string? input)\n    {\n        if (string.IsNullOrWhiteSpace(input)) return null;\n        if (int.TryParse(input, out int p) && Enum.IsDefined(typeof(Priority), p))\n            return (Priority)p;\n        Console.WriteLine(\"Неверный приоритет, используется Medium\");\n        return null;\n    }\n\n    private TaskCategory? ParseCategory(string? input)\n    {\n        if (string.IsNullOrWhiteSpace(input)) return null;\n        if (Enum.TryParse<TaskCategory>(input, true, out var cat))\n            return cat;\n        Console.WriteLine(\"Неверная категория, используется Other\");\n        return null;\n    }\n\n    private DateTime? ParseDate(string? input)\n    {\n        if (string.IsNullOrWhiteSpace(input)) return null;\n        if (DateTime.TryParseExact(input, \"dd.MM.yyyy\", null, System.Globalization.DateTimeStyles.None, out var dt))\n            return dt;\n        Console.WriteLine(\"Неверный формат даты, дедлайн не установлен\");\n        return null;\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Program.cs — точка входа"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using TodoApp.Services;\n\nvar service = new TaskService(\"tasks.json\");\nvar ui = new ConsoleUI(service);\nui.Run();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Базовые тесты (без сторонних фреймворков)"
+    },
+    {
+      "type": "text",
+      "content": "Создайте файл <code>Tests/TaskServiceTests.cs</code>:"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using TodoApp.Models;\nusing TodoApp.Services;\nusing TodoApp.Exceptions;\n\nnamespace TodoApp.Tests;\n\npublic class TaskServiceTests\n{\n    private readonly TaskService _service;\n    private int _passed = 0;\n    private int _failed = 0;\n\n    public TaskServiceTests()\n    {\n        // Используем временный файл для тестов\n        string testFile = Path.GetTempFileName();\n        _service = new TaskService(testFile);\n    }\n\n    public void RunAll()\n    {\n        TestCreateTask();\n        TestGetTask();\n        TestCompleteTask();\n        TestReopenTask();\n        TestDeleteTask();\n        TestStatistics();\n        TestSearch();\n        TestOverdue();\n        TestValidation();\n\n        Console.WriteLine($\"\\n=== РЕЗУЛЬТАТЫ: {_passed} пройдено, {_failed} упало ===\");\n    }\n\n    private void Assert(bool condition, string testName)\n    {\n        if (condition)\n        {\n            Console.WriteLine($\"[PASS] {testName}\");\n            _passed++;\n        }\n        else\n        {\n            Console.WriteLine($\"[FAIL] {testName}\");\n            _failed++;\n        }\n    }\n\n    private void TestCreateTask()\n    {\n        var task = _service.CreateTask(\"Тестовая задача\", Priority.High, TaskCategory.Work);\n        Assert(task.Id > 0, \"CreateTask: ID присвоен\");\n        Assert(task.Title == \"Тестовая задача\", \"CreateTask: Title верный\");\n        Assert(task.Priority == Priority.High, \"CreateTask: Priority верный\");\n        Assert(task.Category == TaskCategory.Work, \"CreateTask: Category верный\");\n        Assert(!task.IsCompleted, \"CreateTask: не завершена по умолчанию\");\n        Assert(task.CreatedAt <= DateTime.Now, \"CreateTask: CreatedAt установлен\");\n    }\n\n    private void TestGetTask()\n    {\n        var created = _service.CreateTask(\"Для поиска\");\n        var found = _service.GetTask(created.Id);\n        Assert(found.Id == created.Id, \"GetTask: найдена по ID\");\n        Assert(found.Title == \"Для поиска\", \"GetTask: данные верные\");\n\n        try\n        {\n            _service.GetTask(99999);\n            Assert(false, \"GetTask: исключение для несуществующего ID\");\n        }\n        catch (TaskNotFoundException)\n        {\n            Assert(true, \"GetTask: бросает TaskNotFoundException\");\n        }\n    }\n\n    private void TestCompleteTask()\n    {\n        var task = _service.CreateTask(\"Завершить меня\");\n        _service.CompleteTask(task.Id);\n        var completed = _service.GetTask(task.Id);\n        Assert(completed.IsCompleted, \"CompleteTask: IsCompleted = true\");\n        Assert(completed.CompletedAt.HasValue, \"CompleteTask: CompletedAt установлен\");\n\n        try\n        {\n            _service.CompleteTask(task.Id); // уже завершена\n            Assert(false, \"CompleteTask: исключение при повторном завершении\");\n        }\n        catch (InvalidOperationException)\n        {\n            Assert(true, \"CompleteTask: бросает InvalidOperationException\");\n        }\n    }\n\n    private void TestReopenTask()\n    {\n        var task = _service.CreateTask(\"Открыть снова\");\n        _service.CompleteTask(task.Id);\n        _service.ReopenTask(task.Id);\n        var reopened = _service.GetTask(task.Id);\n        Assert(!reopened.IsCompleted, \"ReopenTask: IsCompleted = false\");\n        Assert(!reopened.CompletedAt.HasValue, \"ReopenTask: CompletedAt = null\");\n    }\n\n    private void TestDeleteTask()\n    {\n        var task = _service.CreateTask(\"Удалить меня\");\n        _service.DeleteTask(task.Id);\n\n        try\n        {\n            _service.GetTask(task.Id);\n            Assert(false, \"DeleteTask: задача должна быть удалена\");\n        }\n        catch (TaskNotFoundException)\n        {\n            Assert(true, \"DeleteTask: задача не найдена после удаления\");\n        }\n    }\n\n    private void TestStatistics()\n    {\n        _service.CreateTask(\"Активная 1\");\n        _service.CreateTask(\"Активная 2\");\n        var completed = _service.CreateTask(\"Завершённая\");\n        _service.CompleteTask(completed.Id);\n\n        var (total, comp, pending, overdue) = _service.GetStatistics();\n        Assert(total == 3, \"Statistics: Total = 3\");\n        Assert(comp == 1, \"Statistics: Completed = 1\");\n        Assert(pending == 2, \"Statistics: Pending = 2\");\n    }\n\n    private void TestSearch()\n    {\n        _service.CreateTask(\"Купить молоко\", description: \"Магазин у дома\");\n        _service.CreateTask(\"Купить хлеб\", description: \"Пекарня\");\n        _service.CreateTask(\"Прочитать книгу\");\n\n        var milk = _service.Search(\"молоко\").ToList();\n        Assert(milk.Count == 1, \"Search: находит по названию\");\n        Assert(milk[0].Title.Contains(\"молоко\"), \"Search: верный результат\");\n\n        var buy = _service.Search(\"купить\").ToList();\n        Assert(buy.Count == 2, \"Search: находит по части слова\");\n\n        var empty = _service.Search(\"неттакого\").ToList();\n        Assert(empty.Count == 0, \"Search: пусто для несуществующего\");\n    }\n\n    private void TestOverdue()\n    {\n        var overdueTask = _service.CreateTask(\"Просроченная\", dueDate: DateTime.Now.AddDays(-1));\n        var futureTask = _service.CreateTask(\"Будущая\", dueDate: DateTime.Now.AddDays(1));\n\n        Assert(overdueTask.IsOverdue, \"Overdue: IsOverdue = true для вчерашней\");\n        Assert(!futureTask.IsOverdue, \"Overdue: IsOverdue = false для завтрашней\");\n\n        _service.CompleteTask(overdueTask.Id);\n        var completed = _service.GetTask(overdueTask.Id);\n        Assert(!completed.IsOverdue, \"Overdue: завершённая не просрочена\");\n    }\n\n    private void TestValidation()\n    {\n        try\n        {\n            _service.CreateTask(\"\"); // пустое название\n            Assert(false, \"Validation: исключение для пустого названия\");\n        }\n        catch (ArgumentException)\n        {\n            Assert(true, \"Validation: бросает ArgumentException для пустого Title\");\n        }\n\n        try\n        {\n            _service.CreateTask(\"   \"); // только пробелы\n            Assert(false, \"Validation: исключение для пробелов\");\n        }\n        catch (ArgumentException)\n        {\n            Assert(true, \"Validation: бросает ArgumentException для пробелов\");\n        }\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "Запуск тестов из <code>Program.cs</code> (добавьте перед <code>ui.Run()</code>):"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "#if DEBUG\n// Запуск тестов в Debug режиме\nvar tests = new TodoApp.Tests.TaskServiceTests();\ntests.RunAll();\nConsole.WriteLine(\"\\nНажмите Enter для запуска приложения...\");\nConsole.ReadLine();\n#endif"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Запуск и проверка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "dotnet run"
+    },
+    {
+      "type": "text",
+      "content": "Пример работы:"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "=== МЕНЕДЖЕР ЗАДАЧ ===\nКоманды:\n  help (h)     - Показать справку\n  add (a)      - Добавить задачу\n  list (l)     - Список задач\n  ...\n\n> add\nНазвание: Изучить LINQ\nПриоритет (1=Low, 2=Medium, 3=High, 4=Critical) [2]: 3\nКатегория (Personal, Work, Study, Health, Other) [Other]: Study\nДедлайн (дд.мм.гггг) [нет]: 15.12.2024\nОписание [нет]: Пройти урок 10\nЗадача создана: [ ] ! Изучить LINQ (до: 15.12.2024)\n\n> list\n--- Задач: 1 ---\n  1. [ ] ! Изучить LINQ (до: 15.12.2024)\n\n> complete\nID задачи: 1\nЗадача завершена!\n\n> stats\nСтатистика:\n  Всего: 1\n  Выполнено: 1\n  В процессе: 0\n  Просрочено: 0"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Доработки для практики (необязательно)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Редактирование описания** — отдельная команда",
+        "**Подзадачи** — добавить `List<TaskItem> SubTasks` в `TaskItem`",
+        "**Теги** — `List<string> Tags`, фильтрация по тегам",
+        "**Экспорт/импорт** — CSV, Markdown",
+        "**Цвета в консоли** — `Console.ForegroundColor` для приоритетов",
+        "**Конфигурация** — `appsettings.json` для пути к файлу данных",
+        "**xUnit тесты** — подключите `xunit`, `Microsoft.NET.Test.Sdk`, запускайте `dotnet test`"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Чек-лист: что мы применили"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тема",
+        "Где использована"
+      ],
+      "rows": [
+        [
+          "Классы, свойства, конструкторы",
+          "`TaskItem`, `TaskService`"
+        ],
+        [
+          "Инкапсуляция (private set, валидация)",
+          "`TaskItem.Title`, `CompletedAt`"
+        ],
+        [
+          "Наследование (Exception)",
+          "`TaskNotFoundException`"
+        ],
+        [
+          "Enum",
+          "`Priority`, `TaskCategory`"
+        ],
+        [
+          "Коллекции (List, LINQ)",
+          "`_tasks`, `GetTasks`, `Search`"
+        ],
+        [
+          "Исключения (try/catch, throw)",
+          "`ConsoleUI`, `TaskService`"
+        ],
+        [
+          "Файлы (JSON, FileStorage)",
+          "`FileStorage.Save/Load`"
+        ],
+        [
+          "IDisposable / using",
+          "`FileStorage` (File.WriteAllText внутри)"
+        ],
+        [
+          "LINQ (Where, OrderBy, Count, Any)",
+          "`TaskService` методы"
+        ],
+        [
+          "Перегрузки методов",
+          "`CreateTask` с параметрами по умолчанию"
+        ],
+        [
+          "Анонимные типы",
+          "не использовали явно, но `Select new { }` в LINQ"
+        ],
+        [
+          "Nullable типы",
+          "`DateTime?`, `Priority?`, `bool?`"
+        ],
+        [
+          "Pattern matching (switch expressions)",
+          "`priorityMark` в `ToString()`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Краткая шпаргалка по проекту"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Создание проекта:\n  dotnet new console -n TodoApp\n  cd TodoApp\n  dotnet run\n\nСтруктура:\n  Models/      — данные (POCO)\n  Services/    — логика, файлы, UI\n  Exceptions/  — свои исключения\n  Tests/       — простые тесты\n\nПаттерны:\n  - Service layer (TaskService)\n  - Repository-like (FileStorage)\n  - UI отделена от логики\n  - Валидация в модели\n  - Исключения для ошибок бизнес-логики\n\nТестирование:\n  - Простой класс с Assert\n  - Запуск в DEBUG режиме\n  - Изоляция через временные файлы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 11
+}

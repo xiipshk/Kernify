@@ -1,0 +1,337 @@
+{
+  "title": "Урок 12: Современный C++ и управление ресурсами",
+  "slug": "sovremennyy-c-i-upravlenie-resursami",
+  "short_description": "",
+  "goals": [
+    "Понять принцип RAII и его роль в современном C++",
+    "Изучить виды продолжительности хранения (storage duration)",
+    "Освоить умные указатели: unique_ptr, shared_ptr, weak_ptr",
+    "Применить Rule of 3/5/0 для корректного управления ресурсами",
+    "Научиться избегать утечек памяти и двойного освобождения"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять принцип RAII и его роль в современном C++",
+        "Изучить виды продолжительности хранения (storage duration)",
+        "Освоить умные указатели: unique_ptr, shared_ptr, weak_ptr",
+        "Применить Rule of 3/5/0 для корректного управления ресурсами",
+        "Научиться избегать утечек памяти и двойного освобождения"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "RAII (Resource Acquisition Is Initialization)"
+    },
+    {
+      "type": "text",
+      "content": "RAII — идиома, при которой захват ресурса (память, файл, мьютекс, сокет) происходит в конструкторе, а освобождение — в деструкторе. Гарантирует освобождение ресурса даже при исключениях."
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <fstream>\n#include <mutex>\n#include <vector>\n\nclass FileWrapper {\n    std::fstream file_;\npublic:\n    explicit FileWrapper(const char* path, std::ios::openmode mode = std::ios::in | std::ios::out)\n        : file_(path, mode) {\n        if (!file_.is_open()) throw std::runtime_error(\"Cannot open file\");\n    }\n    ~FileWrapper() { if (file_.is_open()) file_.close(); }\n\n    // Запрет копирования (Rule of 5)\n    FileWrapper(const FileWrapper&) = delete;\n    FileWrapper& operator=(const FileWrapper&) = delete;\n\n    // Перемещение разрешено\n    FileWrapper(FileWrapper&& other) noexcept : file_(std::move(other.file_)) {}\n    FileWrapper& operator=(FileWrapper&& other) noexcept {\n        if (this != &other) {\n            if (file_.is_open()) file_.close();\n            file_ = std::move(other.file_);\n        }\n        return *this;\n    }\n\n    std::fstream& get() { return file_; }\n};\n\n// Использование: ресурс гарантированно освободится\nvoid processFile(const char* path) {\n    FileWrapper fw(path);\n    fw.get() << \"data\";\n    // При выходе из области видимости деструктор закроет файл\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Storage Duration (Продолжительность хранения)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Вид",
+        "Ключевое слово",
+        "Жизненный цикл",
+        "Пример"
+      ],
+      "rows": [
+        [
+          "Автоматическая",
+          "(нет) / `auto`",
+          "До конца блока `{}`",
+          "`int x;`, `std::vector v;`"
+        ],
+        [
+          "Статическая",
+          "`static` / `thread_local` / глобальные",
+          "Всё время работы программы",
+          "`static int counter;`"
+        ],
+        [
+          "Динамическая",
+          "`new` / `malloc` / умные указатели",
+          "До явного `delete` / деструктора",
+          "`auto p = std::make_unique<int>();`"
+        ],
+        [
+          "Потоковая",
+          "`thread_local`",
+          "Время жизни потока",
+          "`thread_local int tls = 0;`"
+        ]
+      ]
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iostream>\n#include <thread>\n\nint global = 1;                    // Статическая продолжительность\nthread_local int tls = 0;          // Потоковая продолжительность\n\nvoid threadFunc(int id) {\n    tls = id;\n    std::cout << \"Thread \" << id << \": tls = \" << tls << '\\n';\n}\n\nint main() {\n    static int staticLocal = 42;   // Статическая (инициализируется один раз)\n    int autoVar = 10;              // Автоматическая\n\n    std::thread t1(threadFunc, 1);\n    std::thread t2(threadFunc, 2);\n    t1.join(); t2.join();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Умные указатели (C++11/14/20)"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "`std::unique_ptr` — исключительное владение"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <memory>\n#include <iostream>\n\nstruct Resource {\n    Resource() { std::cout << \"Acquired\\n\"; }\n    ~Resource() { std::cout << \"Released\\n\"; }\n    void use() { std::cout << \"Using\\n\"; }\n};\n\nvoid uniquePtrDemo() {\n    // Создание (предпочтительно make_unique)\n    auto ptr1 = std::make_unique<Resource>();\n    auto ptr2 = std::make_unique<Resource[]>(5); // Массив\n\n    ptr1->use();\n\n    // Перемещение владения\n    auto ptr3 = std::move(ptr1); // ptr1 теперь nullptr\n    if (!ptr1) std::cout << \"ptr1 is empty\\n\";\n\n    // Кастомный deleter\n    auto ptr4 = std::unique_ptr<Resource, void(*)(Resource*)>(\n        new Resource(),\n        [](Resource* p) { std::cout << \"Custom delete\\n\"; delete p; }\n    );\n\n    // release() — передача владения без удаления\n    Resource* raw = ptr3.release(); // ptr3 = nullptr, нужно вручную delete\n    delete raw;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "`std::shared_ptr` — разделяемое владение"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <memory>\n#include <iostream>\n\nvoid sharedPtrDemo() {\n    auto sp1 = std::make_shared<Resource>(); // Счётчик = 1\n    {\n        auto sp2 = sp1; // Счётчик = 2\n        auto sp3 = sp1; // Счётчик = 3\n        std::cout << \"Count: \" << sp1.use_count() << '\\n'; // 3\n    } // sp2, sp3 разрушены, счётчик = 1\n    std::cout << \"Count: \" << sp1.use_count() << '\\n'; // 1\n} // sp1 разрушен, Resource удалён\n\n// Важно: make_shared — одна аллокация для объекта + контрольного блока\n// shared_ptr<T> p(new T) — две аллокации"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "`std::weak_ptr` — слабая ссылка (разрывает циклы)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <memory>\n#include <iostream>\n\nstruct Node;\nusing NodePtr = std::shared_ptr<Node>;\nusing WeakNodePtr = std::weak_ptr<Node>;\n\nstruct Node {\n    int value;\n    WeakNodePtr parent;  // weak_ptr — не увеличивает счётчик\n    std::vector<NodePtr> children;\n\n    ~Node() { std::cout << \"Node \" << value << \" destroyed\\n\"; }\n};\n\nvoid weakPtrDemo() {\n    auto root = std::make_shared<Node>();\n    root->value = 1;\n\n    auto child = std::make_shared<Node>();\n    child->value = 2;\n    child->parent = root;  // Не создаёт цикл!\n    root->children.push_back(child);\n\n    // Проверка и блокировка\n    if (auto locked = child->parent.lock()) {\n        std::cout << \"Parent value: \" << locked->value << '\\n';\n    }\n\n    // root и child корректно уничтожатся при выходе из области видимости\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Rule of 3 / 5 / 0"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Правило",
+        "Когда применяется",
+        "Что определять"
+      ],
+      "rows": [
+        [
+          "**Rule of 3** (C++98)",
+          "Класс управляет ресурсом вручную",
+          "Деструктор, копирующий конструктор, копирующее присваивание"
+        ],
+        [
+          "**Rule of 5** (C++11)",
+          "+ перемещение",
+          "+ перемещающий конструктор, перемещающее присваивание"
+        ],
+        [
+          "**Rule of 0** (Modern)",
+          "Класс использует RAII-обёртки",
+          "Ничего — компилятор сгенерирует правильно"
+        ]
+      ]
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Rule of 0 — ПРЕДПОЧТИТЕЛЬНО\nclass GoodClass {\n    std::string name_;        // RAII\n    std::vector<int> data_;   // RAII\n    std::unique_ptr<Resource> res_; // RAII\n    // Компилятор сгенерирует: деструктор, копирование, перемещение — все правильные\n};\n\n// Rule of 5 — когда НУЖНО ручное управление\nclass ManualResource {\n    int* data_;\n    size_t size_;\npublic:\n    ManualResource(size_t n) : data_(new int[n]), size_(n) {}\n\n    // Деструктор\n    ~ManualResource() { delete[] data_; }\n\n    // Копирование (глубокое)\n    ManualResource(const ManualResource& other)\n        : data_(new int[other.size_]), size_(other.size_) {\n        std::copy(other.data_, other.data_ + size_, data_);\n    }\n    ManualResource& operator=(const ManualResource& other) {\n        if (this != &other) {\n            int* newData = new int[other.size_];\n            std::copy(other.data_, other.data_ + other.size_, newData);\n            delete[] data_;\n            data_ = newData;\n            size_ = other.size_;\n        }\n        return *this;\n    }\n\n    // Перемещение (перехват ресурса)\n    ManualResource(ManualResource&& other) noexcept\n        : data_(other.data_), size_(other.size_) {\n        other.data_ = nullptr;\n        other.size_ = 0;\n    }\n    ManualResource& operator=(ManualResource&& other) noexcept {\n        if (this != &other) {\n            delete[] data_;\n            data_ = other.data_;\n            size_ = other.size_;\n            other.data_ = nullptr;\n            other.size_ = 0;\n        }\n        return *this;\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::span` (C++20) — невладеющая ссылка на непрерывную последовательность"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <span>\n#include <vector>\n#include <array>\n\nvoid process(std::span<int> s) {  // Принимает vector, array, указатель+размер\n    for (int& x : s) x *= 2;\n}\n\nvoid spanDemo() {\n    std::vector<int> v = {1, 2, 3, 4, 5};\n    std::array<int, 3> a = {10, 20, 30};\n    int arr[] = {100, 200};\n\n    process(v);        // OK\n    process(a);        // OK\n    process(arr);      // OK (размер выводится)\n    process({1, 2, 3}); // OK (std::initializer_list -> span)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: RAII-обёртка для `FILE*`"
+    },
+    {
+      "type": "text",
+      "content": "Создайте класс <code>ScopedFile</code>, который:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Принимает `const char* filename` и режим в конструкторе (`fopen`)",
+        "В деструкторе вызывает `fclose` (если файл открыт)",
+        "Запрещает копирование, разрешает перемещение",
+        "Предоставляет доступ к `FILE*` через `get()`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Реализация `unique_ptr` с кастомным deleter"
+    },
+    {
+      "type": "text",
+      "content": "Напишите шаблонный класс <code>MyUniquePtr<T, Deleter></code> с поддержкой:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Конструктора от `T*`",
+        "Перемещения (конструктор и присваивание)",
+        "`release()`, `reset()`, `get()`, `operator*`, `operator->`",
+        "Кастомного deleter'а (хранится как член класса)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Разрыв циклических ссылок"
+    },
+    {
+      "type": "text",
+      "content": "Создайте структуру <code>TreeNode</code> с <code>children</code> (<code>vector<shared<em>ptr></code>) и <code>parent</code> (<code>weak</em>ptr</code>). Напишите функцию, строящую дерево глубины 3, и проверьте, что все узлы корректно уничтожаются при удалении корня."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Rule of 5 для строкового буфера"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте класс <code>StringBuffer</code>, владеющий <code>char<em></code> (ручное управление через <code>new[]</code>/<code>delete[]</code>). Реализуйте все 5 специальных функций. Добавьте методы <code>append(const char</em>)</code>, <code>c_str()</code>, <code>size()</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Эксперимент со storage duration"
+    },
+    {
+      "type": "text",
+      "content": "Напишите программу, демонстрирующую разницу между:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глобальной переменной",
+        "`static` локальной переменной в функции",
+        "`thread_local` переменной",
+        "Автоматической переменной",
+        "Динамически выделенной через `make_unique`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Выведите адреса и порядок конструкторов/деструкторов."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`shared_ptr` цикл (parent↔child)",
+          "Два `shared_ptr` держат друг друга"
+        ],
+        [
+          "`unique_ptr` копирование",
+          "Попытка `auto p2 = p1;`"
+        ],
+        [
+          "Утечка при исключении в конструкторе",
+          "Ресурс захвачен, но конструктор не завершился"
+        ],
+        [
+          "`delete` вместо `delete[]`",
+          "Массив удалён через скалярный delete"
+        ],
+        [
+          "Двойное удаление",
+          "Ручное управление + копирование"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[cppreference: RAII](https://en.cppreference.com/w/cpp/language/raii)",
+        "[cppreference: Smart pointers](https://en.cppreference.com/w/cpp/memory)",
+        "[C++ Core Guidelines: R.1-R.30](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r-resource-management)",
+        "**Книга:** Meyers \"Effective Modern C++\", Items 18-23",
+        "**Видео:** CppCon \"Back to Basics: RAII\" (Arthur O'Dwyer)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`shared_ptr` цикл (parent↔child)",
+      "correct": "Два `shared_ptr` держат друг друга"
+    },
+    {
+      "mistake": "`unique_ptr` копирование",
+      "correct": "Попытка `auto p2 = p1;`"
+    },
+    {
+      "mistake": "Утечка при исключении в конструкторе",
+      "correct": "Ресурс захвачен, но конструктор не завершился"
+    },
+    {
+      "mistake": "`delete` вместо `delete[]`",
+      "correct": "Массив удалён через скалярный delete"
+    },
+    {
+      "mistake": "Двойное удаление",
+      "correct": "Ручное управление + копирование"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 12
+}

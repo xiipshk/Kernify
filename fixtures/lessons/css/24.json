@@ -1,0 +1,481 @@
+{
+  "title": "Урок 24: Контейнерные системы — container queries/units, fluid layouts, компонентные брейкпоинты",
+  "slug": "konteynernye-sistemy-container-queriesunits-fluid-layouts-komponentnye-breykpointy",
+  "short_description": "container queries/units, fluid layouts, компонентные брейкпоинты",
+  "goals": [
+    "Понять разницу между медиа-запросами (viewport) и контейнерными запросами (родительский элемент)",
+    "Освоить `@container` и единицы контейнера (cqw, cqh, cqi, cqb, cqmin, cqmax)",
+    "Создать компонентные брейкпоинты — компонент адаптируется под контейнер, а не под экран",
+    "Построить fluid layouts с `clamp()`, `minmax()`, `auto-fit/auto-fill`",
+    "Создать по-настоящему переиспользуемые компоненты, которые работают в любом контейнере"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять разницу между медиа-запросами (viewport) и контейнерными запросами (родительский элемент)",
+        "Освоить `@container` и единицы контейнера (cqw, cqh, cqi, cqb, cqmin, cqmax)",
+        "Создать компонентные брейкпоинты — компонент адаптируется под контейнер, а не под экран",
+        "Построить fluid layouts с `clamp()`, `minmax()`, `auto-fit/auto-fill`",
+        "Создать по-настоящему переиспользуемые компоненты, которые работают в любом контейнере"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Медиа-запросы vs контейнерные запросы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Медиа-запросы (@media) — зависят от viewport"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Компонент меняется в зависимости от размера экрана */\n@media (max-width: 768px) {\n  .card { padding: 1rem; }\n}\n\n@media (min-width: 769px) {\n  .card { padding: 2rem; }\n}"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Проблема:</strong> Карточка в боковой панели (300px) и в основном контенте (800px) на одном экране получат одинаковые стили, хотя контейнеры разного размера."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контейнерные запросы (@container) — зависят от родителя"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Сначала помечаем элемент как контейнер */\n.card-container {\n  container-type: inline-size;  /* следим за шириной контейнера */\n  /* или container-type: size;  /* следим за шириной и высотой */\n  /* или container-name: card;  /* имя для ссылки в запросе */\n}\n\n/* Затем адаптируем содержимое под размер контейнера */\n@container (max-width: 400px) {\n  .card {\n    padding: 1rem;\n    font-size: 0.875rem;\n    flex-direction: column;\n  }\n}\n\n@container (min-width: 401px) {\n  .card {\n    padding: 1.5rem;\n    font-size: 1rem;\n    flex-direction: row;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ключевое преимущество"
+    },
+    {
+      "type": "text",
+      "content": "Один и тот же компонент <code>.card</code> будет выглядеть по-разному в зависимости от того, в какой контейнер его положили — боковая панель, главное содержимое, модалка, футер."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. container-type и container-name"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "container-type — что отслеживаем"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".sidebar {\n  container-type: inline-size;   /* Только ширина (инлайн-размер) */\n}\n\n.main-content {\n  container-type: size;          /* Ширина и высота (block + inline) */\n}\n\n.normal-flow {\n  container-type: normal;        /* Не является контейнером (по умолчанию) */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "container-name — именованные контейнеры"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card-section {\n  container-type: inline-size;\n  container-name: card-section;\n}\n\n@container card-section (max-width: 500px) {\n  .card { padding: 1rem; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Зачем container-name"
+    },
+    {
+      "type": "text",
+      "content": "Когда на странице много контейнеров, именованные запросы позволяют обращаться к конкретному контейнеру, а не к ближайшему предку."
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"sidebar\" container-type=\"inline-size\" container-name=\"sidebar\">\n  <article class=\"card\">...</article>\n</div>\n\n<div class=\"main\" container-type=\"inline-size\" container-name=\"main\">\n  <article class=\"card\">...</article>\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Только для карточек в сайдбаре */\n@container sidebar (max-width: 300px) {\n  .card { font-size: 0.75rem; }\n}\n\n/* Только для карточек в основном контенте */\n@container main (max-width: 600px) {\n  .card { font-size: 0.875rem; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Единицы контейнера (cq-units)"
+    },
+    {
+      "type": "text",
+      "content": "cq-единицы основаны на размере контейнера, а не на viewport (как vw/vh)."
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Единица",
+        "Описание"
+      ],
+      "rows": [
+        [
+          "`cqw`",
+          "1% ширины контейнера (container query width)"
+        ],
+        [
+          "`cqh`",
+          "1% высоты контейнера"
+        ],
+        [
+          "`cqi`",
+          "1% инлайнового размера контейнера"
+        ],
+        [
+          "`cqb`",
+          "1% block-размера контейнера"
+        ],
+        [
+          "`cqmin`",
+          "Меньшее из cqi и cqb"
+        ],
+        [
+          "`cqmax",
+          "Большее из cqi и cqb"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример использования"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  container-type: inline-size;\n}\n\n.card__title {\n  /* Размер шрифта зависит от ширины контейнера, а не экрана */\n  font-size: clamp(1rem, 5cqw, 2rem);\n\n  /* Отступы тоже от контейнера */\n  padding: 2cqw;\n}\n\n.card__badge {\n  font-size: 3cqw;\n  min-width: 10cqw;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение vw и cqw"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* vw — от ширины экрана (одинаково везде на странице) */\n.viewport-title {\n  font-size: 5vw;\n}\n\n/* cqw — от ширины контейнера (разно в разных местах) */\n.container-title {\n  font-size: 5cqw;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Fluid layouts — плавная адаптация без медиа-запросов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "clamp() — связующее звено"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ":root {\n  --fs-xs: clamp(0.75rem, 0.7rem + 0.5vw, 0.875rem);\n  --fs-sm: clamp(0.875rem, 0.8rem + 0.75vw, 1rem);\n  --fs-base: clamp(1rem, 0.9rem + 1vw, 1.125rem);\n  --fs-lg: clamp(1.125rem, 1rem + 1.25vw, 1.5rem);\n  --fs-xl: clamp(1.25rem, 1.1rem + 1.5vw, 2rem);\n  --fs-2xl: clamp(1.5rem, 1.25rem + 2vw, 3rem);\n\n  --space-xs: clamp(0.25rem, 0.5vw, 0.5rem);\n  --space-sm: clamp(0.5rem, 1vw, 1rem);\n  --space-md: clamp(1rem, 2vw, 1.5rem);\n  --space-lg: clamp(1.5rem, 3vw, 3rem);\n}\n\nh1 { font-size: var(--fs-2xl); }\nh2 { font-size: var(--fs-xl); }\np { font-size: var(--fs-base); line-height: 1.6; }\n\n.section {\n  padding-block: var(--space-lg);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "minmax() в Grid — диапазон размеров треков"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".grid {\n  display: grid;\n  /* Каждая колонка минимум 200px, максимум 1fr (свободное место) */\n  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));\n  gap: 1rem;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "fluid grids — контейнерные единицы + clamp"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card-container {\n  container-type: inline-size;\n}\n\n.card {\n  padding: clamp(1rem, 4cqw, 2rem);\n  gap: clamp(0.5rem, 2cqw, 1rem);\n}\n\n.card__title {\n  font-size: clamp(1rem, 6cqw, 1.5rem);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Компонентные брейкпоинты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Концепция"
+    },
+    {
+      "type": "text",
+      "content": "Вместо глобальных брейкпоинтов (768px, 1024px) у каждого компонента свои точки перелома, зависящие от размера его контейнера."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: карточка продукта с тремя вариантами"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"product-container\" container-type=\"inline-size\">\n  <article class=\"product-card\">\n    <div class=\"product__media\">\n      <img src=\"photo.jpg\" alt=\"\" class=\"product__img\">\n    </div>\n    <div class=\"product__body\">\n      <h3 class=\"product__title\">Название товара</h3>\n      <p class=\"product__text\">Описание товара...</p>\n      <div class=\"product__price\">299 ₽</div>\n    </div>\n    <footer class=\"product__footer\">\n      <button class=\"product__btn\">В корзину</button>\n    </footer>\n  </article>\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".product-container {\n  container-type: inline-size;\n  container-name: product;\n}\n\n/* Базовый стиль — узкий контейнер (мобильный вид) */\n.product-card {\n  display: flex;\n  flex-direction: column;\n  gap: 1rem;\n  padding: 1rem;\n  border: 1px solid oklch(0.88 0.006 285);\n  border-radius: 0.75rem;\n  background: white;\n}\n\n.product__media {\n  aspect-ratio: 1 / 1;\n  width: 100%;\n  background: oklch(0.97 0.001 285);\n  border-radius: 0.5rem;\n  overflow: hidden;\n}\n\n.product__img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n}\n\n.product__body {\n  display: flex;\n  flex-direction: column;\n  gap: 0.5rem;\n  flex: 1;\n}\n\n.product__title {\n  font-size: 1rem;\n  font-weight: 600;\n  margin: 0;\n}\n\n.product__text {\n  font-size: 0.875rem;\n  color: oklch(0.55 0.01 285);\n  line-height: 1.5;\n}\n\n.product__price {\n  font-size: 1.125rem;\n  font-weight: 700;\n  margin-top: auto;\n}\n\n.product__footer {\n  display: flex;\n  gap: 0.5rem;\n  margin-top: auto;\n}\n\n.product__btn {\n  flex: 1;\n  padding: 0.625rem 1rem;\n  background: oklch(0.62 0.22 264);\n  color: white;\n  border: none;\n  border-radius: 0.5rem;\n  cursor: pointer;\n  font-size: 0.875rem;\n  font-weight: 600;\n}\n\n/* Контейнерный брейкпоинт 1: средний контейнер — изображение слева, текст справа */\n@container product (min-width: 450px) {\n  .product-card {\n    flex-direction: row;\n    padding: 1.5rem;\n  }\n\n  .product__media {\n    width: 180px;\n    flex-shrink: 0;\n    aspect-ratio: 1 / 1;\n  }\n\n  .product__title {\n    font-size: 1.125rem;\n  }\n\n  .product__text {\n    font-size: 0.9375rem;\n  }\n}\n\n/* Контейнерный брейкпоинт 2: большой контейнер — полный вариант с’action справа */\n@container product (min-width: 700px) {\n  .product-card {\n    padding: 2rem;\n    gap: 2rem;\n  }\n\n  .product__media {\n    width: 220px;\n  }\n\n  .product__title {\n    font-size: 1.25rem;\n  }\n\n  .product__footer {\n    flex-direction: row;\n    align-items: center;\n  }\n\n  .product__btn {\n    flex: none;\n    width: auto;\n    padding: 0.75rem 1.5rem;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение подходов"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Подход",
+        "Зависит от",
+        "Когда использовать"
+      ],
+      "rows": [
+        [
+          "`@media (max-width: 768px)`",
+          "Viewport (экран)",
+          "Страничная раскладка, общая структура"
+        ],
+        [
+          "`@container (min-width: 450px)`",
+          "Контейнер (родитель)",
+          "Компоненты, карточки, переиспользуемые блоки"
+        ],
+        [
+          "Комбинированный",
+          "Оба",
+          "И то, и другое — страничная структура + компоненты"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Комплексный пример: админ-панель с контейнерными запросами"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"admin-layout\">\n  <aside class=\"sidebar\" container-type=\"inline-size\" container-name=\"sidebar\">\n    <nav class=\"sidebar__nav\">...</nav>\n  </aside>\n\n  <main class=\"main-content\" container-type=\"inline-size\" container-name=\"main\">\n    <section class=\"stats-section\">\n      <div class=\"stats-grid\">\n        <article class=\"stat-card\">\n          <h3>Заказы</h3>\n          <div class=\"stat-value\">1 234</div>\n        </article>\n        <article class=\"stat-card\">\n          <h3>Доход</h3>\n          <div class=\"stat-value\">56 780 ₽</div>\n        </article>\n        <article class=\"stat-card\">\n          <h3>Пользователи</h3>\n          <div class=\"stat-value\">890</div>\n        </article>\n      </div>\n    </section>\n\n    <section class=\"table-section\">\n      <table class=\"data-table\">...</table>\n    </section>\n  </main>\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".admin-layout {\n  display: grid;\n  grid-template-columns: 260px 1fr;\n  grid-template-rows: auto 1fr;\n  gap: 1.5rem;\n  padding: 1.5rem;\n  min-height: 100vh;\n}\n\n/* Sidebar контейнер */\n.sidebar {\n  container-type: inline-size;\n  container-name: sidebar;\n  position: sticky;\n  top: 1.5rem;\n}\n\n.sidebar__nav {\n  display: flex;\n  flex-direction: column;\n  gap: 0.5rem;\n}\n\n.sidebar__link {\n  padding: 0.75rem;\n  border-radius: 0.5rem;\n  color: oklch(0.55 0.01 285);\n  font-size: 0.875rem;\n}\n\n/* Адаптация сайдбара под свою ширину */\n@container sidebar (max-width: 250px) {\n  .sidebar__link {\n    padding: 0.5rem;\n    font-size: 0.75rem;\n    display: flex;\n    align-items: center;\n    gap: 0.5rem;\n  }\n\n  .sidebar__link span {\n    display: none;  /* Скрываем текст, остаются только иконки */\n  }\n}\n\n/* Main контейнер */\n.main-content {\n  container-type: inline-size;\n  container-name: main;\n  display: flex;\n  flex-direction: column;\n  gap: 1.5rem;\n}\n\n/* Статистика — контейнерные брейкпоинты */\n.stats-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));\n  gap: 1rem;\n  width: 100%;\n}\n\n.stat-card {\n  display: flex;\n  flex-direction: column;\n  gap: 0.5rem;\n  padding: 1rem;\n  background: oklch(0.98 0.001 285);\n  border-radius: 0.75rem;\n}\n\n.stat-card h3 {\n  font-size: 0.875rem;\n  font-weight: 500;\n  color: oklch(0.55 0.01 285);\n  margin: 0;\n}\n\n.stat-value {\n  font-size: 1.5rem;\n  font-weight: 700;\n  color: oklch(0.21 0.006 285);\n}\n\n/* Узкий контейнер — компактная статистика */\n@container main (max-width: 600px) {\n  .stats-grid {\n    grid-template-columns: 1fr;\n  }\n\n  .stat-card {\n    flex-direction: row;\n    align-items: center;\n    justify-content: space-between;\n    padding: 0.75rem 1rem;\n  }\n\n  .stat-card h3 {\n    font-size: 0.8125rem;\n  }\n\n  .stat-value {\n    font-size: 1.125rem;\n  }\n}\n\n/* Средний контейнер — две колонки */\n@container main (min-width: 601px) and (max-width: 1000px) {\n  .stats-grid {\n    grid-template-columns: repeat(2, 1fr);\n  }\n}\n\n/* Широкий контейнер — три колонки */\n@container main (min-width: 1001px) {\n  .stats-grid {\n    grid-template-columns: repeat(3, 1fr);\n  }\n}\n\n/* Таблица — горизонтальная прокрутка на узких контейнерах */\n.table-section {\n  overflow-x: auto;\n}\n\n.data-table {\n  width: 100%;\n  border-collapse: collapse;\n  min-width: 600px;  /* Таблица не сжимается ниже 600px */\n}\n\n.data-table th,\n.data-table td {\n  padding: 0.75rem 1rem;\n  text-align: left;\n  border-bottom: 1px solid oklch(0.88 0.006 285);\n}\n\n/* Адаптив таблицы под контейнер main */\n@container main (max-width: 700px) {\n  .data-table {\n    font-size: 0.8125rem;\n  }\n\n  .data-table th,\n  .data-table td {\n    padding: 0.5rem 0.75rem;\n  }\n}\n\n/* Mobile layout для всей страницы */\n@media (max-width: 767px) {\n  .admin-layout {\n    grid-template-columns: 1fr;\n    grid-template-areas:\n      \"main\"\n      \"sidebar\";\n  }\n\n  .sidebar {\n    position: static;\n    order: 2;\n  }\n\n  .main-content {\n    order: 1;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Когда использовать контейнерные запросы — матрица решений"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Сценарий",
+        "Решение"
+      ],
+      "rows": [
+        [
+          "Общая структура страницы (header, main, footer)",
+          "`@media` (viewport)"
+        ],
+        [
+          "Карточка в сайдбаре vs в контенте",
+          "`@container`"
+        ],
+        [
+          "Компонент в модалке (размер модалки неизвестен)",
+          "`@container`"
+        ],
+        [
+          "Повторяющийся компонент в разных местах",
+          "`@container`"
+        ],
+        [
+          "типографика, зависящая от ширины экрана",
+          "`clamp()` + `vw`"
+        ],
+        [
+          "типографика, зависящая от ширины карточки",
+          "`clamp()` + `cqw`"
+        ],
+        [
+          "Grid с автоподбором колонок",
+          "`repeat(auto-fit, minmax())`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Поддержка браузерами (2024)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Фича",
+        "Chrome",
+        "Firefox",
+        "Safari",
+        "Edge"
+      ],
+      "rows": [
+        [
+          "@container",
+          "105+",
+          "110+",
+          "16+",
+          "105+"
+        ],
+        [
+          "container-type",
+          "105+",
+          "110+",
+          "16+",
+          "105+"
+        ],
+        [
+          "cq-units",
+          "105+",
+          "110+",
+          "16+",
+          "105+"
+        ],
+        [
+          "container-name",
+          "105+",
+          "110+",
+          "16+",
+          "105+"
+        ]
+      ]
+    },
+    {
+      "type": "text",
+      "content": "Для старых браузеров — медиа-запросы как фолбэк:"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  padding: 1rem;\n}\n\n/* Современные браузеры — контейнерные запросы */\n@container (min-width: 400px) {\n  .card { padding: 2rem; }\n}\n\n/* Старые браузеры — медиа-запрос как fallback */\n@media (min-width: 768px) {\n  .card { padding: 2rem; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практическое задание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 1: Контейнерный компонент"
+    },
+    {
+      "type": "text",
+      "content": "Создай компонент «профиль пользователя» с аватаром, именем и описанием:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "В узком контейнере (< 300px): аватар сверху, имя и описание по центру под ним",
+        "В широком контейнере (≥ 300px): аватар слева, имя и описание справа (row)",
+        "Используй `container-type: inline-size` и `@container`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 2: cq-единицы для типографики"
+    },
+    {
+      "type": "text",
+      "content": "Создай контейнер с заголовком, размер которого зависит от ширины контейнера:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`font-size: clamp(1rem, 6cqw, 2rem)`",
+        "Проверь в DevTools, что при изменении размера контейнера заголовок масштабируется"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 3: Компонентные брейкпоинты карточки"
+    },
+    {
+      "type": "text",
+      "content": "Создай карточку с тремя вариантами:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "< 350px: вертикальная компоновка, компактный шрифт",
+        "350–600px: изображение слева, контент справа",
+        "> 600px: полная компоновка с большой картинкой и двумя действиями"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 4: Сравнение media vs container"
+    },
+    {
+      "type": "text",
+      "content": "Положи одну и ту же карточку в два контейнера разной ширины на одной странице. Проверь, что контейнерные запросы заставляют её выглядеть по-разному, а медиа-запросы — одинаково."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 5: Fluid layout без медиа-запросов"
+    },
+    {
+      "type": "text",
+      "content": "Создай секцию с карточками, используя только:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`repeat(auto-fit, minmax(250px, 1fr))` для сетки",
+        "`clamp()` для отступов и шрифтов",
+        "Никаких `@media` для самой сетки"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 24
+}

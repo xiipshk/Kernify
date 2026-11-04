@@ -1,0 +1,465 @@
+{
+  "title": "Урок 21: Алгоритмы и производительность — сложность, cache locality, profiling, лишние копии",
+  "slug": "algoritmy-i-proizvoditelnost-slozhnost-cache-locality-profiling-lishnie-kopii",
+  "short_description": "сложность, cache locality, profiling, лишние копии",
+  "goals": [
+    "Понимать алгоритмическую сложность (Big-O) и её влияние на реальную производительность",
+    "Оптимизировать cache locality: data layout, prefetching, false sharing",
+    "Использовать профилировщики (perf, VTune, Instruments, Visual Studio Profiler)",
+    "Избегать лишних копий: move semantics, RVO, NRVO, pass by reference",
+    "Применять алгоритмы STL эффективно и знать их сложность"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать алгоритмическую сложность (Big-O) и её влияние на реальную производительность",
+        "Оптимизировать cache locality: data layout, prefetching, false sharing",
+        "Использовать профилировщики (perf, VTune, Instruments, Visual Studio Profiler)",
+        "Избегать лишних копий: move semantics, RVO, NRVO, pass by reference",
+        "Применять алгоритмы STL эффективно и знать их сложность"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Алгоритмическая сложность (Big-O)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <vector>\n#include <algorithm>\n#include <unordered_map>\n#include <chrono>\n\n// Временная сложность операций STL контейнеров:\n//\n// vector:\n//   доступ по индексу:           O(1)\n//   push_back (amortized):       O(1)\n//   insert/erase в середине:     O(n)\n//   поиск (несортированный):     O(n)\n//   поиск (бинарный, sorted):    O(log n)\n//\n// list/forward_list:\n//   insert/erase (known pos):    O(1)\n//   доступ по индексу:           O(n)\n//   поиск:                       O(n)\n//\n// deque:\n//   доступ по индексу:           O(1)\n//   push_front/back:             O(1) amortized\n//\n// unordered_map/unordered_set:\n//   insert/find/erase (avg):     O(1)\n//   insert/find/erase (worst):   O(n) — коллизии\n//\n// map/set (RB-tree):\n//   insert/find/erase:           O(log n)\n//\n// priority_queue:\n//   push/pop:                    O(log n)\n//   top:                         O(1)"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Правило:</strong> O(n) с малой константой может быть быстрее O(log n) с большой для маленьких n."
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Пример: линейный поиск vs binary_search для маленьких векторов\nvoid searchComparison() {\n    std::vector<int> v(100);\n    std::iota(v.begin(), v.end(), 0);\n\n    auto linear = [&](int x) {\n        return std::find(v.begin(), v.end(), x) != v.end();\n    };\n    auto binary = [&](int x) {\n        return std::binary_search(v.begin(), v.end(), x);\n    };\n\n    // Для n=100 линейный поиск часто быстрее из-за branch prediction и cache\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cache Locality — ключ к производительности"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <vector>\n#include <array>\n#include <chrono>\n#include <iostream>\n\n// ПЛОХО: Array of Structures (AoS) — поля объекта разбросаны в памяти\nstruct ParticleAoS {\n    float x, y, z;      // 12 bytes\n    float vx, vy, vz;   // 12 bytes\n    float mass;         // 4 bytes\n    int id;             // 4 bytes\n    // sizeof = 32 bytes, но если нужен только x,y,z — читаем лишнее\n};\n\n// ХОРОШО: Structure of Arrays (SoA) — однотипные данные вместе\nstruct ParticleSoA {\n    std::vector<float> x, y, z;\n    std::vector<float> vx, vy, vz;\n    std::vector<float> mass;\n    std::vector<int> id;\n    // Обновление позиций: последовательное чтение x,y,z — идеально для prefetcher\n};\n\nvoid cacheLocalityDemo() {\n    const size_t N = 10'000'000;\n\n    // AoS\n    std::vector<ParticleAoS> aos(N);\n    auto t1 = std::chrono::high_resolution_clock::now();\n    float sum = 0;\n    for (auto& p : aos) sum += p.x + p.y + p.z;\n    auto t2 = std::chrono::high_resolution_clock::now();\n\n    // SoA\n    ParticleSoA soa;\n    soa.x.resize(N); soa.y.resize(N); soa.z.resize(N);\n    auto t3 = std::chrono::high_resolution_clock::now();\n    for (size_t i = 0; i < N; ++i) sum += soa.x[i] + soa.y[i] + soa.z[i];\n    auto t4 = std::chrono::high_resolution_clock::now();\n\n    std::cout << \"AoS: \" << (t2-t1).count()/1e6 << \"ms, SoA: \" << (t4-t3).count()/1e6 << \"ms\\n\";\n}"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Cache line = 64 байта (typical x86).</strong> Чтение 1 байта загружает 64 байта."
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// False sharing — разные потоки пишут в разные переменные, но на одной cache line\nstruct BadCounter {\n    std::atomic<int> a{0};\n    std::atomic<int> b{0};  // Скорее всего на той же cache line!\n};\n\nstruct GoodCounter {\n    alignas(64) std::atomic<int> a{0};  // Принудительно разные cache lines\n    alignas(64) std::atomic<int> b{0};\n};\n\nvoid falseSharingDemo() {\n    BadCounter bad;\n    GoodCounter good;\n\n    auto test = [](auto& c) {\n        std::thread t1([&] { for(int i=0;i<10'000'000;++i) c.a.fetch_add(1); });\n        std::thread t2([&] { for(int i=0;i<10'000'000;++i) c.b.fetch_add(1); });\n        t1.join(); t2.join();\n    };\n    // test(good) будет в разы быстрее test(bad)\n}"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Data layout tips:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Горячие поля вместе, холодные — отдельно",
+        "`[[no_unique_address]]` (C++20) для пустых базовых классов",
+        "`bitfield` для флагов — но осторожно с атомарностью",
+        "`std::vector<T>` лучше чем `std::vector<std::unique_ptr<T>>` (pointer chasing)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Prefetching и branch prediction"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <x86intrin.h>  // или <intrin.h> для MSVC\n\nvoid prefetchDemo(const std::vector<int>& v) {\n    // Ручной prefetch (обычно компилятор/CPU справляются сами)\n    for (size_t i = 0; i + 16 < v.size(); ++i) {\n        _mm_prefetch(reinterpret_cast<const char*>(&v[i+16]), _MM_HINT_T0);\n        // работа с v[i]\n    }\n}\n\n// Branch prediction: делайте вероятный путь первым\nvoid branchPredictionDemo(const std::vector<int>& v) {\n    // ПЛОХО: редкий случай первый\n    for (int x : v) {\n        if (x == 42) { /* rare */ } else { /* common */ }\n    }\n    // ХОРОШО: частый случай первый (или используйте [[likely]]/[[unlikely]] C++20)\n    for (int x : v) {\n        if (x != 42) [[likely]] { /* common */ } else { /* rare */ }\n    }\n}\n\n// Profile-guided optimization (PGO):\n// 1. clang++ -fprofile-generate -O2 main.cpp -o app\n// 2. ./app (typical workload)\n// 3. clang++ -fprofile-use -O2 main.cpp -o app_opt"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Профилирование"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Linux: perf"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Intel VTune (бесплатно для open source)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "vtune -collect hotspots ./app\nvtune -report hotspots -format html -output-dir report"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "macOS: Instruments"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Windows: Visual Studio Profiler / WPA"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Google Benchmark (микробенчмарки)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <benchmark/benchmark.h>\n#include <vector>\n#include <algorithm>\n\nstatic void BM_VectorPushBack(benchmark::State& state) {\n    for (auto _ : state) {\n        std::vector<int> v;\n        v.reserve(state.range(0));\n        for (int i = 0; i < state.range(0); ++i)\n            v.push_back(i);\n    }\n}\nBENCHMARK(BM_VectorPushBack)->Arg(100)->Arg(1000)->Arg(10000);\n\nstatic void BM_VectorPushBackReserved(benchmark::State& state) {\n    for (auto _ : state) {\n        std::vector<int> v;\n        v.reserve(state.range(0));\n        for (int i = 0; i < state.range(0); ++i)\n            v.push_back(i);\n    }\n}\nBENCHMARK(BM_VectorPushBackReserved)->Arg(100)->Arg(1000)->Arg(10000);\n\nBENCHMARK_MAIN();"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Избегание лишних копий"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Pass by value vs reference"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <string>\n#include <vector>\n\n// ПЛОХО: копирование строки при вызове\nvoid processBad(std::string s) { std::cout << s; }\n\n// ХОРОШО: const ref для чтения\nvoid processGoodRead(const std::string& s) { std::cout << s; }\n\n// ХОРОШО: pass by value + move если НУЖНО владение\nvoid processGoodTake(std::string s) {  // копия или move при вызове\n    storage_ = std::move(s);\n}\n\n// ДЛЯ СКАЛЯРОВ И МАЛЕНЬКИХ ТИПОВ: pass by value\nvoid processInt(int x) { }  // быстрее чем const int&\nvoid processPair(std::pair<int,int> p) { }  // 2 int = pass by value"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "RVO / NRVO / Guaranteed copy elision (C++17)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iostream>\n\nstruct Heavy {\n    Heavy() { std::cout << \"Default\\n\"; }\n    Heavy(const Heavy&) { std::cout << \"Copy\\n\"; }\n    Heavy(Heavy&&) noexcept { std::cout << \"Move\\n\"; }\n    ~Heavy() { std::cout << \"Dtor\\n\"; }\n};\n\n// C++17: PRVALUE материализуется прямо в целевом объекте — НИКАКОГО копирования/перемещения\nHeavy makeHeavy() {\n    return Heavy();  // Guaranteed copy elision\n}\n\n// NRVO (Named RVO) — оптимизация, НЕ гарантированная\nHeavy makeHeavyNamed() {\n    Heavy h;\n    return h;  // Компилятор МОЖЕТ сконструировать сразу в возвращаемое значение\n}\n\n// Чтобы помочь NRVO: не присваивайте перед return\nHeavy makeHeavyNamedGood(bool flag) {\n    Heavy h;\n    if (flag) h.modify();\n    return h;  // Один путь возврата — лучше шансы на NRVO\n}\n\n// ПЛОХО: несколько return paths убивают NRVO\nHeavy makeHeavyNamedBad(bool flag) {\n    if (flag) {\n        Heavy h1; return h1;\n    } else {\n        Heavy h2; return h2;\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Move semantics в STL"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <vector>\n#include <string>\n#include <algorithm>\n\nvoid moveInSTL() {\n    std::vector<std::string> v;\n    v.push_back(\"hello\");           // копия из const char*\n    v.emplace_back(\"world\");        // конструирует прямо в векторе\n\n    std::string s = \"move me\";\n    v.push_back(std::move(s));      // move в вектор\n\n    // Перемещение элементов при реаллокации\n    std::vector<std::string> v2;\n    v2.reserve(1000);  // ВАЖНО: reserve избегает реаллокаций и move\n    for (int i = 0; i < 1000; ++i) v2.emplace_back(\"item\");\n\n    // erase-remove idiom (C++20: std::erase)\n    v2.erase(std::remove_if(v2.begin(), v2.end(),\n                 [](const auto& s) { return s.size() < 5; }), v2.end());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Small String Optimization (SSO)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <string>\n\nvoid ssoDemo() {\n    std::string s1 = \"short\";        // SSO: хранится внутри объекта (обычно до 15-22 chars)\n    std::string s2 = \"this is a very long string that exceeds SSO buffer\";  // heap allocation\n\n    // sizeof(std::string) обычно 32 байта (libstdc++) или 24 (libc++)\n    // SSO избегает аллокации для коротких строк\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Эффективное использование STL алгоритмов"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <algorithm>\n#include <vector>\n#include <numeric>\n#include <ranges>  // C++20\n\nvoid stlAlgorithmsDemo() {\n    std::vector<int> v = {3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5};\n\n    // Поиск\n    auto it = std::find(v.begin(), v.end(), 5);           // O(n)\n    auto it2 = std::lower_bound(v.begin(), v.end(), 5);   // O(log n) — ТРЕБУЕТ СОРТИРОВКИ\n\n    // Сортировка\n    std::sort(v.begin(), v.end());                        // O(n log n), introsort\n    std::stable_sort(v.begin(), v.end());                 // O(n log n), сохраняет порядок равных\n    std::partial_sort(v.begin(), v.begin()+3, v.end());   // Первые 3 отсортированы\n    std::nth_element(v.begin(), v.begin()+5, v.end());    // 5-й элемент на своём месте\n\n    // Партиционирование\n    auto mid = std::partition(v.begin(), v.end(), [](int x){ return x % 2 == 0; });\n    // [even...][odd...]\n\n    // Копирование с преобразованием\n    std::vector<int> squares(v.size());\n    std::transform(v.begin(), v.end(), squares.begin(), [](int x){ return x*x; });\n\n    // Редукция\n    int sum = std::accumulate(v.begin(), v.end(), 0);\n    int prod = std::reduce(v.begin(), v.end(), 1, std::multiplies{});  // C++17, может быть параллельным\n\n    // C++20 Ranges — ленивые, композируемые\n    auto even_squares = v\n        | std::views::filter([](int x){ return x % 2 == 0; })\n        | std::views::transform([](int x){ return x*x; });\n    for (int x : even_squares) { /* ... */ }  // Вычисляется по требованию\n}"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Сложность алгоритмов:</strong>"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Алгоритм",
+        "Сложность",
+        "Примечание"
+      ],
+      "rows": [
+        [
+          "`sort`",
+          "O(n log n)",
+          "Introsort (quick + heap + insertion)"
+        ],
+        [
+          "`stable_sort`",
+          "O(n log n)",
+          "Merge sort, extra memory"
+        ],
+        [
+          "`partial_sort`",
+          "O(n log k)",
+          "Первые k элементов"
+        ],
+        [
+          "`nth_element`",
+          "O(n)",
+          "Quickselect"
+        ],
+        [
+          "`binary_search`",
+          "O(log n)",
+          "Требует sorted"
+        ],
+        [
+          "`lower_bound/upper_bound`",
+          "O(log n)",
+          ""
+        ],
+        [
+          "`merge`",
+          "O(n)",
+          "Требует sorted входы"
+        ],
+        [
+          "`inplace_merge`",
+          "O(n log n)",
+          ""
+        ],
+        [
+          "`heap` operations",
+          "O(log n)",
+          "`make_heap` O(n)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Оптимизация памяти"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Pool allocator для частых аллокаций одного размера\ntemplate<typename T, size_t BlockSize = 4096>\nclass PoolAllocator {\n    struct Block { Block* next; };\n    Block* free_list_ = nullptr;\n    std::vector<std::unique_ptr<char[]>> blocks_;\n\n    void allocate_block() {\n        auto block = std::make_unique<char[]>(BlockSize);\n        char* p = block.get();\n        for (size_t i = 0; i < BlockSize; i += sizeof(T)) {\n            reinterpret_cast<Block*>(p)->next = free_list_;\n            free_list_ = reinterpret_cast<Block*>(p);\n            p += sizeof(T);\n        }\n        blocks_.push_back(std::move(block));\n    }\npublic:\n    T* allocate() {\n        if (!free_list_) allocate_block();\n        Block* b = free_list_;\n        free_list_ = b->next;\n        return reinterpret_cast<T*>(b);\n    }\n    void deallocate(T* p) {\n        reinterpret_cast<Block*>(p)->next = free_list_;\n        free_list_ = reinterpret_cast<Block*>(p);\n    }\n};\n\n// Использование с std::vector\nstd::vector<int, PoolAllocator<int>> vec;\n// Или для node-based контейнеров\nstd::list<int, PoolAllocator<std::list<int>::value_type>> lst;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Профилирование в коде (ручное)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <chrono>\n#include <iostream>\n\nclass ScopedTimer {\n    std::chrono::high_resolution_clock::time_point start_;\n    const char* name_;\npublic:\n    explicit ScopedTimer(const char* name) : start_(std::chrono::high_resolution_clock::now()), name_(name) {}\n    ~ScopedTimer() {\n        auto end = std::chrono::high_resolution_clock::now();\n        auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start_).count();\n        std::cout << name_ << \": \" << us << \" μs\\n\";\n    }\n};\n\n#define PROFILE_SCOPE(name) ScopedTimer timer##__LINE__(name)\n\nvoid manualProfiling() {\n    PROFILE_SCOPE(\"Total\");\n    {\n        PROFILE_SCOPE(\"Phase 1\");\n        // код\n    }\n    {\n        PROFILE_SCOPE(\"Phase 2\");\n        // код\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Benchmark контейнеров"
+    },
+    {
+      "type": "text",
+      "content": "Напишите Google Benchmark тесты для сравнения:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`std::vector` vs `std::deque` vs `std::list` для: push_back, insert(begin), insert(middle), iteration, find",
+        "`std::unordered_map` vs `std::map` vs `flat_map` (boost/absl) для insert/find/iterate",
+        "Проанализируйте результаты, объясните различия через cache locality"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Оптимизация cache-miss кода"
+    },
+    {
+      "type": "text",
+      "content": "Дан код, обрабатывающий частицы (AoS). Перепишите на SoA. Замерьте производительность до/после с <code>perf stat -e cache-misses,cache-references</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Поиск false sharing"
+    },
+    {
+      "type": "text",
+      "content": "Напишите программу с массивом <code>std::atomic<int> counters[8]</code>, где 8 потоков инкрементят свои элементы."
+    },
+    {
+      "type": "list",
+      "items": [
+        "Замерьте время без `alignas`",
+        "Добавьте `alignas(64)` к каждому элементу",
+        "Сравните производительность, объясните результат"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Профилирование реальной задачи"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте простую задачу: парсинг CSV (1M строк), агрегация по колонке, сортировка результатов. Используйте <code>perf record -g</code> / VTune / VS Profiler. Найдите топ-3 горячих функции. Оптимизируйте их (reserve, string_view, избежание копий, algorithm choice). Замерьте speedup."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Move-only типы в контейнерах"
+    },
+    {
+      "type": "text",
+      "content": "Создайте <code>MoveOnly</code> класс (deleted copy, noexcept move). Поместите в <code>std::vector</code>, <code>std::deque</code>, <code>std::list</code>. Замерьте время <code>push<em>back</code> / <code>emplace</em>back</code> с reserve и без. Объясните разницу в количестве перемещений при реаллокации."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Премьюрая оптимизация",
+          "Оптимизируют не bottlenecks"
+        ],
+        [
+          "`reserve()` забыт",
+          "Множественные реаллокации + move"
+        ],
+        [
+          "`std::string` копирование",
+          "Передача по значению без move"
+        ],
+        [
+          "`std::endl` в цикле",
+          "Флашит буфер каждый раз"
+        ],
+        [
+          "`std::list` для всего",
+          "Указатели — cache misses"
+        ],
+        [
+          "`shared_ptr` везде",
+          "Atomic refcount = cache line ping-pong"
+        ],
+        [
+          "Неиспользование алгоритмов STL",
+          "Ручные циклы с ошибками и без оптимизаций"
+        ],
+        [
+          "Игнорирование alignment",
+          "False sharing, неукооперированный доступ"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[cppreference: Algorithm library](https://en.cppreference.com/w/cpp/algorithm)",
+        "[C++ Core Guidelines: Per](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#per-performance)",
+        "**Книга:** \"Optimized C++\" (Kurt Guntheroth)",
+        "**Книга:** \"Efficient C++\" (Bulka, Mayhew)",
+        "**Книга:** \"Data-Oriented Design\" (Mike Acton)",
+        "**CppCon:** \"Cache-Friendly Data Structures\" (Chandler Carruth)",
+        "**CppCon:** \"Performance Tuning for C++\" (Fedor Pikus)",
+        "**Agner Fog:** \"Optimizing software in C++\" (бесплатная книга/PDF)",
+        "[Google Benchmark](https://github.com/google/benchmark)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Премьюрая оптимизация",
+      "correct": "Оптимизируют не bottlenecks"
+    },
+    {
+      "mistake": "`reserve()` забыт",
+      "correct": "Множественные реаллокации + move"
+    },
+    {
+      "mistake": "`std::string` копирование",
+      "correct": "Передача по значению без move"
+    },
+    {
+      "mistake": "`std::endl` в цикле",
+      "correct": "Флашит буфер каждый раз"
+    },
+    {
+      "mistake": "`std::list` для всего",
+      "correct": "Указатели — cache misses"
+    },
+    {
+      "mistake": "`shared_ptr` везде",
+      "correct": "Atomic refcount = cache line ping-pong"
+    },
+    {
+      "mistake": "Неиспользование алгоритмов STL",
+      "correct": "Ручные циклы с ошибками и без оптимизаций"
+    },
+    {
+      "mistake": "Игнорирование alignment",
+      "correct": "False sharing, неукооперированный доступ"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 21
+}

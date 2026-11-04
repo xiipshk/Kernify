@@ -1,0 +1,401 @@
+{
+  "title": "Урок 2.4: Генераторы и итераторы — yield, send, throw, itertools, асинхронные генераторы",
+  "slug": "generatory-i-iteratory-yield-send-throw-itertools-asinhronnye-generatory",
+  "short_description": "yield, send, throw, itertools, асинхронные генераторы",
+  "goals": [
+    "Понимать протокол итератора (__iter__, __next__)",
+    "Писать генераторы с yield",
+    "Использовать yield from, send, throw, close",
+    "Работать с itertools для составных итераторов",
+    "Знать про асинхронные генераторы (async for)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать протокол итератора (__iter__, __next__)",
+        "Писать генераторы с yield",
+        "Использовать yield from, send, throw, close",
+        "Работать с itertools для составных итераторов",
+        "Знать про асинхронные генераторы (async for)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Протокол итератора"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Итерируемый объект vs Итератор"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ручной перебор"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "it = iter([1, 2, 3])\nwhile True:\n    try:\n        item = next(it)\n        print(item)\n    except StopIteration:\n        break"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Свой итератор"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class CountDown:\n    def __init__(self, start):\n        self.current = start\n\n    def __iter__(self):\n        return self  # итератор сам по себе\n\n    def __next__(self):\n        if self.current <= 0:\n            raise StopIteration\n        val = self.current\n        self.current -= 1\n        return val\n\nfor n in CountDown(3):\n    print(n)  # 3, 2, 1"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Генераторы — yield"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый генератор"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def countdown(start):\n    while start > 0:\n        yield start\n        start -= 1\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "yield vs return"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def with_return():\n    return 1\n    return 2  # недостижимо\n\ndef with_yield():\n    yield 1\n    yield 2\n    yield 3\n\nlist(with_return())  # [1]\nlist(with_yield())   # [1, 2, 3]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генератор — ленивый (вычисляет по требованию)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def infinite():\n    n = 0\n    while True:\n        yield n\n        n += 1\n\ngen = infinite()"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. yield from — делегирование (Python 3.3+)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def subgen():\n    yield 1\n    yield 2\n\ndef maingen():\n    yield 0\n    yield from subgen()  # \"встраивает\" subgen\n    yield 3\n\nlist(maingen())  # [0, 1, 2, 3]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "yield from с возвратом значения"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def accumulator():\n    total = 0\n    while True:\n        x = yield\n        if x is None:\n            return total\n        total += x\n\ndef main():\n    result = yield from accumulator()\n    print(f\"Сумма: {result}\")\n\ngen = main()\nnext(gen)           # запуск до первого yield\ngen.send(10)\ngen.send(20)\ngen.send(None)      # завершает accumulator, возвращает 30"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. send, throw, close — управление генератором"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "send — передача значения внутрь"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def echo():\n    received = yield \"Готов\"\n    while True:\n        received = yield f\"Получено: {received}\"\n\ngen = echo()\nprint(next(gen))        # \"Готов\" (первый yield)\nprint(gen.send(\"привет\"))  # \"Получено: привет\"\nprint(gen.send(\"мир\"))     # \"Получено: мир\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "throw — выбрасывание исключения внутрь"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def robust():\n    try:\n        while True:\n            yield \"работает\"\n    except ValueError:\n        yield \"поймал ValueError\"\n    except Exception:\n        yield \"поймал другое\"\n\ngen = robust()\nprint(next(gen))              # \"работает\"\nprint(gen.throw(ValueError))  # \"поймал ValueError\"\nprint(next(gen))              # \"работает\" (продолжило!)\nprint(gen.throw(RuntimeError))# \"поймал другое\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "close — принудительное завершение"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def infinite():\n    try:\n        while True:\n            yield \"tick\"\n    finally:\n        print(\"Очистка ресурсов!\")\n\ngen = infinite()\nnext(gen)\ngen.close()  # вызывает GeneratorExit внутри, срабатывает finally"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Генераторные выражения (generator expressions)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. itertools — стандартная библиотека итераторов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Бесконечные итераторы"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import itertools\n\nitertools.count(10, 2)      # 10, 12, 14, 16, ...\nitertools.cycle([1, 2, 3])  # 1, 2, 3, 1, 2, 3, ...\nitertools.repeat(5, 3)      # 5, 5, 5\nitertools.repeat(5)         # 5, 5, 5, ... (бесконечно)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Комбинаторика"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "itertools.permutations([1, 2, 3], 2)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фильтрация и нарезка"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "itertools.islice(range(100), 5, 15, 2)  # 5, 7, 9, 11, 13\nitertools.takewhile(lambda x: x < 5, range(10))  # 0,1,2,3,4\nitertools.dropwhile(lambda x: x < 5, range(10))  # 5,6,7,8,9\nitertools.filterfalse(lambda x: x % 2, range(10))  # чётные: 0,2,4,6,8"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Группировка"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "data = [1, 1, 2, 2, 2, 3, 1]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Аккумуляция"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import operator\nitertools.accumulate([1, 2, 3, 4])           # 1, 3, 6, 10 (сумма)\nitertools.accumulate([1, 2, 3, 4], operator.mul)  # 1, 2, 6, 24 (произведение)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Объединение"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "itertools.chain([1, 2], [3, 4], [5])  # 1, 2, 3, 4, 5\nitertools.chain.from_iterable([[1, 2], [3, 4]])  # 1, 2, 3, 4"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. more-itertools (третьесторонняя библиотека)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install more-itertools"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import more_itertools as mit\n\nmit.chunked([1,2,3,4,5], 2)        # [[1,2], [3,4], [5]]\nmit.windowed([1,2,3,4], 3)         # [(1,2,3), (2,3,4)]\nmit.split_when([1,2,3,10,4,5], lambda x: x > 5)  # [[1,2,3], [10], [4,5]]\nmit.always_iterable(5)             # [5] (делает из не-итерируемого итерируемое)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Асинхронные генераторы (Python 3.6+)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import asyncio\n\nasync def async_countdown(n):\n    while n > 0:\n        yield n\n        await asyncio.sleep(0.1)\n        n -= 1\n\nasync def main():\n    async for i in async_countdown(3):\n        print(i)\n\nasyncio.run(main())"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Асинхронный генератор с send/throw"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "async def async_echo():\n    received = yield \"ready\"\n    while True:\n        received = yield f\"got: {received}\"\n\nasync def demo():\n    gen = async_echo()\n    print(await gen.asend(None))   # \"ready\"\n    print(await gen.asend(\"hi\"))   # \"got: hi\"\n    await gen.aclose()\n\nasyncio.run(demo())"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Паттерны и трюки"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pipeline (конвейер)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def gen_numbers():\n    yield from range(1, 11)\n\ndef filter_even(gen):\n    for x in gen:\n        if x % 2 == 0:\n            yield x\n\ndef square(gen):\n    for x in gen:\n        yield x ** 2\n\npipeline = square(filter_even(gen_numbers()))\nlist(pipeline)  # [4, 16, 36, 64, 100]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Корутины через yield (pre-async/await)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def coroutine(func):\n    @wraps(func)\n    def primer(*args, **kwargs):\n        gen = func(*args, **kwargs)\n        next(gen)\n        return gen\n    return primer\n\n@coroutine\ndef grep(pattern):\n    print(f\"Ищем {pattern}\")\n    while True:\n        line = yield\n        if pattern in line:\n            print(line)\n\ng = grep(\"python\")\ng.send(\"hello world\")\ng.send(\"python is great\")  # python is great"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Трансдукеры (composable reducing functions)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Профилирование генераторов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import sys\n\ngen = (x for x in range(1000000))\nprint(sys.getsizeof(gen))  # ~112 байт — константная память!\n\nlst = [x for x in range(1000000)]\nprint(sys.getsizeof(lst))  # ~8 MB!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`return` в генераторе с значением (до 3.3)",
+          "`return` без значения или `yield from`"
+        ],
+        [
+          "`yield` в `try` без `finally` — утечка ресурсов",
+          "Используйте `try/finally` для очистки"
+        ],
+        [
+          "Дважды итерируют генератор",
+          "Генератор — однократный! Сохраняйте в список если нужно повторно"
+        ],
+        [
+          "`yield from` без понимания возврата",
+          "`yield from` пробрасывает `return` значение подгенератора"
+        ],
+        [
+          "`groupby` без сортировки",
+          "Данные должны быть отсортированы по ключу!"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Docs: Iterators** — https://docs.python.org/3/library/stdtypes.html#iterator-types",
+        "**Python Docs: itertools** — https://docs.python.org/3/library/itertools.html",
+        "**Real Python: Python Generators** — https://realpython.com/introduction-to-python-generators/",
+        "**PEP 342 — Coroutines via Enhanced Generators** — https://peps.python.org/pep-0342/",
+        "**PEP 380 — yield from** — https://peps.python.org/pep-0380/",
+        "**more-itertools docs** — https://more-itertools.readthedocs.io/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`return` в генераторе с значением (до 3.3)",
+      "correct": "`return` без значения или `yield from`"
+    },
+    {
+      "mistake": "`yield` в `try` без `finally` — утечка ресурсов",
+      "correct": "Используйте `try/finally` для очистки"
+    },
+    {
+      "mistake": "Дважды итерируют генератор",
+      "correct": "Генератор — однократный! Сохраняйте в список если нужно повторно"
+    },
+    {
+      "mistake": "`yield from` без понимания возврата",
+      "correct": "`yield from` пробрасывает `return` значение подгенератора"
+    },
+    {
+      "mistake": "`groupby` без сортировки",
+      "correct": "Данные должны быть отсортированы по ключу!"
+    }
+  ],
+  "resources": [
+    "**Python Docs: Iterators** — https://docs.python.org/3/library/stdtypes.html#iterator-types",
+    "**Python Docs: itertools** — https://docs.python.org/3/library/itertools.html",
+    "**Real Python: Python Generators** — https://realpython.com/introduction-to-python-generators/",
+    "**PEP 342 — Coroutines via Enhanced Generators** — https://peps.python.org/pep-0342/",
+    "**PEP 380 — yield from** — https://peps.python.org/pep-0380/",
+    "**more-itertools docs** — https://more-itertools.readthedocs.io/"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 15
+}

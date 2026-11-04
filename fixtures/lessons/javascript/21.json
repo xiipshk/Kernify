@@ -1,0 +1,285 @@
+{
+  "title": "Урок 21: Проект среднего уровня — «Task Manager» (Full-Stack Like)",
+  "slug": "proekt-srednego-urovnya-task-manager-full-stack-like",
+  "short_description": "«Task Manager» (Full-Stack Like)",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели проекта"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Закрепить темы уроков 11-20 на практике",
+        "Построить SPA с роутингом, состоянием, API-слоем",
+        "Применить: модули, классы, асинхронность, паттерны, тесты, линтинг",
+        "Получить production-ready архитектуру для портфолио"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Требования"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Функционал:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Авторизация**: Регистрация, вход, JWT в HttpOnly cookie, защищённые роуты",
+        "**Проекты**: CRUD, переключение между проектами",
+        "**Задачи**: CRUD, статусы (Backlog/Todo/In Progress/Done), приоритеты, дедлайны",
+        "**Drag & Drop**: Перемещение задач между колонками (Kanban)",
+        "**Фильтры/Поиск**: По статусу, приоритету, тексту, тегам",
+        "**Real-time** (опционально): WebSocket уведомления об изменениях",
+        "**Офлайн**: Service Worker, IndexedDB кэш, синхронизация при онлайне"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "text",
+      "content": "<strong>Технологический стек:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Билд**: Vite + TypeScript",
+        "**Роутинг**: Собственный роутер (History API) или wouter",
+        "**Состояние**: Собственный стор (EventEmitter + Proxy) или Zustand",
+        "**API**: Fetch wrapper с interceptors, retry, токены",
+        "**Стили**: CSS Modules / PostCSS / Tailwind (на выбор)",
+        "**Тесты**: Vitest + Testing Library + MSW (Mock Service Worker)",
+        "**Линт**: ESLint + Prettier + Husky",
+        "**CI**: GitHub Actions (lint, test, build, e2e)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Архитектура (Feature-Sliced Design упрощённо)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "src/\n├── app/                    # Инициализация, провайдеры, роутинг\n│   ├── providers/          # AuthProvider, QueryProvider\n│   ├── routes/             # Конфигурация роутов\n│   └── styles/             # Глобальные стили, reset, variables\n│\n├── pages/                  # Страницы (компоновка виджетов)\n│   ├── LoginPage/\n│   ├── RegisterPage/\n│   ├── DashboardPage/\n│   ├── ProjectPage/\n│   └── SettingsPage/\n│\n├── widgets/                # Крупные самостоятельные блоки\n│   ├── KanbanBoard/        # Доска с колонками\n│   ├── ProjectSidebar/     # Список проектов\n│   ├── TaskModal/          # Модалка создания/редактирования\n│   └── Header/             # Верхняя панель с пользователем\n│\n├── features/               # Бизнес-фичи (действия пользователя)\n│   ├── auth/               # login, register, logout, refresh\n│   ├── projects/           # CRUD проектов\n│   ├── tasks/              # CRUD задач, DnD, фильтры\n│   └── notifications/      # Toast, real-time updates\n│\n├── entities/               # Бизнес-сущности\n│   ├── User/\n│   ├── Project/\n│   └── Task/\n│\n├── shared/                 # Переиспользуемое ядро\n│   ├── api/                # fetch wrapper, endpoints, types\n│   ├── router/             # Роутер, хуки навигации\n│   ├── store/              # Базовый стор, хуки\n│   ├── ui/                 # Примитивы: Button, Input, Modal, Select, ...\n│   ├── utils/              # Helpers: date, validation, classnames\n│   ├── hooks/              # Кастомные хуки\n│   └── types/              # Глобальные типы\n│\n└── main.ts                 # Точка входа"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ключевые реализации"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1. API Client (shared/api/client.ts)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "type RequestOptions = RequestInit & {\n  params?: Record<string, string>;\n  skipAuth?: boolean;\n  retry?: number;\n};\n\nclass ApiClient {\n  private baseUrl: string;\n  private refreshPromise: Promise<string> | null = null;\n\n  constructor(baseUrl: string) {\n    this.baseUrl = baseUrl;\n  }\n\n  private async getAccessToken(): Promise<string | null> {\n    // Токен в памяти или из cookie (HttpOnly — читать нельзя, но отправляется автоматически)\n    return getCookie('access_token');\n  }\n\n  private async refreshToken(): Promise<string> {\n    if (!this.refreshPromise) {\n      this.refreshPromise = (async () => {\n        const res = await fetch(`${this.baseUrl}/auth/refresh`, {\n          method: 'POST',\n          credentials: 'include'\n        });\n        if (!res.ok) throw new Error('Refresh failed');\n        const { accessToken } = await res.json();\n        return accessToken;\n      })().finally(() => { this.refreshPromise = null; });\n    }\n    return this.refreshPromise;\n  }\n\n  async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {\n    const { params, skipAuth, retry = 1, headers, ...init } = options;\n\n    const url = new URL(endpoint, this.baseUrl);\n    if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));\n\n    const requestHeaders: HeadersInit = {\n      'Content-Type': 'application/json',\n      ...headers\n    };\n\n    if (!skipAuth) {\n      const token = await this.getAccessToken();\n      if (token) (requestHeaders as Record<string, string>)['Authorization'] = `Bearer ${token}`;\n    }\n\n    const makeRequest = async (attempt: number): Promise<Response> => {\n      const res = await fetch(url, { ...init, headers: requestHeaders, credentials: 'include' });\n\n      if (res.status === 401 && !skipAuth && attempt < retry) {\n        await this.refreshToken();\n        return makeRequest(attempt + 1);\n      }\n      return res;\n    };\n\n    const response = await makeRequest(0);\n\n    if (!response.ok) {\n      const error = await response.json().catch(() => ({ message: 'Unknown error' }));\n      throw new ApiError(response.status, error.message, error);\n    }\n\n    if (response.status === 204) return null as T;\n    return response.json();\n  }\n\n  get<T>(endpoint: string, opts?: RequestOptions) { return this.request<T>(endpoint, { ...opts, method: 'GET' }); }\n  post<T>(endpoint: string, body: unknown, opts?: RequestOptions) { return this.request<T>(endpoint, { ...opts, method: 'POST', body: JSON.stringify(body) }); }\n  patch<T>(endpoint: string, body: unknown, opts?: RequestOptions) { return this.request<T>(endpoint, { ...opts, method: 'PATCH', body: JSON.stringify(body) }); }\n  delete<T>(endpoint: string, opts?: RequestOptions) { return this.request<T>(endpoint, { ...opts, method: 'DELETE' }); }\n}\n\nexport const api = new ApiClient(import.meta.env.VITE_API_URL || '/api');\n\nexport class ApiError extends Error {\n  constructor(public status: number, message: string, public data?: unknown) {\n    super(message);\n    this.name = 'ApiError';\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2. Store (shared/store/index.ts)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "type Listener<T> = (state: T) => void;\n\nexport function createStore<T extends object>(initialState: T) {\n  let state = initialState;\n  const listeners = new Set<Listener<T>>();\n\n  // Proxy для отслеживания мутаций\n  const proxy = new Proxy(state, {\n    set(target, prop, value) {\n      target[prop as keyof T] = value;\n      listeners.forEach(fn => fn(state));\n      return true;\n    }\n  });\n\n  return {\n    getState: () => state,\n    setState: (partial: Partial<T> | ((s: T) => Partial<T>)) => {\n      const next = typeof partial === 'function' ? partial(state) : partial;\n      state = { ...state, ...next };\n      listeners.forEach(fn => fn(state));\n    },\n    subscribe: (fn: Listener<T>) => {\n      listeners.add(fn);\n      fn(state);\n      return () => listeners.delete(fn);\n    },\n    // Для React/Vue интеграции\n    useStore: (selector?: (s: T) => any) => {\n      // Реализация через useSyncExternalStore (React 18+)\n    }\n  };\n}\n\n// Использование\ninterface AuthState {\n  user: User | null;\n  isAuthenticated: boolean;\n  isLoading: boolean;\n}\n\nexport const authStore = createStore<AuthState>({\n  user: null,\n  isAuthenticated: false,\n  isLoading: true\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3. Роутер (shared/router/index.ts)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "type RouteHandler = (params: Record<string, string>) => Promise<void> | void;\n\ninterface Route {\n  path: string;\n  handler: RouteHandler;\n  guards?: Array<() => boolean | Promise<boolean>>;\n}\n\nexport class Router {\n  private routes: Route[] = [];\n  private currentParams: Record<string, string> = {};\n\n  addRoute(path: string, handler: RouteHandler, guards?: Route['guards']) {\n    this.routes.push({ path, handler, guards });\n  }\n\n  private match(pathname: string): { route: Route; params: Record<string, string> } | null {\n    for (const route of this.routes) {\n      const regex = this.pathToRegex(route.path);\n      const match = pathname.match(regex);\n      if (match) {\n        const params: Record<string, string> = {};\n        match.groups && Object.entries(match.groups).forEach(([k, v]) => params[k] = v!);\n        return { route, params };\n      }\n    }\n    return null;\n  }\n\n  private pathToRegex(path: string): RegExp {\n    const escaped = path\n      .replace(/\\//g, '\\\\/')\n      .replace(/:(\\w+)/g, '(?<$1>[^/]+)');\n    return new RegExp(`^${escaped}$`);\n  }\n\n  async navigate(path: string, replace = false) {\n    const match = this.match(path);\n    if (!match) return this.navigate('/404');\n\n    const { route, params } = match;\n\n    // Guards\n    for (const guard of route.guards || []) {\n      if (!(await guard())) return this.navigate('/login');\n    }\n\n    this.currentParams = params;\n    replace ? history.replaceState(null, '', path) : history.pushState(null, '', path);\n    await route.handler(params);\n  }\n\n  start() {\n    window.addEventListener('popstate', () => this.navigate(location.pathname, true));\n    this.navigate(location.pathname, true);\n  }\n}\n\n// Глобальный экземпляр\nexport const router = new Router();\n\n// Хелперы для навигации\nexport const navigate = (path: string) => router.navigate(path);\nexport const useParams = () => router.currentParams;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4. Drag & Drop (features/tasks/dnd.ts)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Нативный HTML5 DnD для Kanban\nexport function setupKanbanDnD(\n  columns: HTMLElement[],\n  onMove: (taskId: string, fromColumn: string, toColumn: string, index: number) => void\n) {\n  let draggedTask: HTMLElement | null = null;\n  let sourceColumn: string | null = null;\n\n  columns.forEach(column => {\n    const columnId = column.dataset.columnId!;\n\n    column.addEventListener('dragstart', (e) => {\n      const task = (e.target as HTMLElement).closest('[data-task-id]') as HTMLElement;\n      if (!task) return;\n\n      draggedTask = task;\n      sourceColumn = columnId;\n      task.classList.add('dragging');\n      e.dataTransfer!.effectAllowed = 'move';\n    });\n\n    column.addEventListener('dragend', () => {\n      if (draggedTask) draggedTask.classList.remove('dragging');\n      draggedTask = null;\n      sourceColumn = null;\n    });\n\n    column.addEventListener('dragover', (e) => {\n      e.preventDefault();\n      e.dataTransfer!.dropEffect = 'move';\n\n      const afterElement = getDragAfterElement(column, e.clientY);\n      const dragging = document.querySelector('.dragging');\n      if (afterElement) {\n        column.insertBefore(dragging!, afterElement);\n      } else {\n        column.appendChild(dragging!);\n      }\n    });\n\n    column.addEventListener('drop', (e) => {\n      e.preventDefault();\n      if (!draggedTask || !sourceColumn) return;\n\n      const taskId = draggedTask.dataset.taskId!;\n      const targetColumn = columnId;\n      const tasks = [...column.querySelectorAll('[data-task-id]')];\n      const index = tasks.indexOf(draggedTask);\n\n      if (sourceColumn !== targetColumn || index !== -1) {\n        onMove(taskId, sourceColumn, targetColumn, index);\n      }\n    });\n  });\n}\n\nfunction getDragAfterElement(container: HTMLElement, y: number): Element | null {\n  const draggableElements = [...container.querySelectorAll('[data-task-id]:not(.dragging)')];\n  return draggableElements.reduce((closest, child) => {\n    const box = child.getBoundingClientRect();\n    const offset = y - box.top - box.height / 2;\n    if (offset < 0 && offset > closest.offset) {\n      return { offset, element: child };\n    }\n    return closest;\n  }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5. Офлайн поддержка (shared/offline/index.ts)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Service Worker регистрация\nexport async function registerSW() {\n  if ('serviceWorker' in navigator) {\n    const reg = await navigator.serviceWorker.register('/sw.js');\n    console.log('SW registered', reg.scope);\n  }\n}\n\n// IndexedDB кэш для офлайн-режима\nimport { openDB } from 'idb';\n\nconst DB_NAME = 'task-manager-offline';\nconst STORE_TASKS = 'tasks';\nconst STORE_MUTATIONS = 'mutations';\n\nexport const offlineDB = await openDB(DB_NAME, 1, {\n  upgrade(db) {\n    db.createObjectStore(STORE_TASKS, { keyPath: 'id' });\n    db.createObjectStore(STORE_MUTATIONS, { keyPath: 'id', autoIncrement: true });\n  }\n});\n\n// Сохранение задачи в кэш\nexport async function cacheTask(task: Task) {\n  await offlineDB.put(STORE_TASKS, task);\n}\n\n// Очередь мутаций для синхронизации\nexport async function queueMutation(mutation: { type: 'create'|'update'|'delete'; payload: any }) {\n  await offlineDB.add(STORE_MUTATIONS, { ...mutation, timestamp: Date.now() });\n}\n\n// Синхронизация при возврате онлайн\nexport async function syncWhenOnline(api: ApiClient) {\n  const mutations = await offlineDB.getAll(STORE_MUTATIONS);\n  for (const m of mutations) {\n    try {\n      switch (m.type) {\n        case 'create': await api.post('/tasks', m.payload); break;\n        case 'update': await api.patch(`/tasks/${m.payload.id}`, m.payload); break;\n        case 'delete': await api.delete(`/tasks/${m.payload.id}`); break;\n      }\n      await offlineDB.delete(STORE_MUTATIONS, m.id);\n    } catch (e) {\n      console.error('Sync failed', e);\n      break; // Остановимся, попробуем позже\n    }\n  }\n}\n\n// Слушатель онлайн/офлайн\nwindow.addEventListener('online', () => syncWhenOnline(api));"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Тестирование (примеры)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unit тест store"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// shared/store/__tests__/authStore.test.ts\nimport { describe, it, expect, vi } from 'vitest';\nimport { createStore } from '../index';\n\ndescribe('createStore', () => {\n  it('notifies subscribers on change', () => {\n    const store = createStore({ count: 0 });\n    const listener = vi.fn();\n    const unsubscribe = store.subscribe(listener);\n\n    store.setState({ count: 1 });\n    expect(listener).toHaveBeenCalledWith({ count: 1 });\n\n    unsubscribe();\n    store.setState({ count: 2 });\n    expect(listener).toHaveBeenCalledTimes(1);\n  });\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Интеграционный тест API (MSW)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// features/tasks/__tests__/tasks.test.ts\nimport { http, HttpResponse } from 'msw';\nimport { setupServer } from 'msw/node';\nimport { api } from '@/shared/api/client';\n\nconst server = setupServer(\n  http.get('/api/tasks', () => HttpResponse.json([\n    { id: '1', title: 'Task 1', status: 'todo' }\n  ])),\n  http.post('/api/tasks', async ({ request }) => {\n    const body = await request.json();\n    return HttpResponse.json({ id: '2', ...body }, { status: 201 });\n  })\n);\n\nbeforeAll(() => server.listen());\nafterEach(() => server.resetHandlers());\nafterAll(() => server.close());\n\nit('fetches tasks', async () => {\n  const tasks = await api.get<Task[]>('/tasks');\n  expect(tasks).toHaveLength(1);\n});\n\nit('creates task', async () => {\n  const task = await api.post<Task>('/tasks', { title: 'New', status: 'backlog' });\n  expect(task.id).toBe('2');\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "E2E тест (Playwright)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// e2e/kanban.spec.ts\nimport { test, expect } from '@playwright/test';\n\ntest('drag task between columns', async ({ page }) => {\n  await page.goto('/project/1');\n  await page.waitForSelector('[data-column-id=\"todo\"]');\n\n  const task = page.locator('[data-task-id=\"1\"]').first();\n  const targetColumn = page.locator('[data-column-id=\"in-progress\"]');\n\n  await task.dragTo(targetColumn);\n\n  await expect(page.locator('[data-column-id=\"in-progress\"] [data-task-id=\"1\"]')).toBeVisible();\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "CI/CD Pipeline (.github/workflows/ci.yml)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "name: CI\n\non:\n  push:\n    branches: [main, develop]\n  pull_request:\n    branches: [main]\n\nenv:\n  NODE_VERSION: '20'\n\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: ${{ env.NODE_VERSION }}\n          cache: 'npm'\n      - run: npm ci\n      - run: npm run lint\n\n  typecheck:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: ${{ env.NODE_VERSION }}\n          cache: 'npm'\n      - run: npm ci\n      - run: npm run typecheck\n\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: ${{ env.NODE_VERSION }}\n          cache: 'npm'\n      - run: npm ci\n      - run: npm run test -- --run --coverage\n      - name: Upload coverage\n        uses: codecov/codecov-action@v4\n\n  build:\n    runs-on: ubuntu-latest\n    needs: [lint, typecheck, test]\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: ${{ env.NODE_VERSION }}\n          cache: 'npm'\n      - run: npm ci\n      - run: npm run build\n      - uses: actions/upload-artifact@v4\n        with:\n          name: dist\n          path: dist/\n\n  e2e:\n    runs-on: ubuntu-latest\n    needs: build\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: ${{ env.NODE_VERSION }}\n          cache: 'npm'\n      - run: npm ci\n      - run: npm run build\n      - uses: actions/download-artifact@v4\n        with:\n          name: dist\n          path: dist/\n      - run: npx serve -s dist -l 3000 &\n      - run: npx playwright install --with-deps chromium\n      - run: npm run test:e2e\n\n  deploy-preview:\n    runs-on: ubuntu-latest\n    needs: [build, e2e]\n    if: github.event_name == 'pull_request'\n    steps:\n      - uses: actions/download-artifact@v4\n        with:\n          name: dist\n          path: dist/\n      - name: Deploy to Netlify/Vercel preview\n        run: npx netlify deploy --dir=dist --message=\"PR #${{ github.event.number }}\" || npx vercel --token=${{ secrets.VERCEL_TOKEN }}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания для углубления"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки в проекте"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Бизнес-логика в компонентах",
+          "Выносите в features/entities, компоненты — только UI"
+        ],
+        [
+          "Проп-дриллинг (проброс через 5 уровней)",
+          "Context / Store / композиция"
+        ],
+        [
+          "Дублирование типов API и фронтенда",
+          "Генерация типов из OpenAPI (openapi-typescript)"
+        ],
+        [
+          "Нет обработки ошибок API",
+          "Глобальный Error Boundary + toast уведомления"
+        ],
+        [
+          "Тесты ломаются при рефакторинге",
+          "Тестируйте поведение, не реализацию"
+        ],
+        [
+          "Офлайн не работает",
+          "Проверяйте Service Worker в DevTools → Application"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Контрольные вопросы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Зачем разделять features, entities, widgets, shared?",
+        "Как работает оптимистичное обновление UI?",
+        "В чём разница между MSW и мокированием fetch в тестах?",
+        "Зачем нужен `credentials: 'include'` в fetch?",
+        "Как реализовать бесконечную прокрутку задач?",
+        "Что такое Feature-Sliced Design и зачем он нужен?"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Что дальше?"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Урок 22**: TypeScript Deep Dive",
+        "**Урок 23**: Advanced React Patterns / Vue Composition API",
+        "**Урок 24**: Node.js Backend для этого проекта",
+        "**Урок 25**: Modules & Metaprogramming",
+        "**Урок 26+**: Advanced уровень"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Поздравляю! Вы построили полноценное SPA приложение с современной архитектурой! 🚀"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Бизнес-логика в компонентах",
+      "correct": "Выносите в features/entities, компоненты — только UI"
+    },
+    {
+      "mistake": "Проп-дриллинг (проброс через 5 уровней)",
+      "correct": "Context / Store / композиция"
+    },
+    {
+      "mistake": "Дублирование типов API и фронтенда",
+      "correct": "Генерация типов из OpenAPI (openapi-typescript)"
+    },
+    {
+      "mistake": "Нет обработки ошибок API",
+      "correct": "Глобальный Error Boundary + toast уведомления"
+    },
+    {
+      "mistake": "Тесты ломаются при рефакторинге",
+      "correct": "Тестируйте поведение, не реализацию"
+    },
+    {
+      "mistake": "Офлайн не работает",
+      "correct": "Проверяйте Service Worker в DevTools → Application"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 21
+}

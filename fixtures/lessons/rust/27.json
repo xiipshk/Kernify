@@ -1,0 +1,436 @@
+{
+  "title": "Урок 27: Async Internals (Внутреннее устройство async)",
+  "slug": "async-internals-vnutrennee-ustroystvo-async",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Как работает `async fn` — State Machine"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Трансформация компилятором"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Исходный код:\nasync fn fetch_data() -> String {\n    let data = download().await;\n    process(data).await\n}\n\n// Компилятор превращает в что-то вроде:\nenum FetchDataState {\n    Start,\n    WaitingDownload(DownloadFuture),\n    WaitingProcess(ProcessFuture),\n    Done(String),\n}\n\nstruct FetchDataFuture {\n    state: FetchDataState,\n}\n\nimpl Future for FetchDataFuture {\n    type Output = String;\n\n    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<String> {\n        loop {\n            match self.state {\n                FetchDataState::Start => {\n                    let fut = download();\n                    self.state = FetchDataState::WaitingDownload(fut);\n                }\n                FetchDataState::WaitingDownload(ref mut fut) => {\n                    match Pin::new(fut).poll(cx) {\n                        Poll::Ready(data) => {\n                            let fut = process(data);\n                            self.state = FetchDataState::WaitingProcess(fut);\n                        }\n                        Poll::Pending => return Poll::Pending,\n                    }\n                }\n                FetchDataState::WaitingProcess(ref mut fut) => {\n                    match Pin::new(fut).poll(cx) {\n                        Poll::Ready(result) => {\n                            self.state = FetchDataState::Done(result);\n                        }\n                        Poll::Pending => return Poll::Pending,\n                    }\n                }\n                FetchDataState::Done(result) => {\n                    return Poll::Ready(result);\n                }\n            }\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ключевые моменты"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Каждое `.await` — это точка приостановки (yield point)",
+        "Локальные переменные сохраняются в state machine",
+        "Future — это просто struct, реализующий `Future` trait",
+        "`Pin` нужен, чтобы state machine не перемещалась в памяти (указатели на себя)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. `Future` Trait"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Определение"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::future::Future;\nuse std::pin::Pin;\nuse std::task::{Context, Poll};\n\npub trait Future {\n    type Output;\n    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;\n}\n\npub enum Poll<T> {\n    Ready(T),\n    Pending,\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Context` и `Waker`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::task::{Context, Waker};\n\npub struct Context<'a> {\n    waker: &'a Waker,\n}\n\nimpl<'a> Context<'a> {\n    pub fn from_waker(waker: &'a Waker) -> Self { Context { waker } }\n    pub fn waker(&self) -> &'a Waker { self.waker }\n}\n\n// Waker — это handle для пробуждения задачи\npub struct Waker { /* ... */ }\n\nimpl Waker {\n    pub fn wake(self) { /* помечает задачу как готую */ }\n    pub fn wake_by_ref(&self) { /* то же самое */ }\n    pub fn clone(&self) -> Waker { /* клонирует waker */ }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Реализация своего Future"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простой Future"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::future::Future;\nuse std::pin::Pin;\nuse std::task::{Context, Poll};\nuse std::time::{Duration, Instant};\nuse std::thread;\n\nstruct Delay {\n    when: Instant,\n    waker: Option<Waker>,\n}\n\nimpl Future for Delay {\n    type Output = ();\n\n    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {\n        if Instant::now() >= self.when {\n            Poll::Ready(())\n        } else {\n            self.waker = Some(cx.waker().clone());\n            // В реальности здесь был бы timer thread\n            Poll::Pending\n        }\n    }\n}\n\n// Использование\nasync fn example() {\n    Delay { when: Instant::now() + Duration::from_secs(1), waker: None }.await;\n    println!(\"1 second passed\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Future с данными"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Counter {\n    count: u32,\n    limit: u32,\n}\n\nimpl Future for Counter {\n    type Output = u32;\n\n    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<u32> {\n        if self.count >= self.limit {\n            Poll::Ready(self.count)\n        } else {\n            self.count += 1;\n            cx.waker().wake_by_ref(); // Сразу просыпаемся для следующего цикла\n            Poll::Pending\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. `Pin` — зачем и как"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема самозареференцирующихся Future"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Этот код НЕБЕЗОПАСЕН без Pin:\nasync fn bad_example() {\n    let x = String::from(\"hello\");\n    let ptr = &x as *const String; // Указатель на локальную переменную\n    yield_now().await; // Приостановка!\n    // После await x может быть перемещена в памяти!\n    println!(\"{}\", unsafe { &*ptr }); // UB!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Pin<P>` гарантирует, что значение не двигается"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\n\nfn pin_example(mut fut: Pin<&mut impl Future<Output = i32>>) {\n    // fut нельзя переместить, можно только poll\n    let _ = fut.as_mut().poll(&mut Context::from_waker(&noop_waker()));\n}\n\n// noop waker для тестов\nfn noop_waker() -> Waker {\n    use std::task::{RawWaker, RawWakerVTable};\n    fn noop(_: *const ()) {}\n    fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VTABLE) }\n    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);\n    unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Pin` projection — доступ к полям"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\n\nstruct MyFuture {\n    field: i32,\n    other: String,\n}\n\nimpl Future for MyFuture {\n    type Output = i32;\n\n    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<i32> {\n        // Безопасно: field не содержит указателей на self\n        let field = self.field; // Copy\n        // Небезопасно для String:\n        // let other = &self.other; // Это &String, OK\n        // let other_mut = &mut self.get_unchecked_mut().other; // Нужно unsafe\n        Poll::Ready(field)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Простой Executor"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый executor"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::future::Future;\nuse std::pin::Pin;\nuse std::task::{Context, Poll, Waker, RawWaker, RawWakerVTable};\nuse std::sync::{Arc, Mutex};\nuse std::collections::VecDeque;\n\nstruct Task {\n    future: Pin<Box<dyn Future<Output = ()> + Send>>,\n}\n\nstruct Executor {\n    ready_queue: Arc<Mutex<VecDeque<Task>>>,\n}\n\nimpl Executor {\n    fn new() -> Self {\n        Executor { ready_queue: Arc::new(Mutex::new(VecDeque::new())) }\n    }\n\n    fn spawn<F>(&self, future: F) where F: Future<Output = ()> + Send + 'static {\n        self.ready_queue.lock().unwrap().push_back(Task {\n            future: Box::pin(future),\n        });\n    }\n\n    fn run(&self) {\n        loop {\n            let task = self.ready_queue.lock().unwrap().pop_front();\n            if let Some(mut task) = task {\n                let waker = self.make_waker();\n                let mut cx = Context::from_waker(&waker);\n                let _ = task.future.as_mut().poll(&mut cx);\n            } else {\n                // Нет задач — можно спать или выйти\n                break;\n            }\n        }\n    }\n\n    fn make_waker(&self) -> Waker {\n        let queue = self.ready_queue.clone();\n        unsafe fn wake(ptr: *const ()) {\n            let arc = Arc::from_raw(ptr as *const Mutex<VecDeque<Task>>);\n            // В реальности здесь нужно поместить задачу обратно в очередь\n            std::mem::forget(arc);\n        }\n        // Упрощённый пример — настоящий waker сложнее\n        todo!()\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование `block_on`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// tokio::block_on реализует простой executor для текущего потока\nfn block_on<F: Future>(mut future: F) -> F::Output {\n    let mut future = unsafe { Pin::new_unchecked(&mut future) };\n    let waker = noop_waker();\n    let mut cx = Context::from_waker(&waker);\n\n    loop {\n        match future.as_mut().poll(&mut cx) {\n            Poll::Ready(val) => return val,\n            Poll::Pending => thread::park(), // Ждём wake\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. `Waker` — детально"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как работает Waker"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::task::{RawWaker, RawWakerVTable, Waker};\n\nstruct MyWaker {\n    task_id: usize,\n    queue: Arc<Mutex<VecDeque<usize>>>,\n}\n\nimpl MyWaker {\n    fn new(task_id: usize, queue: Arc<Mutex<VecDeque<usize>>>) -> Waker {\n        let data = Box::into_raw(Box::new(MyWaker { task_id, queue }));\n        let vtable = &VTABLE;\n        let raw = RawWaker::new(data as *const (), vtable);\n        unsafe { Waker::from_raw(raw) }\n    }\n}\n\nstatic VTABLE: RawWakerVTable = RawWakerVTable::new(\n    |data| { // clone\n        let waker = unsafe { &*(data as *const MyWaker) };\n        let new = Box::new(MyWaker {\n            task_id: waker.task_id,\n            queue: waker.queue.clone()\n        });\n        RawWaker::new(Box::into_raw(new) as *const (), &VTABLE)\n    },\n    |data| { // wake\n        let waker = unsafe { Box::from_raw(data as *mut MyWaker) };\n        waker.queue.lock().unwrap().push_back(waker.task_id);\n    },\n    |data| { // wake_by_ref\n        let waker = unsafe { &*(data as *const MyWaker) };\n        waker.queue.lock().unwrap().push_back(waker.task_id);\n    },\n    |data| { // drop\n        unsafe { Box::from_raw(data as *mut MyWaker); }\n    },\n);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Async Traits и `async_fn_in_trait`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Native async traits (Rust 1.75+)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Database {\n    async fn get_user(&self, id: u64) -> Result<User, Error>;\n    async fn save_user(&self, user: &User) -> Result<(), Error>;\n}\n\n// Это сахар для:\ntrait Database {\n    fn get_user(&self, id: u64) -> impl Future<Output = Result<User, Error>> + '_;\n    fn save_user(&self, user: &User) -> impl Future<Output = Result<(), Error>> + '_;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`async_trait` crate (для старых версий / dyn)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use async_trait::async_trait;\n\n#[async_trait]\ntrait Database {\n    async fn get_user(&self, id: u64) -> Result<User, Error>;\n}\n\n// Генерирует:\n// type GetUserFuture<'a> = Pin<Box<dyn Future<Output = Result<User, Error>> + Send + 'a>>;\n// fn get_user(&'a self, id: u64) -> GetUserFuture<'a> { ... }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Pinning в структурех"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Pin<Box<T>>` для self-referential structs"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\n\nstruct SelfRefFuture {\n    data: String,\n    ptr: *const String,\n    state: u8,\n}\n\nimpl SelfRefFuture {\n    fn new() -> Pin<Box<Self>> {\n        let mut boxed = Box::pin(SelfRefFuture {\n            data: String::from(\"hello\"),\n            ptr: std::ptr::null(),\n            state: 0,\n        });\n        // Безопасно: boxed закреплён\n        let ptr = &boxed.data as *const String;\n        unsafe { boxed.as_mut().get_unchecked_mut().ptr = ptr; }\n        boxed\n    }\n}\n\nimpl Future for SelfRefFuture {\n    type Output = String;\n\n    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<String> {\n        let this = self.get_mut();\n        match this.state {\n            0 => { this.state = 1; Poll::Pending }\n            1 => Poll::Ready(unsafe { (&*this.ptr).clone() }),\n            _ => unreachable!(),\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Combinators — `join`, `select`, `race`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`join` — ждём все"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use futures::future::join;\n\nasync fn join_example() {\n    let a = async { sleep(Duration::from_millis(100)).await; 1 };\n    let b = async { sleep(Duration::from_millis(200)).await; 2 };\n\n    let (res_a, res_b) = join(a, b).await; // ~200ms всего\n    println!(\"{} {}\", res_a, res_b);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`select` — первый готовый"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use futures::future::select;\n\nasync fn select_example() {\n    let a = async { sleep(Duration::from_millis(100)).await; \"fast\" };\n    let b = async { sleep(Duration::from_millis(200)).await; \"slow\" };\n\n    let (res, _remaining) = select(a, b).await;\n    println!(\"First: {}\", res); // \"fast\"\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`race` / `timeout`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use futures::future::race;\n\nasync fn with_timeout<F: Future>(fut: F, dur: Duration) -> Result<F::Output, TimeoutError> {\n    let timeout = sleep(dur);\n    match race(fut, timeout).await {\n        Either::Left((val, _)) => Ok(val),\n        Either::Right(_) => Err(TimeoutError),\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Streams — Async Iterators"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Stream` trait"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use futures::stream::Stream;\nuse std::pin::Pin;\nuse std::task::{Context, Poll};\n\npub trait Stream {\n    type Item;\n    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>>;\n    fn size_hint(&self) -> (usize, Option<usize>) { (0, None) }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Реализация Stream"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use futures::stream::{Stream, StreamExt};\nuse std::pin::Pin;\n\nstruct CounterStream {\n    current: u32,\n    max: u32,\n}\n\nimpl Stream for CounterStream {\n    type Item = u32;\n\n    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<u32>> {\n        if self.current >= self.max {\n            Poll::Ready(None)\n        } else {\n            let val = self.current;\n            self.current += 1;\n            Poll::Ready(Some(val))\n        }\n    }\n}\n\n// Использование\nasync fn use_stream() {\n    let mut stream = CounterStream { current: 0, max: 5 };\n    while let Some(val) = stream.next().await {\n        println!(\"{}\", val);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Простой timer Future"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::future::Future;\nuse std::pin::Pin;\nuse std::task::{Context, Poll, Waker};\nuse std::time::{Duration, Instant};\nuse std::sync::{Arc, Mutex};\nuse std::thread;\n\nstruct Timer {\n    deadline: Instant,\n    waker: Option<Waker>,\n}\n\nimpl Future for Timer {\n    type Output = ();\n\n    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {\n        if Instant::now() >= self.deadline {\n            Poll::Ready(())\n        } else {\n            self.waker = Some(cx.waker().clone());\n            Poll::Pending\n        }\n    }\n}\n\n// Timer thread (упрощённый)\nfn start_timer_thread() {\n    thread::spawn(|| loop {\n        thread::sleep(Duration::from_millis(10));\n        // Проверять таймеры и вызывать wake\n    });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Channel как Stream"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use futures::stream::Stream;\nuse std::pin::Pin;\nuse std::task::{Context, Poll};\nuse std::sync::mpsc;\n\nstruct ReceiverStream<T> {\n    rx: mpsc::Receiver<T>,\n}\n\nimpl<T> Stream for ReceiverStream<T> {\n    type Item = T;\n\n    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<T>> {\n        match self.rx.try_recv() {\n            Ok(val) => Poll::Ready(Some(val)),\n            Err(mpsc::TryRecvError::Empty) => Poll::Pending,\n            Err(mpsc::TryRecvError::Disconnected) => Poll::Ready(None),\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Mini executor с Waker"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::future::Future;\nuse std::pin::Pin;\nuse std::task::{Context, Poll, Waker, RawWaker, RawWakerVTable};\nuse std::sync::{Arc, Mutex};\nuse std::collections::VecDeque;\n\nstruct MiniExecutor {\n    queue: Arc<Mutex<VecDeque<Task>>>,\n}\n\nstruct Task {\n    future: Pin<Box<dyn Future<Output = ()> + Send>>,\n    id: usize,\n}\n\nimpl MiniExecutor {\n    fn new() -> Self {\n        MiniExecutor { queue: Arc::new(Mutex::new(VecDeque::new())) }\n    }\n\n    fn spawn<F>(&self, fut: F) where F: Future<Output = ()> + Send + 'static {\n        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);\n        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);\n        self.queue.lock().unwrap().push_back(Task {\n            future: Box::pin(fut),\n            id,\n        });\n    }\n\n    fn run(&self) {\n        while let Some(mut task) = self.queue.lock().unwrap().pop_front() {\n            let waker = self.make_waker(task.id);\n            let mut cx = Context::from_waker(&waker);\n            match task.future.as_mut().poll(&mut cx) {\n                Poll::Ready(()) => {}\n                Poll::Pending => {\n                    self.queue.lock().unwrap().push_back(task);\n                }\n            }\n        }\n    }\n\n    fn make_waker(&self, task_id: usize) -> Waker {\n        let queue = self.queue.clone();\n        unsafe fn wake(data: *const ()) {\n            let (queue, id) = *(data as *const (Arc<Mutex<VecDeque<Task>>>, usize));\n            queue.lock().unwrap().push_back(Task {\n                future: panic!(\"requeued\"), // упрощение\n                id\n            });\n        }\n        // Настоящая реализация сложнее\n        todo!()\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`future cannot be sent between threads`",
+          "Future не `Send`"
+        ],
+        [
+          "`self-referential future`",
+          "Указатели на поля внутри async fn"
+        ],
+        [
+          "`poll after completion`",
+          "Вызов poll после Ready"
+        ],
+        [
+          "`waker not waking`",
+          "Waker не кладёт задачу в очередь"
+        ],
+        [
+          "`block_on in async context`",
+          "Вложенный block_on"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Шпаргалка: Async Internals"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Концепция",
+        "Ключевой API"
+      ],
+      "rows": [
+        [
+          "Future",
+          "`poll(Pin<&mut Self>, &mut Context) -> Poll<Output>`"
+        ],
+        [
+          "Poll",
+          "`Ready(T)`, `Pending`"
+        ],
+        [
+          "Context",
+          "`waker() -> &Waker`"
+        ],
+        [
+          "Waker",
+          "`wake()`, `wake_by_ref()`, `clone()`"
+        ],
+        [
+          "Pin",
+          "`Pin<&mut T>`, `Pin<Box<T>>`, `get_unchecked_mut()`"
+        ],
+        [
+          "Executor",
+          "`spawn`, `run`, `block_on`"
+        ],
+        [
+          "Stream",
+          "`poll_next -> Poll<Option<Item>>`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "14. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**State Machine**: как `async fn` компилируется в enum с состояниями",
+        "**Future trait**: `poll`, `Pin`, `Context`, `Waker`, `Poll`",
+        "**Pin**: закрепление в памяти для самозареференцирующихся future",
+        "**Custom Future**: реализация `Future` вручную",
+        "**Executor**: как работает `block_on`, ready queue, waker",
+        "**Waker**: `RawWaker`, `RawWakerVTable`, пробуждение задач",
+        "**Async traits**: native (1.75+) и `async_trait` crate",
+        "**Combinators**: `join`, `select`, `race`, `timeout`",
+        "**Streams**: `Stream` trait, `poll_next`, адаптеры"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`future cannot be sent between threads`",
+      "correct": "Future не `Send`"
+    },
+    {
+      "mistake": "`self-referential future`",
+      "correct": "Указатели на поля внутри async fn"
+    },
+    {
+      "mistake": "`poll after completion`",
+      "correct": "Вызов poll после Ready"
+    },
+    {
+      "mistake": "`waker not waking`",
+      "correct": "Waker не кладёт задачу в очередь"
+    },
+    {
+      "mistake": "`block_on in async context`",
+      "correct": "Вложенный block_on"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 27
+}

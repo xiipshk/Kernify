@@ -1,0 +1,490 @@
+{
+  "title": "Урок 30: Large App Engineering — TypeScript, Tree Shaking, Integration Tests, CI/CD, Monitoring",
+  "slug": "large-app-engineering-typescript-tree-shaking-integration-tests-cicd-monitoring",
+  "short_description": "TypeScript, Tree Shaking, Integration Tests, CI/CD, Monitoring",
+  "goals": [
+    "Глубоко понять TypeScript: advanced types, generics, conditional types, template literals",
+    "Освоить Tree Shaking & Dead Code Elimination: sideEffects, pure annotations, bundler config",
+    "Разобрать Integration Testing: Testcontainers, contract testing, E2E strategies",
+    "Изучить CI/CD Pipeline: GitHub Actions, caching, matrix builds, deployment strategies",
+    "Понять Monitoring & Observability: metrics, logs, traces, alerting, SLO/SLI"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубоко понять TypeScript: advanced types, generics, conditional types, template literals",
+        "Освоить Tree Shaking & Dead Code Elimination: sideEffects, pure annotations, bundler config",
+        "Разобрать Integration Testing: Testcontainers, contract testing, E2E strategies",
+        "Изучить CI/CD Pipeline: GitHub Actions, caching, matrix builds, deployment strategies",
+        "Понять Monitoring & Observability: metrics, logs, traces, alerting, SLO/SLI"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. TypeScript Advanced Types"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.1 Conditional Types & Infer"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Conditional Types: T extends U ? X : Y\ntype IsString<T> = T extends string ? true : false;\ntype A = IsString<'hello'>;  // true\ntype B = IsString<123>;      // false\n\n// Infer — извлечение типов внутри conditional:\ntype ReturnType<T> = T extends (...args: any[]) => infer R ? R : never;\ntype ParamType<T> = T extends (arg: infer P) => any ? P : never;\n\nfunction foo(s: string): number { return s.length; }\ntype FooReturn = ReturnType<typeof foo>;  // number\ntype FooParam = ParamType<typeof foo>;    // string\n\n// Distributive conditional types (over unions):\ntype ToArray<T> = T extends any ? T[] : never;\ntype Result = ToArray<string | number>;  // string[] | number[] (распределяется!)\n\n// Non-distributive: обернуть в tuple\ntype ToArrayNonDist<T> = [T] extends [any] ? T[] : never;\ntype Result2 = ToArrayNonDist<string | number>;  // (string | number)[]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.2 Template Literal Types (TS 4.1+)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Конструирование строковых типов:\ntype EventName<T extends string> = `on${Capitalize<T>}`;\ntype ClickEvent = EventName<'click'>;  // 'onClick'\n\n// С unions:\ntype Direction = 'top' | 'right' | 'bottom' | 'left';\ntype MarginProps = `margin${Capitalize<Direction>}`;\n// 'marginTop' | 'marginRight' | 'marginBottom' | 'marginLeft'\n\n// Pattern matching:\ntype ParseUrl<T extends string> = T extends `${infer Protocol}://${infer Rest}`\n  ? { protocol: Protocol; rest: Rest }\n  : never;\n\ntype Parsed = ParseUrl<'https://example.com/path'>;\n// { protocol: 'https'; rest: 'example.com/path' }\n\n// CSS-in-JS типизация:\ntype CSSProperty<T> = T extends `${infer Prop}: ${infer Value}` ? { [K in Prop]: Value } : never;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.3 Mapped Types & Utility Types"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Key remapping (TS 4.1+):\ntype Getters<T> = {\n  [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K]\n};\n\ninterface User { name: string; age: number; }\ntype UserGetters = Getters<User>;\n// { getName: () => string; getAge: () => number; }\n\n// Filter keys:\ntype OnlyStrings<T> = {\n  [K in keyof T as T[K] extends string ? K : never]: T[K]\n};\ntype UserStrings = OnlyStrings<User>;  // { name: string }\n\n// Deep readonly:\ntype DeepReadonly<T> = {\n  readonly [K in keyof T]: T[K] extends object ? DeepReadonly<T[K]> : T[K]\n};\n\n// Built-in utilities:\nPartial<T>          // все optional\nRequired<T>         // все required\nReadonly<T>         // все readonly\nPick<T, K>          // выбрать ключи\nOmit<T, K>          // исключить ключи\nRecord<K, T>        // объект с ключами K и значениями T\nExclude<T, U>       // исключить U из T\nExtract<T, U>       // оставить только U из T\nNonNullable<T>      // убрать null/undefined\nParameters<T>       // tuple параметров функции\nConstructorParameters<T> // параметры конструктора\nReturnType<T>       // возвращаемый тип\nInstanceType<T>     // тип экземпляра класса\nThisParameterType<T> // тип this\nOmitThisParameter<T> // убрать this"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.4 Generics Constraints & Defaults"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Constraints:\nfunction merge<T extends object, U extends object>(a: T, b: U): T & U {\n  return { ...a, ...b };\n}\n\n// Default generics:\ninterface ApiResponse<T = unknown> {\n  data: T;\n  status: number;\n  error?: string;\n}\n\n// Type parameter defaults в type aliases:\ntype Container<T = string> = { value: T };\n\n// Variance (in/out) — TS 4.7+:\n// out — ковариантность (return types)\ninterface Producer<out T> { make(): T; }\n// in — контравариантность (parameter types)\ninterface Consumer<in T> { consume(t: T): void; }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.5 Advanced Patterns"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Branded types (nominal typing):\ntype Brand<K, T> = K & { __brand: T };\ntype UserId = Brand<string, 'UserId'>;\ntype PostId = Brand<string, 'PostId'>;\n\nfunction getUser(id: UserId) { /* ... */ }\ngetUser('123' as UserId);  // OK\n// getUser('123' as PostId); // Error!\n\n// Fluent API typing:\nclass QueryBuilder<T> {\n  select<K extends keyof T>(keys: K[]): QueryBuilder<Pick<T, K>> { return this; }\n  where<U extends Partial<T>>(cond: U): QueryBuilder<T> { return this; }\n  execute(): Promise<T[]> { return Promise.resolve([]); }\n}\n\nconst users = await new QueryBuilder<User>()\n  .select(['name', 'email'])\n  .where({ active: true })\n  .execute();\n// users: Pick<User, 'name' | 'email'>[]\n\n// Discriminated unions для state machines:\ntype LoadingState = { status: 'loading' };\ntype SuccessState = { status: 'success'; data: User[] };\ntype ErrorState = { status: 'error'; error: Error };\ntype State = LoadingState | SuccessState | ErrorState;\n\nfunction handle(state: State) {\n  switch (state.status) {\n    case 'loading': return '...';\n    case 'success': return state.data.length;  // state.data доступен!\n    case 'error': return state.error.message;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Tree Shaking & Dead Code Elimination"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.1 Как работает Tree Shaking"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Tree Shaking = удаление unused exports при bundling\n// Работает ТОЛЬКО с ES Modules (import/export) — статический анализ!\n\n// ❌ CommonJS — НЕ tree-shakable:\nconst _ = require('lodash');\n_.map([1,2,3], x => x*2); // весь lodash попадает в bundle!\n\n// ✅ ES Modules — tree-shakable:\nimport { map } from 'lodash-es';\nmap([1,2,3], x => x*2); // только map + зависимости!\n\n// ✅ Или с babel/plugin-transform-runtime:\nimport map from 'lodash/map';  // cherry-pick (но не всегда работает)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.2 package.json: sideEffects"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "// package.json библиотеки:\n{\n  \"name\": \"my-lib\",\n  \"sideEffects\": false,  // ВСЁ чистое — можно безопасно удалять неиспользуемое\n  // ИЛИ массив файлов с side effects:\n  \"sideEffects\": [\n    \"*.css\",           // CSS импорты имеют side effects\n    \"./polyfills.js\"   // этот файл выполняет код при импорте\n  ]\n}\n\n// В коде библиотеки — пометьте pure функции:\n/* @__PURE__ */ export function helper() { ... }\n\n// Или в package.json exports:\n\"exports\": {\n  \".\": {\n    \"import\": \"./index.mjs\",\n    \"types\": \"./index.d.ts\"\n  },\n  \"./pure\": {\n    \"import\": \"./pure.mjs\",\n    \"sideEffects\": false\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.3 Bundler Configuration"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// webpack.config.js\nmodule.exports = {\n  mode: 'production',  // включает optimization\n  optimization: {\n    usedExports: true,      // пометка unused exports\n    sideEffects: true,      // чтение package.json sideEffects\n    minimize: true,         // terser minification\n    concatenateModules: true, // scope hoisting\n    providedExports: true,  // анализ exports\n    innerGraph: true,       // глубокий анализ зависимостей (webpack 5.5+)\n  },\n  // Для библиотек:\n  output: {\n    library: { type: 'module' },  // ESM output\n  },\n  experiments: {\n    outputModule: true,\n  }\n};\n\n// Rollup (более агрессивный tree shaking):\nexport default {\n  input: 'src/index.ts',\n  output: { format: 'esm', dir: 'dist' },\n  treeshake: {\n    moduleSideEffects: 'no-external',  // внешние зависимости — без side effects\n    propertyReadSideEffects: false,\n    unknownGlobalSideEffects: false,\n  },\n  plugins: [\n    typescript(),\n    terser({ module: true })\n  ]\n};\n\n// esbuild (самый быстрый):\n// esbuild src/index.ts --bundle --outfile=dist/index.js --format=esm --tree-shaking=true"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.4 Common Tree Shaking Pitfalls"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ Side effects в коде:\nconsole.log('init');  // side effect!\nwindow.global = {};   // side effect!\nrequire('./polyfill'); // side effect!\n\n// ❌ Re-exporting всё (barrel files):\n// utils/index.ts\nexport * from './helpers';  // ВСЁ экспортируется!\nexport * from './constants';\n\n// ✅ Named exports только нужного:\n// utils/helpers.ts\nexport function map() { ... }\nexport function filter() { ... }\n\n// utils/index.ts\nexport { map, filter } from './helpers';  // явный реэкспорт\n\n// ❌ Dynamic import в условии:\nif (condition) {\n  const { heavy } = await import('./heavy'); // не tree-shaken!\n}\n\n// ✅ Используйте bundler-specific magic comments:\nconst { heavy } = await import(/* webpackChunkName: \"heavy\" */ './heavy');"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.5 Analyzing Bundle Size"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Integration Testing Strategies"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.1 Testing Pyramid (Updated)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "        /\\\n       /  \\     E2E Tests (few) — Cypress, Playwright\n      /----\\    Critical user journeys\n     /      \\\n    /        \\  Integration Tests (some) — Testcontainers, API tests\n   /----------\\  Service interactions, DB, external APIs\n  /            \\\n /              \\ Unit Tests (many) — Vitest, Jest\n/----------------\\  Pure functions, components, utils"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.2 Testcontainers (Real DB/Services in Tests)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// vitest.config.ts\nimport { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    globals: true,\n    setupFiles: ['./tests/setup.ts'],\n    teardownFiles: ['./tests/teardown.ts'],\n  },\n});\n\n// tests/setup.ts\nimport { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';\nimport { GenericContainer, StartedTestContainer } from 'testcontainers';\n\nlet pgContainer: StartedPostgreSqlContainer;\nlet redisContainer: StartedTestContainer;\n\nexport async function setup() {\n  pgContainer = await new PostgreSqlContainer('postgres:16-alpine')\n    .withDatabase('testdb')\n    .withUsername('test')\n    .withPassword('test')\n    .start();\n\n  redisContainer = await new GenericContainer('redis:7-alpine')\n    .withExposedPorts(6379)\n    .start();\n\n  // Set env vars для приложения\n  process.env.DATABASE_URL = pgContainer.getConnectionUri();\n  process.env.REDIS_URL = `redis://${redisContainer.getHost()}:${redisContainer.getMappedPort(6379)}`;\n}\n\nexport async function teardown() {\n  await pgContainer?.stop();\n  await redisContainer?.stop();\n}\n\n// tests/user.integration.test.ts\nimport { describe, it, expect, beforeAll, afterAll } from 'vitest';\nimport { setup, teardown } from './setup';\nimport { UserRepository } from '../src/repositories/user';\n\ndescribe('UserRepository Integration', () => {\n  let repo: UserRepository;\n\n  beforeAll(async () => {\n    await setup();\n    repo = new UserRepository();\n    await repo.migrate(); // run migrations\n  });\n\n  afterAll(async () => {\n    await teardown();\n  });\n\n  it('should create and find user', async () => {\n    const user = await repo.create({ email: 'test@example.com', name: 'Test' });\n    expect(user.id).toBeDefined();\n\n    const found = await repo.findById(user.id);\n    expect(found?.email).toBe('test@example.com');\n  });\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.3 Contract Testing (Pact)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Consumer test (frontend/client):\nimport { PactV3, MatchersV3 } from '@pact-foundation/pact';\nimport { UserApiClient } from './api/client';\n\nconst { like, eachLike } = MatchersV3;\n\nconst provider = new PactV3({\n  consumer: 'web-app',\n  provider: 'user-api',\n  dir: './pacts',\n});\n\ndescribe('UserApiClient contract', () => {\n  it('returns users list', async () => {\n    await provider\n      .given('users exist')\n      .uponReceiving('a request for users')\n      .withRequest({\n        method: 'GET',\n        path: '/api/users',\n        headers: { Accept: 'application/json' },\n      })\n      .willRespondWith({\n        status: 200,\n        headers: { 'Content-Type': 'application/json' },\n        body: eachLike({\n          id: like('123'),\n          name: like('John'),\n          email: like('john@example.com'),\n        }),\n      })\n      .executeTest(async (mockServer) => {\n        const client = new UserApiClient(mockServer.url);\n        const users = await client.getUsers();\n        expect(users).toHaveLength(1);\n        expect(users[0].name).toBe('John');\n      });\n  });\n});\n\n// Provider verification (backend):\n// npx @pact-foundation/pact-verifier-cli \\\n//   --provider-base-url=http://localhost:3000 \\\n//   --pact-urls=./pacts/web-app-user-api.json"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.4 E2E Testing (Playwright)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// tests/e2e/login.spec.ts\nimport { test, expect } from '@playwright/test';\n\ntest.describe('Authentication', () => {\n  test.beforeEach(async ({ page }) => {\n    await page.goto('/login');\n  });\n\n  test('successful login redirects to dashboard', async ({ page }) => {\n    await page.fill('[data-testid=\"email\"]', 'user@example.com');\n    await page.fill('[data-testid=\"password\"]', 'password123');\n    await page.click('[data-testid=\"submit\"]');\n\n    await expect(page).toHaveURL('/dashboard');\n    await expect(page.locator('[data-testid=\"welcome\"]')).toContainText('Welcome');\n  });\n\n  test('failed login shows error', async ({ page }) => {\n    await page.fill('[data-testid=\"email\"]', 'wrong@example.com');\n    await page.fill('[data-testid=\"password\"]', 'wrong');\n    await page.click('[data-testid=\"submit\"]');\n\n    await expect(page.locator('[data-testid=\"error\"]')).toContainText('Invalid credentials');\n  });\n});\n\n// Playwright config:\nimport { defineConfig, devices } from '@playwright/test';\n\nexport default defineConfig({\n  testDir: './tests/e2e',\n  fullyParallel: true,\n  retries: process.env.CI ? 2 : 0,\n  workers: process.env.CI ? 2 : undefined,\n  reporter: 'html',\n  use: {\n    baseURL: 'http://localhost:3000',\n    trace: 'on-first-retry',\n    screenshot: 'only-on-failure',\n  },\n  projects: [\n    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },\n    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },\n    { name: 'webkit', use: { ...devices['Desktop Safari'] } },\n    { name: 'Mobile Chrome', use: { ...devices['Pixel 5'] } },\n    { name: 'Mobile Safari', use: { ...devices['iPhone 12'] } },\n  ],\n  webServer: {\n    command: 'npm run start',\n    url: 'http://localhost:3000',\n    reuseExistingServer: !process.env.CI,\n  },\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. CI/CD Pipeline (GitHub Actions)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.1 Complete CI Pipeline"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.2 CD Pipeline (Deployment)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.3 Caching Strategies"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Monitoring & Observability"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.1 Three Pillars: Metrics, Logs, Traces"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Metrics (Prometheus format):\n// counter, gauge, histogram, summary\n\nimport { Counter, Gauge, Histogram, Registry } from 'prom-client';\n\nconst register = new Registry();\n\n// HTTP requests\nconst httpRequestsTotal = new Counter({\n  name: 'http_requests_total',\n  help: 'Total HTTP requests',\n  labelNames: ['method', 'path', 'status'],\n  registers: [register],\n});\n\nconst httpRequestDuration = new Histogram({\n  name: 'http_request_duration_seconds',\n  help: 'HTTP request latency',\n  labelNames: ['method', 'path'],\n  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5],\n  registers: [register],\n});\n\n// Business metrics\nconst activeUsers = new Gauge({\n  name: 'active_users',\n  help: 'Currently active users',\n  registers: [register],\n});\n\n// Middleware:\napp.use((req, res, next) => {\n  const start = process.hrtime.bigint();\n  res.on('finish', () => {\n    const duration = Number(process.hrtime.bigint() - start) / 1e9;\n    httpRequestsTotal.inc({ method: req.method, path: req.route?.path || req.path, status: res.statusCode });\n    httpRequestDuration.observe({ method: req.method, path: req.route?.path || req.path }, duration);\n  });\n  next();\n});\n\n// /metrics endpoint:\napp.get('/metrics', async (req, res) => {\n  res.set('Content-Type', register.contentType);\n  res.send(await register.metrics());\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.2 Structured Logging (Pino)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// logger.ts\nimport pino from 'pino';\n\nexport const logger = pino({\n  level: process.env.LOG_LEVEL || 'info',\n  formatters: {\n    level: (label) => ({ level: label }),\n  },\n  timestamp: pino.stdTimeFunctions.isoTime,\n  base: {\n    service: 'my-app',\n    version: process.env.APP_VERSION,\n    environment: process.env.NODE_ENV,\n  },\n  redact: {\n    paths: ['req.headers.authorization', 'req.body.password', '*.secrets'],\n    censor: '[REDACTED]',\n  },\n});\n\n// Child loggers с контекстом:\nconst childLogger = logger.child({ requestId: 'abc-123', userId: '456' });\nchildLogger.info({ action: 'user_login' }, 'User logged in');\n\n// Serialization для ошибок:\nlogger.error({ err: error }, 'Operation failed');\n// { \"level\": 50, \"err\": { \"type\": \"Error\", \"message\": \"...\", \"stack\": \"...\" } }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.3 Distributed Tracing (OpenTelemetry)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// tracing.ts\nimport { NodeSDK } from '@opentelemetry/sdk-node';\nimport { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';\nimport { JaegerExporter } from '@opentelemetry/exporter-jaeger';\nimport { Resource } from '@opentelemetry/resources';\nimport { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';\n\nconst sdk = new NodeSDK({\n  resource: new Resource({\n    [SemanticResourceAttributes.SERVICE_NAME]: 'my-app',\n    [SemanticResourceAttributes.SERVICE_VERSION]: process.env.APP_VERSION,\n    [SemanticResourceAttributes.DEPLOYMENT_ENVIRONMENT]: process.env.NODE_ENV,\n  }),\n  traceExporter: new JaegerExporter({\n    endpoint: process.env.JAEGER_ENDPOINT || 'http://localhost:14268/api/traces',\n  }),\n  instrumentations: [getNodeAutoInstrumentations()],\n});\n\nsdk.start();\n\n// Graceful shutdown:\nprocess.on('SIGTERM', () => {\n  sdk.shutdown().catch(console.error);\n});\n\n// Manual spans:\nimport { trace, SpanStatusCode } from '@opentelemetry/api';\n\nconst tracer = trace.getTracer('my-app');\n\nasync function handleRequest(req, res) {\n  return tracer.startActiveSpan('handleRequest', async (span) => {\n    try {\n      span.setAttribute('http.method', req.method);\n      span.setAttribute('http.url', req.url);\n      const result = await doWork(req);\n      span.setStatus({ code: SpanStatusCode.OK });\n      return result;\n    } catch (err) {\n      span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });\n      span.recordException(err);\n      throw err;\n    } finally {\n      span.end();\n    }\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.4 SLO / SLI / Error Budgets"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.5 Alerting Rules (Prometheus Alertmanager)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Architecture Patterns for Large Apps"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.1 Monorepo vs Polyrepo"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.2 Modular Architecture"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Domain-Driven Design structure:\nsrc/\n├── modules/\n│   ├── users/\n│   │   ├── domain/          # entities, value objects, domain events\n│   │   ├── application/     # use cases, commands, queries\n│   │   ├── infrastructure/  # repositories, external adapters\n│   │   ├── presentation/    # controllers, GraphQL resolvers\n│   │   └── tests/\n│   ├── orders/\n│   │   └── ...\n│   └── payments/\n│       └── ...\n├── shared/\n│   ├── kernel/              # base classes, interfaces\n│   ├── utils/               # pure functions\n│   └── types/               # shared types\n└── app.ts                   // composition root\n\n// Dependency Rule: inner layers не зависят от outer\n// domain → application → infrastructure → presentation"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.3 Feature Flags"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// feature-flags.ts\ninterface FeatureFlags {\n  newDashboard: boolean;\n  betaApi: boolean;\n  darkMode: boolean;\n}\n\nconst flags: FeatureFlags = {\n  newDashboard: process.env.FF_NEW_DASHBOARD === 'true',\n  betaApi: process.env.FF_BETA_API === 'true',\n  darkMode: true,\n};\n\n// Runtime evaluation (LaunchDarkly, Unleash, custom):\nasync function getFlags(user: User): Promise<FeatureFlags> {\n  const response = await fetch(`${FLAGS_SERVICE}/flags?userId=${user.id}`);\n  return response.json();\n}\n\n// Usage:\nif (flags.newDashboard) {\n  return <NewDashboard />;\n}\nreturn <LegacyDashboard />;"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Browser vs Node.js Engineering Differences"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Aspect",
+        "Browser (Frontend)",
+        "Node.js (Backend)"
+      ],
+      "rows": [
+        [
+          "**TypeScript**",
+          "Strict, DOM types",
+          "Strict, Node types (@types/node)"
+        ],
+        [
+          "**Tree Shaking**",
+          "Critical (bundle size)",
+          "Less critical (server)"
+        ],
+        [
+          "**Testing**",
+          "Unit + Component + E2E",
+          "Unit + Integration + Contract"
+        ],
+        [
+          "**CI**",
+          "Build + Preview deploy",
+          "Build + Test + Container build"
+        ],
+        [
+          "**CD**",
+          "Static hosting (Vercel, Netlify)",
+          "K8s, VMs, Serverless"
+        ],
+        [
+          "**Monitoring**",
+          "RUM (Real User Monitoring)",
+          "Infrastructure + APM"
+        ],
+        [
+          "**Logs**",
+          "Console, Sentry",
+          "Structured JSON, ELK/Datadog"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: TypeScript Advanced"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// 1. Создайте тип DeepPartial<T> — делает все свойства optional рекурсивно\n// 2. Создайте тип RequiredKeys<T> — возвращает union только required ключей\n// 3. Создайте тип AsyncReturnType<T> — для async функций\n// 4. Реализуйте типизированный EventEmitter с infer событиями"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Tree Shaking Audit"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Integration Test with Testcontainers"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// Напишите интеграционные тесты для:\n// - PostgreSQL repository (CRUD + transactions)\n// - Redis cache (TTL, invalidation)\n// - External API mock (WireMock или MSW)\n// Используйте vitest + testcontainers"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 4: CI/CD Pipeline"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Дополнительные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**TypeScript Handbook**: https://www.typescriptlang.org/docs/handbook/2/",
+        "**Type Challenges**: https://github.com/type-challenges/type-challenges",
+        "**Tree Shaking**: https://webpack.js.org/guides/tree-shaking/",
+        "**Testcontainers**: https://testcontainers.com/",
+        "**Pact Contract Testing**: https://docs.pact.io/",
+        "**Playwright**: https://playwright.dev/",
+        "**GitHub Actions**: https://docs.github.com/en/actions",
+        "**OpenTelemetry JS**: https://opentelemetry.io/docs/instrumentation/js/",
+        "**Prometheus Client**: https://github.com/siimon/prom-client",
+        "**SLO Handbook**: https://slo-handbook.com/"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Контрольные вопросы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "В чём разница между `T extends U ? X : Y` и `[T] extends [U] ? X : Y`?",
+        "Как `sideEffects: false` в package.json влияет на tree shaking?",
+        "Почему barrel files (`export * from ...`) вредят tree shaking?",
+        "Что такое Testcontainers и зачем они нужны вместо моков?",
+        "В чём разница между Contract Testing и E2E Testing?",
+        "Что такое Error Budget и как он связан с SLO/SLI?",
+        "Зачем нужны OpenTelemetry и distributed tracing?",
+        "Как feature flags помогают в CI/CD?"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "📝 Саммари"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Концепция",
+        "Ключевой момент"
+      ],
+      "rows": [
+        [
+          "**TypeScript Advanced**",
+          "Conditional types, infer, template literals, mapped types, branded types"
+        ],
+        [
+          "**Tree Shaking**",
+          "Только ES Modules; sideEffects: false; избегайте barrel files; анализируйте bundle"
+        ],
+        [
+          "**Integration Tests**",
+          "Testcontainers для реальных БД; Pact для contract testing; Playwright для E2E"
+        ],
+        [
+          "**CI/CD**",
+          "GitHub Actions: matrix, caching, artifacts; staging → production с approval"
+        ],
+        [
+          "**Observability**",
+          "Metrics (Prometheus), Logs (Pino), Traces (OpenTelemetry); SLO/SLI/Error Budgets"
+        ],
+        [
+          "**Architecture**",
+          "Monorepo (Nx/Turborepo); Modular/DDD; Feature flags для безопасных деплоев"
+        ]
+      ]
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 30
+}

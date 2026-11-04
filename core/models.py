@@ -107,7 +107,9 @@ class ActiveManager(models.Manager):
     """Manager that returns only non-deleted objects."""
 
     def get_queryset(self):
-        return super().get_queryset().filter(is_deleted=False)
+        if hasattr(self.model, 'is_deleted'):
+            return super().get_queryset().filter(is_deleted=False)
+        return super().get_queryset()
 
 
 class PublishedManager(models.Manager):

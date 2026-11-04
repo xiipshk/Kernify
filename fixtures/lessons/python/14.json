@@ -1,0 +1,357 @@
+{
+  "title": "Урок 2.3: Декораторы и замыкания — функции высшего порядка, functools, практические паттерны",
+  "slug": "dekoratory-i-zamykaniya-funktsii-vysshego-poryadka-functools-prakticheskie-patterny",
+  "short_description": "функции высшего порядка, functools, практические паттерны",
+  "goals": [
+    "Понимать замыкания (closures) и лексическое замыкание",
+    "Писать декораторы без аргументов и с аргументами",
+    "Использовать functools.wraps для сохранения метаданных",
+    "Знать стандартные декораторы: lru_cache, singledispatch, cached_property",
+    "Применять декораторы для логирования, тайминга, валидации, retry"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать замыкания (closures) и лексическое замыкание",
+        "Писать декораторы без аргументов и с аргументами",
+        "Использовать functools.wraps для сохранения метаданных",
+        "Знать стандартные декораторы: lru_cache, singledispatch, cached_property",
+        "Применять декораторы для логирования, тайминга, валидации, retry"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Функции — объекты первого класса"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def greet(name):\n    return f\"Привет, {name}!\"\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Замыкания (Closures)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое замыкание"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def outer(x):"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Лексическое замыкание — переменные ищутся по тексту кода"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def make_multiplier(factor):\n    def multiplier(n):\n        return n * factor  # factor захватывается по ссылке\n    return multiplier\n\ndouble = make_multiplier(2)\ntriple = make_multiplier(3)\n\nprint(double(5))  # 10\nprint(triple(5))  # 15"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "⚠️ Ловушка: позднее связывание в циклах"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Декораторы — базовый синтаксис"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Декоратор без аргументов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def my_decorator(func):\n    def wrapper(*args, **kwargs):\n        print(\"До вызова\")\n        result = func(*args, **kwargs)\n        print(\"После вызова\")\n        return result\n    return wrapper\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема: теряются метаданные функции"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@my_decorator\ndef greet(name):\n    \"\"\"Приветствует пользователя.\"\"\"\n    return f\"Привет, {name}!\"\n\nprint(greet.__name__)      # 'wrapper' — неверно!\nprint(greet.__doc__)       # None — неверно!\nprint(greet.__annotations__)  # {} — неверно!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Решение: functools.wraps"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import wraps\n\ndef my_decorator(func):\n    @wraps(func)\n    def wrapper(*args, **kwargs):\n        print(\"До вызова\")\n        result = func(*args, **kwargs)\n        print(\"После вызова\")\n        return result\n    return wrapper\n\n@my_decorator\ndef greet(name):\n    \"\"\"Приветствует пользователя.\"\"\"\n    return f\"Привет, {name}!\"\n\nprint(greet.__name__)   # 'greet' — верно!\nprint(greet.__doc__)    # 'Приветствует пользователя.' — верно!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Декораторы с аргументами"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def repeat(times):"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Удобный паттерн: декоратор с опциональными аргументами"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import wraps\nfrom typing import Callable, Optional\n\ndef debug(func: Optional[Callable] = None, *, prefix: str = \"DEBUG\"):\n    \"\"\"Можно использовать как @debug или @debug(prefix='INFO')\"\"\"\n\n    def decorator(f):\n        @wraps(f)\n        def wrapper(*args, **kwargs):\n            print(f\"[{prefix}] Вызов {f.__name__}({args}, {kwargs})\")\n            result = f(*args, **kwargs)\n            print(f\"[{prefix}] Результат: {result}\")\n            return result\n        return wrapper\n\n    if func is None:\n        return decorator  # @debug(prefix='...')\n    return decorator(func)  # @debug\n\n@debug\ndef add(a, b):\n    return a + b\n\n@debug(prefix=\"TRACE\")\ndef mul(a, b):\n    return a * b"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Классовые декораторы"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class CountCalls:\n    def __init__(self, func):\n        self.func = func\n        self.count = 0\n        wraps(func)(self)\n\n    def __call__(self, *args, **kwargs):\n        self.count += 1\n        print(f\"Вызов #{self.count}\")\n        return self.func(*args, **kwargs)\n\n@CountCalls\ndef say_hello(name):\n    return f\"Привет, {name}!\"\n\nsay_hello(\"Анна\")\nsay_hello(\"Борис\")\nprint(say_hello.count)  # 2"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. functools — стандартные декораторы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "lru_cache — мемоизация (кэширование результатов)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import lru_cache\n\n@lru_cache(maxsize=128)\ndef fibonacci(n):\n    if n < 2:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "cached_property — кэшируемое свойство (Python 3.8+)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import cached_property\nimport time\n\nclass DataProcessor:\n    def __init__(self, data):\n        self.data = data\n\n    @cached_property\n    def processed(self):\n        print(\"Тяжелая обработка...\")\n        time.sleep(1)\n        return [x * 2 for x in self.data]\n\ndp = DataProcessor([1, 2, 3])\nprint(dp.processed)  # Тяжелая обработка... [2, 4, 6]\nprint(dp.processed)  # [2, 4, 6] — мгновенно, без вычислений"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "singledispatch — перегрузка по типу первого аргумента"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import singledispatch\n\n@singledispatch\ndef serialize(obj):\n    raise NotImplementedError(f\"Нельзя сериализовать {type(obj)}\")\n\n@serialize.register\ndef _(obj: int):\n    return str(obj)\n\n@serialize.register\ndef _(obj: str):\n    return f'\"{obj}\"'\n\n@serialize.register\ndef _(obj: list):\n    return \"[\" + \", \".join(serialize(x) for x in obj) + \"]\"\n\nprint(serialize(42))        # \"42\"\nprint(serialize(\"hello\"))   # '\"hello\"'\nprint(serialize([1, \"a\"]))  # '[42, \"a\"]'"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "partial — частичное применение"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import partial\n\ndef power(base, exp):\n    return base ** 2\n\nsquare = partial(power, exp=2)\ncube = partial(power, exp=3)\n\nprint(square(5))  # 25\nprint(cube(3))    # 27"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "reduce — свертка"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import reduce\nimport operator\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практические паттерны декораторов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Таймер"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import wraps\nimport time\n\ndef timer(func):\n    @wraps(func)\n    def wrapper(*args, **kwargs):\n        start = time.perf_counter()\n        result = func(*args, **kwargs)\n        elapsed = time.perf_counter() - start\n        print(f\"{func.__name__} выполнен за {elapsed:.4f} сек\")\n        return result\n    return wrapper\n\n@timer\ndef slow_function():\n    time.sleep(0.5)\n    return \"Готово\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Логгер"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import logging\nfrom functools import wraps\n\nlogging.basicConfig(level=logging.INFO)\nlogger = logging.getLogger(__name__)\n\ndef log_calls(func):\n    @wraps(func)\n    def wrapper(*args, **kwargs):\n        logger.info(f\"Вызов {func.__name__} с args={args}, kwargs={kwargs}\")\n        try:\n            result = func(*args, **kwargs)\n            logger.info(f\"{func.__name__} вернул {result}\")\n            return result\n        except Exception as e:\n            logger.exception(f\"{func.__name__} выбросил {e}\")\n            raise\n    return wrapper"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Валидация аргументов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import wraps\nfrom inspect import signature\n\ndef validate(**validators):\n    def decorator(func):\n        sig = signature(func)\n        @wraps(func)\n        def wrapper(*args, **kwargs):\n            bound = sig.bind(*args, **kwargs)\n            bound.apply_defaults()\n\n            for param, validator in validators.items():\n                value = bound.arguments.get(param)\n                if value is not None and not validator(value):\n                    raise ValueError(f\"Валидация не пройдена для {param}={value}\")\n            return func(*args, **kwargs)\n        return wrapper\n    return decorator\n\n@validate(age=lambda x: x >= 0, name=lambda x: len(x) > 0)\ndef create_user(name, age):\n    return {\"name\": name, \"age\": age}\n\ncreate_user(\"Анна\", 25)   # OK\ncreate_user(\"\", 25)       # ValueError\ncreate_user(\"Борис\", -5)  # ValueError"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Retry с backoff"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import wraps\nimport time\nimport random\n\ndef retry(times=3, delay=1, backoff=2, exceptions=(Exception,)):\n    def decorator(func):\n        @wraps(func)\n        def wrapper(*args, **kwargs):\n            current_delay = delay\n            for attempt in range(1, times + 1):\n                try:\n                    return func(*args, **kwargs)\n                except exceptions as e:\n                    if attempt == times:\n                        raise\n                    print(f\"Попытка {attempt} не удалась: {e}. Жду {current_delay}с...\")\n                    time.sleep(current_delay)\n                    current_delay *= backoff\n        return wrapper\n    return decorator\n\n@retry(times=3, delay=0.5, exceptions=(ConnectionError,))\ndef unreliable_request():\n    if random.random() < 0.7:\n        raise ConnectionError(\"Сеть недоступна\")\n    return \"Успех!\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Singleton"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from functools import wraps\n\ndef singleton(cls):\n    instances = {}\n    @wraps(cls)\n    def get_instance(*args, **kwargs):\n        if cls not in instances:\n            instances[cls] = cls(*args, **kwargs)\n        return instances[cls]\n    return get_instance\n\n@singleton\nclass Database:\n    def __init__(self):\n        self.connected = False\n\ndb1 = Database()\ndb2 = Database()\nprint(db1 is db2)  # True"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Deprecated"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import warnings\nfrom functools import wraps\n\ndef deprecated(reason=\"\", version=\"next\"):\n    def decorator(func):\n        @wraps(func)\n        def wrapper(*args, **kwargs):\n            warnings.warn(\n                f\"{func.__name__} устарел (версия {version}): {reason}\",\n                DeprecationWarning,\n                stacklevel=2\n            )\n            return func(*args, **kwargs)\n        return wrapper\n    return decorator\n\n@deprecated(\"Используйте new_function()\", version=\"2.0\")\ndef old_function():\n    pass"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Стек декораторов (порядок применения)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@a\n@b\n@c\ndef f():\n    pass\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Забыли `@wraps` — теряется `__name__`, `__doc__`",
+          "Всегда используйте `@wraps(func)`"
+        ],
+        [
+          "Декоратор с аргументами: неверная вложенность",
+          "3 уровня: `args -> decorator -> wrapper`"
+        ],
+        [
+          "Модификация `args`/`kwargs` в декораторе",
+          "Работайте с копиями или документируйте side effects"
+        ],
+        [
+          "`lru_cache` на методах класса — утечка памяти",
+          "Используйте `cached_property` или `weakref`"
+        ],
+        [
+          "Замыкание в цикле — все функции видят последнее значение",
+          "`lambda i=i: i` или `functools.partial`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Docs: functools** — https://docs.python.org/3/library/functools.html",
+        "**Real Python: Primer on Python Decorators** — https://realpython.com/primer-on-python-decorators/",
+        "**Real Python: functools.lru_cache** — https://realpython.com/lru-cache-python/",
+        "**PEP 318 — Decorators** — https://peps.python.org/pep-0318/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Забыли `@wraps` — теряется `__name__`, `__doc__`",
+      "correct": "Всегда используйте `@wraps(func)`"
+    },
+    {
+      "mistake": "Декоратор с аргументами: неверная вложенность",
+      "correct": "3 уровня: `args -> decorator -> wrapper`"
+    },
+    {
+      "mistake": "Модификация `args`/`kwargs` в декораторе",
+      "correct": "Работайте с копиями или документируйте side effects"
+    },
+    {
+      "mistake": "`lru_cache` на методах класса — утечка памяти",
+      "correct": "Используйте `cached_property` или `weakref`"
+    },
+    {
+      "mistake": "Замыкание в цикле — все функции видят последнее значение",
+      "correct": "`lambda i=i: i` или `functools.partial`"
+    }
+  ],
+  "resources": [
+    "**Python Docs: functools** — https://docs.python.org/3/library/functools.html",
+    "**Real Python: Primer on Python Decorators** — https://realpython.com/primer-on-python-decorators/",
+    "**Real Python: functools.lru_cache** — https://realpython.com/lru-cache-python/",
+    "**PEP 318 — Decorators** — https://peps.python.org/pep-0318/"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 14
+}

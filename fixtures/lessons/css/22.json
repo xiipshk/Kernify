@@ -1,0 +1,685 @@
+{
+  "title": "Урок 22: Модель каскада — источники/приоритеты, слои, специфичность, наследование, сокращения, @scope",
+  "slug": "model-kaskada-istochnikiprioritety-sloi-spetsifichnost-nasledovanie-sokrascheniya-scope",
+  "short_description": "источники/приоритеты, слои, специфичность, наследование, сокращения, @scope",
+  "goals": [
+    "Понять модель каскада CSS: источники стилей и их приоритет",
+    "Изучить специфичность — как вычисляется вес селектора",
+    "Разобрать наследование — какие свойства наследуются, какие нет",
+    "Освоить каскадные слои (@layer) и @scope для управления приоритетом",
+    "Научиться использовать сокращения (shorthand) и корректно сбрасывать стили"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять модель каскада CSS: источники стилей и их приоритет",
+        "Изучить специфичность — как вычисляется вес селектора",
+        "Разобрать наследование — какие свойства наследуются, какие нет",
+        "Освоить каскадные слои (@layer) и @scope для управления приоритетом",
+        "Научиться использовать сокращения (shorthand) и корректно сбрасывать стили"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Модель каскада — откуда берутся стили"
+    },
+    {
+      "type": "text",
+      "content": "Каскад (C — в CSS) определяет, какое правило применяется, когда несколько селекторов нацелены на один элемент."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Источники стилей (от низкого к высокому приоритету)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Приоритет",
+        "Источник",
+        "Описание"
+      ],
+      "rows": [
+        [
+          "1 (низкий)",
+          "User Agent",
+          "Встроенные стили браузера (например, `display: block` для `div`)"
+        ],
+        [
+          "2",
+          "User",
+          "Пользовательские стили браузера (расширения, пользовательский CSS)"
+        ],
+        [
+          "3",
+          "Author",
+          "Авторские стили сайта (твои CSS-файлы)"
+        ],
+        [
+          "4",
+          "Author `!important`",
+          "Твои стили с `!important`"
+        ],
+        [
+          "5",
+          "User `!important`",
+          "Пользовательские стили с `!important`"
+        ],
+        [
+          "6 (высокий)",
+          "User Agent `!important`",
+          "Встроенные браузерные `!important`"
+        ]
+      ]
+    },
+    {
+      "type": "text",
+      "content": "Внутри одного источника приоритет определяется:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Порядком объявления (позже = выше)",
+        "Специфичностью селектора",
+        "Каскадными слоями (@layer)"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример каскада"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* User Agent: button { padding: 1px 6px; } */\n/* User:   button { background: #f0f0f0; } */\n/* Author: button { background: blue; color: white; padding: 0.5rem 1rem; } */\n/* Итог:   background: blue; color: white; padding: 0.5rem 1rem; */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Порядок объявления в одном источнике"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".btn { color: red; }   /* строка 10 */\n.btn { color: blue; }  /* строка 20 — выигрывает, так как позже */"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Специфичность — вес селектора"
+    },
+    {
+      "type": "text",
+      "content": "Специфичность считается как набор из четырёх чисел (A, B, C, D), сравниваемых слева направо."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Компоненты специфичности"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Компонент",
+        "Селекторы",
+        "Вес"
+      ],
+      "rows": [
+        [
+          "A",
+          "ID селекторы (`#header`)",
+          "(1,0,0,0) каждый"
+        ],
+        [
+          "B",
+          "Классы, атрибуты, псевдоклассы (`.btn`, `[type=\"text\"]`, `:hover`, `:not()`)",
+          "(0,1,0,0) каждый"
+        ],
+        [
+          "C",
+          "Элементы/теги, псевдоэлементы (`div`, `::before`, `p`)",
+          "(0,0,1,0) каждый"
+        ],
+        [
+          "D",
+          "Универсальный (`*`), комбинаторы (` `, `>`, `+`, `~`)",
+          "(0,0,0,1) — не влияет"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Примеры вычисления"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* (0,1,0,0) — один класс */\n.btn { color: red; }\n\n/* (0,2,0,0) — два класса */\n.btn.primary { color: blue; } /* выигрывает у .btn */\n\n/* (0,0,1,0) — один тег */\ndiv { color: green; }\n\n/* (0,1,1,0) — класс + тег */\n.btn div { color: orange; } /* выигрывает у .btn */\n\n/* (1,0,0,0) — ID */\n#header { color: purple; } /* выигрывает у любого количества классов */\n\n/* (1,1,0,0) — ID + класс */\n#header .btn { color: pink; } /* выигрывает у #header */\n\n/* (0,0,0,1) — универсальный */\n* { margin: 0; } /* ниже любого селектора */\n\n/* (0,1,0,1) — класс + универсальный (комбинатор не считается отдельно в современном подходе) */\n*.btn { } /* как .btn */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ":not(), :is(), :where() — особенности"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* :not() — считается специфичность самого селектора внутри, плюс сам :not() как класс (0,1,0,0) */\n.btn:not(.disabled) { color: red; }  /* (0,2,0,0) */\n\n/* :is() — specificity = максимум из селекторов внутри (как один класс) */\n:is(.btn, .card) { color: blue; } /* (0,1,0,0) */\n\n/* :where() — specificity = (0,0,0,0) — всегда ниже любого селектора */\n:where(.btn, .card) { color: green; } /* проигрывает любому */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Практическое правило"
+    },
+    {
+      "type": "text",
+      "content": "Держи специфичность низкой (максимум 0,2,0,0), чтобы легко переопределять стили. Избегай ID в стилях."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Наследование"
+    },
+    {
+      "type": "text",
+      "content": "Некоторые свойства автоматически наследуются от родителя к потомку, другие — нет."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Наследуемые свойства (по умолчанию)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`color`, `font-family`, `font-size`, `font-weight`, `font-style`, `line-height`",
+        "`text-align`, `text-indent`, `text-transform`, `letter-spacing`, `word-spacing`",
+        "`visibility`, `cursor`, `list-style`",
+        "`quotes`, `orphans`, `widows`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "body {\n  font-family: system-ui;\n  color: #1f2937;\n  line-height: 1.6;\n}\n/* Все потомки наследуют font-family, color, line-height */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "НЕ наследуемые свойства"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`margin`, `padding`, `border`, `outline`",
+        "`width`, `height`, `min-width`, `max-height`",
+        "`display`, `position`, `flex`, `grid`",
+        "`background`, `box-shadow`, `opacity`, `transform`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Принудительное наследование / сброс"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".child {\n  color: inherit;      /* явно наследовать цвет */\n  border: inherit;     /* наследовать границу (если наследуется) */\n  margin: initial;     /* сбросить к начальному значению */\n  padding: unset;      /* inherit если наследуется, иначе initial */\n  background: revert;  /* сбросить к user-agent стилям */\n  font-size: revert-layer; /* сбросить к значению из предыдущего каскадного слоя */\n  all: initial;        /* сбросить ВСЕ свойства к initial */\n  all: inherit;        /* унаследовать ВСЕ свойства */\n  all: unset;          /* inherited или initial в зависимости от свойства */\n  all: revert;         /* сбросить к user-agent */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "all — сброс всех свойств сразу"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".reset-button {\n  all: initial;           /* все свойства в initial */\n  /* потом заново задаём нужные */\n  padding: 0.5rem 1rem;\n  background: var(--color-primary);\n  color: white;\n  border: none;\n  border-radius: 0.5rem;\n  cursor: pointer;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Каскадные слои (@layer)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Зачем нужны слои"
+    },
+    {
+      "type": "text",
+      "content": "Слои позволяют управлять приоритетом стилей независимо от специфичности селектора. Стили в более позднем слое выигрывают у ранних."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Объявление порядка слоёв"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer reset, tokens, base, layout, components, utilities, overrides;\n/* reset — самый низкий приоритет, overrides — самый высокий */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование слоёв"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer reset {\n  * { margin: 0; padding: 0; box-sizing: border-box; }\n}\n\n@layer base {\n  body { font-family: system-ui; color: var(--color-text); }\n}\n\n@layer components {\n  .btn { background: blue; color: white; }\n}\n\n@layer utilities {\n  .text-center { text-align: center !important; }\n}\n\n@layer overrides {\n  .homepage .hero { background: red; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Вложенные слои"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer components {\n  @layer buttons {\n    .btn { background: blue; }\n  }\n\n  @layer cards {\n    .card { border: 1px solid #ccc; }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Специфичность внутри и между слоями"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer base, components;\n\n@layer base {\n  .btn { color: red; }     /* (0,1,0,0) в слое base */\n}\n\n@layer components {\n  .btn { color: blue; }    /* (0,1,0,0) в слое components — выигрывает, так как слой позднее */\n}"
+    },
+    {
+      "type": "text",
+      "content": "Даже если в <code>base</code> селектор более специфичный, слой <code>components</code> выиграет из-за порядка слоёв."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "!important и слои"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@layer base {\n  .btn { color: red !important; }\n}\n\n@layer components {\n  .btn { color: blue !important; } /* выигрывает из-за слоя */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. @scope — область действия селекторов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема, которую решает @scope"
+    },
+    {
+      "type": "text",
+      "content": "Селекторы могут «утекать» за пределы компонента. @scope ограничивает область, в которой селектор применяется."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@scope (верхняя_граница) to (нижняя_граница) {\n  селектор { свойство: значение; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Стили применяются только к элементам внутри .card, но не ниже .card__body */\n@scope (.card) to (.card__body) {\n  h2 {\n    color: oklch(0.21 0.006 285);\n    margin-bottom: 0.5rem;\n  }\n\n  p {\n    color: oklch(0.55 0.01 285);\n  }\n}"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"card\">\n  <h2>Заголовок — стили применятся</h2>\n  <p>Текст — стили применятся</p>\n\n  <div class=\"card__body\">\n    <h2>Заголовок — стили НЕ применятся (нижняя граница)</h2>\n    <p>Текст — стили НЕ применятся</p>\n  </div>\n\n  <section class=\"related\">\n    <h2>Заголовок — стили применятся (вне card__body, но внутри card)</h2>\n  </section>\n</div>\n\n<div class=\"unrelated\">\n  <h2>Заголовок — стили НЕ применятся (вне card)</h2>\n</div>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Scope без нижней границы"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@scope (.card) {\n  /* Применяется ко всем потомкам .card */\n  h2 { color: red; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Spezificity в @scope"
+    },
+    {
+      "type": "text",
+      "content": "Селекторы внутри @scope получают бонус к специфичности в зависимости от близости к границы scope (ближе к верхней границе = выше приоритет)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Поддержка @scope"
+    },
+    {
+      "type": "text",
+      "content": "Chrome 118+, Firefox 127+, Safari 17.4+. Для старых браузеров используй обёртку в класс компонента (БЭМ)."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Сокращения (shorthand) и сброс стилей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CSS Shorthand — сокращенная запись"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "margin / padding"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Четыре значения: top, right, bottom, left */\nmargin: 1rem 2rem 1.5rem 1rem;\n\n/* Три значения: top, horizontal, bottom */\nmargin: 1rem 2rem 1.5rem;\n\n/* Два значения: vertical, horizontal */\nmargin: 1rem 2rem;\n\n/* Одно значение: все стороны */\nmargin: 1rem;"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "border"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "border: 1px solid #e5e7eb;\n/* border-width border-style border-color */"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "font"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "font: italic small-caps 700 1.2rem/1.6 system-ui;\n/* style variant weight size/line-height family */"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "background"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "background: #2563eb url('bg.png') no-repeat center/cover fixed;\n/* color image repeat position size attachment origin clip */"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "list-style"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "list-style: disc inside url('marker.png');\n/* type position image */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Антипаттерн shorthand"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Плохо: border shorthand сбрасывает border-image */\n.card {\n  border-image: url('frame.png') 30 round;\n  border: 1px solid #000;  /* border-image сбрасывается в initial! */\n}\n\n/* Хорошо: задавай border-image после border, или используй долгое описание */\n.card {\n  border: 1px solid #000;\n  border-image: url('frame.png') 30 round;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сброс конкретных свойств"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".initial {\n  display: initial;   /* значение по умолчанию для свойства (inline для span, block для div) */\n  color: initial;     /* depends on property */\n}\n\n.inherit {\n  color: inherit;     /* значение от родителя */\n}\n\n.unset {\n  margin: unset;      /* inherit если наследуется, initial если нет */\n}\n\n.revert {\n  background: revert; /* сбросить к user-agent стилям браузера */\n}\n\n.revert-layer {\n  font-size: revert-layer; /* сбросить к предыдущему каскадному слою */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Комплексный пример: приоритеты в действии"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"card featured\">\n  <h2 class=\"card__title\">Заголовок</h2>\n  <p class=\"card__text\">Описание</p>\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Пользовательские стили (browser extension) */\n/* .card__title { color: green; }  hypothetical user style */\n\n/* Авторские стили — слой base */\n@layer base {\n  .card__title {\n    color: oklch(0.21 0.006 285);\n    font-size: 1.125rem;\n  }\n}\n\n/* Авторские стили — слой components */\n@layer components {\n  .card__title {\n    color: oklch(0.62 0.22 264);  /* выигрывает из-за слоя components, несмотря на одинаковую специфичность */\n  }\n\n  .featured .card__title {\n    color: oklch(0.65 0.22 20);   /* (0,2,0,0) — выигрывает по специфичности внутри слоя */\n  }\n}\n\n/* Сброс для конкретного случая */\n.card__title--reset {\n  all: initial;\n  color: inherit;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Итоговое применение (для `.featured .card__title`):"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Источник: Author (твои стили) — приоритет 3",
+        "Слой: components — приоритет выше base",
+        "Специфичность: (0,2,0,0) для `.featured .card__title` против (0,1,0,0) для `.card__title`",
+        "Результат: `color: oklch(0.65 0.22 20)` (красный от featured)"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Таблица приоритетов (справочник)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Уровень",
+        "Пример",
+        "Победитель если конфликтует с"
+      ],
+      "rows": [
+        [
+          "1",
+          "User Agent `div { color: black; }`",
+          "Проигрывает всему"
+        ],
+        [
+          "2",
+          "User стили браузера",
+          "Проигрывает Author"
+        ],
+        [
+          "3",
+          "Author `.btn { color: blue; }`",
+          "Проигрывает Author !important"
+        ],
+        [
+          "4",
+          "Author `!important` `.btn { color: red !important; }`",
+          "Проигрывает User !important"
+        ],
+        [
+          "5",
+          "User `!important`",
+          "Проигрывает User Agent !important"
+        ],
+        [
+          "6",
+          "User Agent `!important`",
+          "Высший приоритет"
+        ]
+      ]
+    },
+    {
+      "type": "text",
+      "content": "Внутри одного уровня:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Позже в коде = выше",
+        "Выше специфичность = выше",
+        "Позже слой @layer = выше"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Чек-лист понимания каскада"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Вопрос",
+        "Ответ"
+      ],
+      "rows": [
+        [
+          "Что wins: класс или ID?",
+          "ID (1,0,0,0)勝ど classe (0,1,0,0)"
+        ],
+        [
+          "Что wins: два одинаковых класса, но разные слои?",
+          "Поздний слой"
+        ],
+        [
+          "Что wins:later в коде или выше специфичность?",
+          "Сначала специфичность, потом порядок (в одном слое)"
+        ],
+        [
+          "Наследуется ли margin?",
+          "Нет"
+        ],
+        [
+          "Наследуется ли color?",
+          "Да"
+        ],
+        [
+          "Что делает `all: initial`?",
+          "Сбрасывает все свойства к initial"
+        ],
+        [
+          "Что делает `revert`?",
+          "Сбрасывает к user-agent стилям"
+        ],
+        [
+          "Когда @scope полезен?",
+          "Когда нужно ограничить действие селектора границей компонента"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практическое задание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 1: Специфичность в действии"
+    },
+    {
+      "type": "text",
+      "content": "Создай HTML с элементом, к которому применяются 5 разных селекторов с разной специфичностью. Предскажи, какой цвет победит, проверь в DevTools (Computed)."
+    },
+    {
+      "type": "text",
+      "content": "Селекторы:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`*` (универсальный)",
+        "`.title` (класс)",
+        "`h2.card__title` (тег + класс)",
+        "`#main .card__title` (ID + класс)",
+        "`.card__title { color: red !important; }`"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 2: Наследование"
+    },
+    {
+      "type": "text",
+      "content": "Создай <code>.card</code> с <code>color</code> и <code>font-family</code>. Добавь внутрь <code>.card<strong>title</code> с własnym <code>font-size</code>, но без <code>color</code> — проверь, что цвет наследуется. Добавь <code>.card</strong>price</code> с <code>margin</code> — проверь, что margin НЕ наследуется."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 3: Каскадные слои"
+    },
+    {
+      "type": "text",
+      "content": "Создай два слоя <code>@layer base, components</code>. В base задай <code>.btn { color: red; }</code>, в components — <code>.btn { color: blue; }</code>. Проверь, что синий gewinnt. Затем добавь <code>!important</code> в base — проверь, что красный всё равно проигрывает синему без !important в components (из-за слоя), но с !important в components синий выиграет."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 4: @scope"
+    },
+    {
+      "type": "text",
+      "content": "Создай <code>.card</code> с заголовками h2 внутри и вне <code>.card<strong>body</code>. Используй @scope, чтобы стили h2 применялись только внутри <code>.card</code>, но не внутри <code>.card</strong>body</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 5: Shorthand и сброс"
+    },
+    {
+      "type": "text",
+      "content": "Практикуй shorthand для margin, padding, border, font, background. Используй <code>all: initial</code> для сброса стиля кнопки, затем задай только нужные свойства."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 22
+}

@@ -1,0 +1,439 @@
+{
+  "title": "Урок 17: Browser APIs — DOM, Events, Fetch, Storage, URL/History, Forms",
+  "slug": "browser-apis-dom-events-fetch-storage-urlhistory-forms",
+  "short_description": "DOM, Events, Fetch, Storage, URL/History, Forms",
+  "goals": [
+    "Мастерски работать с DOM: селекторы, навигация, манипуляция, шаблоны",
+    "Понимать систему событий: фазы, делегирование, кастомные события",
+    "Использовать Fetch API для HTTP запросов с обработкой ошибок",
+    "Работать с локальным хранилищем: localStorage, sessionStorage, IndexedDB",
+    "Управлять URL и историей браузера: History API, URLSearchParams",
+    "Обрабатывать формы: FormData, валидация, отправка"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Мастерски работать с DOM: селекторы, навигация, манипуляция, шаблоны",
+        "Понимать систему событий: фазы, делегирование, кастомные события",
+        "Использовать Fetch API для HTTP запросов с обработкой ошибок",
+        "Работать с локальным хранилищем: localStorage, sessionStorage, IndexedDB",
+        "Управлять URL и историей браузера: History API, URLSearchParams",
+        "Обрабатывать формы: FormData, валидация, отправка"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. DOM — Document Object Model"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Селекторы и навигация"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Современные селекторы\nconst el = document.querySelector(\"#app\");           // первый подходящий\nconst els = document.querySelectorAll(\".item\");      // NodeList (не массив!)\nconst byId = document.getElementById(\"app\");         // быстрее для ID\nconst byClass = document.getElementsByClassName(\"item\"); // HTMLCollection (живой)\nconst byTag = document.getElementsByTagName(\"div\");  // HTMLCollection\n\n// Навигация\nel.parentElement;        // родитель\nel.children;             // дочерние элементы (HTMLCollection)\nel.firstElementChild;    // первый дочерний элемент\nel.lastElementChild;     // последний дочерний элемент\nel.previousElementSibling;\nel.nextElementSibling;\nel.closest(\".container\"); // ближайший родитель по селектору"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Манипуляция элементами"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Создание\nconst div = document.createElement(\"div\");\nconst text = document.createTextNode(\"Текст\");\nconst fragment = document.createDocumentFragment(); // для батча\n\n// Атрибуты\nel.setAttribute(\"data-id\", \"42\");\nel.getAttribute(\"data-id\");\nel.removeAttribute(\"data-id\");\nel.hasAttribute(\"data-id\");\n\n// data-* атрибуты\nel.dataset.id;           // \"42\"\nel.dataset.userName;     // camelCase -> kebab-case\n\n// Классы\nel.classList.add(\"active\", \"visible\");\nel.classList.remove(\"hidden\");\nel.classList.toggle(\"open\");\nel.classList.contains(\"active\"); // boolean\n\n// Стили\nel.style.color = \"red\";\nel.style.cssText = \"color: red; font-size: 14px\";\ngetComputedStyle(el).color; // реальные вычисленные стили\n\n// Вставка\nparent.append(child1, child2, \"text\");      // в конец (поддерживает строки)\nparent.prepend(child);                       // в начало\nparent.before(el);                           // перед родителем\nparent.after(el);                            // после родителя\nel.replaceWith(newEl);                       // замена\nel.remove();                                 // удаление"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Template и клонирование"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<template id=\"card-template\">\n  <article class=\"card\">\n    <h2></h2>\n    <p></p>\n  </article>\n</template>"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const template = document.querySelector(\"#card-template\");\nconst clone = template.content.cloneNode(true); // true = deep clone\nclone.querySelector(\"h2\").textContent = \"Заголовок\";\nclone.querySelector(\"p\").textContent = \"Описание\";\ndocument.body.append(clone);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Опасные методы (избегайте)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ innerHTML — XSS уязвимость!\nel.innerHTML = `<img src=x onerror=alert(1)>`;\n\n// ✅ Безопасно\nel.textContent = \"Текст\"; // экранирует HTML\n// или создавайте элементы через createElement"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Events — Система событий"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фазы события"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "CAPTURING PHASE (вниз) → TARGET PHASE → BUBBLING PHASE (вверх)\nwindow → document → html → body → ... → target → ... → body → html → document → window"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// addEventListener(type, listener, options)\nelement.addEventListener(\"click\", handler, {\n  capture: false,      // true = фаза перехвата (вверх)\n  once: false,         // true = удалить после первого вызова\n  passive: false,      // true = никогда не вызовет preventDefault()\n  signal: abortSignal  // AbortSignal для удаления\n});\n\n// Удаление\nelement.removeEventListener(\"click\", handler, { capture: false });"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Объект события"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "element.addEventListener(\"click\", (event) => {\n  event.type;           // \"click\"\n  event.target;         // элемент, на котором сработало событие\n  event.currentTarget;  // элемент, на котором висит слушатель (=== this)\n  event.eventPhase;     // 1=capturing, 2=target, 3=bubbling\n  event.bubbles;        // true/false\n  event.cancelable;     // true/false\n  event.preventDefault(); // отмена действия по умолчанию\n  event.stopPropagation(); // остановка всплытия\n  event.stopImmediatePropagation(); // остановка + другие слушатели на этом элементе\n  event.isTrusted;      // true = пользовательское действие, false = dispatchEvent\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Делегирование событий"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Вместо 100 слушателей на <li> — один на <ul>\nul.addEventListener(\"click\", (e) => {\n  const li = e.target.closest(\"li\");\n  if (!li || !ul.contains(li)) return; // клик не в li или не наш ul\n\n  const id = li.dataset.id;\n  console.log(\"Clicked item:\", id);\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кастомные события"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Создание и диспатч\nconst event = new CustomEvent(\"user-login\", {\n  detail: { userId: 42, role: \"admin\" },\n  bubbles: true,\n  cancelable: true\n});\ndocument.dispatchEvent(event);\n\n// Слушание\ndocument.addEventListener(\"user-login\", (e) => {\n  console.log(e.detail.userId); // 42\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Полезные события"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// DOM готов (до загрузки картинок/стилей)\ndocument.addEventListener(\"DOMContentLoaded\", () => {});\n\n// Полная загрузка\nwindow.addEventListener(\"load\", () => {});\n\n// Изменение размера (debounce!)\nwindow.addEventListener(\"resize\", debounce(() => {}, 150));\n\n// Скролл (passive для производительности)\nwindow.addEventListener(\"scroll\", () => {}, { passive: true });\n\n// Клавиатура\ninput.addEventListener(\"keydown\", (e) => {\n  if (e.key === \"Enter\" && !e.shiftKey) submit();\n});\n\n// Фокус\ninput.addEventListener(\"focusin\", () => {});  // пузырится\ninput.addEventListener(\"focus\", () => {});    // не пузырится\n\n// Видимость страницы\ndocument.addEventListener(\"visibilitychange\", () => {\n  if (document.hidden) pauseVideo();\n  else playVideo();\n});\n\n// Онлайн/офлайн\nwindow.addEventListener(\"online\", () => {});\nwindow.addEventListener(\"offline\", () => {});\n\n// Хранилище в другом окне\nwindow.addEventListener(\"storage\", (e) => {\n  console.log(e.key, e.oldValue, e.newValue, e.storageArea);\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Fetch API — HTTP запросы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// GET\nconst response = await fetch(\"/api/users\");\nif (!response.ok) throw new Error(`HTTP ${response.status}`);\nconst users = await response.json();\n\n// POST с JSON\nconst response = await fetch(\"/api/users\", {\n  method: \"POST\",\n  headers: {\n    \"Content-Type\": \"application/json\",\n    \"Accept\": \"application/json\"\n  },\n  body: JSON.stringify({ name: \"Анна\", email: \"anna@example.com\" })\n});\n\n// FormData (multipart/form-data)\nconst formData = new FormData();\nformData.append(\"name\", \"Анна\");\nformData.append(\"avatar\", fileInput.files[0]);\nconst response = await fetch(\"/api/upload\", {\n  method: \"POST\",\n  body: formData // Content-Type ставится автоматически с boundary\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Работа с ответом"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const response = await fetch(\"/api/data\");\n\n// Статус\nresponse.ok;        // true если 200-299\nresponse.status;    // 200, 404, 500...\nresponse.statusText; // \"OK\", \"Not Found\"\n\n// Заголовки\nresponse.headers.get(\"Content-Type\");\nresponse.headers.has(\"ETag\");\nfor (const [key, value] of response.headers) {}\n\n// Тело (только ОДИН раз!)\nconst text = await response.text();\nconst json = await response.json();\nconst blob = await response.blob();\nconst arrayBuffer = await response.arrayBuffer();\nconst formData = await response.formData();\n\n// Клонирование для повторного чтения\nconst clone = response.clone();\nconst json = await clone.json();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Обработка ошибок"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "async function fetchWithErrorHandling(url, options = {}) {\n  try {\n    const response = await fetch(url, options);\n\n    if (!response.ok) {\n      // HTTP ошибки (4xx, 5xx) не выбрасывают исключение!\n      const error = new Error(`HTTP ${response.status}: ${response.statusText}`);\n      error.status = response.status;\n      error.response = response;\n      throw error;\n    }\n\n    return await response.json();\n  } catch (err) {\n    if (err.name === \"TypeError\" && err.message.includes(\"fetch\")) {\n      // Сетевая ошибка (нет интернета, CORS, DNS)\n      throw new NetworkError(\"Нет соединения с сервером\");\n    }\n    throw err; // пробрасываем дальше\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Таймаут и отмена"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// AbortController (встроенный таймаут)\nconst controller = new AbortController();\nconst timeoutId = setTimeout(() => controller.abort(), 5000);\n\ntry {\n  const response = await fetch(\"/api/slow\", { signal: controller.signal });\n  clearTimeout(timeoutId);\n} catch (err) {\n  if (err.name === \"AbortError\") console.log(\"Таймаут!\");\n}\n\n// AbortSignal.timeout (ES2023)\nconst response = await fetch(\"/api/data\", {\n  signal: AbortSignal.timeout(5000)\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Параллельные и последовательные запросы"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Параллельно — быстро\nconst [users, posts, comments] = await Promise.all([\n  fetch(\"/api/users\").then(r => r.json()),\n  fetch(\"/api/posts\").then(r => r.json()),\n  fetch(\"/api/comments\").then(r => r.json())\n]);\n\n// Последовательно — когда нужен результат предыдущего\nconst user = await fetch(`/api/users/${id}`).then(r => r.json());\nconst posts = await fetch(`/api/users/${id}/posts`).then(r => r.json());\n\n// Promise.allSettled — не падает если один упал\nconst results = await Promise.allSettled(urls.map(u => fetch(u)));"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Storage — Хранилище в браузере"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "localStorage / sessionStorage"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// localStorage — постоянное, sessionStorage — до закрытия вкладки\nconst storage = localStorage; // или sessionStorage\n\nstorage.setItem(\"key\", \"value\");\nstorage.getItem(\"key\");        // \"value\" или null\nstorage.removeItem(\"key\");\nstorage.clear();               // всё\nstorage.key(0);                // имя ключа по индексу\nstorage.length;                // количество ключей\n\n// Только строки! Для объектов — JSON\nconst user = { name: \"Анна\", age: 25 };\nlocalStorage.setItem(\"user\", JSON.stringify(user));\nconst parsed = JSON.parse(localStorage.getItem(\"user\") || \"null\");"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "IndexedDB — полноценная БД"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Открытие БД\nconst request = indexedDB.open(\"MyDB\", 1);\n\nrequest.onupgradeneeded = (e) => {\n  const db = e.target.result;\n  if (!db.objectStoreNames.contains(\"users\")) {\n    const store = db.createObjectStore(\"users\", { keyPath: \"id\", autoIncrement: true });\n    store.createIndex(\"email\", \"email\", { unique: true });\n  }\n};\n\nrequest.onsuccess = (e) => {\n  const db = e.target.result;\n  // Работа с БД...\n};\n\n// Запись\nconst tx = db.transaction(\"users\", \"readwrite\");\nconst store = tx.objectStore(\"users\");\nstore.add({ name: \"Анна\", email: \"anna@example.com\" });\ntx.oncomplete = () => console.log(\"Готово\");\n\n// Чтение\nconst tx = db.transaction(\"users\", \"readonly\");\nconst store = tx.objectStore(\"users\");\nconst request = store.get(1);\nrequest.onsuccess = () => console.log(request.result);\n\n// Индексы\nconst index = store.index(\"email\");\nindex.get(\"anna@example.com\").onsuccess = (e) => console.log(e.target.result);\n\n// Курсоры для перебора\nstore.openCursor().onsuccess = (e) => {\n  const cursor = e.target.result;\n  if (cursor) {\n    console.log(cursor.value);\n    cursor.continue();\n  }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "idb — удобная обёртка (рекомендуется)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install idb"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "import { openDB } from \"idb\";\n\nconst db = await openDB(\"MyDB\", 1, {\n  upgrade(db) {\n    db.createObjectStore(\"users\", { keyPath: \"id\" });\n  }\n});\n\n// Простые операции\nawait db.add(\"users\", { id: 1, name: \"Анна\" });\nconst user = await db.get(\"users\", 1);\nawait db.put(\"users\", { id: 1, name: \"Анна\", age: 26 });\nawait db.delete(\"users\", 1);\nconst all = await db.getAll(\"users\");\nconst byEmail = await db.getAllFromIndex(\"users\", \"email\", \"anna@example.com\");\n\n// Транзакции\nconst tx = db.transaction(\"users\", \"readwrite\");\ntx.store.add({ id: 2, name: \"Борис\" });\nawait tx.done;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cookies (через document.cookie)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Установка\ndocument.cookie = \"session=abc123; max-age=3600; path=/; Secure; SameSite=Lax\";\n\n// Чтение (парсинг вручную)\nconst cookies = Object.fromEntries(\n  document.cookie.split(\"; \").map(c => c.split(\"=\").map(decodeURIComponent))\n);\n\n// HttpOnly cookies — недоступны из JS (безопасность!)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. URL и History API"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "URL и URLSearchParams"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Парсинг URL\nconst url = new URL(\"https://example.com/path?name=Анна&age=25#section\");\nurl.href;           // полный URL\nurl.origin;         // \"https://example.com\"\nurl.protocol;       // \"https:\"\nurl.host;           // \"example.com\"\nurl.hostname;       // \"example.com\"\nurl.port;           // \"\"\nurl.pathname;       // \"/path\"\nurl.search;         // \"?name=Анна&age=25\"\nurl.hash;           // \"#section\"\nurl.username;       // \"\"\nurl.password;       // \"\"\n\n// SearchParams\nurl.searchParams.get(\"name\");        // \"Анна\"\nurl.searchParams.getAll(\"tag\");      // [\"js\", \"ts\"]\nurl.searchParams.has(\"age\");         // true\nurl.searchParams.set(\"age\", \"26\");\nurl.searchParams.append(\"tag\", \"react\");\nurl.searchParams.delete(\"name\");\nurl.searchParams.toString();         // \"age=26&tag=js&tag=react&tag=react\"\n[...url.searchParams];               // [[\"age\", \"26\"], [\"tag\", \"js\"], ...]\n\n// Относительные URL\nconst relative = new URL(\"/api/users\", \"https://example.com\");\n// https://example.com/api/users"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "History API — SPA навигация"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Добавление записи (меняет URL без перезагрузки)\nhistory.pushState({ page: \"profile\", userId: 42 }, \"\", \"/profile/42\");\n\n// Замена текущей записи\nhistory.replaceState({ page: \"settings\" }, \"\", \"/settings\");\n\n// Навигация\nhistory.back();      // назад\nhistory.forward();   // вперёд\nhistory.go(-2);      // на 2 назад\nhistory.length;      // количество записей\nhistory.state;       // состояние текущей записи\n\n// Событие popstate — назад/вперёд браузера\nwindow.addEventListener(\"popstate\", (e) => {\n  console.log(e.state); // { page: \"profile\", userId: 42 }\n  renderPage(e.state);\n});\n\n// scrollRestoration\nhistory.scrollRestoration = \"manual\"; // \"auto\" по умолчанию"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Паттерн SPA роутера"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function router() {\n  const routes = {\n    \"/\": () => renderHome(),\n    \"/profile/:id\": (params) => renderProfile(params.id),\n    \"/settings\": () => renderSettings()\n  };\n\n  function match(path) {\n    for (const [pattern, handler] of Object.entries(routes)) {\n      const regex = patternToRegex(pattern);\n      const match = path.match(regex);\n      if (match) return { handler, params: match.groups };\n    }\n    return null;\n  }\n\n  function navigate(path) {\n    history.pushState({}, \"\", path);\n    const match = match(path);\n    if (match) match.handler(match.params);\n  }\n\n  window.addEventListener(\"popstate\", () => {\n    const match = match(location.pathname);\n    if (match) match.handler(match.params);\n  });\n\n  return { navigate };\n}\n\nconst { navigate } = router();\nnavigate(\"/profile/42\");"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Forms — Работа с формами"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "FormData"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<form id=\"login-form\">\n  <input name=\"email\" type=\"email\" required>\n  <input name=\"password\" type=\"password\" required>\n  <input name=\"avatar\" type=\"file\">\n  <button type=\"submit\">Войти</button>\n</form>"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const form = document.querySelector(\"#login-form\");\n\n// FormData из формы\nconst formData = new FormData(form);\n\n// Итерация\nfor (const [name, value] of formData) {\n  console.log(name, value); // value может быть File\n}\n\n// Получение значений\nformData.get(\"email\");           // первое значение\nformData.getAll(\"tags\");         // все значения для name=\"tags[]\"\nformData.has(\"email\");           // boolean\nformData.set(\"email\", \"new@x.y\"); // замена\nformData.append(\"tags\", \"js\");   // добавление\nformData.delete(\"tags\");\n\n// Файлы\nconst file = formData.get(\"avatar\"); // File объект\nfile.name;        // \"photo.jpg\"\nfile.type;        // \"image/jpeg\"\nfile.size;        // байты\nfile.lastModified; // timestamp\nconst text = await file.text();    // как текст\nconst arrayBuffer = await file.arrayBuffer();\nconst stream = file.stream();      // ReadableStream"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Валидация (HTML5 + JS)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<input name=\"email\" type=\"email\" required pattern=\"[^@]+@[^@]+\\.[^@]+\" title=\"Неверный email\">\n<input name=\"age\" type=\"number\" min=\"18\" max=\"100\" required>\n<textarea name=\"bio\" maxlength=\"500\" required></textarea>"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const form = document.querySelector(\"form\");\nconst email = form.elements.email;\n\n// Встроенная валидация\nemail.validity.valid;           // boolean\nemail.validity.valueMissing;    // required не заполнено\nemail.validity.typeMismatch;    // type=\"email\" но не email\nemail.validity.patternMismatch; // не проходит pattern\nemail.validity.tooLong;         // превышен maxlength\nemail.validity.rangeUnderflow;  // меньше min\nemail.validity.rangeOverflow;   // больше max\n\nemail.validationMessage;        // текст ошибки браузера\nemail.checkValidity();          // true/false, показывает UI ошибку\nemail.reportValidity();         // true/false, фокусирует и показывает UI\n\n// Кастомная валидация\nemail.setCustomValidity(\"\");    // сброс\nif (customCheck(email.value)) {\n  email.setCustomValidity(\"Этот email уже занят\");\n}\nemail.reportValidity();\n\n// Отключение браузерной валидации\nform.noValidate = true; // или <form novalidate>\n\n// События\nform.addEventListener(\"submit\", (e) => {\n  if (!form.checkValidity()) {\n    e.preventDefault(); // не отправлять\n    // показываем свои ошибки\n  }\n});\n\n// Событие invalid (на элементе, не пузырится!)\nemail.addEventListener(\"invalid\", (e) => {\n  e.preventDefault(); // отменяем браузерный UI\n  showCustomError(email, email.validationMessage);\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Отправка формы"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Обычный submit (перезагрузка страницы)\n<form action=\"/api/login\" method=\"POST\">...</form>\n\n// AJAX отправка\nform.addEventListener(\"submit\", async (e) => {\n  e.preventDefault();\n\n  const formData = new FormData(form);\n  const submitBtn = form.querySelector('[type=\"submit\"]');\n  submitBtn.disabled = true;\n\n  try {\n    const response = await fetch(form.action, {\n      method: form.method,\n      body: formData\n    });\n\n    if (response.ok) {\n      const data = await response.json();\n      showSuccess(data.message);\n    } else {\n      const error = await response.json();\n      showErrors(error.fields); // { email: \"Неверный формат\" }\n    }\n  } catch (err) {\n    showError(\"Сетевая ошибка\");\n  } finally {\n    submitBtn.disabled = false;\n  }\n});\n\n// Прогресс загрузки файлов\nconst xhr = new XMLHttpRequest(); // fetch не даёт progress!\nxhr.upload.addEventListener(\"progress\", (e) => {\n  if (e.lengthComputable) {\n    const percent = (e.loaded / e.total) * 100;\n    progressBar.value = percent;\n  }\n});\nxhr.open(\"POST\", \"/api/upload\");\nxhr.send(formData);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`el.innerHTML = userInput` — XSS",
+          "`el.textContent = userInput` или создавайте элементы через `createElement`"
+        ],
+        [
+          "`querySelectorAll` возвращает массив",
+          "Это `NodeList` — используйте `[...els]` или `Array.from(els)` для методов массива"
+        ],
+        [
+          "`addEventListener` без удаления — утечка памяти",
+          "Используйте `{ once: true }` или `AbortController` / `removeEventListener` в cleanup"
+        ],
+        [
+          "`fetch` не бросает на 404/500",
+          "Всегда проверяйте `response.ok` или `status`"
+        ],
+        [
+          "`await response.json()` дважды",
+          "Тело можно прочитать один раз — используйте `response.clone()`"
+        ],
+        [
+          "`localStorage` для больших данных (лимит ~5MB)",
+          "Используйте `IndexedDB` для больших объёмов"
+        ],
+        [
+          "`document.cookie` читает HttpOnly куки",
+          "HttpOnly куки недоступны из JS — это защита от XSS"
+        ],
+        [
+          "`history.pushState` не вызывает `popstate`",
+          "`popstate` срабатывает только на действия пользователя (back/forward)"
+        ],
+        [
+          "`form.submit()` не вызывает событие `submit`",
+          "Используйте `form.requestSubmit()` для триггера валидации и события"
+        ],
+        [
+          "`FormData` не отправляет пустые файлы",
+          "`<input type=\"file\" required>` — браузер сам заблокирует отправку"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`el.innerHTML = userInput` — XSS",
+      "correct": "`el.textContent = userInput` или создавайте элементы через `createElement`"
+    },
+    {
+      "mistake": "`querySelectorAll` возвращает массив",
+      "correct": "Это `NodeList` — используйте `[...els]` или `Array.from(els)` для методов массива"
+    },
+    {
+      "mistake": "`addEventListener` без удаления — утечка памяти",
+      "correct": "Используйте `{ once: true }` или `AbortController` / `removeEventListener` в cleanup"
+    },
+    {
+      "mistake": "`fetch` не бросает на 404/500",
+      "correct": "Всегда проверяйте `response.ok` или `status`"
+    },
+    {
+      "mistake": "`await response.json()` дважды",
+      "correct": "Тело можно прочитать один раз — используйте `response.clone()`"
+    },
+    {
+      "mistake": "`localStorage` для больших данных (лимит ~5MB)",
+      "correct": "Используйте `IndexedDB` для больших объёмов"
+    },
+    {
+      "mistake": "`document.cookie` читает HttpOnly куки",
+      "correct": "HttpOnly куки недоступны из JS — это защита от XSS"
+    },
+    {
+      "mistake": "`history.pushState` не вызывает `popstate`",
+      "correct": "`popstate` срабатывает только на действия пользователя (back/forward)"
+    },
+    {
+      "mistake": "`form.submit()` не вызывает событие `submit`",
+      "correct": "Используйте `form.requestSubmit()` для триггера валидации и события"
+    },
+    {
+      "mistake": "`FormData` не отправляет пустые файлы",
+      "correct": "`<input type=\"file\" required>` — браузер сам заблокирует отправку"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 17
+}

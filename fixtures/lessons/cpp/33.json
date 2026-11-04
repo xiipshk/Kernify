@@ -1,0 +1,515 @@
+{
+  "title": "Урок 33: Проект — library/system app with tests, performance measurements and docs",
+  "slug": "proekt-librarysystem-app-with-tests-performance-measurements-and-docs",
+  "short_description": "library/system app with tests, performance measurements and docs",
+  "goals": [
+    "Объединить все знания в комплексном проекте",
+    "Построить production-ready C++ библиотеку/приложение",
+    "Настроить полноценный CI/CD pipeline",
+    "Написать comprehensive тесты (unit, integration, property-based, fuzz)",
+    "Реализовать бенчмарки и performance regression testing",
+    "Создать документацию: API reference, guides, architecture docs"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Объединить все знания в комплексном проекте",
+        "Построить production-ready C++ библиотеку/приложение",
+        "Настроить полноценный CI/CD pipeline",
+        "Написать comprehensive тесты (unit, integration, property-based, fuzz)",
+        "Реализовать бенчмарки и performance regression testing",
+        "Создать документацию: API reference, guides, architecture docs"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Project Specification: High-Performance Log Processing Library"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Requirements"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Name: fastlog — high-throughput structured logging library\nTarget: C++20, cross-platform (Linux, Windows, macOS)\nPerformance: >10M logs/sec single-threaded, lock-free async backend\nFeatures:\n  - Structured logging (key-value pairs, not just strings)\n  - Multiple sinks: file, stdout, syslog, network, custom\n  - Log levels: trace, debug, info, warn, error, critical\n  - Filtering by level, module, custom predicates\n  - Formatters: JSON, text, binary (protobuf/flatbuffers)\n  - Async processing with bounded queue (backpressure)\n  - Zero-cost when disabled (compile-time level filtering)\n  - Thread-safe, lock-free hot path\n  - Header-only core + compiled backend"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Architecture Overview"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "fastlog/\n├── include/fastlog/           # Public API (header-only)\n│   ├── logger.hpp\n│   ├── record.hpp\n│   ├── sink.hpp\n│   ├── formatter.hpp\n│   ├── level.hpp\n│   └── macros.hpp             # FASTLOG_INFO(logger, \"msg\", kv...)\n├── src/                       # Implementation\n│   ├── backend/\n│   │   ├── async_worker.hpp/cpp\n│   │   ├── ring_buffer.hpp\n│   │   └── backpressure.hpp\n│   ├── sinks/\n│   │   ├── file_sink.cpp\n│   │   ├── stdout_sink.cpp\n│   │   ├── rotating_file_sink.cpp\n│   │   └── network_sink.cpp\n│   ├── formatters/\n│   │   ├── json_formatter.cpp\n│   │   ├── text_formatter.cpp\n│   │   └── binary_formatter.cpp\n│   └── detail/\n│       ├── thread_pool.hpp\n│       └── atomic_queue.hpp\n├── tests/\n│   ├── unit/\n│   ├── integration/\n│   ├── property/              # RapidCheck / libfuzzer\n│   ├── bench/\n│   └── fuzz/\n├── bench/                     # Google Benchmark suite\n├── docs/\n│   ├── api/                   # Doxygen + m.css\n│   ├── guides/\n│   └── architecture/\n├── examples/\n├── cmake/\n├── .github/workflows/\n├── CMakeLists.txt\n├── conanfile.py\n├── vcpkg.json\n└── README.md"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Core Implementation Highlights"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Zero-Cost Macros"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// macros.hpp\n#define FASTLOG_TRACE(logger, msg, ...) \\\n    FASTLOG_LOG(logger, fastlog::Level::Trace, msg, ##__VA_ARGS__)\n\n#define FASTLOG_LOG(logger, level, msg, ...) \\\n    do { \\\n        if (FASTLOG_LIKELY((logger).should_log(level))) { \\\n            (logger).log(level, __FILE__, __LINE__, __FUNCTION__, msg, ##__VA_ARGS__); \\\n        } \\\n    } while(0)\n\n// Compile-time level filtering\ntemplate <fastlog::Level GlobalLevel = fastlog::Level::Info>\nclass CompileTimeFilter {\npublic:\n    static constexpr bool should_log(fastlog::Level lvl) noexcept {\n        return lvl >= GlobalLevel;\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Lock-Free Ring Buffer (SPSC)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ring_buffer.hpp\ntemplate <typename T, size_t Capacity>\nclass RingBuffer {\n    static_assert((Capacity & (Capacity - 1)) == 0, \"Power of 2\");\n    alignas(64) std::atomic<size_t> head_{0};\n    alignas(64) std::atomic<size_t> tail_{0};\n    T buffer_[Capacity];\npublic:\n    bool try_push(T&& item) noexcept {\n        size_t head = head_.load(std::memory_order_relaxed);\n        size_t next = (head + 1) & (Capacity - 1);\n        if (next == tail_.load(std::memory_order_acquire)) return false;\n        buffer_[head] = std::move(item);\n        head_.store(next, std::memory_order_release);\n        return true;\n    }\n    bool try_pop(T& item) noexcept {\n        size_t tail = tail_.load(std::memory_order_relaxed);\n        if (tail == head_.load(std::memory_order_acquire)) return false;\n        item = std::move(buffer_[tail]);\n        tail_.store((tail + 1) & (Capacity - 1), std::memory_order_release);\n        return true;\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Async Worker with Backpressure"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// async_worker.hpp\nclass AsyncWorker {\n    RingBuffer<LogRecord, 65536> queue_;\n    std::thread worker_;\n    std::atomic<bool> running_{true};\n    std::unique_ptr<Sink> sink_;\n    std::unique_ptr<Formatter> formatter_;\n    BackpressurePolicy policy_;\n\n    void run() {\n        LogRecord record;\n        while (running_.load(std::memory_order_acquire)) {\n            if (queue_.try_pop(record)) {\n                auto formatted = formatter_->format(record);\n                sink_->write(formatted);\n            } else {\n                std::this_thread::yield(); // или wait/notify\n            }\n        }\n        // Drain remaining\n        while (queue_.try_pop(record)) {\n            sink_->write(formatter_->format(record));\n        }\n    }\npublic:\n    bool try_log(LogRecord&& record) {\n        if (!queue_.try_push(std::move(record))) {\n            return policy_.handle_overflow(*this, std::move(record));\n        }\n        return true;\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Testing Strategy"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unit Tests (Catch2 / GoogleTest)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// tests/unit/level_test.cpp\n#include <catch2/catch_test_macros.hpp>\n#include <fastlog/level.hpp>\n\nTEST_CASE(\"Level comparison\") {\n    using fastlog::Level;\n    REQUIRE(Level::Trace < Level::Debug);\n    REQUIRE(Level::Error > Level::Warn);\n    REQUIRE(Level::Critical == Level::Critical);\n}\n\nTEST_CASE(\"Level from string\") {\n    REQUIRE(fastlog::level_from_string(\"debug\") == Level::Debug);\n    REQUIRE(fastlog::level_from_string(\"INVALID\") == Level::Info); // default\n}"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// tests/unit/ring_buffer_test.cpp\nTEST_CASE(\"RingBuffer SPSC\") {\n    RingBuffer<int, 1024> rb;\n    REQUIRE(rb.try_push(42));\n    int val;\n    REQUIRE(rb.try_pop(val));\n    REQUIRE(val == 42);\n    REQUIRE_FALSE(rb.try_pop(val));\n}\n\nTEST_CASE(\"RingBuffer overflow\") {\n    RingBuffer<int, 4> rb;\n    for (int i = 0; i < 4; ++i) REQUIRE(rb.try_push(i));\n    REQUIRE_FALSE(rb.try_push(99)); // full\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Property-Based Testing (RapidCheck)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// tests/property/formatter_property.cpp\n#include <rapidcheck/catch.h>\n#include <fastlog/formatters/json_formatter.hpp>\n\nPROP(\"JSON formatter roundtrip\") {\n    auto record = *rc::gen::arbitrary<LogRecord>();\n    std::string json = JsonFormatter::format(record);\n    auto parsed = JsonFormatter::parse(json);\n    RC_ASSERT(parsed.has_value());\n    RC_ASSERT(parsed->message == record.message);\n    RC_ASSERT(parsed->level == record.level);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Integration Tests"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// tests/integration/end_to_end_test.cpp\nTEST_CASE(\"Full logging pipeline\") {\n    auto sink = std::make_shared<MemorySink>();\n    auto logger = fastlog::Logger::create(\"test\")\n        .sink(sink)\n        .level(fastlog::Level::Debug)\n        .build();\n\n    FASTLOG_INFO(logger, \"Hello {}\", \"world\");\n    FASTLOG_DEBUG(logger, \"Debug {}\", 42);\n\n    sink->flush();\n    auto logs = sink->get_logs();\n    REQUIRE(logs.size() == 2);\n    REQUIRE(logs[0].message == \"Hello world\");\n    REQUIRE(logs[1].message == \"Debug 42\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Fuzzing Targets"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// tests/fuzz/fuzz_formatter.cpp\nextern \"C\" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {\n    std::string_view input(reinterpret_cast<const char*>(data), size);\n    fastlog::TextFormatter::format(input); // не должно падать\n    fastlog::JsonFormatter::format(input);\n    return 0;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Benchmarking & Performance Regression"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Google Benchmark Suite"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// bench/log_throughput.cpp\n#include <benchmark/benchmark.h>\n#include <fastlog/logger.hpp>\n\nstatic void BM_SyncLogging(benchmark::State& state) {\n    auto logger = fastlog::Logger::create(\"bench\")\n        .sink(std::make_shared<NullSink>())\n        .level(fastlog::Level::Info)\n        .build();\n\n    for (auto _ : state) {\n        FASTLOG_INFO(logger, \"Message {}\", \"with args\");\n    }\n    state.SetItemsProcessed(state.iterations());\n}\nBENCHMARK(BM_SyncLogging);\n\nstatic void BM_AsyncLogging(benchmark::State& state) {\n    auto logger = fastlog::Logger::create(\"bench\")\n        .async(65536)\n        .sink(std::make_shared<NullSink>())\n        .level(fastlog::Level::Info)\n        .build();\n\n    for (auto _ : state) {\n        FASTLOG_INFO(logger, \"Message {}\", \"with args\");\n    }\n    state.SetItemsProcessed(state.iterations());\n}\nBENCHMARK(BM_AsyncLogging);\n\nstatic void BM_DisabledLogging(benchmark::State& state) {\n    auto logger = fastlog::Logger::create(\"bench\")\n        .level(fastlog::Level::Warn)  // Info disabled\n        .build();\n\n    for (auto _ : state) {\n        FASTLOG_INFO(logger, \"This should be no-op\");\n    }\n    state.SetItemsProcessed(state.iterations());\n}\nBENCHMARK(BM_DisabledLogging);\n\nBENCHMARK_MAIN();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Performance Regression in CI"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Documentation"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Doxygen + m.css"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// include/fastlog/logger.hpp\n/**\n * @file logger.hpp\n * @brief Main logger interface\n */\n\nnamespace fastlog {\n\n/**\n * @class Logger\n * @brief Thread-safe structured logger with async support\n *\n * Example usage:\n * @code\n * auto logger = Logger::create(\"myapp\")\n *     .async(65536)\n *     .sink(std::make_shared<FileSink>(\"app.log\"))\n *     .level(Level::Info)\n *     .build();\n *\n * FASTLOG_INFO(logger, \"User logged in\", \"user_id\", 42);\n * @endcode\n */\nclass Logger {\npublic:\n    /**\n     * @brief Create logger builder\n     * @param name Logger name (used in output)\n     * @return LoggerBuilder for fluent configuration\n     */\n    static LoggerBuilder create(std::string_view name);\n\n    /**\n     * @brief Log a message at specified level\n     * @tparam Args Key-value pairs (key, value, key, value...)\n     * @param level Log level\n     * @param file Source file (__FILE__)\n     * @param line Source line (__LINE__)\n     * @param func Source function (__FUNCTION__)\n     * @param message Format string\n     * @param args Key-value arguments\n     */\n    template <typename... Args>\n    void log(Level level, const char* file, int line, const char* func,\n             std::string_view message, Args&&... args);\n};\n\n} // namespace fastlog"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Markdown Guides"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "docs/\n├── guides/\n│   ├── getting-started.md\n│   ├── configuration.md\n│   ├── async-logging.md\n│   ├── custom-sinks.md\n│   ├── custom-formatters.md\n│   ├── performance-tuning.md\n│   └── migration-v1-to-v2.md\n├── architecture/\n│   ├── overview.md\n│   ├── thread-model.md\n│   ├── memory-model.md\n│   └── extension-points.md\n└── api/\n    └── (generated by Doxygen)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "README.md"
+    },
+    {
+      "type": "code",
+      "language": "markdown",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Features"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Fast**: >10M logs/sec single-threaded",
+        "**Structured**: Key-value pairs, not strings",
+        "**Async**: Lock-free ring buffer, backpressure",
+        "**Zero-cost**: Compile-time level filtering",
+        "**Portable**: Linux, Windows, macOS"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Quick Start"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <fastlog/logger.hpp>\n#include <fastlog/sinks/file_sink.hpp>\n\nint main() {\n    auto logger = fastlog::Logger::create(\"app\")\n        .sink(std::make_shared<fastlog::FileSink>(\"app.log\"))\n        .level(fastlog::Level::Info)\n        .build();\n\n    FASTLOG_INFO(logger, \"Hello fastlog!\", \"version\", \"1.0.0\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Benchmarks"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Scenario",
+        "Throughput"
+      ],
+      "rows": [
+        [
+          "Sync (disabled)",
+          "2.5B ops/sec"
+        ],
+        [
+          "Sync (enabled)",
+          "15M logs/sec"
+        ],
+        [
+          "Async",
+          "25M logs/sec"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Install"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "vcpkg install fastlog"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "License"
+    },
+    {
+      "type": "text",
+      "content": "MIT"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. CI/CD Pipeline"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GitHub Actions Full Pipeline"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Packaging & Distribution"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "vcpkg Port"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Conan v2 Recipe"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Build the Library"
+    },
+    {
+      "type": "text",
+      "content": "Создайте проект <code>fastlog</code> по спецификации выше. Реализуйте:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Header-only public API",
+        "Lock-free ring buffer",
+        "Async worker с backpressure",
+        "3 sinks (file, stdout, rotating file)",
+        "2 formatters (JSON, text)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Test Coverage"
+    },
+    {
+      "type": "text",
+      "content": "Настройте тестирование:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Unit tests > 90% coverage (lcov/llvm-cov)",
+        "Property-based tests для форматтеров",
+        "Integration tests для полного pipeline",
+        "Fuzzing targets для парсеров/форматтеров",
+        "Запуск в CI на каждой PR"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Benchmark Suite"
+    },
+    {
+      "type": "text",
+      "content": "Напишите бенчмарки:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Sync vs async throughput",
+        "Latency percentiles (p50, p99, p999)",
+        "Memory allocation tracking",
+        "Scalability: 1..N threads",
+        "Regression detection в CI"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Documentation"
+    },
+    {
+      "type": "text",
+      "content": "Сгенерируйте:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "API reference (Doxygen + современная тема)",
+        "Getting started guide",
+        "Architecture documentation",
+        "Migration guide",
+        "Примеры для всех фич"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Release Automation"
+    },
+    {
+      "type": "text",
+      "content": "Настройте:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Semantic versioning (Conventional Commits)",
+        "Автоматические changelog",
+        "GitHub Release с artifacts",
+        "Публикация в vcpkg / Conan Center Index",
+        "SBOM генерация"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Production Hardening"
+    },
+    {
+      "type": "text",
+      "content": "Добавьте в проект:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Structured logging для самого fastlog (dogfooding)",
+        "Health checks / metrics export (Prometheus)",
+        "Graceful shutdown с drain",
+        "Configuration validation",
+        "Security audit (sanitizers, fuzzing, static analysis)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Итоговый чеклист проекта"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] CMake 3.20+ с modern targets",
+        "[ ] C++20 minimum, optional C++23 features",
+        "[ ] Header-only public API + compiled backend",
+        "[ ] Zero-cost disabled logging",
+        "[ ] Lock-free SPSC ring buffer",
+        "[ ] Async worker с backpressure policies",
+        "[ ] Multiple sinks + formatters",
+        "[ ] Unit tests (Catch2/GTest) > 90% coverage",
+        "[ ] Property-based tests (RapidCheck)",
+        "[ ] Fuzzing targets (libFuzzer)",
+        "[ ] Benchmarks (Google Benchmark) + CI regression",
+        "[ ] Documentation (Doxygen + guides)",
+        "[ ] CI/CD (GitHub Actions): Linux/Win/macOS × GCC/Clang/MSVC",
+        "[ ] Sanitizers в CI (ASan, UBSan, TSan)",
+        "[ ] Static analysis (clang-tidy, cppcheck)",
+        "[ ] Packaging: vcpkg, Conan, CMake Config",
+        "[ ] Semantic versioning, ABI stability policy",
+        "[ ] SBOM, reproducible builds",
+        "[ ] Examples для быстрого старта"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы для проекта"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Catch2** — https://github.com/catchorg/Catch2",
+        "**Google Benchmark** — https://github.com/google/benchmark",
+        "**RapidCheck** — https://github.com/emil-e/rapidcheck",
+        "**libFuzzer** — https://llvm.org/docs/LibFuzzer.html",
+        "**Doxygen + m.css** — https://mcss.mosra.cz/documentation/doxygen/",
+        "**GitHub Actions** — https://docs.github.com/en/actions",
+        "**vcpkg Ports** — https://github.com/microsoft/vcpkg/tree/master/ports",
+        "**Conan Center Index** — https://github.com/conan-io/conan-center-index",
+        "**Semantic Release** — https://github.com/semantic-release/semantic-release"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [
+    "**Catch2** — https://github.com/catchorg/Catch2",
+    "**Google Benchmark** — https://github.com/google/benchmark",
+    "**RapidCheck** — https://github.com/emil-e/rapidcheck",
+    "**libFuzzer** — https://llvm.org/docs/LibFuzzer.html",
+    "**Doxygen + m.css** — https://mcss.mosra.cz/documentation/doxygen/",
+    "**GitHub Actions** — https://docs.github.com/en/actions",
+    "**vcpkg Ports** — https://github.com/microsoft/vcpkg/tree/master/ports",
+    "**Conan Center Index** — https://github.com/conan-io/conan-center-index",
+    "**Semantic Release** — https://github.com/semantic-release/semantic-release"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 33
+}

@@ -1,0 +1,467 @@
+{
+  "title": "Урок 8: Обработка ошибок",
+  "slug": "obrabotka-oshibok",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Два типа ошибок в Rust"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Невосстанавливаемые (Unrecoverable) — `panic!`"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Баги в коде: выход за границы массива, деление на ноль, логические ошибки",
+        "Программа должна остановиться",
+        "`panic!` разворачивает стек (unwind) или прерывает (abort)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let v = vec![1, 2, 3];\n    // v[99]; // PANIC: index out of bounds\n\n    // Явный panic\n    // panic!(\"Something went wrong!\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Восстанавливаемые (Recoverable) — `Result<T, E>`"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Ожидаемые ошибки: файл не найден, парсинг, сеть, ввод пользователя",
+        "Программа может обработать и продолжить"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::fs::File;\n\nfn main() {\n    let f = File::open(\"hello.txt\");\n    let f = match f {\n        Ok(file) => file,\n        Err(error) => {\n            panic!(\"Problem opening file: {:?}\", error);\n        }\n    };\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. `Result<T, E>` детально"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Определение"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "enum Result<T, E> {\n    Ok(T),\n    Err(E),\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основные методы"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let ok: Result<i32, &str> = Ok(5);\n    let err: Result<i32, &str> = Err(\"error\");\n\n    // Проверка\n    println!(\"is_ok: {}\", ok.is_ok());   // true\n    println!(\"is_err: {}\", err.is_err()); // true\n\n    // Извлечение (опасно — PANIC при Err/None)\n    println!(\"unwrap: {}\", ok.unwrap());\n    println!(\"expect: {}\", ok.expect(\"must exist\"));\n\n    // Безопасные альтернативы\n    println!(\"unwrap_or: {}\", err.unwrap_or(0));\n    println!(\"unwrap_or_else: {}\", err.unwrap_or_else(|| 42));\n\n    // Трансформация\n    println!(\"map: {:?}\", ok.map(|x| x * 2));           // Ok(10)\n    println!(\"map_err: {:?}\", err.map_err(|e| e.len())); // Err(5)\n\n    // Цепочки\n    println!(\"and_then: {:?}\", ok.and_then(|x| Ok(x + 1))); // Ok(6)\n    println!(\"or_else: {:?}\", err.or_else(|_| Ok(10)));     // Ok(10)\n\n    // Итераторы\n    let results = vec![Ok(1), Err(\"e\"), Ok(3)];\n    let values: Vec<_> = results.into_iter().filter_map(|r| r.ok()).collect();\n    println!(\"{:?}\", values); // [1, 3]\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Оператор `?` — распространение ошибки"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::fs::File;\nuse std::io::{self, Read};\n\nfn read_username() -> Result<String, io::Error> {\n    let mut file = File::open(\"config.txt\")?; // Возвращает Err если ошибка\n    let mut username = String::new();\n    file.read_to_string(&mut username)?;      // Возвращает Err если ошибка\n    Ok(username)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Эквивалент без `?`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn read_username_verbose() -> Result<String, io::Error> {\n    let mut file = match File::open(\"config.txt\") {\n        Ok(f) => f,\n        Err(e) => return Err(e),\n    };\n    let mut username = String::new();\n    match file.read_to_string(&mut username) {\n        Ok(_) => Ok(username),\n        Err(e) => Err(e),\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`?` с `Option`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn first_char(s: &str) -> Option<char> {\n    s.chars().next()? // None если строка пуста\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`?` в `main` (Rust 1.26+)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() -> Result<(), Box<dyn std::error::Error>> {\n    let f = File::open(\"hello.txt\")?;\n    Ok(())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Создание собственных типов ошибок"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простой enum ошибки"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[derive(Debug)]\nenum AppError {\n    NotFound(String),\n    PermissionDenied,\n    Io(std::io::Error),\n    Parse(std::num::ParseIntError),\n}\n\nfn find_user(id: u32) -> Result<String, AppError> {\n    if id == 0 {\n        return Err(AppError::NotFound(\"User not found\".into()));\n    }\n    Ok(\"Alice\".into())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Реализация `std::error::Error`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::fmt;\nuse std::error::Error;\n\n#[derive(Debug)]\nstruct MyError {\n    message: String,\n    code: i32,\n}\n\nimpl fmt::Display for MyError {\n    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {\n        write!(f, \"[Code {}] {}\", self.code, self.message)\n    }\n}\n\nimpl Error for MyError {\n    fn source(&self) -> Option<&(dyn Error + 'static)> {\n        None // Нет вложенной ошибки\n    }\n}\n\nfn risky() -> Result<(), MyError> {\n    Err(MyError { message: \"oops\".into(), code: 42 })\n}\n\nfn main() {\n    match risky() {\n        Err(e) => eprintln!(\"Error: {}\", e), // Display\n        Ok(_) => (),\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`From` для автоматического конвертирования"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "impl From<std::io::Error> for AppError {\n    fn from(err: std::io::Error) -> Self {\n        AppError::Io(err)\n    }\n}\n\nimpl From<std::num::ParseIntError> for AppError {\n    fn from(err: std::num::ParseIntError) -> Self {\n        AppError::Parse(err)\n    }\n}\n\n// Теперь ? работает автоматически!\nfn parse_config() -> Result<i32, AppError> {\n    let content = std::fs::read_to_string(\"config.txt\")?; // io::Error -> AppError\n    let num = content.trim().parse::<i32>()?;              // ParseIntError -> AppError\n    Ok(num)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Библиотеки для ошибок: `thiserror` и `anyhow`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`thiserror` — для библиотек (derive Error)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`anyhow` — для приложений (упрощённая обработка)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Стратегии обработки ошибок"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Стратегия",
+        "Когда использовать",
+        "Пример"
+      ],
+      "rows": [
+        [
+          "`match` / `if let`",
+          "Нужна разная логика для Ok/Err",
+          "UI, retry logic"
+        ],
+        [
+          "`unwrap_or` / `unwrap_or_else`",
+          "Есть разумное значение по умолчанию",
+          "Конфиг с дефолтами"
+        ],
+        [
+          "`expect`",
+          "Ошибка = баг, сообщение для разработчика",
+          "Внутренние инварианты"
+        ],
+        [
+          "`?`",
+          "Проброс наверх",
+          "Большинство функций"
+        ],
+        [
+          "`map_err` / `map`",
+          "Трансформация ошибки/значения",
+          "Адаптация типов"
+        ],
+        [
+          "`and_then` / `or_else`",
+          "Цепочки с изменением типа ошибки",
+          "Комбинаторы"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. `panic!` хуки и настройка"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пользовательский panic hook"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::panic;\n\nfn main() {\n    panic::set_hook(Box::new(|info| {\n        eprintln!(\"Custom panic: {}\", info);\n        // Логирование, отправка в Sentry и т.д.\n    }));\n\n    panic!(\"Intentional panic!\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::panic::catch_unwind` — перехват паники"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::panic;\n\nfn main() {\n    let result = panic::catch_unwind(|| {\n        panic!(\"boom!\");\n    });\n\n    match result {\n        Ok(_) => println!(\"No panic\"),\n        Err(_) => println!(\"Caught panic!\"),\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Профиль `panic = \"abort\"` (Cargo.toml)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[profile.release]\npanic = \"abort\" # Меньший бинарник, быстрее, нет unwind"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Собственный тип ошибки с `thiserror`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use thiserror::Error;\n\n#[derive(Error, Debug)]\nenum CalculatorError {\n    #[error(\"division by zero\")]\n    DivByZero,\n    #[error(\"overflow: {0} * {1}\")]\n    Overflow(i64, i64),\n    #[error(\"invalid input: {0}\")]\n    InvalidInput(String),\n}\n\nfn safe_div(a: i64, b: i64) -> Result<i64, CalculatorError> {\n    if b == 0 { return Err(CalculatorError::DivByZero); }\n    a.checked_div(b).ok_or(CalculatorError::Overflow(a, b))\n}\n\nfn safe_mul(a: i64, b: i64) -> Result<i64, CalculatorError> {\n    a.checked_mul(b).ok_or(CalculatorError::Overflow(a, b))\n}\n\nfn main() {\n    println!(\"{:?}\", safe_div(10, 0));\n    println!(\"{:?}\", safe_mul(1_000_000_000, 1_000_000_000));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Цепочка ошибок с контекстом (`anyhow`)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use anyhow::{Result, Context};\n\nfn parse_config() -> Result<Config> {\n    let path = \"config.json\";\n    let content = std::fs::read_to_string(path)\n        .with_context(|| format!(\"reading {}\", path))?;\n    let config: Config = serde_json::from_str(&content)\n        .context(\"parsing JSON\")?;\n    Ok(config)\n}\n\n#[derive(serde::Deserialize)]\nstruct Config { port: u16 }\n\nfn main() -> Result<()> {\n    let cfg = parse_config()?;\n    println!(\"Port: {}\", cfg.port);\n    Ok(())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Комбинаторы Result"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn parse_numbers(input: &str) -> Result<Vec<i32>, std::num::ParseIntError> {\n    input.split(',')\n        .map(|s| s.trim().parse())\n        .collect() // Result<Vec<i32>, E> через FromIterator\n}\n\nfn main() {\n    match parse_numbers(\"1, 2, 3\") {\n        Ok(nums) => println!(\"Sum: {}\", nums.iter().sum::<i32>()),\n        Err(e) => eprintln!(\"Parse error: {}\", e),\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Типичные ошибки новичков"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`unwrap()` на `Err`",
+          "Необработанная ошибка"
+        ],
+        [
+          "`?` в функции возвращающей `()`",
+          "`?` работает только с `Result`/`Option`"
+        ],
+        [
+          "`the trait `From` is not implemented`",
+          "Нет конвертации между типами ошибок"
+        ],
+        [
+          "`expected enum Result, found ()`",
+          "Забыли `Ok()` в успешной ветке"
+        ],
+        [
+          "`cannot use ? in main`",
+          "main должен возвращать `Result`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Шпаргалка: методы Result/Option"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Задача",
+        "Result",
+        "Option"
+      ],
+      "rows": [
+        [
+          "Получить значение или panic",
+          "`unwrap()`",
+          "`unwrap()`"
+        ],
+        [
+          "Получить с сообщением",
+          "`expect(\"msg\")`",
+          "`expect(\"msg\")`"
+        ],
+        [
+          "Значение по умолчанию",
+          "`unwrap_or(default)`",
+          "`unwrap_or(default)`"
+        ],
+        [
+          "Ленивое значение по умолчанию",
+          "`unwrap_or_else(",
+          "",
+          "...)`",
+          "`unwrap_or_else(",
+          "",
+          "...)`"
+        ],
+        [
+          "Трансформация значения",
+          "`map(",
+          "x",
+          "...)`",
+          "`map(",
+          "x",
+          "...)`"
+        ],
+        [
+          "Трансформация ошибки",
+          "`map_err(",
+          "e",
+          "...)`",
+          "—"
+        ],
+        [
+          "Цепочка с новым Result",
+          "`and_then(",
+          "x",
+          "...)`",
+          "`and_then(",
+          "x",
+          "...)`"
+        ],
+        [
+          "Альтернатива при ошибке",
+          "`or_else(",
+          "e",
+          "...)`",
+          "`or_else(",
+          "",
+          "...)`"
+        ],
+        [
+          "Проверка",
+          "`is_ok()` / `is_err()`",
+          "`is_some()` / `is_none()`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Две категории ошибок: `panic!` (баги) и `Result` (ожидаемые)",
+        "`Result<T, E>` — enum с `Ok(T)` и `Err(E)`",
+        "Оператор `?` — идиоматичное распространение ошибок",
+        "Методы: `map`, `and_then`, `unwrap_or`, `map_err`, `or_else`",
+        "Собственные ошибки: `enum` + `impl Error` + `impl From`",
+        "`thiserror` для библиотек, `anyhow` для приложений",
+        "`panic` хуки и профиль `panic = \"abort\"`"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`unwrap()` на `Err`",
+      "correct": "Необработанная ошибка"
+    },
+    {
+      "mistake": "`?` в функции возвращающей `()`",
+      "correct": "`?` работает только с `Result`/`Option`"
+    },
+    {
+      "mistake": "`the trait `From` is not implemented`",
+      "correct": "Нет конвертации между типами ошибок"
+    },
+    {
+      "mistake": "`expected enum Result, found ()`",
+      "correct": "Забыли `Ok()` в успешной ветке"
+    },
+    {
+      "mistake": "`cannot use ? in main`",
+      "correct": "main должен возвращать `Result`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 8
+}

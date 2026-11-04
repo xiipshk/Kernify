@@ -1,0 +1,321 @@
+{
+  "title": "Урок 32: Продвинутый проект — «Real-time Collaborative Platform»",
+  "slug": "prodvinutyy-proekt-real-time-collaborative-platform",
+  "short_description": "«Real-time Collaborative Platform»",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели проекта"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Построить production-ready платформу для совместной работы в реальном времени",
+        "Применить все паттерны из уроков 25-31: DDD, CQRS, Event Sourcing, Plugin Architecture, Codegen",
+        "Реализовать: Operational Transformation / CRDT, WebSocket масштабирование, микросервисы",
+        "Получить проект уровня Senior/Staff Engineer для портфолио"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Требования"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Функционал (MVP)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Документы**: Rich-text редактор (TipTap/ProseMirror/Slate) с коллаборативным редактированием",
+        "**Real-time**: Несколько пользователей одновременно редактируют, видят курсоры друг друга",
+        "**История**: Time-travel (undo/redo на уровне документа), версионирование",
+        "**Комментарии**: Потоки комментариев, упоминания (@user), разрешение",
+        "**Права доступа**: Owner/Editor/Commenter/Viewer, приглашения по ссылке",
+        "**Офлайн**: Полная работа офлайн, синхронизация при онлайне (CRDT)",
+        "**Экспорт**: PDF, Markdown, HTML, DOCX"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Архитектурные требования"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Monorepo** (Nx / Turborepo): apps/api, apps/web, packages/shared, packages/editor, packages/sync",
+        "**Backend**: Node.js (Fastify/NestJS) + TypeScript, PostgreSQL + Redis",
+        "**Real-time**: WebSocket (ws / Socket.io) + Horizontal scaling (Redis Pub/Sub)",
+        "**Sync Engine**: Yjs (CRDT) или Automerge / custom OT",
+        "**Database**: Event Store (EventStoreDB) или PostgreSQL + event sourcing",
+        "**Auth**: JWT + Refresh tokens, OAuth2 (Google/GitHub), 2FA (TOTP)",
+        "**API**: tRPC (end-to-end types) + REST для вебхуков",
+        "**Frontend**: React 18 + Vite, TanStack Query, Zustand/Jotai, TailwindCSS",
+        "**Testing**: Vitest (unit), Playwright (e2e), Contract tests (Pact)",
+        "**Observability**: OpenTelemetry, Prometheus, Grafana, Sentry",
+        "**CI/CD**: GitHub Actions → Docker → Kubernetes (kind локально, GKE/EKS в проде)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Архитектура (High Level)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "┌─────────────────────────────────────────────────────────────────────┐\n│                         CLIENTS (Web, Mobile)                        │\n└─────────────────────────────────┬───────────────────────────────────┘\n                                  │ HTTPS / WSS\n                                  ▼\n┌─────────────────────────────────────────────────────────────────────┐\n│                      API GATEWAY (Kong / NGINX)                      │\n│                    Rate Limit, Auth, Routing, SSL                    │\n└─────────────────────────────────┬───────────────────────────────────┘\n                                  │\n          ┌───────────────────────┼───────────────────────┐\n          ▼                       ▼                       ▼\n┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐\n│  AUTH SERVICE   │    │  DOCUMENT SVC   │    │  SYNC SERVICE   │\n│  (Identity)     │    │  (CRUD, Meta)   │    │  (WebSocket,    │\n│                 │    │                 │    │   CRDT/OT)      │\n└────────┬────────┘    └────────┬────────┘    └────────┬────────┘\n         │                      │                      │\n         ▼                      ▼                      ▼\n┌─────────────────────────────────────────────────────────────────────┐\n│                    EVENT BUS (Redis Streams / Kafka)                 │\n└─────────────────────────────────┬───────────────────────────────────┘\n                                  │\n          ┌───────────────────────┼───────────────────────┐\n          ▼                       ▼                       ▼\n┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐\n│  PROJECTIONS    │    │  NOTIFICATIONS  │    │  ANALYTICS      │\n│  (Read Models)  │    │  (Email, Push)  │    │  (ClickHouse)   │\n└─────────────────┘    └─────────────────┘    └─────────────────┘"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ключевые компоненты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1. Sync Engine (packages/sync) — Yjs + WebRTC/WebSocket"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// packages/sync/src/yjs-provider.ts\nimport * as Y from 'yjs';\nimport { WebsocketProvider } from 'y-websocket';\nimport { IndexeddbPersistence } from 'y-indexeddb';\n\nexport class CollaborativeDoc {\n  private doc: Y.Doc;\n  private provider: WebsocketProvider;\n  private persistence: IndexeddbPersistence;\n  private awareness: any;\n\n  constructor(\n    private docId: string,\n    private user: { id: string; name: string; color: string },\n    private wsUrl: string\n  ) {\n    this.doc = new Y.Doc({ guid: docId });\n    this.setupPersistence();\n    this.setupProvider();\n    this.setupAwareness();\n  }\n\n  private setupPersistence() {\n    this.persistence = new IndexeddbPersistence(this.docId, this.doc);\n    this.persistence.on('synced', () => {\n      console.log('Local DB synced');\n    });\n  }\n\n  private setupProvider() {\n    this.provider = new WebsocketProvider(this.wsUrl, this.docId, this.doc, {\n      connect: true,\n      awareness: this.awareness\n    });\n\n    this.provider.on('status', (event: { status: string }) => {\n      console.log('Connection status:', event.status);\n    });\n\n    this.provider.on('sync', (isSynced: boolean) => {\n      if (isSynced) this.flushPendingOperations();\n    });\n  }\n\n  private setupAwareness() {\n    this.awareness = this.provider.awareness;\n    this.awareness.setLocalStateField('user', {\n      id: this.user.id,\n      name: this.user.name,\n      color: this.user.color,\n      cursor: null,\n      selection: null\n    });\n\n    this.awareness.on('change', () => {\n      // Обновление UI курсоров других пользователей\n      const states = Array.from(this.awareness.getStates().values());\n      this.onAwarenessChange?.(states.filter(s => s.user?.id !== this.user.id));\n    });\n  }\n\n  // Rich-text binding (TipTap/ProseMirror)\n  bindToEditor(editor: any) {\n    const yText = this.doc.getText('content');\n    // y-prosemirror или y-tiptap binding\n  }\n\n  // Офлайн очередь операций\n  private pendingOps: Uint8Array[] = [];\n\n  applyLocalUpdate(update: Uint8Array) {\n    if (this.provider.wsconnected) {\n      this.provider.send(update);\n    } else {\n      this.pendingOps.push(update);\n    }\n  }\n\n  private flushPendingOperations() {\n    this.pendingOps.forEach(op => this.provider.send(op));\n    this.pendingOps = [];\n  }\n\n  // Снимок для экспорта/истории\n  getSnapshot(): Uint8Array {\n    return Y.encodeStateAsUpdate(this.doc);\n  }\n\n  destroy() {\n    this.provider.destroy();\n    this.persistence.destroy();\n    this.doc.destroy();\n  }\n\n  onAwarenessChange?: (users: any[]) => void;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2. Document Service (apps/api/src/modules/documents)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// apps/api/src/modules/documents/document.aggregate.ts\nimport { AggregateRoot, EventHandler } from '@nestjs/cqrs';\n\nexport class Document extends AggregateRoot {\n  private constructor(\n    public readonly id: DocumentId,\n    private _title: string,\n    private _ownerId: UserId,\n    private _collaborators: Collaborator[],\n    private _yjsState: Uint8Array,\n    private _version: number,\n    private _status: DocumentStatus\n  ) {\n    super();\n  }\n\n  static create(cmd: CreateDocumentCommand): Document {\n    const doc = new Document(\n      DocumentId.generate(),\n      cmd.title,\n      cmd.ownerId,\n      [{ userId: cmd.ownerId, role: 'owner' }],\n      new Uint8Array(),\n      0,\n      'active'\n    );\n    doc.apply(new DocumentCreated(doc.id, cmd.title, cmd.ownerId));\n    return doc;\n  }\n\n  updateTitle(title: string, userId: UserId) {\n    this.assertCanEdit(userId);\n    if (this._title !== title) {\n      this._title = title;\n      this.apply(new DocumentTitleChanged(this.id, title, userId));\n    }\n  }\n\n  addCollaborator(userId: UserId, role: CollaboratorRole, actorId: UserId) {\n    this.assertOwner(actorId);\n    if (!this._collaborators.some(c => c.userId.equals(userId))) {\n      this._collaborators.push({ userId, role });\n      this.apply(new CollaboratorAdded(this.id, userId, role));\n    }\n  }\n\n  updateYjsState(state: Uint8Array, version: number) {\n    if (version !== this._version) {\n      throw new ConcurrencyError(`Expected version ${this._version}, got ${version}`);\n    }\n    this._yjsState = state;\n    this._version++;\n    this.apply(new DocumentSynced(this.id, state, this._version));\n  }\n\n  // Event Handlers для проекций\n  @EventHandler(DocumentCreated)\n  onCreated(event: DocumentCreated) { /* read model update */ }\n\n  @EventHandler(DocumentSynced)\n  onSynced(event: DocumentSynced) { /* read model update */ }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3. Event Sourcing Infrastructure"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// packages/shared/src/event-store/event-store.ts\nimport { EventStoreDBClient, jsonEvent, START } from '@eventstore/db-client';\n\nexport class EventStore {\n  constructor(private client: EventStoreDBClient) {}\n\n  async appendToStream(\n    streamId: string,\n    events: DomainEvent[],\n    expectedRevision: number | typeof START = START\n  ) {\n    const eventData = events.map(e => jsonEvent({\n      type: e.constructor.name,\n      data: e.serialize(),\n      metadata: { causationId: e.causationId, correlationId: e.correlationId }\n    }));\n    await this.client.appendToStream(streamId, eventData, { expectedRevision });\n  }\n\n  async readStream(streamId: string) {\n    const events = [];\n    for await (const event of this.client.readStream(streamId, { fromRevision: START })) {\n      events.push(this.deserialize(event.event));\n    }\n    return events;\n  }\n\n  async subscribeToAll(handler: (event: DomainEvent) => Promise<void>) {\n    const subscription = this.client.subscribeToAll({\n      fromPosition: { commitPosition: 0n, preparePosition: 0n },\n      resolveLinkTos: true\n    });\n    for await (const event of subscription) {\n      await handler(this.deserialize(event.event));\n    }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4. tRPC Router с типами"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// apps/api/src/trpc/router.ts\nimport { initTRPC, TRPCError } from '@trpc/server';\nimport { z } from 'zod';\nimport { DocumentService } from '../modules/documents/document.service';\nimport { SyncService } from '../modules/sync/sync.service';\n\nconst t = initTRPC.context<{ userId: string }>().create();\n\nexport const appRouter = t.router({\n  documents: t.router({\n    list: t.procedure\n      .input(z.object({ cursor: z.string().optional(), limit: z.number().default(20) }))\n      .query(async ({ ctx, input }) => {\n        return documentService.listForUser(ctx.userId, input);\n      }),\n\n    create: t.procedure\n      .input(z.object({ title: z.string().min(1).max(200) }))\n      .mutation(async ({ ctx, input }) => {\n        return documentService.create(ctx.userId, input.title);\n      }),\n\n    getById: t.procedure\n      .input(z.object({ id: z.string().uuid() }))\n      .query(async ({ ctx, input }) => {\n        const doc = await documentService.getById(input.id);\n        if (!doc.canAccess(ctx.userId)) throw new TRPCError({ code: 'FORBIDDEN' });\n        return doc;\n      }),\n\n    updateTitle: t.procedure\n      .input(z.object({ id: z.string().uuid(), title: z.string().min(1).max(200) }))\n      .mutation(async ({ ctx, input }) => {\n        await documentService.updateTitle(input.id, input.title, ctx.userId);\n      }),\n\n    invite: t.procedure\n      .input(z.object({\n        id: z.string().uuid(),\n        email: z.string().email(),\n        role: z.enum(['editor', 'commenter', 'viewer'])\n      }))\n      .mutation(async ({ ctx, input }) => {\n        await documentService.invite(input.id, input.email, input.role, ctx.userId);\n      })\n  }),\n\n  sync: t.router({\n    getSnapshot: t.procedure\n      .input(z.object({ docId: z.string().uuid() }))\n      .query(async ({ input }) => {\n        return syncService.getSnapshot(input.docId);\n      }),\n\n    // WebSocket connection info\n    getConnectionInfo: t.procedure\n      .input(z.object({ docId: z.string().uuid() }))\n      .query(async ({ ctx, input }) => {\n        return syncService.getConnectionInfo(input.docId, ctx.userId);\n      })\n  })\n});\n\nexport type AppRouter = typeof appRouter;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5. Frontend Architecture (apps/web)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// apps/web/src/features/documents/DocumentEditor.tsx\nimport { useEditor, EditorContent } from '@tiptap/react';\nimport Collaboration from '@tiptap/extension-collaboration';\nimport CollaborationCursors from '@tiptap/extension-collaboration-cursors';\nimport { useDocument } from '@/hooks/useDocument';\nimport { useSync } from '@/hooks/useSync';\n\nexport function DocumentEditor({ docId }: { docId: string }) {\n  const { document, user } = useDocument(docId);\n  const { provider, awareness } = useSync(docId, user);\n\n  const editor = useEditor({\n    extensions: [\n      StarterKit,\n      Collaboration.configure({ document: provider.doc }),\n      CollaborationCursors.configure({ provider: provider.awareness })\n    ],\n    content: document.content,\n    onUpdate: ({ editor }) => {\n      // Автосохранение с дебаунсом\n      debouncedSave(editor.getJSON());\n    },\n    editorProps: {\n      attributes: { class: 'prose prose-lg max-w-none focus:outline-none' }\n    }\n  });\n\n  // Рендер курсоров других пользователей\n  const cursors = useAwarenessCursors(awareness);\n\n  return (\n    <div className=\"flex h-screen\">\n      <aside className=\"w-64 border-r p-4\">\n        <CollaboratorsList users={cursors} currentUser={user} />\n        <CommentsPanel docId={docId} />\n      </aside>\n      <main className=\"flex-1 p-8 overflow-auto\">\n        <EditorContent editor={editor} />\n        {cursors.map(cursor => (\n          <RemoteCursor key={cursor.user.id} cursor={cursor} />\n        ))}\n      </main>\n    </div>\n  );\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6. Kubernetes Deployment"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Тестирование"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Contract Testing (Pact)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// tests/contract/document-api.consumer.test.ts\nimport { pactWith } from 'pactum';\nimport { DocumentApiClient } from '@/clients/document-api';\n\npactWith({ consumer: 'WebApp', provider: 'DocumentApi' }, provider => {\n  let client: DocumentApiClient;\n\n  beforeAll(() => {\n    client = new DocumentApiClient(provider.mockService.baseUrl);\n  });\n\n  describe('GET /documents/:id', () => {\n    it('returns document', async () => {\n      provider.addInteraction({\n        state: 'document exists',\n        uponReceiving: 'a request for document',\n        withRequest: {\n          method: 'GET',\n          path: '/documents/123',\n          headers: { Authorization: 'Bearer token' }\n        },\n        willRespondWith: {\n          status: 200,\n          body: like({\n            id: '123',\n            title: 'Test Doc',\n            content: 'Hello world',\n            version: 5\n          })\n        }\n      });\n\n      const doc = await client.getDocument('123');\n      expect(doc.title).toBe('Test Doc');\n    });\n  });\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "E2E (Playwright)"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// tests/e2e/collaborative-editing.spec.ts\nimport { test, expect } from '@playwright/test';\n\ntest('two users edit simultaneously', async ({ browser }) => {\n  const ctx1 = await browser.newContext();\n  const ctx2 = await browser.newContext();\n\n  const page1 = await ctx1.newPage();\n  const page2 = await ctx2.newPage();\n\n  // User 1 creates doc\n  await page1.goto('/login');\n  await login(page1, 'user1@test.com');\n  await page1.goto('/doc/new');\n  await page1.fill('[data-testid=\"title\"]', 'Shared Doc');\n  await page1.click('[data-testid=\"create\"]');\n  const docUrl = page1.url();\n\n  // Share with user 2\n  await page1.click('[data-testid=\"share\"]');\n  await page1.fill('[data-testid=\"invite-email\"]', 'user2@test.com');\n  await page1.click('[data-testid=\"send-invite\"]');\n\n  // User 2 joins\n  await page2.goto('/login');\n  await login(page2, 'user2@test.com');\n  await page2.goto(docUrl);\n\n  // Both edit\n  const editor1 = page1.locator('.ProseMirror');\n  const editor2 = page2.locator('.ProseMirror');\n\n  await editor1.type('User 1 typing ');\n  await editor2.type('User 2 typing ');\n\n  // Both should see each other's text\n  await expect(editor1).toContainText('User 2 typing');\n  await expect(editor2).toContainText('User 1 typing');\n\n  // Cursors visible\n  await expect(page1.locator('[data-remote-cursor=\"user2\"]')).toBeVisible();\n  await expect(page2.locator('[data-remote-cursor=\"user1\"]')).toBeVisible();\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Observability"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "OpenTelemetry Instrumentation"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// packages/shared/src/observability/tracing.ts\nimport { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';\nimport { registerInstrumentations } from '@opentelemetry/instrumentation';\nimport { HttpInstrumentation } from '@opentelemetry/instrumentation-http';\nimport { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';\nimport { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';\nimport { JaegerExporter } from '@opentelemetry/exporter-jaeger';\nimport { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';\n\nconst provider = new NodeTracerProvider();\nprovider.addSpanProcessor(new BatchSpanProcessor(new JaegerExporter({\n  endpoint: process.env.JAEGER_ENDPOINT\n})));\nprovider.register();\n\nregisterInstrumentations({\n  instrumentations: [\n    new HttpInstrumentation(),\n    new ExpressInstrumentation(),\n    new PinoInstrumentation()\n  ]\n});\n\n// Custom spans для бизнес-операций\nimport { trace, SpanStatusCode } from '@opentelemetry/api';\n\nexport async function traceOperation<T>(\n  name: string,\n  fn: (span: any) => Promise<T>,\n  attributes?: Record<string, any>\n): Promise<T> {\n  return trace.getTracer('collab-platform').startActiveSpan(name, async span => {\n    try {\n      span.setAttributes(attributes || {});\n      const result = await fn(span);\n      span.setStatus({ code: SpanStatusCode.OK });\n      return result;\n    } catch (error) {\n      span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });\n      span.recordException(error);\n      throw error;\n    } finally {\n      span.end();\n    }\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания для углубления"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "WebSocket не переподключается",
+          "Exponential backoff + jitter, heartbeat ping/pong"
+        ],
+        [
+          "CRDT память растёт бесконечно",
+          "Garbage collection (Yjs: `doc.gc()`), снапшоты"
+        ],
+        [
+          "Race condition при сохранении",
+          "Optimistic locking (version), retry с backoff"
+        ],
+        [
+          "Нет горизонтального масштабирования WS",
+          "Redis Pub/Sub + sticky sessions или connection routing"
+        ],
+        [
+          "События теряются при рестарте",
+          "EventStoreDB persistent subscriptions, outbox pattern"
+        ],
+        [
+          "Тесты флакают на WebSocket",
+          "Mock WS провайдер в unit, отдельный WS сервер в e2e"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Контрольные вопросы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "В чём разница между OT (Operational Transformation) и CRDT?",
+        "Как Yjs обеспечивает eventual consistency без центрального сервера?",
+        "Зачем нужен Event Sourcing в Document Service?",
+        "Как горизонтально масштабировать WebSocket серверы?",
+        "Что такое Awareness в Yjs и зачем он нужен?",
+        "Как реализовать Time-travel (историю версий) на CRDT?",
+        "В чём преимущества tRPC над REST/OpenAPI для этого проекта?"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Что дальше?"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Масштабирование**: Sharding документов, CDN для статики, Edge computing",
+        "**AI**: Collaborative AI (совместное промптинг), Smart suggestions",
+        "**Mobile**: React Native / Flutter приложения с офлайн sync",
+        "**Enterprise**: SSO (SAML/OIDC), Audit logs, DLP, Compliance (GDPR, SOC2)",
+        "**Platform**: Multi-tenancy, White-label, Marketplace, API для интеграций"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Итоговый чек-лист Senior/Staff уровня"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] Monorepo с правильной структурой (Nx/Turborepo)",
+        "[ ] DDD/CQRS/Event Sourcing в бэкенде",
+        "[ ] CRDT/OT для real-time синхронизации",
+        "[ ] Горизонтальное масштабирование WebSocket",
+        "[ ] End-to-end типизация (tRPC + Zod)",
+        "[ ] Contract testing (Pact)",
+        "[ ] E2E тесты критических пользовательских путей",
+        "[ ] Observability (Traces, Metrics, Logs)",
+        "[ ] CI/CD с preview окружениями",
+        "[ ] Kubernetes manifests (Helm/Kustomize)",
+        "[ ] Документация (ADR, API docs, Runbooks)",
+        "[ ] Security audit (OWASP, dependencies, secrets)",
+        "[ ] Performance budget и мониторинг",
+        "[ ] Disaster recovery и backup стратегия"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Поздравляю! Вы прошли путь от основ JavaScript до проектирования распределённых систем реального времени. Это уровень Staff/Principal Engineer. 🎓🚀"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "WebSocket не переподключается",
+      "correct": "Exponential backoff + jitter, heartbeat ping/pong"
+    },
+    {
+      "mistake": "CRDT память растёт бесконечно",
+      "correct": "Garbage collection (Yjs: `doc.gc()`), снапшоты"
+    },
+    {
+      "mistake": "Race condition при сохранении",
+      "correct": "Optimistic locking (version), retry с backoff"
+    },
+    {
+      "mistake": "Нет горизонтального масштабирования WS",
+      "correct": "Redis Pub/Sub + sticky sessions или connection routing"
+    },
+    {
+      "mistake": "События теряются при рестарте",
+      "correct": "EventStoreDB persistent subscriptions, outbox pattern"
+    },
+    {
+      "mistake": "Тесты флакают на WebSocket",
+      "correct": "Mock WS провайдер в unit, отдельный WS сервер в e2e"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 32
+}

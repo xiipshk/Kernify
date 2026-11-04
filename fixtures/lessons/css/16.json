@@ -1,0 +1,548 @@
+{
+  "title": "Урок 16: Продвинутые анимации — Keyframes, Timing Functions, Will-change, FLIP, View Transitions API, Motion Path",
+  "slug": "prodvinutye-animatsii-keyframes-timing-functions-will-change-flip-view-transitions-api-motion-path",
+  "short_description": "Keyframes, Timing Functions, Will-change, FLIP, View Transitions API, Motion Path",
+  "goals": [
+    "Глубоко понять @keyframes, animation properties и их нюансы",
+    "Освоить Timing Functions: cubic-bezier, steps, linear(), easing functions",
+    "Изучить will-change, contain и производительность анимаций",
+    "Применить технику FLIP для сложных layout-анимаций",
+    "Работать с View Transitions API для нативных переходов между состояниями",
+    "Использовать Motion Path (offset-path) для анимации по траектории"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубоко понять @keyframes, animation properties и их нюансы",
+        "Освоить Timing Functions: cubic-bezier, steps, linear(), easing functions",
+        "Изучить will-change, contain и производительность анимаций",
+        "Применить технику FLIP для сложных layout-анимаций",
+        "Работать с View Transitions API для нативных переходов между состояниями",
+        "Использовать Motion Path (offset-path) для анимации по траектории"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. @keyframes — в глубину"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис и ключевые моменты"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@keyframes slide-in {\n  /* 0% и 100% можно писать как from/to */\n  from {\n    opacity: 0;\n    transform: translateX(-100px);\n  }\n  30% {\n    /* Промежуточный ключевой кадр */\n    opacity: 0.8;\n    transform: translateX(-20px);\n  }\n  to {\n    opacity: 1;\n    transform: translateX(0);\n  }\n}\n\n/* Несколько анимаций в одном @keyframes — НЕЛЬЗЯ */\n/* Нужно создавать отдельные @keyframes для каждой анимации */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Composite — как комбинируются анимации"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".element {\n  /* По умолчанию: replace — последняя анимация побеждает */\n  animation: move 1s, scale 1s;\n\n  /* add — анимации складываются (transform) */\n  animation-composition: add;\n\n  /* accumulate — как add, но для filter и др. */\n  animation-composition: accumulate;\n}\n\n/* Практика: независимые transform-анимации */\n.card {\n  animation:\n    float 3s ease-in-out infinite,\n    rotate 10s linear infinite;\n  animation-composition: add;  /* Обе работают одновременно! */\n}\n\n@keyframes float {\n  0%, 100% { transform: translateY(0); }\n  50% { transform: translateY(-10px); }\n}\n@keyframes rotate {\n  to { transform: rotate(360deg); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Анимация дискретных свойств"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "@keyframes blink {\n  0%, 50% { visibility: visible; }\n  51%, 100% { visibility: hidden; }\n}\n\n/* display анимация (CSS Animations Level 2) */\n@keyframes reveal {\n  from {\n    opacity: 0;\n    display: none;\n  }\n  to {\n    opacity: 1;\n    display: block;\n  }\n}\n\n.reveal {\n  animation: reveal 0.3s ease;\n  /* transition-behavior: allow-discrete; для transition */\n  transition: opacity 0.3s, display 0.3s allow-discrete;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Timing Functions — мастерство easing"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "cubic-bezier — создаём свои кривые"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ":root {\n  /* Классические easing */\n  --ease-in: cubic-bezier(0.4, 0, 1, 1);\n  --ease-out: cubic-bezier(0, 0, 0.2, 1);\n  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);\n\n  /* Материальные (Material Design) */\n  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);\n  --ease-decelerated: cubic-bezier(0, 0, 0.2, 1);\n  --ease-accelerated: cubic-bezier(0.4, 0, 1, 1);\n\n  /* Пружинные (spring-like) */\n  --ease-spring: cubic-bezier(0.68, -0.55, 0.265, 1.55);\n  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);\n\n  /* Резкие */\n  --ease-sharp: cubic-bezier(0.4, 0, 0.6, 1);\n}\n\n/* Генератор: cubic-bezier.com */\n.custom-ease {\n  /* Вход быстрый, выход медленный — \"anticipation\" */\n  transition-timing-function: cubic-bezier(0.8, 0, 0.2, 1);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "steps() — дискретные анимации"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Спрайтовая анимация */\n.sprite {\n  width: 100px;\n  height: 100px;\n  background: url('spritesheet.png') 0 0;\n  animation: sprite-walk 1s steps(8) infinite;\n}\n\n@keyframes sprite-walk {\n  to { background-position: -800px 0; }\n}\n\n/* Секундная стрелка */\n.clock-hand {\n  animation: tick 60s steps(60) infinite;\n}\n@keyframes tick {\n  to { transform: rotate(360deg); }\n}\n\n/* Появление по буквам */\n.typewriter {\n  width: 0;\n  animation: type 2s steps(20) forwards;\n}\n@keyframes type {\n  to { width: 100%; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "linear() — сложные кривые (Chrome 113+, Firefox 115+)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Пружина с несколькими отскоками */\n.bounce {\n  animation: bounce 1s linear(\n    0, 0.063, 0.25, 0.5, 0.75, 0.9, 1\n  );\n}\n\n/* Эластичная кривая */\n.elastic {\n  animation: elastic 1.5s linear(\n    0,\n    0.5 10%, 1.2 20%, 0.8 30%, 1.1 40%,\n    0.95 50%, 1.02 60%, 0.98 70%, 1.01 80%,\n    0.99 90%, 1\n  );\n}\n\n/* Удобный генератор: linear-easing-generator.netlify.app */"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Will-change, Contain и производительность"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "will-change — правильное использование"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Правильно: заранее сообщаем браузеру */\n.will-animate {\n  will-change: transform, opacity;\n}\n\n/* НЕПРАВИЛЬНО: на всё подряд */\n.bad {\n  will-change: all;  /* Антипаттерн! Пожирает память */\n}\n\n/* Включаем ТОЛЬКО перед анимацией */\n.element:hover {\n  will-change: transform;\n  transition: transform 0.3s;\n}\n.element {\n  will-change: auto;  /* Сбрасываем после */\n}\n\n/* JavaScript контроль */\nfunction animate(element) {\n  element.style.willChange = 'transform, opacity';\n  element.animate(keyframes, options).finished.then(() => {\n    element.style.willChange = 'auto';\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "contain — изоляция для производительности"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Layout containment — детей не влияют на родителя */\n.card {\n  contain: layout;\n  /* Или строже: */\n  contain: layout paint;      /* + отрисовка изолирована */\n  contain: strict;            /* layout + paint + size + style */\n  contain: content;           /* layout + paint + style */\n}\n\n/* Практический кейс: список с анимациями */\n.list {\n  contain: strict;  /* Анимация одной карточки не пересчитывает весь список */\n}\n.list-item {\n  animation: slide 0.3s ease;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Производительность: что анимировать дешево"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* ГПУ-ускоренные (compositor thread) — БЫСТРО */\n.good {\n  animation: good 1s;\n}\n@keyframes good {\n  to {\n    transform: translate3d(100px, 0, 0) scale(1.1);\n    opacity: 0.5;\n    filter: blur(2px);  /* С осторожностью */\n  }\n}\n\n/* Главный поток (layout/paint) — МЕДЛЕННО */\n.bad {\n  animation: bad 1s;\n}\n@keyframes bad {\n  to {\n    width: 200px;           /* Layout */\n    height: 200px;          /* Layout */\n    margin-left: 100px;     /* Layout */\n    background: red;        /* Paint */\n    box-shadow: 0 10px 20px; /* Paint */\n    border-radius: 10px;    /* Paint */\n  }\n}\n\n/* Проверка в DevTools: Performance > Animations > \"GPU\" badge */"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. FLIP Technique — анимируем невозможное"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Суть FLIP (First, Last, Invert, Play)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function flipAnimation(element, callback) {\n  // 1. FIRST — запомнить текущее состояние\n  const first = element.getBoundingClientRect();\n\n  // 2. LAST — применить новое состояние (без анимации)\n  callback();  // Например: element.classList.add('expanded');\n\n  const last = element.getBoundingClientRect();\n\n  // 3. INVERT — вычислить дельту и применить обратный transform\n  const dx = first.left - last.left;\n  const dy = first.top - last.top;\n  const dw = first.width / last.width;\n  const dh = first.height / last.height;\n\n  element.style.transform = `\n    translate(${dx}px, ${dy}px)\n    scale(${dw}, ${dh})\n  `;\n  element.style.transformOrigin = 'top left';\n\n  // 4. PLAY — убрать invert, запустить transition\n  requestAnimationFrame(() => {\n    element.style.transition = 'transform 0.3s ease';\n    element.style.transform = '';\n  });\n}\n\n/* Пример: перемещение элемента в списке */\nfunction moveItem(item, newIndex) {\n  flipAnimation(item, () => {\n    item.parentNode.insertBefore(item,\n      item.parentNode.children[newIndex]);\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "FLIP для Grid/Flex реорганизации"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Контейнер с FLIP-поддержкой */\n.flip-container {\n  /* Не используем gap для FLIP — вычисляется сложно */\n  display: grid;\n  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));\n}\n\n.flip-item {\n  will-change: transform;\n  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);\n}\n\n/* JavaScript: пересчитываем позицию после DOM изменений */\nfunction reorderGrid(items, newOrder) {\n  // 1. Запоминаем все позиции\n  const positions = new Map();\n  items.forEach(item => {\n    positions.set(item, item.getBoundingClientRect());\n  });\n\n  // 2. Применяем новый порядок\n  newOrder.forEach(item => container.appendChild(item));\n\n  // 3. Инвертируем и анимируем\n  items.forEach(item => {\n    const first = positions.get(item);\n    const last = item.getBoundingClientRect();\n\n    const dx = first.left - last.left;\n    const dy = first.top - last.top;\n\n    item.style.transform = `translate(${dx}px, ${dy}px)`;\n\n    requestAnimationFrame(() => {\n      item.style.transition = 'transform 0.4s';\n      item.style.transform = '';\n    });\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Библиотеки для FLIP"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// flip-toolkit (React/Vue/Vanilla)\n// import { Flipped } from 'flip-toolkit';\n\n// vanilla: https://github.com/aholachek/flip-toolkit\n// React: <Flipped key={id} flipId={id}>Content</Flipped>"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. View Transitions API — нативные переходы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый Same-Document Transition"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Простой переход при изменении DOM\nfunction navigate(newContent) {\n  if (!document.startViewTransition) {\n    // Fallback\n    container.innerHTML = newContent;\n    return;\n  }\n\n  const transition = document.startViewTransition(() => {\n    container.innerHTML = newContent;\n  });\n\n  transition.finished.then(() => {\n    console.log('Transition complete');\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CSS для View Transitions"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Анимация старой страницы ухода */\n::view-transition-old(root) {\n  animation: fade-out 0.3s ease forwards;\n}\n\n/* Анимация новой страницы появления */\n::view-transition-new(root) {\n  animation: fade-in 0.3s ease forwards;\n}\n\n/* Группы для элементов */\n::view-transition-group(header) {\n  animation-duration: 0.5s;\n}\n::view-transition-image-pair(header) {\n  animation-duration: 0.5s;\n}\n::view-transition-old(header) {\n  animation: slide-up 0.5s ease;\n}\n::view-transition-new(header) {\n  animation: slide-down 0.5s ease;\n}\n\n/* Кастомные ключевые кадры */\n@keyframes fade-in {\n  from { opacity: 0; transform: translateY(20px); }\n  to { opacity: 1; transform: translateY(0); }\n}\n@keyframes fade-out {\n  from { opacity: 1; transform: translateY(0); }\n  to { opacity: 0; transform: translateY(-20px); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "view-transition-name — именованные элементы"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Элемент сохраняет личность между страницами */\n.product-card {\n  view-transition-name: product-123;\n  /* Уникальное имя! */\n}\n\n/* В списке — генерируем уникальные имена */\n.product-card:nth-child(1) { view-transition-name: product-1; }\n.product-card:nth-child(2) { view-transition-name: product-2; }\n\n/* CSS counter trick для автоматизации */\n.product-list {\n  counter-reset: product;\n}\n.product-card {\n  view-transition-name: 'product-' counter(product);\n  counter-increment: product;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Продвинутые паттерны"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Общий контейнер для плавного morphing */\n::view-transition-group(product-123) {\n  animation: morph 0.6s cubic-bezier(0.4, 0, 0.2, 1);\n}\n\n/* Раздельная анимация оболочки и контента */\n::view-transition-image-pair(product-123) {\n  animation:\n    grow-image 0.4s ease,\n    crossfade 0.4s ease;\n}\n\n/* Skip transition для определённых элементов */\n.no-transition {\n  view-transition-name: none;\n}\n\n/* Анимация только позиционирования (без cross-fade) */\n::view-transition-old(product-123),\n::view-transition-new(product-123) {\n  animation: none;\n  mix-blend-mode: normal;\n}\n::view-transition-group(product-123) {\n  animation: move-only 0.4s ease;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "View Transitions + SPA Router"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Интеграция с router\nasync function handleNavigation(to, from) {\n  // 1. Подготавливаем данные\n  await preloadData(to);\n\n  // 2. Запускаем переход\n  const transition = document.startViewTransition(async () => {\n    await router.navigate(to);\n    updateMetaTags(to);\n  });\n\n  // 3. Ждём готовности нового контента\n  try {\n    await transition.ready;\n    // Можно запустить входные анимации\n    animateEntrance();\n  } catch (e) {\n    // Transition был отменён/пропущен\n  }\n\n  // 4. После завершения\n  transition.finished.then(() => {\n    cleanupOldContent();\n  });\n}\n\n// Обработка пропуска анимации (prefers-reduced-motion)\n@media (prefers-reduced-motion: reduce) {\n  ::view-transition-group(*),\n  ::view-transition-old(*),\n  ::view-transition-new(*) {\n    animation: none !important;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Motion Path — анимация по траектории"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "offset-path — определяем путь"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".moving {\n  /* SVG path */\n  offset-path: path('M 0 0 C 100 0, 100 100, 200 100');\n\n  /* Базовые фигуры */\n  offset-path: ray(45deg closest-side);\n  offset-path: circle(50% at center);\n  offset-path: ellipse(50% 25% at center);\n  offset-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);\n\n  /* CSS Shapes */\n  offset-path: shape-outside;  /* От элемента */\n\n  /* Положение на пути (0% - 100%) */\n  offset-distance: 0%;\n  animation: move 4s linear infinite;\n}\n\n@keyframes move {\n  to { offset-distance: 100%; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "offset-rotate — ориентация на пути"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".vehicle {\n  offset-path: path('M 0 0 C 100 -50, 200 50, 300 0');\n  animation: drive 5s ease-in-out infinite alternate;\n}\n\n@keyframes drive {\n  to { offset-distance: 100%; }\n}\n\n/* Автоповорот (по умолчанию) */\n.auto-rotate {\n  offset-rotate: auto;        /* Следует за направлением пути */\n  offset-rotate: auto 90deg;  /* + 90 градусов */\n}\n\n/* Фиксированный угол */\n.fixed-angle {\n  offset-rotate: 0deg;  /* Не поворачивается */\n}\n\n/* Отключить поворот */\n.no-rotate {\n  offset-rotate: 0deg;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "offset-anchor — точка привязки"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Центр элемента на пути (default) */\n.centered {\n  offset-anchor: center;\n  /* или 50% 50% */\n}\n\n/* Нижний центр — для \"езды\" по дороге */\n.bottom-center {\n  offset-anchor: bottom center;\n  /* 50% 100% */\n}\n\n/* Кастомная точка */\n.custom-anchor {\n  offset-anchor: 25% 75%;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Комплексный пример: планета на орбите"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".orbit {\n  position: relative;\n  width: 300px;\n  height: 300px;\n}\n\n.sun {\n  position: absolute;\n  top: 50%; left: 50%;\n  transform: translate(-50%, -50%);\n  width: 60px; height: 60px;\n  border-radius: 50%;\n  background: radial-gradient(circle at 30% 30%, #ffd700, #ff8c00);\n}\n\n.planet {\n  position: absolute;\n  width: 24px; height: 24px;\n  border-radius: 50%;\n  background: linear-gradient(135deg, #4ecdc4, #45b7d1);\n\n  offset-path: path('M 150 150 m -120 0 a 120 120 0 1 0 240 0 a 120 120 0 1 0 -240 0');\n  offset-anchor: center;\n  animation: orbit 8s linear infinite;\n}\n\n@keyframes orbit {\n  to { offset-distance: 100%; }\n}\n\n/* Луна вокруг планеты */\n.moon {\n  position: absolute;\n  width: 8px; height: 8px;\n  background: #ccc;\n  border-radius: 50%;\n\n  /* Путь относительно планеты через контейнер */\n  offset-path: circle(40px at center);\n  offset-anchor: center;\n  animation: moon-orbit 2s linear infinite;\n}\n\n@keyframes moon-orbit {\n  to { offset-distance: 100%; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практическое задание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 1: Animation Performance Lab"
+    },
+    {
+      "type": "text",
+      "content": "Создай бенчмарк для сравнения:"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Тестируй:\n1. transform vs left/top\n2. will-change: on/off\n3. contain: strict на контейнере\n4. filter vs box-shadow анимация\n5. Анимируй 100 элементов одновременно\n*/"
+    },
+    {
+      "type": "text",
+      "content": "Измеряй через Performance API: <code>requestAnimationFrame</code>, <code>performance.now()</code>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 2: FLIP Layout Animations"
+    },
+    {
+      "type": "text",
+      "content": "Реализуй:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Drag-to-reorder список с FLIP",
+        "Masonry grid с анимированным рефлоу",
+        "Expandable карточки (плавный resize без layout thrashing)",
+        "Tab switcher с FLIP переходом контента"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 3: View Transitions SPA"
+    },
+    {
+      "type": "text",
+      "content": "Построй микро-SPA:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "3+ страницы с уникальными переходами",
+        "Shared element transitions (карточка → деталь)",
+        "Nested transitions (модалка внутри страницы)",
+        "Fallback для неподдерживающих браузеров",
+        "Respect `prefers-reduced-motion`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 4: Motion Path Playground"
+    },
+    {
+      "type": "text",
+      "content": "Интерактивный редактор:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "SVG path editor (drag points)",
+        "Real-time preview объекта на пути",
+        "Настройка offset-rotate, offset-anchor",
+        "Экспорт CSS + JS для GSAP/FLIP",
+        "Примеры: rollercoaster, текст по пути, морфинг фигур"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Таблица поддержки (2024)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Фича",
+        "Chrome",
+        "Firefox",
+        "Safari",
+        "Edge"
+      ],
+      "rows": [
+        [
+          "@keyframes",
+          "43+",
+          "16+",
+          "9+",
+          "79+"
+        ],
+        [
+          "animation-composition",
+          "112+",
+          "114+",
+          "16+",
+          "112+"
+        ],
+        [
+          "linear() easing",
+          "113+",
+          "115+",
+          "17.2+",
+          "113+"
+        ],
+        [
+          "will-change",
+          "36+",
+          "36+",
+          "15.4+",
+          "79+"
+        ],
+        [
+          "contain",
+          "52+",
+          "69+",
+          "15.4+",
+          "79+"
+        ],
+        [
+          "FLIP (JS)",
+          "All",
+          "All",
+          "All",
+          "All"
+        ],
+        [
+          "View Transitions API",
+          "111+",
+          "Behind flag",
+          "18+",
+          "111+"
+        ],
+        [
+          "Motion Path (offset-path)",
+          "55+",
+          "72+",
+          "16+",
+          "79+"
+        ],
+        [
+          "offset-rotate",
+          "55+",
+          "72+",
+          "16+",
+          "79+"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Таблица частых ошибок"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Проблема",
+        "Решение"
+      ],
+      "rows": [
+        [
+          "will-change: all",
+          "Пожирает память/GPU",
+          "Указывай конкретные свойства"
+        ],
+        [
+          "Анимировать width/height",
+          "Layout thrashing",
+          "Используй transform: scale()"
+        ],
+        [
+          "transition на display",
+          "Не работает",
+          "`transition-behavior: allow-discrete` + @starting-style"
+        ],
+        [
+          "FLIP без requestAnimationFrame",
+          "Рвёт анимацию",
+          "Оборачивай PLAY в rAF"
+        ],
+        [
+          "View Transitions без уникальных имен",
+          "Конфликты элементов",
+          "Генерируй уникальные view-transition-name"
+        ],
+        [
+          "offset-path без offset-distance",
+          "Не движется",
+          "Анимируй offset-distance: 0% → 100%"
+        ],
+        [
+          "linear() с невалидными значениями",
+          "Игнорируется",
+          "Проверяй в DevTools, используй генератор"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Спецификации"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[CSS Animations Level 2](https://www.w3.org/TR/css-animations-2/)",
+        "[CSS Easing Functions Level 2](https://www.w3.org/TR/css-easing-2/)",
+        "[View Transitions API](https://www.w3.org/TR/css-view-transitions-1/)",
+        "[Motion Path](https://www.w3.org/TR/motion-1/)",
+        "[CSS Containment](https://www.w3.org/TR/css-contain-3/)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Статьи"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[FLIP Your Animations](https://aerotwist.com/blog/flip-your-animations/) — Paul Lewis",
+        "[High Performance Animations](https://www.html5rocks.com/en/tutorials/speed/high-performance-animations/)",
+        "[View Transitions API](https://developer.chrome.com/docs/view-transitions/)",
+        "[Motion Path Deep Dive](https://css-tricks.com/animating-along-a-path-with-css-motion-path/)",
+        "[linear() Easing Generator](https://linear-easing-generator.netlify.app/)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инструменты"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[cubic-bezier.com](https://cubic-bezier.com/)",
+        "[Chrome DevTools > Animations panel](https://developer.chrome.com/docs/devtools/animations/)",
+        "[Animation Performance Checklist](https://animation-checklist.vercel.app/)",
+        "[View Transitions Demo](https://view-transitions.github.io/)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 16
+}

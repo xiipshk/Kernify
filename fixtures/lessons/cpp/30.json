@@ -1,0 +1,401 @@
+{
+  "title": "Урок 30: Optimization — machine code, vectorization, cache, profiling, compile-time cost",
+  "slug": "optimization-machine-code-vectorization-cache-profiling-compile-time-cost",
+  "short_description": "machine code, vectorization, cache, profiling, compile-time cost",
+  "goals": [
+    "Понять кодогенерацию: assembly, calling conventions, optimizations",
+    "Освоить векторизацию: SIMD, автовекторизация, explicit intrinsics",
+    "Изучить cache-friendly programming: locality, prefetching, false sharing",
+    "Научиться профилированию: perf, VTune, sampling vs instrumentation",
+    "Понять compile-time cost: template bloat, header cost, unity builds"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять кодогенерацию: assembly, calling conventions, optimizations",
+        "Освоить векторизацию: SIMD, автовекторизация, explicit intrinsics",
+        "Изучить cache-friendly programming: locality, prefetching, false sharing",
+        "Научиться профилированию: perf, VTune, sampling vs instrumentation",
+        "Понять compile-time cost: template bloat, header cost, unity builds"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Machine Code & Assembly Basics"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Calling Conventions (x86-64 System V AMD64 ABI)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Caller-saved (volatile):  rax, rcx, rdx, rsi, rdi, r8-r11\nCallee-saved (non-volatile): rbx, rbp, r12-r15\nReturn: rax (rdx:rax для 128-bit)\nArgs: rdi, rsi, rdx, rcx, r8, r9, затем стек"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример функции и её ассемблер"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int add(int a, int b) { return a + b; }\n\n// GCC -O2 -S add.cpp\nadd:\n    lea eax, [rdi + rsi]   // return в rax\n    ret"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Inlining"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "inline int square(int x) { return x * x; }\n\n// always_inline — принудительно\n__attribute__((always_inline)) int fast_square(int x) { return x * x; }\n\n// noinline — запрет\n__attribute__((noinline)) int debug_square(int x) { return x * x; }\n\n// MSVC\n__forceinline int fast_square(int x) { return x * x; }\n__declspec(noinline) int debug_square(int x) { return x * x; }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Compiler Explorer (Godbolt) — обязательный инструмент"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Vectorization (SIMD)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Auto-vectorization"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Простой цикл — автовекторизуется\nvoid add_arrays(float* a, float* b, float* c, size_t n) {\n    for (size_t i = 0; i < n; ++i)\n        c[i] = a[i] + b[i];\n}\n\n// GCC/Clang: -O2 -ftree-vectorize -march=native\n// MSVC: /O2 /arch:AVX2"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Hints для автовекторизации"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// restrict / __restrict — нет aliasing\nvoid add_arrays(float* __restrict a, float* __restrict b, float* __restrict c, size_t n) {\n    for (size_t i = 0; i < n; ++i)\n        c[i] = a[i] + b[i];\n}\n\n// alignas для выравнивания\nvoid add_aligned(float* __restrict a, float* __restrict b, float* __restrict c, size_t n) {\n    // a, b, c выровнены на 32 байта (AVX)\n    for (size_t i = 0; i < n; ++i)\n        c[i] = a[i] + b[i];\n}\n\n// #pragma для принудительной векторизации\n#pragma GCC ivdep\n#pragma clang loop vectorize(enable)\nfor (size_t i = 0; i < n; ++i) { ... }\n\n// MSVC\n#pragma loop(hint_parallel(8))\nfor (size_t i = 0; i < n; ++i) { ... }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Explicit SIMD (Intrinsics)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <immintrin.h>  // AVX/AVX2/AVX-512\n\nvoid add_avx(float* a, float* b, float* c, size_t n) {\n    size_t i = 0;\n    for (; i + 7 < n; i += 8) {\n        __m256 va = _mm256_load_ps(a + i);      // 8 floats\n        __m256 vb = _mm256_load_ps(b + i);\n        __m256 vc = _mm256_add_ps(va, vb);\n        _mm256_store_ps(c + i, vc);\n    }\n    // tail handling\n    for (; i < n; ++i) c[i] = a[i] + b[i];\n}\n\n// FMA (Fused Multiply-Add)\nvoid fma_avx2(float* a, float* b, float* c, float* d, size_t n) {\n    for (size_t i = 0; i + 7 < n; i += 8) {\n        __m256 va = _mm256_load_ps(a + i);\n        __m256 vb = _mm256_load_ps(b + i);\n        __m256 vc = _mm256_load_ps(c + i);\n        __m256 vd = _mm256_fmadd_ps(va, vb, vc); // a*b + c\n        _mm256_store_ps(d + i, vd);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "C++23 std::simd (Experimental)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <experimental/simd>\n\nusing namespace std::experimental;\n\nvoid add_simd(float* a, float* b, float* c, size_t n) {\n    using Vec = native_simd<float>;\n    size_t i = 0;\n    for (; i + Vec::size() <= n; i += Vec::size()) {\n        Vec va(a + i, vector_aligned);\n        Vec vb(b + i, vector_aligned);\n        Vec vc = va + vb;\n        vc.copy_to(c + i, vector_aligned);\n    }\n    // scalar tail\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Cache Optimization"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cache Hierarchy (Typical)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "L1:  32-64 KB/core,  4-5 cycles,  64-byte lines\nL2:  256 KB-1 MB/core, 12-15 cycles\nL3:  8-32 MB shared,  30-50 cycles\nRAM: ~100-300 cycles"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Data Layout — AoS vs SoA"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Array of Structures (AoS) — плохо для SIMD\nstruct Particle { float x, y, z, vx, vy, vz, mass; };\nstd::vector<Particle> particles;\n\n// Structure of Arrays (SoA) — cache-friendly, SIMD-friendly\nstruct ParticleSystem {\n    std::vector<float> x, y, z;\n    std::vector<float> vx, vy, vz;\n    std::vector<float> mass;\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Prefetching"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Software prefetch\nfor (size_t i = 0; i < n; ++i) {\n    __builtin_prefetch(&data[i + 16], 0, 3); // read, high temporal locality\n    process(data[i]);\n}\n\n// C++26: std::prefetch (proposal)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "False Sharing"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ПЛОХО: разные потоки пишут в соседние ячейки одной cache line\nstruct Counter { std::atomic<int> value; };\nCounter counters[4]; // 4 * 4 = 16 байт — одна cache line (64 байта)!\n\n// ХОРОШО: padding до cache line\nstruct alignas(64) PaddedCounter {\n    std::atomic<int> value;\n};\nPaddedCounter counters[4]; // каждый в своей cache line\n\n// Или C++17 hardware_destructive_interference_size\nalignas(std::hardware_destructive_interference_size) std::atomic<int> counter;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cache-Friendly Algorithms"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Blocked matrix multiplication (tiling)\nvoid matmul_blocked(float* A, float* B, float* C, int N, int BLOCK=32) {\n    for (int ii = 0; ii < N; ii += BLOCK)\n        for (int jj = 0; jj < N; jj += BLOCK)\n            for (int kk = 0; kk < N; kk += BLOCK)\n                for (int i = ii; i < ii + BLOCK; ++i)\n                    for (int k = kk; k < kk + BLOCK; ++k) {\n                        float aik = A[i*N + k];\n                        for (int j = jj; j < jj + BLOCK; ++j)\n                            C[i*N + j] += aik * B[k*N + j];\n                    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Profiling"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Linux perf"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Intel VTune / AMD uProf"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Google Benchmark (Microbenchmarks)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <benchmark/benchmark.h>\n\nstatic void BM_StringCreation(benchmark::State& state) {\n    for (auto _ : state)\n        std::string s(\"hello\");\n}\nBENCHMARK(BM_StringCreation);\n\nstatic void BM_StringCopy(benchmark::State& state) {\n    std::string x = \"hello\";\n    for (auto _ : state)\n        std::string s = x;\n}\nBENCHMARK(BM_StringCopy);\n\nBENCHMARK_MAIN();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Valgrind / Callgrind"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "valgrind --tool=callgrind ./app\nkcachegrind callgrind.out.xxx  # GUI"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Compile-Time Cost"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Template Bloat"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ПРОБЛЕМА: код раздувается для каждого T\ntemplate <typename T>\nvoid process(std::vector<T>& v) {\n    std::sort(v.begin(), v.end());\n    // ... много кода\n}\n\n// РЕШЕНИЕ: type erasure / void* / базовый класс\nvoid process_erased(void* data, size_t size, size_t align, void (*sort_fn)(void*, size_t));\n\n// Или explicit instantiation в .cpp\n// header\ntemplate <typename T> void process_impl(std::vector<T>&);\n// cpp\ntemplate void process_impl<int>(std::vector<int>&);\ntemplate void process_impl<float>(std::vector<float>&);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Header Cost"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ПРОБЛЕМА: #include <vector> тянет 10000+ строк\n// РЕШЕНИЕ:\n// 1. Forward declarations где возможно\n// 2. Pimpl idiom\nclass Widget {\n    struct Impl;\n    std::unique_ptr<Impl> pimpl_;\npublic:\n    Widget();\n    ~Widget(); // нужен в .cpp для destroy Impl\n    void do_work();\n};\n\n// 3. Modules (C++20) — не включают заголовки транзитивно\nexport module widget;\nimport <memory>; // не экспортируется дальше"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unity Builds"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Precompiled Headers (PCH)"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Profile-Guided Optimization (PGO)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GCC/Clang PGO"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MSVC PGO"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "BOLT (Post-link Optimization)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Assembly Analysis"
+    },
+    {
+      "type": "text",
+      "content": "Напишите функцию <code>dot<em>product(float<em>, float</em>, size</em>t)</code> и изучите её ассемблер при <code>-O0</code>, <code>-O2</code>, <code>-O3 -march=native</code>. Найдите где автовекторизация сработала, а где нет."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: SIMD Implementation"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте <code>memcpy</code> / <code>memset</code> / <code>strlen</code> используя AVX2 intrinsics. Сравните с <code>std::memcpy</code> и <code>glibc</code> версией."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Cache Benchmark"
+    },
+    {
+      "type": "text",
+      "content": "Создайте benchmark: последовательный vs случайный доступ к массиву 100MB. Измерьте bandwidth через <code>perf stat</code>. Добавьте prefetch и измерьте улучшение."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: False Sharing Demo"
+    },
+    {
+      "type": "text",
+      "content": "Напишите программу с 4 потоками, каждый инкрементирует свой <code>atomic<int></code> в массиве. Сравните время с <code>alignas(64)</code> и без. Объясните результаты."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Profiling Real Code"
+    },
+    {
+      "type": "text",
+      "content": "Возьмите свой проект (или любой open-source). Запустите под <code>perf record -g</code>. Найдите top 3 hot functions. Попробуйте оптимизировать одну из них."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Template Bloat Measurement"
+    },
+    {
+      "type": "text",
+      "content": "Создайте шаблонный класс <code>Matrix<T, N, M></code> с методами. Явно инстанцируйте для 10 типов. Измерьте размер бинарника с explicit instantiation в .cpp vs только в header."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 7: PGO Workflow"
+    },
+    {
+      "type": "text",
+      "content": "Настройте PGO для проекта с CMake. Сравьте производительность до/после на реальной нагрузке."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Agner Fog: Optimization Manuals** — https://www.agner.org/optimize/",
+        "**Intel Intrinsics Guide** — https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html",
+        "**Compiler Explorer** — https://godbolt.org/",
+        "**perf wiki** — https://perf.wiki.kernel.org/",
+        "**Brendan Gregg: Flame Graphs** — http://www.brendangregg.com/flamegraphs.html",
+        "**CppCon: \"Optimizing C++\" (Chandler Carruth, Mike Acton, Fedor Pikus)**",
+        "**C++ Performance Tips** — https://github.com/cpp-best-practices/cppbestpractices/blob/master/06-Performance.md"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [
+    "**Agner Fog: Optimization Manuals** — https://www.agner.org/optimize/",
+    "**Intel Intrinsics Guide** — https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html",
+    "**Compiler Explorer** — https://godbolt.org/",
+    "**perf wiki** — https://perf.wiki.kernel.org/",
+    "**Brendan Gregg: Flame Graphs** — http://www.brendangregg.com/flamegraphs.html",
+    "**CppCon: \"Optimizing C++\" (Chandler Carruth, Mike Acton, Fedor Pikus)**",
+    "**C++ Performance Tips** — https://github.com/cpp-best-practices/cppbestpractices/blob/master/06-Performance.md"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 30
+}

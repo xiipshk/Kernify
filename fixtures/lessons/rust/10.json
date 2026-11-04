@@ -1,0 +1,533 @@
+{
+  "title": "Урок 10: Трейты и дженерики",
+  "slug": "treyty-i-dzheneriki",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Трейты (Traits) — определение и реализация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Summary {\n    fn summarize(&self) -> String;\n}\n\nstruct Article {\n    headline: String,\n    content: String,\n}\n\nimpl Summary for Article {\n    fn summarize(&self) -> String {\n        format!(\"{} - {}\", self.headline, self.content)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Дефолтная реализация"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Summary {\n    fn summarize(&self) -> String {\n        String::from(\"(Read more...)\") // Дефолт\n    }\n}\n\nimpl Summary for Article {\n    // Можно не переопределять\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Трейты как параметры (Static Dispatch — мономорфизация)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Generic с trait bound\nfn notify<T: Summary>(item: &T) {\n    println!(\"Breaking news! {}\", item.summarize());\n}\n\n// Несколько bounds\nfn notify_multi<T: Summary + std::fmt::Debug>(item: &T) {}\n\n// where clause (читаемее для сложных bounds)\nfn notify_where<T>(item: &T)\nwhere\n    T: Summary + std::fmt::Debug,\n{}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`impl Trait` в аргументах (синтаксический сахар)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Эквивалентно fn notify<T: Summary>(item: &T)\nfn notify(item: &impl Summary) {\n    println!(\"{}\", item.summarize());\n}\n\n// Несколько трейтов\nfn notify(item: &(impl Summary + std::fmt::Debug)) {}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Дженерики (Generics)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "В функциях"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn largest<T: PartialOrd + Copy>(list: &[T]) -> T {\n    let mut largest = list[0];\n    for &item in list {\n        if item > largest {\n            largest = item;\n        }\n    }\n    largest\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "В структурах"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Point<T> {\n    x: T,\n    y: T,\n}\n\nimpl<T> Point<T> {\n    fn x(&self) -> &T { &self.x }\n}\n\n// Методы только для конкретных T\nimpl Point<f64> {\n    fn distance_from_origin(&self) -> f64 {\n        (self.x.powi(2) + self.y.powi(2)).sqrt()\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "В enum'ах"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "enum Option<T> {\n    Some(T),\n    None,\n}\n\nenum Result<T, E> {\n    Ok(T),\n    Err(E),\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Множественные параметры"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Pair<T, U> {\n    first: T,\n    second: U,\n}\n\nfn compare<T, U>(a: T, b: U) where T: PartialEq<U> {\n    println!(\"Equal: {}\", a == b);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Возврат `impl Trait` (Static Dispatch)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn returns_summarizable() -> impl Summary {\n    Article {\n        headline: \"Rust 1.75 released\".into(),\n        content: \"...\".into(),\n    }\n}\n\n// Можно вернуть только ОДИН конкретный тип!\n// fn returns_conditional(cond: bool) -> impl Summary {\n//     if cond { Article { ... } } else { Tweet { ... } } // ОШИБКА!\n// }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Ассоциированные типы (Associated Types)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "В трейтах"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Iterator {\n    type Item; // Ассоциированный тип\n    fn next(&mut self) -> Option<Self::Item>;\n}\n\nstruct Counter {\n    count: u32,\n}\n\nimpl Iterator for Counter {\n    type Item = u32; // Конкретизация\n    fn next(&mut self) -> Option<u32> {\n        if self.count < 5 {\n            self.count += 1;\n            Some(self.count)\n        } else { None }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Разница с дженериками"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Generic — может быть несколько реализаций для разных T\ntrait Container<T> { fn get(&self) -> T; }\n\n// Associated type — только одна реализация на тип\ntrait Container2 { type Item; fn get(&self) -> Self::Item; }\n\nstruct MyVec(Vec<i32>);\n\n// OK: одна реализация\nimpl Container2 for MyVec { type Item = i32; fn get(&self) -> i32 { self.0[0] } }\n\n// Можно несколько для разных T\nimpl Container<i32> for MyVec { fn get(&self) -> i32 { self.0[0] } }\nimpl Container<String> for MyVec { fn get(&self) -> String { \"hi\".into() } }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Supertraits (Supertrait bounds)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait OutlinePrint: std::fmt::Display { // Требует Display\n    fn outline_print(&self) {\n        let output = self.to_string(); // Display доступен\n        println!(\"*** {} ***\", output);\n    }\n}\n\nstruct Point { x: i32, y: i32 }\n\nimpl std::fmt::Display for Point {\n    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {\n        write!(f, \"({}, {})\", self.x, self.y)\n    }\n}\n\nimpl OutlinePrint for Point {}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Newtype Pattern (Обёртка для реализации чужого трейта)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Ошибка: нельзя реализовать внешний трейт для внешнего типа\n// impl std::fmt::Display for Vec<i32> {}\n\nstruct Wrapper(Vec<i32>);\n\nimpl std::fmt::Display for Wrapper {\n    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {\n        write!(f, \"[{}]\", self.0.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(\", \"))\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Динамическая диспетчеризация (Dynamic Dispatch) — `dyn Trait`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Trait object — указатель + vtable\nfn notify_dynamic(item: &dyn Summary) {\n    println!(\"{}\", item.summarize());\n}\n\nfn main() {\n    let article = Article { headline: \"Hi\".into(), content: \"...\".into() };\n    notify_dynamic(&article); // &dyn Summary\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Box<dyn Trait>` — владение trait object"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn returns_random() -> Box<dyn Summary> {\n    if rand::random() {\n        Box::new(Article { ... })\n    } else {\n        Box::new(Tweet { ... })\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение: Static vs Dynamic"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Аспект",
+        "Static (`impl Trait`, generics)",
+        "Dynamic (`dyn Trait`)"
+      ],
+      "rows": [
+        [
+          "Производительность",
+          "Инлайнинг, мономорфизация",
+          "Косвенный вызов через vtable"
+        ],
+        [
+          "Размер кода",
+          "Увеличивается (код на каждый T)",
+          "Один код"
+        ],
+        [
+          "Гибкость",
+          "Тип известен на компиляции",
+          "Тип известен только в runtime"
+        ],
+        [
+          "Heterogeneous collections",
+          "Нет",
+          "Да (`Vec<Box<dyn Trait>>`)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Важные трейты стандартной библиотеки"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Clone` / `Copy`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[derive(Clone)] // Глубокое копирование\nstruct Deep;\n\n#[derive(Copy, Clone)] // Битовое копирование (только если все поля Copy)\nstruct Shallow;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Default`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[derive(Default)]\nstruct Config { timeout: u64, retries: u32 }\n\nfn main() {\n    let cfg = Config::default();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`From` / `Into` / `TryFrom` / `TryInto`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let s: String = \"hello\".into(); // From<&str> for String\nlet n: i32 = 5.into(); // Into<i32> for i32\n\n// TryFrom — может неудаться\nlet n: i32 = \"42\".parse().unwrap(); // FromStr\n// или\nuse std::convert::TryFrom;\nlet n = i32::try_from(1000i64).unwrap();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`AsRef` / `AsMut` / `Borrow` / `BorrowMut`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn print<T: AsRef<str>>(s: T) { println!(\"{}\", s.as_ref()); }\nprint(\"hello\");      // &str\nprint(String::from(\"world\")); // String"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Deref` / `DerefMut` — умные указатели"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ops::Deref;\n\nstruct MyBox<T>(T);\n\nimpl<T> Deref for MyBox<T> {\n    type Target = T;\n    fn deref(&self) -> &T { &self.0 }\n}\n\nfn main() {\n    let b = MyBox(5);\n    println!(\"{}\", *b); // *(b.deref())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Drop` — деструктор"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Resource { name: String }\n\nimpl Drop for Resource {\n    fn drop(&mut self) {\n        println!(\"Dropping {}\", self.name);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Send` / `Sync` — потокобезопасность (маркеры)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`Send` — безопасно передавать владение другому потоку",
+        "`Sync` — безопасно разделять `&T` между потоками",
+        "Авто-выводятся; `!Send` / `!Sync` для raw pointers, `MutexGuard`, etc."
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Operator Overloading (Перегрузка операторов)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ops::Add;\n\n#[derive(Debug, PartialEq)]\nstruct Point { x: i32, y: i32 }\n\nimpl Add for Point {\n    type Output = Point;\n    fn add(self, other: Point) -> Point {\n        Point { x: self.x + other.x, y: self.y + other.y }\n    }\n}\n\nfn main() {\n    let p = Point { x: 1, y: 2 } + Point { x: 3, y: 4 };\n    println!(\"{:?}\", p); // Point { x: 4, y: 6 }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основные трейты операторов"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Оператор",
+        "Трейт",
+        "Метод"
+      ],
+      "rows": [
+        [
+          "`+`",
+          "`Add`",
+          "`add`"
+        ],
+        [
+          "`-`",
+          "`Sub`",
+          "`sub`"
+        ],
+        [
+          "`*`",
+          "`Mul`",
+          "`mul`"
+        ],
+        [
+          "`/`",
+          "`Div`",
+          "`div`"
+        ],
+        [
+          "`%`",
+          "`Rem`",
+          "`rem`"
+        ],
+        [
+          "`+=`",
+          "`AddAssign`",
+          "`add_assign`"
+        ],
+        [
+          "`==`",
+          "`PartialEq`",
+          "`eq`"
+        ],
+        [
+          "`<`",
+          "`PartialOrd`",
+          "`partial_cmp`"
+        ],
+        [
+          "`[]`",
+          "`Index` / `IndexMut`",
+          "`index`"
+        ],
+        [
+          "`()`",
+          "`Fn` / `FnMut` / `FnOnce`",
+          "`call`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Generic trait с ассоциированным типом"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Graph {\n    type Node;\n    type Edge;\n    fn nodes(&self) -> Vec<Self::Node>;\n    fn edges(&self) -> Vec<Self::Edge>;\n}\n\nstruct SimpleGraph {\n    nodes: Vec<String>,\n    edges: Vec<(String, String)>,\n}\n\nimpl Graph for SimpleGraph {\n    type Node = String;\n    type Edge = (String, String);\n    fn nodes(&self) -> Vec<String> { self.nodes.clone() }\n    fn edges(&self) -> Vec<(String, String)> { self.edges.clone() }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: `impl Trait` в возвращаемом типе"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Shape { fn area(&self) -> f64; }\nstruct Circle { r: f64 }\nstruct Square { s: f64 }\nimpl Shape for Circle { fn area(&self) -> f64 { std::f64::consts::PI * self.r * self.r } }\nimpl Shape for Square { fn area(&self) -> f64 { self.s * self.s } }\n\nfn random_shape() -> Box<dyn Shape> { // dynamic dispatch\n    if rand::random() { Box::new(Circle { r: 5.0 }) }\n    else { Box::new(Square { s: 4.0 }) }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Newtype для `Display`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::fmt;\n\nstruct Meters(f64);\n\nimpl fmt::Display for Meters {\n    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {\n        write!(f, \"{} m\", self.0)\n    }\n}\n\nfn main() {\n    println!(\"Distance: {}\", Meters(100.5));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Типичные ошибки новичков"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`the trait bound T: Trait is not satisfied`",
+          "Тип не реализует трейт"
+        ],
+        [
+          "`cannot infer type`",
+          "Компилятор не знает T"
+        ],
+        [
+          "`impl Trait not allowed here`",
+          "`impl Trait` только в аргументах/возврате fn"
+        ],
+        [
+          "`expected concrete type, found trait`",
+          "Попытка использовать trait как тип"
+        ],
+        [
+          "`only one implementation allowed`",
+          "Ассоциированный тип — одна реализация"
+        ],
+        [
+          "`the size for values of type dyn Trait cannot be known`",
+          "`dyn Trait` не `Sized`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Шпаргалка: Generic vs Associated Types"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ситуация",
+        "Используйте"
+      ],
+      "rows": [
+        [
+          "Один тип на реализацию",
+          "Associated Type (`type Item`)"
+        ],
+        [
+          "Много реализаций для разных T",
+          "Generic (`trait Container<T>`)"
+        ],
+        [
+          "Трейт в сигнатуре функции",
+          "`impl Trait` (аргументы/возврат)"
+        ],
+        [
+          "Коллекция разных типов",
+          "`Box<dyn Trait>` / `Vec<Box<dyn Trait>>`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`trait` — определение общего поведения",
+        "`impl Trait for Type` — реализация",
+        "Дженерики: `fn foo<T: Bound>(x: T)`, `struct S<T>`, `enum E<T>`",
+        "Trait bounds: `T: Trait1 + Trait2`, `where` clauses",
+        "`impl Trait` в аргументах и возвращаемых типах (static dispatch)",
+        "Ассоциированные типы: `type Item` — одна реализация на тип",
+        "Supertraits: `trait Child: Parent`",
+        "Newtype pattern для orphan rule",
+        "`dyn Trait` — dynamic dispatch, trait objects",
+        "Ключевые трейты: `Clone`, `Copy`, `Default`, `From`/`Into`, `Deref`, `Drop`, `Send`, `Sync`",
+        "Operator overloading через `std::ops`"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`the trait bound T: Trait is not satisfied`",
+      "correct": "Тип не реализует трейт"
+    },
+    {
+      "mistake": "`cannot infer type`",
+      "correct": "Компилятор не знает T"
+    },
+    {
+      "mistake": "`impl Trait not allowed here`",
+      "correct": "`impl Trait` только в аргументах/возврате fn"
+    },
+    {
+      "mistake": "`expected concrete type, found trait`",
+      "correct": "Попытка использовать trait как тип"
+    },
+    {
+      "mistake": "`only one implementation allowed`",
+      "correct": "Ассоциированный тип — одна реализация"
+    },
+    {
+      "mistake": "`the size for values of type dyn Trait cannot be known`",
+      "correct": "`dyn Trait` не `Sized`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 10
+}

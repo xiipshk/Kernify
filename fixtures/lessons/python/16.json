@@ -1,0 +1,367 @@
+{
+  "title": "Урок 2.5: Контекстные менеджеры — with, __enter__/__exit__, contextlib, ресурсы",
+  "slug": "kontekstnye-menedzhery-with-enter-exit-contextlib-resursy",
+  "short_description": "with, __enter__/__exit__, contextlib, ресурсы",
+  "goals": [
+    "Понимать протокол контекстного менеджера",
+    "Писать свои классы с __enter__/__exit__",
+    "Использовать contextlib.contextmanager",
+    "Работать с ExitStack, AsyncExitStack",
+    "Правильно управлять ресурсами (файлы, соединения, блокировки)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать протокол контекстного менеджера",
+        "Писать свои классы с __enter__/__exit__",
+        "Использовать contextlib.contextmanager",
+        "Работать с ExitStack, AsyncExitStack",
+        "Правильно управлять ресурсами (файлы, соединения, блокировки)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Зачем нужны контекстные менеджеры"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема: управление ресурсами"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что происходит под капотом"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "with EXPR as VAR:\n    BLOCK\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Классовый контекстный менеджер"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый шаблон"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class ManagedResource:\n    def __init__(self, name):\n        self.name = name\n        self.handle = None\n\n    def __enter__(self):\n        print(f\"Открываем {self.name}\")\n        self.handle = acquire_resource(self.name)\n        return self.handle  # значение для `as`\n\n    def __exit__(self, exc_type, exc_val, exc_tb):\n        print(f\"Закрываем {self.name}\")\n        release_resource(self.handle)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Параметры __exit__"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def __exit__(self, exc_type, exc_val, exc_tb):"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. contextlib.contextmanager — генераторный декоратор"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простой случай"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import contextmanager\n\n@contextmanager\ndef open_file(path, mode=\"r\"):\n    f = open(path, mode)\n    try:\n        yield f  # значение для `as`\n    finally:\n        f.close()\n\nwith open_file(\"data.txt\") as f:\n    content = f.read()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "С обработкой ошибок"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@contextmanager\ndef transaction(db):\n    try:\n        yield db\n        db.commit()\n    except Exception:\n        db.rollback()\n        raise\n    finally:\n        db.close()\n\nwith transaction(db) as tx:\n    tx.execute(\"INSERT ...\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контекстный менеджер с возвратом значения"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@contextmanager\ndef timer():\n    import time\n    start = time.perf_counter()\n    try:\n        yield lambda: time.perf_counter() - start  # функция для получения времени\n    finally:\n        pass\n\nwith timer() as get_elapsed:\n    do_work()\n    print(f\"Прошло: {get_elapsed():.3f} сек\")"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. contextlib — полезные утилиты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "closing — для объектов с close()"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import closing\nimport urllib.request\n\nwith closing(urllib.request.urlopen(\"http://example.com\")) as page:\n    html = page.read()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "suppress — игнорирование исключений"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import suppress\nimport os\n\nwith suppress(FileNotFoundError):\n    os.remove(\"temp.txt\")  # ошибка игнорируется, если файл не существует"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "redirect_stdout/stderr"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import redirect_stdout\nimport io\n\nbuf = io.StringIO()\nwith redirect_stdout(buf):\n    print(\"Это пойдёт в буфер\")\nprint(\"А это в консоль\")\nprint(buf.getvalue())  # \"Это пойдёт в буфер\\n\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "nullcontext — заглушка (Python 3.7+)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import nullcontext\n\ndef process(data, logger=nullcontext()):\n    with logger as log:\n        log.info(\"Обработка...\")  # если logger=None — ничего не делает"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "chdir — смена директории (Python 3.11+)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import chdir\n\nwith chdir(\"/tmp\"):"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. ExitStack — динамический стек контекстов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда нужно: неизвестное число ресурсов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import ExitStack\n\ndef process_files(filenames):\n    with ExitStack() as stack:\n        files = [stack.enter_context(open(f)) for f in filenames]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Callback — регистрация функции очистки"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "with ExitStack() as stack:\n    stack.callback(print, \"Очистка 1\")\n    stack.callback(print, \"Очистка 2\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Перехват исключений в коллбэках"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "with ExitStack() as stack:\n    @stack.callback\n    def cleanup():\n        print(\"Всегда выполняется\")"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. AsyncExitStack — для асинхронных контекстов (Python 3.7+)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import AsyncExitStack\nimport asyncio\n\nclass AsyncResource:\n    async def __aenter__(self):\n        print(\"Асинхронное открытие\")\n        return self\n\n    async def __aexit__(self, *args):\n        print(\"Асинхронное закрытие\")\n\nasync def main():\n    async with AsyncExitStack() as stack:\n        res1 = await stack.enter_async_context(AsyncResource())\n        res2 = await stack.enter_async_context(AsyncResource())"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Паттерны использования"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Блокировки (threading)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import threading\n\nlock = threading.Lock()\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Временная замена (mocking, monkeypatching)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import contextmanager\n\n@contextmanager\ndef patch(obj, attr, new_value):\n    old = getattr(obj, attr)\n    setattr(obj, attr, new_value)\n    try:\n        yield\n    finally:\n        setattr(obj, attr, old)\n\nclass Config:\n    debug = False\n\nwith patch(Config, \"debug\", True):\n    print(Config.debug)  # True\nprint(Config.debug)      # False"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Измерение времени"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import contextmanager\nimport time\n\n@contextmanager\ndef timed(label):\n    start = time.perf_counter()\n    try:\n        yield\n    finally:\n        print(f\"{label}: {time.perf_counter() - start:.3f}с\")\n\nwith timed(\"загрузка\"):\n    data = load_data()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Временное изменение окружения"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import os\nfrom contextlib import contextmanager\n\n@contextmanager\ndef env_var(key, value):\n    old = os.environ.get(key)\n    os.environ[key] = value\n    try:\n        yield\n    finally:\n        if old is None:\n            del os.environ[key]\n        else:\n            os.environ[key] = old\n\nwith env_var(\"DEBUG\", \"1\"):\n    print(os.getenv(\"DEBUG\"))  # \"1\""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Вложенные контексты"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Асинхронные контекстные менеджеры (async with)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class AsyncDB:\n    async def __aenter__(self):\n        self.conn = await connect()\n        return self.conn\n\n    async def __aexit__(self, exc_type, exc_val, exc_tb):\n        await self.conn.close()\n        return False\n\nasync def main():\n    async with AsyncDB() as db:\n        await db.execute(\"SELECT 1\")"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки и лучшие практики"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`__enter__` не возвращает `self`/ресурс",
+          "`return self` или `return resource`"
+        ],
+        [
+          "`__exit__` не принимает 3 аргумента",
+          "`def __exit__(self, exc_type, exc_val, exc_tb):`"
+        ],
+        [
+          "Подавление всех исключений (`return True`)",
+          "Подавляйте ТОЛЬКО ожидаемые, логируйте остальные"
+        ],
+        [
+          "Ресурс не закрывается при ошибке в `__enter__`",
+          "`__exit__` не вызовется — используйте `try/finally` в `__enter__`"
+        ],
+        [
+          "Забыли `@contextmanager` на генераторе",
+          "Без декоратора это просто генератор, не контекстный менеджер"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Docs: contextlib** — https://docs.python.org/3/library/contextlib.html",
+        "**Real Python: Context Managers** — https://realpython.com/python-with-statement/",
+        "**PEP 343 — The \"with\" Statement** — https://peps.python.org/pep-0343/",
+        "**PEP 377 — Exception Handling in Generators** — https://peps.python.org/pep-0377/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`__enter__` не возвращает `self`/ресурс",
+      "correct": "`return self` или `return resource`"
+    },
+    {
+      "mistake": "`__exit__` не принимает 3 аргумента",
+      "correct": "`def __exit__(self, exc_type, exc_val, exc_tb):`"
+    },
+    {
+      "mistake": "Подавление всех исключений (`return True`)",
+      "correct": "Подавляйте ТОЛЬКО ожидаемые, логируйте остальные"
+    },
+    {
+      "mistake": "Ресурс не закрывается при ошибке в `__enter__`",
+      "correct": "`__exit__` не вызовется — используйте `try/finally` в `__enter__`"
+    },
+    {
+      "mistake": "Забыли `@contextmanager` на генераторе",
+      "correct": "Без декоратора это просто генератор, не контекстный менеджер"
+    }
+  ],
+  "resources": [
+    "**Python Docs: contextlib** — https://docs.python.org/3/library/contextlib.html",
+    "**Real Python: Context Managers** — https://realpython.com/python-with-statement/",
+    "**PEP 343 — The \"with\" Statement** — https://peps.python.org/pep-0343/",
+    "**PEP 377 — Exception Handling in Generators** — https://peps.python.org/pep-0377/"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 16
+}

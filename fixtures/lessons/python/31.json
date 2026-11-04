@@ -1,0 +1,359 @@
+{
+  "title": "Урок 31: Security & Reliability — валидация, секреты, безопасная десериализация, уязвимости зависимостей, логирование",
+  "slug": "security-reliability-validatsiya-sekrety-bezopasnaya-deserializatsiya-uyazvimosti-zavisimostey-logirovanie",
+  "short_description": "валидация, секреты, безопасная десериализация, уязвимости зависимостей, логирование",
+  "goals": [
+    "Валидировать входящие данные (Pydantic, схемы)",
+    "Безопасно управлять секретами (ключи, токены, пароли)",
+    "Избегать небезопасной десериализации (pickle, yaml, eval)",
+    "Сканировать зависимости на уязвимости (pip-audit, safety, dependabot)",
+    "Настроить структурированное логирование и аудит"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Валидировать входящие данные (Pydantic, схемы)",
+        "Безопасно управлять секретами (ключи, токены, пароли)",
+        "Избегать небезопасной десериализации (pickle, yaml, eval)",
+        "Сканировать зависимости на уязвимости (pip-audit, safety, dependabot)",
+        "Настроить структурированное логирование и аудит"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Валидация входящих данных"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pydantic v2 — стандарт де-факто"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from pydantic import BaseModel, Field, EmailStr, HttpUrl, field_validator, model_validator\nfrom typing import Optional\nfrom datetime import datetime\nfrom enum import Enum\n\nclass UserRole(str, Enum):\n    ADMIN = \"admin\"\n    USER = \"user\"\n    GUEST = \"guest\"\n\nclass UserCreate(BaseModel):\n    email: EmailStr\n    username: str = Field(min_length=3, max_length=20, pattern=r\"^[a-zA-Z0-9_]+$\")\n    password: str = Field(min_length=12, max_length=128)\n    full_name: Optional[str] = Field(default=None, max_length=100)\n    role: UserRole = UserRole.USER\n    birth_date: Optional[datetime] = None\n\n    @field_validator(\"password\")\n    @classmethod\n    def password_complexity(cls, v: str) -> str:\n        if not any(c.isupper() for c in v):\n            raise ValueError(\"Пароль должен содержать заглавную букву\")\n        if not any(c.islower() for c in v):\n            raise ValueError(\"Пароль должен содержать строчную букву\")\n        if not any(c.isdigit() for c in v):\n            raise ValueError(\"Пароль должен содержать цифру\")\n        if not any(c in \"!@#$%^&*\" for c in v):\n            raise ValueError(\"Пароль должен содержать спецсимвол\")\n        return v\n\n    @model_validator(mode=\"after\")\n    def check_adult(self) -> \"UserCreate\":\n        if self.birth_date and self.role == UserRole.ADMIN:\n            age = (datetime.now() - self.birth_date).days // 365\n            if age < 18:\n                raise ValueError(\"Админ должен быть старше 18 лет\")\n        return self\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Валидация на уровне API (FastAPI)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi import FastAPI, HTTPException, status\nfrom pydantic import ValidationError\n\napp = FastAPI()\n\n@app.post(\"/users\", status_code=status.HTTP_201_CREATED)\nasync def create_user(user_data: UserCreate):\n    try:\n        user = UserCreate(**user_data.model_dump())\n    except ValidationError as e:\n        raise HTTPException(status_code=422, detail=e.errors())\n    return await user_service.create(user)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Управление секретами"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "❌ НИКОГДА не храните секреты в коде"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "✅ Переменные окружения + .env (только для разработки)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Продакшн: Secret Managers"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генерация секретов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import secrets\nimport string\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Безопасная десериализация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "❌ ОПАСНЫЕ паттерны (RCE уязвимости)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "✅ Безопасные альтернативы"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Если НУЖНО pickle (только доверенные данные!)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import pickle\nimport hmac\nimport hashlib\n\nSECRET_KEY = b\"your-secret-key\"\n\ndef safe_dumps(obj: object) -> bytes:\n    data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)\n    signature = hmac.new(SECRET_KEY, data, hashlib.sha256).digest()\n    return signature + data\n\ndef safe_loads(signed_data: bytes) -> object:\n    signature, data = signed_data[:32], signed_data[32:]\n    expected = hmac.new(SECRET_KEY, data, hashlib.sha256).digest()\n    if not hmac.compare_digest(signature, expected):\n        raise ValueError(\"Invalid signature\")\n    return pickle.loads(data)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Сканирование уязвимостей зависимостей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "pip-audit (официальный PyPA)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pip-audit\npip-audit                    # проверка текущего окружения\npip-audit -r requirements.txt  # проверка файла\npip-audit --format=json      # для CI"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Safety (коммерческий, более полная БД)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install safety\nsafety check                 # проверка окружения\nsafety check -r requirements.txt"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GitHub Dependabot (автоматически)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "В CI (GitHub Actions)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "- name: Run pip-audit\n  run: |\n    pip install pip-audit\n    pip-audit --format=json --output=audit.json || true\n\n- name: Upload audit results\n  uses: actions/upload-artifact@v4\n  with:\n    name: dependency-audit\n    path: audit.json"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "deptry — поиск проблем с зависимостями"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install deptry\ndeptry .  # находит: неиспользуемые, отсутствующие в pyproject.toml, неиспользуемые в коде"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Структурированное логирование и аудит"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "structlog — structured logging"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import structlog\nimport logging\nimport sys\n\nstructlog.configure(\n    processors=[\n        structlog.contextvars.merge_contextvars,\n        structlog.processors.add_log_level,\n        structlog.processors.StackInfoRenderer(),\n        structlog.dev.set_exc_info,\n        structlog.processors.TimeStamper(fmt=\"iso\"),\n        structlog.processors.JSONRenderer()  # для продакшн"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стандартный logging + JSON formatter"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import logging\nimport json\nfrom datetime import datetime\n\nclass JSONFormatter(logging.Formatter):\n    def format(self, record):\n        log_obj = {\n            \"timestamp\": datetime.utcnow().isoformat() + \"Z\",\n            \"level\": record.levelname,\n            \"logger\": record.name,\n            \"message\": record.getMessage(),\n            \"module\": record.module,\n            \"function\": record.funcName,\n            \"line\": record.lineno,\n        }\n        if record.exc_info:\n            log_obj[\"exception\"] = self.formatException(record.exc_info)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Аудит безопасных событий"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from dataclasses import dataclass, asdict\nfrom datetime import datetime\nfrom enum import Enum\nimport structlog\n\nclass AuditEventType(str, Enum):\n    LOGIN_SUCCESS = \"login_success\"\n    LOGIN_FAILED = \"login_failed\"\n    PASSWORD_CHANGED = \"password_changed\"\n    PERMISSION_GRANTED = \"permission_granted\"\n    DATA_EXPORTED = \"data_exported\"\n    ADMIN_ACTION = \"admin_action\"\n\n@dataclass\nclass AuditEvent:\n    event_type: AuditEventType\n    user_id: int\n    timestamp: str = None\n    ip: str = None\n    details: dict = None\n\n    def __post_init__(self):\n        self.timestamp = self.timestamp or datetime.utcnow().isoformat() + \"Z\"\n\naudit_logger = structlog.get_logger(\"audit\")\n\ndef log_audit(event: AuditEvent):\n    audit_logger.info(\"audit_event\", **asdict(event))\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Основные принципы безопасности (OWASP Top 10 для Python)"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Уязвимость",
+        "Защита в Python"
+      ],
+      "rows": [
+        [
+          "**Injection (SQL, Command)**",
+          "Параметризованные запросы (SQLAlchemy ORM, `cursor.execute(\"...\", params)`), `shlex.quote()`"
+        ],
+        [
+          "**Broken Auth**",
+          "bcrypt/argon2 для паролей, JWT с коротким TTL, MFA"
+        ],
+        [
+          "**Sensitive Data Exposure**",
+          "Шифрование в покое (AES-GCM), TLS 1.3, секреты не в логах"
+        ],
+        [
+          "**XXE**",
+          "`defusedxml` вместо `xml.etree`, отключить внешние сущности"
+        ],
+        [
+          "**Broken Access Control**",
+          "RBAC/ABAC, проверка прав на каждом эндпоинте"
+        ],
+        [
+          "**Security Misconfiguration**",
+          "`debug=False` в проде, security headers (CSP, HSTS)"
+        ],
+        [
+          "**XSS**",
+          "Jinja2 autoescape, CSP, sanitize HTML (bleach)"
+        ],
+        [
+          "**Insecure Deserialization**",
+          "Только JSON/msgpack, избегать pickle/yaml.load"
+        ],
+        [
+          "**Vulnerable Components**",
+          "`pip-audit`, Dependabot, `pip install --upgrade`"
+        ],
+        [
+          "**Insufficient Logging**",
+          "Structured logs, корреляция request_id, алерты на аномалии"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`SECRET_KEY` в репозитории",
+          "Только в secret manager / env vars"
+        ],
+        [
+          "`pickle.load()` из сети/файлов пользователей",
+          "JSON / msgpack / safe yaml"
+        ],
+        [
+          "`yaml.load()` без `Loader=yaml.SafeLoader`",
+          "`yaml.safe_load()`"
+        ],
+        [
+          "Логирование паролей/токенов",
+          "Фильтруйте чувствительные поля в formatter"
+        ],
+        [
+          "Отсутствие rate limiting",
+          "`slowapi` / nginx rate limit на авторизацию"
+        ],
+        [
+          "`debug=True` в продакшене",
+          "Всегда `False`, отдельные settings для prod"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`SECRET_KEY` в репозитории",
+      "correct": "Только в secret manager / env vars"
+    },
+    {
+      "mistake": "`pickle.load()` из сети/файлов пользователей",
+      "correct": "JSON / msgpack / safe yaml"
+    },
+    {
+      "mistake": "`yaml.load()` без `Loader=yaml.SafeLoader`",
+      "correct": "`yaml.safe_load()`"
+    },
+    {
+      "mistake": "Логирование паролей/токенов",
+      "correct": "Фильтруйте чувствительные поля в formatter"
+    },
+    {
+      "mistake": "Отсутствие rate limiting",
+      "correct": "`slowapi` / nginx rate limit на авторизацию"
+    },
+    {
+      "mistake": "`debug=True` в продакшене",
+      "correct": "Всегда `False`, отдельные settings для prod"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 31
+}

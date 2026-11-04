@@ -1,0 +1,904 @@
+{
+  "title": "Урок 28: Производительность рендеринга — style/layout/paint/compositing, layout thrashing, профилирование анимаций",
+  "slug": "proizvoditelnost-renderinga-stylelayoutpaintcompositing-layout-thrashing-profilirovanie-animatsiy",
+  "short_description": "style/layout/paint/compositing, layout thrashing, профилирование анимаций",
+  "goals": [
+    "Понять конвейер рендеринга браузера (Style → Layout → Paint → Composite → Display)",
+    "Изучить, какие CSS-свойства затрагивают какой этап конвейера",
+    "Научиться находить и устранять layout thrashing (forced reflow)",
+    "Освоить профилирование анимаций и рендеринга в DevTools",
+    "Применять contain, will-change, CSS containment для оптимизации"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять конвейер рендеринга браузера (Style → Layout → Paint → Composite → Display)",
+        "Изучить, какие CSS-свойства затрагивают какой этап конвейера",
+        "Научиться находить и устранять layout thrashing (forced reflow)",
+        "Освоить профилирование анимаций и рендеринга в DevTools",
+        "Применять contain, will-change, CSS containment для оптимизации"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Конвейер рендеринга браузера"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пять этапов конвейера"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "JavaScript ──→ Style ──→ Layout ──→ Paint ──→ Composite ──→ Display\n                    ↓          ↓          ↓           ↓\n               Вычисление   Геометрия   Растровая   Слои на экране\n               стилей         элементов   обработка"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Этап 1: Style (Расчет стилей)"
+    },
+    {
+      "type": "text",
+      "content": "Браузер определяет, какие CSS-правила применяются к каждому элементу, и вычисляет итоговые значения свойств."
+    },
+    {
+      "type": "text",
+      "content": "<strong>Что влияет:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Сложность селекторов (специфичность, количество правил)",
+        "Количество элементов в DOM",
+        "CSS-переменные, каскадные слои, @layer"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "<strong>Как оптимизировать:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Держи селекторы простыми (избегай `.a .b .c .d .e`)",
+        "Минимизируй количество правил CSS",
+        "Используй классы вместо теговых селекторов"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Плохо: глубокая вложенность, дорого вычислять */\ndiv ul li a span { color: red; }\n\n/* Хорошо: простой класс */\n.link-text { color: red; }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Этап 2: Layout (Расчет геометрии / Reflow)"
+    },
+    {
+      "type": "text",
+      "content": "Браузер вычисляет размеры и позиции всех элементов на странице."
+    },
+    {
+      "type": "text",
+      "content": "<strong>Свойства, вызывают Layout:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`width`, `height`, `min-width`, `max-height`",
+        "`margin`, `padding`, `border`",
+        "`top`, `left`, `right`, `bottom` (для positioned)",
+        "`font-size`, `line-height`",
+        "`flex`, `grid`, `display`, `position`",
+        "`float`, `clear`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "<strong>Стоимость:</strong> 🔴 Высокая — пересчитывает всю дерево layout"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Этап 3: Paint (Растровая обработка)"
+    },
+    {
+      "type": "text",
+      "content": "Браузер определяет, какие цвета, текстуры, границы, тени рисовать."
+    },
+    {
+      "type": "text",
+      "content": "<strong>Свойства, вызывают Paint:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`color`, `background`, `background-image`",
+        "`box-shadow`, `text-shadow`",
+        "`border`, `border-radius`, `border-color`",
+        "`outline`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "<strong>Стоимость:</strong> 🟡 Средняя"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Этап 4: Composite (Композитинг)"
+    },
+    {
+      "type": "text",
+      "content": "Браузер объединяет слои в итоговое изображение на экране. Это происходит на compositing потоке (GPU)."
+    },
+    {
+      "type": "text",
+      "content": "<strong>Свойства, затрагивают только Composite:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`transform` (translate, scale, rotate)",
+        "`opacity`",
+        "`filter` (аккуратно —blur может быть дорог)",
+        "`will-change`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "<strong>Стоимость:</strong> 🟢 Низкая (60fps возможна)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Этап 5: Display"
+    },
+    {
+      "type": "text",
+      "content": "Отображение итогового кадра на экране."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Свойства по этапам конвейера — шпаргалка"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Свойство",
+        "Style",
+        "Layout",
+        "Paint",
+        "Composite"
+      ],
+      "rows": [
+        [
+          "color",
+          "✅",
+          "",
+          "✅",
+          ""
+        ],
+        [
+          "background",
+          "✅",
+          "",
+          "✅",
+          ""
+        ],
+        [
+          "box-shadow",
+          "✅",
+          "",
+          "✅",
+          ""
+        ],
+        [
+          "border-radius",
+          "✅",
+          "",
+          "✅",
+          ""
+        ],
+        [
+          "opacity",
+          "✅",
+          "",
+          "",
+          "✅"
+        ],
+        [
+          "transform",
+          "✅",
+          "",
+          "",
+          "✅"
+        ],
+        [
+          "filter",
+          "✅",
+          "",
+          "",
+          "✅"
+        ],
+        [
+          "width",
+          "✅",
+          "✅",
+          "✅",
+          ""
+        ],
+        [
+          "height",
+          "✅",
+          "✅",
+          "✅",
+          ""
+        ],
+        [
+          "margin",
+          "✅",
+          "✅",
+          "✅",
+          ""
+        ],
+        [
+          "padding",
+          "✅",
+          "✅",
+          "✅",
+          ""
+        ],
+        [
+          "top/left (positioned)",
+          "✅",
+          "✅",
+          "✅",
+          ""
+        ],
+        [
+          "font-size",
+          "✅",
+          "✅",
+          "✅",
+          ""
+        ],
+        [
+          "display",
+          "✅",
+          "✅",
+          "✅",
+          ""
+        ],
+        [
+          "will-change",
+          "",
+          "",
+          "",
+          "✅ (подсказка)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что анимировать — дешево"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* 🟢 Дешево — только Composite */\n.anim-cheap {\n  animation: move 0.5s;\n}\n@keyframes move {\n  to {\n    transform: translate3d(100px, 0, 0);  /* translateZ(0) создает слой */\n    opacity: 0.5;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что не анимировать — дорого"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* 🔴 Дорого — Layout + Paint */\n.anim-expensive {\n  animation: move 0.5s;\n}\n@keyframes move {\n  to {\n    width: 200px;\n    height: 200px;\n    margin: 20px;\n    top: 50px;\n    left: 50px;\n    background: red;\n    box-shadow: 0 10px 20px rgba(0,0,0,0.3);\n    border-radius: 10px;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Замена дорогого на дешевое"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Вместо width/height анимации — transform: scale() */\n.bad {\n  animation: grow 0.3s;\n}\n@keyframes grow {\n  to { width: 200px; height: 200px; }\n}\n\n.good {\n  animation: grow 0.3s;\n}\n@keyframes grow {\n  to { transform: scale(1.25); }  /* Только Composite */\n}\n\n/* Вместо top/left — transform: translate() */\n.bad {\n  animation: slide 0.3s;\n}\n@keyframes slide {\n  to { top: 100px; left: 100px; }\n}\n\n.good {\n  animation: slide 0.3s;\n}\n@keyframes slide {\n  to { transform: translate3d(100px, 100px, 0); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Layout Thrashing (Forced Reflow / Layout Thrashing)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое layout thrashing"
+    },
+    {
+      "type": "text",
+      "content": "Чередование чтения и записи layout-свойств в цикле заставляет браузер пересчитывать геометрию на каждой итерации."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример проблемы"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ПЛОХО — Layout Thrashing\nconst items = document.querySelectorAll('.item');\nfor (let i = 0; i < items.length; i++) {\n  // Чтение layout (вызывает reflow)\n  const width = items[i].offsetWidth;\n  // Запись layout (вызывает recalculation)\n  items[i].style.width = (width + 10) + 'px';\n}\n// На each итерации: чтение + запись = forced reflow\n// При 100 элементах — 200 forced reflow!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Решение — разделить чтение и запись"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ХОРОШО — сначала читаем все, потом пишем все\nconst items = document.querySelectorAll('.item');\n\n// Фаза 1: Чтение (все layout-значения сразу)\nconst widths = [];\nfor (let i = 0; i < items.length; i++) {\n  widths.push(items[i].offsetWidth);\n}\n\n// Фаза 2: Запись (все изменения сразу)\nfor (let i = 0; i < items.length; i++) {\n  items[i].style.width = (widths[i] + 10) + 'px';\n}\n// Только 2 прохода, нет thrashing"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "RequestAnimationFrame для пакетной обработки"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ХОРОШО —批量 в следующем кадре\nfunction updateItems() {\n  const items = document.querySelectorAll('.item');\n  const measurements = [];\n\n  // Чтение\n  items.forEach(item => {\n    measurements.push(item.getBoundingClientRect());\n  });\n\n  // Запись\n  items.forEach((item, i) => {\n    item.style.transform = `translateX(${measurements[i].left}px)`;\n  });\n}\n\nrequestAnimationFrame(updateItems);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Свойства, которые вызывают forced reflow при чтении"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "offsetTop, offsetLeft, offsetWidth, offsetHeight\nscrollTop, scrollLeft, scrollWidth, scrollHeight\nclientTop, clientLeft, clientWidth, clientHeight\ngetComputedStyle()\ngetBoundingClientRect()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Антипаттерн — чтение в цикле"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ПЛОХО\nfor (let i = 0; i < elements.length; i++) {\n  elements[i].style.top = elements[i].offsetTop + 'px';  // Чтение + запись\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. CSS Containment (contain)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "contain: layout"
+    },
+    {
+      "type": "text",
+      "content": "Изолирует внутреннюю верстку элемента — изменения внутри не влияют на родителей."
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  contain: layout;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "contain: paint"
+    },
+    {
+      "type": "text",
+      "content": "Изолирует отрисовку — содержимое не выходит за границы элемента."
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  contain: paint;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "contain: style"
+    },
+    {
+      "type": "text",
+      "content": "Изолирует пересчет стилей."
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  contain: style;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "contain: size"
+    },
+    {
+      "type": "text",
+      "content": "Элемент не зависит от размера содержимого для своего собственного размера."
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  contain: size;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "contain: strict / content"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* strict = layout + paint + size + style */\n.card {\n  contain: strict;\n}\n\n/* content = layout + paint + style (без size) */\n.card {\n  contain: content;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Практический кейс — длинный список"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<ul class=\"list\">\n  <li class=\"list-item\">...</li>\n  <li class=\"list-item\">...</li>\n  <!-- 100+ элементов -->\n</ul>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".list {\n  contain: strict;  /* Анимация одного элемента не пересчитывает весь список */\n}\n\n.list-item {\n  animation: slide 0.3s ease;\n  contain: paint;   /* Отрисовка элемента изолирована */\n}\n\n@keyframes slide {\n  from { transform: translateX(-20px); opacity: 0; }\n  to { transform: translateX(0); opacity: 1; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда использовать contain"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Долгосрочные списки и таблицы с множеством элементов",
+        "Компоненты с частыми анимациями внутри",
+        "Изолированные виджеты ( рекламные блоки, встроенные компоненты)",
+        "Когда изменение одной части страницы не должно влиять на другую"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ограничения contain"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`contain: size` требует явной высоты/ширины элемента (иначе он схлопнется)",
+        "`contain: layout` не работает с элементами, которые должны влиять на родителя (например, floated элементы)",
+        "Не используй contain на элементах, которые должны участвовать в общем layout"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. will-change — правильное использование"
+    },
+    {
+      "type": "text",
+      "content": "###will-change говорит браузеру, что свойство скоро изменится"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Включаем заранее */\n.will-animate {\n  will-change: transform, opacity;\n}\n\n/* Сбрасываем после */\n.will-animate {\n  will-change: auto;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Антипаттерны will-change"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* ПЛОХО — на всё подряд, пожирает память */\n.bad {\n  will-change: all;\n  will-change: transform, opacity, filter, width, height, margin, padding;\n}\n\n/* ПЛОХО — никогда не сбрасывается */\n.stuck {\n  will-change: transform;  /* Память не освобождается */\n}\n\n/* ПЛОХО — на статических элементах */\n.static {\n  will-change: transform;  /* Ничего не анимируется, память wasted */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правильный паттерн через JavaScript"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function prepareAnimation(element) {\n  element.style.willChange = 'transform, opacity';\n}\n\nfunction cleanupAnimation(element) {\n  element.style.willChange = 'auto';\n}\n\n// Использование\nconst card = document.querySelector('.card');\nprepareAnimation(card);\n\ncard.animate(\n  [{ transform: 'translateX(0)' }, { transform: 'translateX(100px)' }],\n  { duration: 500 }\n).finished.then(() => {\n  cleanupAnimation(card);\n});"
+    },
+    {
+      "type": "text",
+      "content": "###will-change и compositing слои <code>will-change: transform</code> создает отдельный compositing слой для элемента. Это хорошо для анимации, но потребляет память. Слишком много слоев = снижение производительности."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Профилирование в DevTools"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Performance панель"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Открой DevTools → Performance",
+        "Нажми кнопку записи (круг)",
+        "Выполни действие на странице (прокрутка, анимация, клик)",
+        "Останови запись",
+        "Анализируй:"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что смотреть в Performance"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**FPS** (кадры в секунду) — должен быть близко к 60",
+        "**CPU** — загрузка процессора",
+        "**NET** — сетевые запросы",
+        "**Main** — главный поток (JS, Layout, Paint)",
+        "**Compositor** — compositing поток (трансформации, opacity)",
+        "**Experience** — метрики пользовательского опыта (LCP, CLS, FID)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Анализ анимации"
+    },
+    {
+      "type": "text",
+      "content": "В Performance записи:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Желтые блоки — Layout",
+        "Фиолетовые блоки — Paint",
+        "Зеленые блоки — Composite",
+        "Если анимация создает много желтых/фиолетовых блоков — она неоптимальна"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Бейдж GPU в Animations панели"
+    },
+    {
+      "type": "list",
+      "items": [
+        "DevTools → Animations",
+        "Выбери анимацию",
+        "Ищи бейдж «GPU» — значит анимация идет на compositing потоке"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Layers панель"
+    },
+    {
+      "type": "list",
+      "items": [
+        "DevTools → More tools → Layers",
+        "Показывает все compositing слои страницы",
+        "Каждый слой — потребление памяти",
+        "Много слоев = проблемы с памятью"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Rendering панель"
+    },
+    {
+      "type": "list",
+      "items": [
+        "DevTools → Rendering",
+        "Включи «Paint flashing» — мерцание при перерисовке",
+        "Включи «Layer borders» — границы compositing слоев",
+        "Включи «Layout shift regions» — зоны сдвига макета (CLS)"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Оптимизация анимаций"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CSS vs JavaScript анимации"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "CSS Animation",
+        "JS Animation (Web Animations API)"
+      ],
+      "rows": [
+        [
+          "Деclareтивно",
+          "Импертивно"
+        ],
+        [
+          "Лучше оптимизируется браузером",
+          "Более гибко"
+        ],
+        [
+          "Может использовать compositing поток",
+          "То же самое"
+        ],
+        [
+          "Меньше кода для простых случаев",
+          "Сложные сценарии, синхронизация"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "requestAnimationFrame для JS анимаций"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ПЛОХО — setInterval не синхронизирован с кадрами\nsetInterval(() => {\n  element.style.transform = `translateX(${x}px)`;\n  x += 1;\n}, 16);\n\n// ХОРОШО — синхронизировано с refresh rate экрана\nfunction animate() {\n  element.style.transform = `translateX(${x}px)`;\n  x += 1;\n  if (x < 100) requestAnimationFrame(animate);\n}\nrequestAnimationFrame(animate);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Отложенная загрузка и рендеринг"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Контент ниже фolda не рендерится до прокрутки (браузер сам управляет) */\n/* Но можно подсказать через loading=\"lazy\" для изображений */\n<img src=\"below-fold.jpg\" loading=\"lazy\">\n\n/* font-display: swap — шрифт не блокирует рендеринг */\n@font-face {\n  font-family: 'Custom';\n  font-display: swap;  /* Пока системный шрифт, потом заменим */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Комплексный пример: оптимизированный список с анимацией"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"optimized-list\">\n  <div class=\"list-item\" data-id=\"1\">\n    <img src=\"photo1.jpg\" alt=\"\" loading=\"lazy\">\n    <div class=\"content\">\n      <h3>Заголовок 1</h3>\n      <p>Описание...</p>\n    </div>\n  </div>\n  <!-- 50+ элементов -->\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".optimized-list {\n  contain: strict;  /* Изоляция всего списка */\n  display: grid;\n  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));\n  gap: 1rem;\n  padding: 1rem;\n}\n\n.list-item {\n  contain: paint;  /* Изоляция отрисовки элемента */\n  display: flex;\n  flex-direction: column;\n  gap: 0.5rem;\n  padding: 1rem;\n  border: 1px solid oklch(0.88 0.006 285);\n  border-radius: 0.75rem;\n  background: white;\n\n  /* Дешевая анимация — только transform + opacity */\n  transition:\n    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),\n    box-shadow 0.2s ease;\n\n  will-change: auto;\n}\n\n.list-item:hover {\n  will-change: transform, box-shadow;  /* Включаем перед ховером */\n  transform: translateY(-4px);\n  box-shadow: 0 12px 28px rgb(0 0 0 / 0.1);\n}\n\n.list-item:not(:hover) {\n  will-change: auto;  /* Сбрасываем после */\n}\n\n.list-item img {\n  width: 100%;\n  height: 200px;\n  object-fit: cover;\n  border-radius: 0.5rem;\n  display: block;\n}\n\n/* Изображения не вызывают layout shift */\n.list-item img {\n  width: 100%;\n  height: 200px;  /* Явные размеры для предотвращения CLS */\n}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// app.js — оптимизированные операции со списком\nconst list = document.querySelector('.optimized-list');\nconst items = document.querySelectorAll('.list-item');\n\n// Функция обновления без layout thrashing\nfunction updateItemsPositions() {\n  // Фаза 1: Чтение всех значений\n  const rects = [];\n  items.forEach(item => {\n    rects.push(item.getBoundingClientRect());\n  });\n\n  // Фаза 2: Запись всех изменений\n  items.forEach((item, i) => {\n    item.style.transform = `translateX(${rects[i].left}px)`;\n  });\n}\n\n// Вызывать в requestAnimationFrame\nlet ticking = false;\nfunction requestUpdate() {\n  if (!ticking) {\n    requestAnimationFrame(() => {\n      updateItemsPositions();\n      ticking = false;\n    });\n    ticking = true;\n  }\n}\n\n// Использовать при изменении размера окна\nwindow.addEventListener('resize', requestUpdate);\n\n// Анимация при добавлении элемента\nfunction addItem(itemElement) {\n  itemElement.style.willChange = 'transform, opacity';\n  itemElement.style.opacity = '0';\n  itemElement.style.transform = 'translateY(20px)';\n\n  list.appendChild(itemElement);\n\n  requestAnimationFrame(() => {\n    itemElement.style.transition = 'opacity 0.3s, transform 0.3s';\n    itemElement.style.opacity = '1';\n    itemElement.style.transform = 'translateY(0)';\n  });\n\n  // Сбрасываем will-change после анимации\n  itemElement.getAnimations()[0]?.finished.then(() => {\n    itemElement.style.willChange = 'auto';\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Чек-лист производительности"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Критерий",
+        "Как проверить",
+        "Инструмент"
+      ],
+      "rows": [
+        [
+          "Анимации только на transform/opacity",
+          "Поиск width/height/top/left в @keyframes",
+          "Код review"
+        ],
+        [
+          "will-change сбрасывается после анимации",
+          "Нет永久 will-change",
+          "Код review"
+        ],
+        [
+          "contain на списках и сложных компонентах",
+          "contain: strict/layout/paint",
+          "Код review"
+        ],
+        [
+          "Нет layout thrashing в JS",
+          "Чтение/запись разделены",
+          "Performance панель"
+        ],
+        [
+          "FPS стабильно ~60",
+          "Performance запись анимации",
+          "DevTools Performance"
+        ],
+        [
+          "GPU-слой создан для анимаций",
+          "Бейдж GPU в Animations панели",
+          "DevTools Animations"
+        ],
+        [
+          "Нет forced reflow в циклах",
+          "Чтение offsetWidth в цикле",
+          "Код review"
+        ],
+        [
+          "Изображения с явными размерами",
+          "width/height на img",
+          "Код review / Lighthouse"
+        ],
+        [
+          "font-display: swap для шрифтов",
+          "@font-face",
+          "Код review"
+        ],
+        [
+          "CLS минимален (без сдвигов)",
+          "Lighthouse / Performance → Experience",
+          "DevTools Lighthouse"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практическое задание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 1: Анализ конвейера"
+    },
+    {
+      "type": "text",
+      "content": "Создай страницу с элементом, который анимирует:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`width` и `height` (дорого — Layout + Paint)",
+        "`transform: scale()` (дешево — Composite)"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "text",
+      "content": "Запиши оба варианта в DevTools Performance и сравни FPS и количество Layout/Paint событий."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 2: Layout Thrashing"
+    },
+    {
+      "type": "text",
+      "content": "Напиши код, который вызывает layout thrashing (чтение offsetWidth в цикле с записью style.width). Затем исправь его — раздели чтение и запись. Измерь разницу в DevTools."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 3: will-change контроль"
+    },
+    {
+      "type": "text",
+      "content": "Создай кнопку с анимацией при клике:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "will-change включается через JS перед анимацией",
+        "will-change сбрасывается через .finished.then()",
+        "Проверь в DevTools Layers панель, что compositing слой создается и удаляется"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 4: Contain для списка"
+    },
+    {
+      "type": "text",
+      "content": "Создай список из 100 элементов:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "contain: strict на контейнере",
+        "contain: paint на элементах",
+        "Анимация Appear при загрузке",
+        "Сравни производительность с и без contain"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 5: DevTools профилирование"
+    },
+    {
+      "type": "text",
+      "content": "Проведи полный аудит страницы:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Performance запись при скролле — нету ли лишних Layout/Paint",
+        "Animations панель — есть ли бейдж GPU на анимациях",
+        "Rendering → Paint flashing — минимальное перерисование",
+        "Lighthouse — Performance оценка"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 6: Замена дорогой анимации на дешевую"
+    },
+    {
+      "type": "text",
+      "content": "Возьми существующую анимацию с width/height/top/left и замени на transform: scale()/translate(). Проверь в DevTools, что теперь анимация идет на compositing потоке."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 28
+}

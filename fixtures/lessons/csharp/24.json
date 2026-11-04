@@ -1,0 +1,357 @@
+{
+  "title": "Урок 3.2: Language/Runtime Internals — IL, Attributes, Reflection, Expression Trees, Source Generators",
+  "slug": "languageruntime-internals-il-attributes-reflection-expression-trees-source-generators",
+  "short_description": "IL, Attributes, Reflection, Expression Trees, Source Generators",
+  "goals": [
+    "Читать и понимать IL (Intermediate Language) код",
+    "Создавать и использовать кастомные атрибуты",
+    "Работать с Reflection: типы, члены, generic, assembly loading",
+    "Построить Expression Trees для динамического кода",
+    "Написать Source Generator для генерации кода на этапе компиляции"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Читать и понимать IL (Intermediate Language) код",
+        "Создавать и использовать кастомные атрибуты",
+        "Работать с Reflection: типы, члены, generic, assembly loading",
+        "Построить Expression Trees для динамического кода",
+        "Написать Source Generator для генерации кода на этапе компиляции"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. IL (Intermediate Language) — Основы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое IL"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// C# код\npublic int Add(int a, int b) => a + b;\n\n// Компилируется в IL (упрощённо):\n// .method public hidebysig instance int32 Add(int32 a, int32 b) cil managed\n// {\n//     .maxstack 2\n//     ldarg.1          // загружает аргумент a\n//     ldarg.2          // загружает аргумент b\n//     add              // складывает\n//     ret              // возвращает результат\n// }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Просмотр IL"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основные IL инструкции"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Стек: ldarg, ldloc, ldc, stloc, starg\n// Арифметика: add, sub, mul, div, rem\n// Логика: and, or, xor, not\n// Ветвление: br, brtrue, brfalse, beq, bgt, ble, blt\n// Вызовы: call, callvirt, newobj\n// Возврат: ret, throw"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "DynamicMethod — IL во время выполнения"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Reflection.Emit;\n\nvar dm = new DynamicMethod(\"Add\", typeof(int), [typeof(int), typeof(int)]);\nvar il = dm.GetILGenerator();\n\nil.Emit(OpCodes.Ldarg_0);\nil.Emit(OpCodes.Ldarg_1);\nil.Emit(OpCodes.Add);\nil.Emit(OpCodes.Ret);\n\nvar addFunc = (Func<int, int, int>)dm.CreateDelegate(typeof(Func<int, int, int>));\nConsole.WriteLine(addFunc(3, 5)); // 8"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Attributes — Атрибуты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовые атрибуты"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System;\n\n// Объявление атрибута\n[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method,\n                AllowMultiple = true, Inherited = false)]\npublic class DescriptionAttribute : Attribute\n{\n    public string Description { get; }\n    public string Author { get; set; } // именованный параметр\n\n    public DescriptionAttribute(string description)\n    {\n        Description = description;\n    }\n}\n\n// Использование\n[Description(\"User entity\", Author = \"Team\")]\npublic class User { }\n\n[Description(\"Gets user by id\")]\npublic User GetUser(int id) => new();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Чтение атрибутов через Reflection"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var type = typeof(User);\nvar attrs = type.GetCustomAttributes<DescriptionAttribute>(inherit: false);\n\nforeach (var attr in attrs)\n{\n    Console.WriteLine($\"{attr.Description}, Author: {attr.Author}\");\n}\n\n// AttributeTargets\n// Assembly, Module, Class, Struct, Enum, Constructor, Method, Property,\n// Field, Event, Interface, Parameter, Delegate, ReturnValue, GenericParameter"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Conditional Attribute"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "[Conditional(\"DEBUG\")]\npublic void DebugLog(string message)\n{\n    Console.WriteLine($\"[DEBUG] {message}\");\n}\n\n// В Releaseビルде вызов полностью удаляется!\nDebugLog(\"This won't appear in Release\");"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Caller Information Attributes"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public void Log(string message,\n    [CallerMemberName] string memberName = \"\",\n    [CallerFilePath] string filePath = \"\",\n    [CallerLineNumber] int lineNumber = 0)\n{\n    Console.WriteLine($\"{filePath}:{lineNumber} [{memberName}] {message}\");\n}\n\n// Вызов:\nLog(\"Error\"); // Автоматически подставит caller info"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Reflection — Рефлексия"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовая рефлексия типов"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var type = typeof(List<int>);\n\nConsole.WriteLine(type.FullName);        // System.Collections.Generic.List`1[[System.Int32]]\nConsole.WriteLine(type.IsGenericType);   // True\nConsole.WriteLine(type.GetGenericTypeDefinition()); // List`1\n\nvar genericArgs = type.GetGenericArguments(); // [int]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Создание экземпляров"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Activator\nvar list = (List<string>)Activator.CreateInstance(typeof(List<string>))!;\n\n// ConstructorInfo\nvar ctor = typeof(List<string>).GetConstructor(Type.EmptyTypes)!;\nvar list2 = (List<string>)ctor.Invoke(null);\n\n// Generic type creation\nvar dictType = typeof(Dictionary<,>).MakeGenericType(typeof(string), typeof(int));\nvar dict = Activator.CreateInstance(dictType); // Dictionary<string, int>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Методы и свойства"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var type = typeof(string);\n\n// Методы\nvar methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static);\nvar toUpper = type.GetMethod(\"ToUpper\", Type.EmptyTypes)!;\nvar result = toUpper.Invoke(\"hello\", null); // \"HELLO\"\n\n// Generic методы\nvar method = typeof(Enumerable).GetMethods()\n    .First(m => m.Name == \"Where\" && m.GetParameters().Length == 2);\nvar genericMethod = method.MakeGenericMethod(typeof(int));\n// вызов через Invoke...\n\n// Свойства\nvar props = type.GetProperties();\nvar lengthProp = type.GetProperty(\"Length\")!;\nvar len = (int)lengthProp.GetValue(\"hello\")!; // 5"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Рефлексия над Generic"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "interface IRepository<T> { }\nclass UserRepository : IRepository<User> { }\n\nvar repoType = typeof(UserRepository);\nvar interfaces = repoType.GetInterfaces();\n\nforeach (var iface in interfaces)\n{\n    if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IRepository<>))\n    {\n        var entityType = iface.GetGenericArguments()[0]; // User\n        Console.WriteLine($\"Entity: {entityType.Name}\");\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Assembly Loading"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Загрузка сборки\nvar asm = Assembly.Load(\"MyLibrary\");           // по имени\nvar asm2 = Assembly.LoadFrom(@\"C:\\path.dll\");   // по пути\nvar asm3 = Assembly.GetExecutingAssembly();     // текущая\nvar asm4 = Assembly.GetEntryAssembly();         // точка входа\n\n// Все типы в сборке\nforeach (var type in asm.GetTypes())\n{\n    if (type.IsClass && !type.IsAbstract)\n    {\n        Console.WriteLine(type.FullName);\n    }\n}\n\n// Plugins pattern\nvar plugins = asm.GetTypes()\n    .Where(t => typeof(IPlugin).IsAssignableFrom(t) && !t.IsInterface)\n    .Select(t => (IPlugin)Activator.CreateInstance(t)!);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Expression Trees — Деревья выражений"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основы"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Linq.Expressions;\n\n// Expression<Func<T>> — дерево, а не делегат\nExpression<Func<int, int, int>> addExpr = (a, b) => a + b;\n\n// Компиляция в делегат\nFunc<int, int, int> addFunc = addExpr.Compile();\nConsole.WriteLine(addFunc(3, 4)); // 7\n\n// Инспекция дерева\nConsole.WriteLine(addExpr.NodeType);        // Lambda\nConsole.WriteLine(addExpr.Parameters.Count); // 2\nConsole.WriteLine(addExpr.Body.NodeType);    // Add"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Построение Expression Trees вручную"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// a + b\nvar aParam = Expression.Parameter(typeof(int), \"a\");\nvar bParam = Expression.Parameter(typeof(int), \"b\");\nvar addBody = Expression.Add(aParam, bParam);\n\nvar lambda = Expression.Lambda<Func<int, int, int>>(addBody, aParam, bParam);\nvar compiled = lambda.Compile();\nConsole.WriteLine(compiled(10, 20)); // 30"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сложные примеры"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Property access: obj.Property\nvar objParam = Expression.Parameter(typeof(Person), \"p\");\nvar nameProp = Expression.Property(objParam, \"Name\");\nvar lambda = Expression.Lambda<Func<Person, string>>(nameProp, objParam);\nvar getName = lambda.Compile();\n\n// Method call: obj.ToString()\nvar toStringMethod = typeof(object).GetMethod(\"ToString\")!;\nvar callExpr = Expression.Call(objParam, toStringMethod);\nvar toStringLambda = Expression.Lambda<Func<Person, string>>(callExpr, objParam);\n\n// Constant\nvar constExpr = Expression.Constant(42);\n\n// Block expressions (multiple statements)\nvar variable = Expression.Variable(typeof(int), \"temp\");\nvar block = Expression.Block(\n    [variable],\n    Expression.Assign(variable, Expression.Constant(10)),\n    Expression.Add(variable, Expression.Constant(5))\n);\nvar blockLambda = Expression.Lambda<Func<int>>(block);\nConsole.WriteLine(blockLambda.Compile()()); // 15"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Практическое применение: Dynamic Query Building"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public static IQueryable<T> Where<T>(this IQueryable<T> query, string propertyName, object value)\n{\n    var param = Expression.Parameter(typeof(T), \"x\");\n    var prop = Expression.Property(param, propertyName);\n    var constValue = Expression.Constant(value);\n    var equal = Expression.Equal(prop, constValue);\n    var lambda = Expression.Lambda<Func<T, bool>>(equal, param);\n    return query.Where(lambda);\n}\n\n// Использование:\n// users.Where(\"Age\", 25).Where(\"Name\", \"John\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Expression Visitor — трансформация деревьев"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class ParameterReplacer : ExpressionVisitor\n{\n    private readonly ParameterExpression _oldParam;\n    private readonly ParameterExpression _newParam;\n\n    public ParameterReplacer(ParameterExpression oldParam, ParameterExpression newParam)\n    {\n        _oldParam = oldParam;\n        _newParam = newParam;\n    }\n\n    protected override Expression VisitParameter(ParameterExpression node)\n    {\n        return node == _oldParam ? _newParam : base.VisitParameter(node);\n    }\n}\n\n// Замена параметра в лямбде\nvar oldParam = Expression.Parameter(typeof(int), \"x\");\nvar newParam = Expression.Parameter(typeof(int), \"y\");\nvar expr = Expression.Lambda<Func<int, int>>(Expression.Add(oldParam, Expression.Constant(1)), oldParam);\n\nvar visitor = new ParameterReplacer(oldParam, newParam);\nvar newExpr = visitor.Visit(expr); // y => y + 1"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Source Generators — Генераторы исходного кода"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое Source Generator"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Генератор выполняется НА ЭТАПЕ КОМПИЛЯЦИИ\n// Генерирует .cs файлы, которые компилируются вместе с проектом\n// Нет рефлексии во время выполнения!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простой генератор"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MyGenerator.cs (в отдельном проекте: <OutputItemType>Analyzer</OutputItemType>)\nusing Microsoft.CodeAnalysis;\nusing Microsoft.CodeAnalysis.CSharp;\nusing Microsoft.CodeAnalysis.CSharp.Syntax;\n\n[Generator]\npublic class AutoToStringGenerator : IIncrementalGenerator\n{\n    public void Initialize(IncrementalGeneratorInitializationContext context)\n    {\n        // Находим все классы с атрибутом [AutoToString]\n        var provider = context.SyntaxProvider\n            .CreateSyntaxProvider(\n                predicate: static (node, _) => node is ClassDeclarationSyntax cds && cds.AttributeLists.Count > 0,\n                transform: static (ctx, _) => GetClassIfHasAttribute(ctx))\n            .Where(static m => m is not null)!;\n\n        context.RegisterSourceOutput(provider, static (ctx, classDecl) =>\n        {\n            if (classDecl is null) return;\n\n            var source = GenerateToString(classDecl);\n            ctx.AddSource($\"{classDecl.Identifier.Text}.g.cs\", source);\n        });\n    }\n\n    private static ClassDeclarationSyntax? GetClassIfHasAttribute(GeneratorSyntaxContext ctx)\n    {\n        var classDecl = (ClassDeclarationSyntax)ctx.Node;\n        foreach (var attrList in classDecl.AttributeLists)\n        {\n            foreach (var attr in attrList.Attributes)\n            {\n                if (attr.Name.ToString() == \"AutoToString\")\n                    return classDecl;\n            }\n        }\n        return null;\n    }\n\n    private static string GenerateToString(ClassDeclarationSyntax classDecl)\n    {\n        var properties = classDecl.Members\n            .OfType<PropertyDeclarationSyntax>()\n            .Select(p => p.Identifier.Text);\n\n        var propStrings = string.Join(\", \", properties.Select(p => $\"{p} = {{{p}}}\"));\n\n        return $$\"\"\"\n            // <auto-generated />\n            #nullable enable\n            namespace {{classDecl.Parent?.ToString() ?? \"Global\"}}\n            {\n                partial class {{classDecl.Identifier.Text}}\n                {\n                    public override string ToString() => $\"{{classDecl.Identifier.Text}} { {{propStrings}} }\";\n                }\n            }\n            \"\"\";\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование генератора"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// В проекте-потребителе (ProjectReference на генератор)\n[AutoToString]\npublic partial class User\n{\n    public string Name { get; set; } = \"\";\n    public int Age { get; set; }\n}\n\n// Сгенерируется:\n// partial class User { public override string ToString() => $\"User { Name = {Name}, Age = {Age} }\"; }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инкрементальные генераторы (C# 9 / .NET 5+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// IIncrementalGenerator — быстрее, кэширует результаты\n// ISourceGenerator — старый API\n\n[Generator(LanguageNames.CSharp)]\npublic class EnumExtensionsGenerator : IIncrementalGenerator\n{\n    public void Initialize(IncrementalGeneratorInitializationContext context)\n    {\n        var enums = context.SyntaxProvider\n            .CreateSyntaxProvider(\n                (node, _) => node is EnumDeclarationSyntax,\n                (ctx, _) => (EnumDeclarationSyntax)ctx.Node)\n            .Where(static e => e.AttributeLists.Any(a => a.Attributes.Any(at => at.Name.ToString() == \"GenerateExtensions\")));\n\n        context.RegisterSourceOutput(enums, (ctx, enumDecl) =>\n        {\n            var members = enumDecl.Members.Select(m => m.Identifier.Text);\n            var switchCases = string.Join(\"\\n\", members.Select(m => $\"{enumDecl.Identifier.Text}.{m} => \\\"{m}\\\"\"));\n\n            var source = $$\"\"\"\n                // <auto-generated />\n                public static class {{enumDecl.Identifier.Text}}Extensions\n                {\n                    public static string ToDisplayName(this {{enumDecl.Identifier.Text}} value) => value switch\n                    {\n                        {{switchCases}},\n                        _ => value.ToString()\n                    };\n                }\n                \"\"\";\n            ctx.AddSource($\"{enumDecl.Identifier.Text}Extensions.g.cs\", source);\n        });\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Атрибуты для генераторов"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// В проекте генератора (можно вынести в общий пакет)\n[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Enum)]\npublic class AutoToStringAttribute : Attribute { }\n\n[AttributeUsage(AttributeTargets.Enum)]\npublic class GenerateExtensionsAttribute : Attribute { }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Reflection в hot path без кэширования",
+          "Кэшируйте `MethodInfo`, `PropertyInfo` в static полях"
+        ],
+        [
+          "`GetMethods()` без BindingFlags",
+          "Всегда указывайте `BindingFlags.Public"
+        ],
+        [
+          "Source Generator падает с исключением",
+          "Оборачивайте в try-catch, логируйте через `context.ReportDiagnostics`"
+        ],
+        [
+          "Генератор не перезапускается при изменении",
+          "Используйте `IncrementalGenerator`, проверяйте `SyntaxProvider` predicates"
+        ],
+        [
+          "Expression Tree не компилируется",
+          "Проверяйте типы параметров, `Expression.Lambda<Func<...>>` должен совпадать"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Reflection в hot path без кэширования",
+      "correct": "Кэшируйте `MethodInfo`, `PropertyInfo` в static полях"
+    },
+    {
+      "mistake": "`GetMethods()` без BindingFlags",
+      "correct": "Всегда указывайте `BindingFlags.Public"
+    },
+    {
+      "mistake": "Source Generator падает с исключением",
+      "correct": "Оборачивайте в try-catch, логируйте через `context.ReportDiagnostics`"
+    },
+    {
+      "mistake": "Генератор не перезапускается при изменении",
+      "correct": "Используйте `IncrementalGenerator`, проверяйте `SyntaxProvider` predicates"
+    },
+    {
+      "mistake": "Expression Tree не компилируется",
+      "correct": "Проверяйте типы параметров, `Expression.Lambda<Func<...>>` должен совпадать"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 24
+}

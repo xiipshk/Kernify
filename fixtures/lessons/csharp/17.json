@@ -1,0 +1,356 @@
+{
+  "title": "Урок 17: Асинхронность — Task, async/await, CancellationToken, ошибки, параллельные операции",
+  "slug": "asinhronnost-task-asyncawait-cancellationtoken-oshibki-parallelnye-operatsii",
+  "short_description": "Task, async/await, CancellationToken, ошибки, параллельные операции",
+  "goals": [
+    "Понимать модель async/await и state machine",
+    "Правильно работать с Task, ValueTask, CancellationToken",
+    "Обрабатывать ошибки в асинхронном коде",
+    "Использовать параллельные операции (Parallel, PLINQ, Task.WhenAll)",
+    "Избегать дедлоков, утечек памяти и других частых ошибок"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать модель async/await и state machine",
+        "Правильно работать с Task, ValueTask, CancellationToken",
+        "Обрабатывать ошибки в асинхронном коде",
+        "Использовать параллельные операции (Parallel, PLINQ, Task.WhenAll)",
+        "Избегать дедлоков, утечек памяти и других частых ошибок"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Основы Task и async/await"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Task vs Thread"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Thread — поток ОС, дорогой (~1MB стека), блокирует при ожидании\n// Task — обещание результата, дешёвый, не блокирует поток при await\n\n// Создание Task\nTask.Run(() => DoWork());           // в ThreadPool\nTask.Factory.StartNew(() => ...);   // больше контроля\nTask.CompletedTask;                 // уже завершённый\nTask.FromResult(42);                // с результатом\nTask.FromException(new Exception()); // с ошибкой\nTask.Delay(1000);                   // таймер (не блокирует поток!)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "async/await — синтаксический сахар"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Компилятор превращает в state machine (IAsyncStateMachine)\npublic async Task<string> DownloadAsync(string url)\n{\n    using var http = new HttpClient();\n    var content = await http.GetStringAsync(url); // yield control здесь\n    return content.ToUpper(); // продолжение в captured context\n}\n\n// Эквивалентно (упрощённо):\npublic Task<string> DownloadAsync(string url)\n{\n    var tcs = new TaskCompletionSource<string>();\n    var http = new HttpClient();\n    http.GetStringAsync(url).ContinueWith(t =>\n    {\n        if (t.IsFaulted) tcs.SetException(t.Exception!);\n        else tcs.SetResult(t.Result.ToUpper());\n    });\n    return tcs.Task;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ValueTask — для горячих путей (high-frequency)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ValueTask — struct, избегает аллокации Task если результат уже есть\npublic ValueTask<int> GetCachedOrCompute(int key)\n{\n    if (_cache.TryGetValue(key, out var value))\n        return new ValueTask<int>(value); // синхронно, без аллокации\n\n    return new ValueTask<int>(ComputeAsync(key)); // асинхронно\n}\n\n// ValueTask<T> можно await'ить как обычный Task\n// ВАЖНО: ValueTask можно await'ить ТОЛЬКО ОДИН РАЗ!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. CancellationToken — кооперативная отмена"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public async Task ProcessAsync(CancellationToken ct = default)\n{\n    for (int i = 0; i < 100; i++)\n    {\n        ct.ThrowIfCancellationRequested(); // бросает OperationCanceledException\n        await DoStepAsync(i, ct);\n    }\n}\n\n// Вызов с таймаутом\nusing var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));\nawait ProcessAsync(cts.Token);\n\n// Отмена вручную\ncts.Cancel();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CancellationToken в стандартных API"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Большинство BCL методов принимают ct\nawait httpClient.GetAsync(url, ct);\nawait stream.ReadAsync(buffer, ct);\nawait Task.Delay(1000, ct);\nawait semaphore.WaitAsync(ct);\n\n// LINQ с отменой (PLINQ)\nvar result = items.AsParallel()\n    .WithCancellation(ct)\n    .Where(x => ExpensiveCheck(x))\n    .ToList();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Linked CancellationTokenSource"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Комбинирование нескольких токенов\npublic async Task ParentAsync(CancellationToken parentCt)\n{\n    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(parentCt);\n\n    var child1 = ChildAsync(linkedCts.Token);\n    var child2 = ChildAsync(linkedCts.Token);\n\n    await Task.WhenAll(child1, child2);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Обработка ошибок"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "try/catch с await"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public async Task<User?> GetUserAsync(int id)\n{\n    try\n    {\n        return await _db.Users.FindAsync(id);\n    }\n    catch (SqlException ex) when (ex.Number == -2) // timeout\n    {\n        _logger.LogWarning(ex, \"DB timeout\");\n        throw new TimeoutException(\"Database unavailable\", ex);\n    }\n    catch (Exception ex)\n    {\n        _logger.LogError(ex, \"Unexpected error\");\n        throw; // сохраняет stack trace\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Task.Exception — AggregateException"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var task = Task.Run(() => { throw new InvalidOperationException(\"oops\"); });\n\ntry { await task; }\ncatch (Exception ex)\n{\n    // ex — это InvalidOperationException (не AggregateException!)\n    // await \"разворачивает\" AggregateException\n}\n\n// Без await — нужно распаковывать\nvar task2 = Task.Run(() => { throw new Exception(\"x\"); });\ntask2.Wait(); // AggregateException с InnerException"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Необработанные исключения в Task"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ОПАСНО: fire-and-forget без обработки\nTask.Run(() => { throw new Exception(\"lost!\"); }); // Exception потеряется!\n\n// ПРАВИЛЬНО: всегда обрабатывайте\n_ = Task.Run(async () =>\n{\n    try { await DoWork(); }\n    catch (Exception ex) { _logger.LogError(ex, \"Background task failed\"); }\n});\n\n// Или используйте TaskScheduler.UnobservedTaskException (глобальный хук)\nTaskScheduler.UnobservedTaskException += (s, e) =>\n{\n    _logger.LogError(e.Exception, \"Unobserved exception\");\n    e.SetObserved(); // предотвращает crash процесса\n};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Параллельные операции"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Task.WhenAll / WhenAny"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Параллельный запуск — все одновременно\nvar tasks = urls.Select(url => DownloadAsync(url)).ToArray();\nvar results = await Task.WhenAll(tasks); // ждёт все\n\n// Fail-fast: первый успешный или первая ошибка\nvar first = await Task.WhenAny(tasks);\nvar result = await first; // propagate exception if any\n\n// Timeout pattern\nvar completed = await Task.WhenAny(task, Task.Delay(5000));\nif (completed == task) return await task;\nthrow new TimeoutException();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Parallel / Parallel.ForEach"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// CPU-bound параллелизм (использует ThreadPool)\nParallel.For(0, 100, i => Compute(i));\n\nParallel.ForEach(items, item => Process(item));\n\n// С опциями\nParallel.ForEach(items, new ParallelOptions\n{\n    MaxDegreeOfParallelism = 4,\n    CancellationToken = ct\n}, item => Process(item));\n\n// Parallel LINQ (PLINQ) — для запросов\nvar result = items.AsParallel()\n    .WithDegreeOfParallelism(4)\n    .Select(Transform)\n    .ToList();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SemaphoreSlim — ограничение параллелизма"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Ограничить до 5 одновременных запросов\nvar semaphore = new SemaphoreSlim(5);\n\nvar tasks = urls.Select(async url =>\n{\n    await semaphore.WaitAsync(ct);\n    try { return await DownloadAsync(url); }\n    finally { semaphore.Release(); }\n});\n\nvar results = await Task.WhenAll(tasks);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Channels — Producer/Consumer (.NET Core 3.0+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Threading.Channels;\n\nvar channel = Channel.CreateBounded<int>(new BoundedChannelOptions(100)\n{\n    FullMode = BoundedChannelFullMode.Wait // блокирует producer при заполнении\n});\n\n// Producer\nasync Task Produce(ChannelWriter<int> writer, CancellationToken ct)\n{\n    for (int i = 0; i < 1000; i++)\n    {\n        await writer.WriteAsync(i, ct);\n    }\n    writer.Complete();\n}\n\n// Consumer\nasync Task Consume(ChannelReader<int> reader, CancellationToken ct)\n{\n    await foreach (var item in reader.ReadAllAsync(ct))\n    {\n        await ProcessAsync(item);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Асинхронные паттерны и антипаттерны"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ConfigureAwait(false) — не захватывать context"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// В библиотеках — ВСЕГДА используйте ConfigureAwait(false)\npublic async Task<Data> GetDataAsync()\n{\n    var json = await _http.GetStringAsync(url).ConfigureAwait(false);\n    return JsonSerializer.Deserialize<Data>(json);\n}\n\n// В UI (WPF/WinForms/MAUI) — НЕ используйте, нужен UI context\n// В ASP.NET Core — context нет, можно не писать"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Async void — ТОЛЬКО для event handlers"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ПЛОХО: исключения не ловятся, не await'ится\npublic async void BadButton_Click(object sender, EventArgs e) { ... }\n\n// ХОРОШО: event handler\npublic async void GoodButton_Click(object sender, EventArgs e)\n{\n    try { await DoWork(); }\n    catch (Exception ex) { MessageBox.Show(ex.Message); }\n}\n\n// В остальных случаях — async Task\npublic async Task GoodMethod() { ... }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Async в конструкторе / свойствах — НЕТ"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ПЛОХО\npublic class Bad\n{\n    public Bad() { _data = await LoadAsync(); } // Ошибка компиляции\n    public async Task<string> Prop { get => await LoadAsync(); } // Ошибка\n}\n\n// ХОРОШО: фабричный метод или Lazy initialization\npublic class Good\n{\n    private readonly Lazy<Task<Data>> _lazyData;\n    public Good() => _lazyData = new(async () => await LoadAsync());\n    public Task<Data> GetDataAsync() => _lazyData.Value;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Deadlock: .Result / .Wait() в async контексте"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ДЕДЛОК в UI/ASP.NET (legacy sync context):\npublic string Bad() => DownloadAsync(url).Result; // БЛОКИРУЕТ поток!\n// await continuation ждёт захваченный контекст, который занят .Result\n\n// ПРАВИЛЬНО:\npublic async Task<string> Good() => await DownloadAsync(url);\n\n// Если ОЧЕНЬ нужно синхронно (редко):\npublic string Sync() => Task.Run(() => DownloadAsync(url)).GetAwaiter().GetResult();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Продвинутые темы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "IAsyncEnumerable — асинхронные стримы (.NET Core 3.0+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public async IAsyncEnumerable<int> GenerateAsync([EnumeratorCancellation] CancellationToken ct = default)\n{\n    for (int i = 0; i < 100; i++)\n    {\n        ct.ThrowIfCancellationRequested();\n        await Task.Delay(100, ct);\n        yield return i;\n    }\n}\n\n// Потребление\nawait foreach (var item in GenerateAsync(ct))\n{\n    Console.WriteLine(item);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Async Disposable"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class AsyncResource : IAsyncDisposable\n{\n    private readonly HttpClient _http = new();\n\n    public async ValueTask DisposeAsync()\n    {\n        await _http.DisposeAsync(); // асинхронный Dispose\n    }\n}\n\n// Использование\nawait using var resource = new AsyncResource();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "TaskCompletionSource — мост к event-based API"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public Task<string> WaitForMessageAsync(CancellationToken ct)\n{\n    var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);\n\n    void Handler(string msg)\n    {\n        _eventSource.MessageReceived -= Handler;\n        tcs.TrySetResult(msg);\n    }\n\n    _eventSource.MessageReceived += Handler;\n\n    ct.Register(() => tcs.TrySetCanceled(ct));\n\n    return tcs.Task;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`async void` не в event handler",
+          "`async Task`"
+        ],
+        [
+          "`.Result` / `.Wait()` в async коде",
+          "`await`"
+        ],
+        [
+          "Игнорирование `CancellationToken`",
+          "Прокидывайте во все async вызовы"
+        ],
+        [
+          "`Task.Run` для IO-bound операций",
+          "Прямой `await` IO метода"
+        ],
+        [
+          "Захват UI context в библиотеках",
+          "`.ConfigureAwait(false)`"
+        ],
+        [
+          "Многократный `await` одного `ValueTask`",
+          "`await` только один раз"
+        ],
+        [
+          "Отсутствие `try/catch` в fire-and-forget",
+          "Оборачивайте в try/catch + логирование"
+        ],
+        [
+          "`Task.Delay` без токена отмены",
+          "`Task.Delay(ms, ct)`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`async void` не в event handler",
+      "correct": "`async Task`"
+    },
+    {
+      "mistake": "`.Result` / `.Wait()` в async коде",
+      "correct": "`await`"
+    },
+    {
+      "mistake": "Игнорирование `CancellationToken`",
+      "correct": "Прокидывайте во все async вызовы"
+    },
+    {
+      "mistake": "`Task.Run` для IO-bound операций",
+      "correct": "Прямой `await` IO метода"
+    },
+    {
+      "mistake": "Захват UI context в библиотеках",
+      "correct": "`.ConfigureAwait(false)`"
+    },
+    {
+      "mistake": "Многократный `await` одного `ValueTask`",
+      "correct": "`await` только один раз"
+    },
+    {
+      "mistake": "Отсутствие `try/catch` в fire-and-forget",
+      "correct": "Оборачивайте в try/catch + логирование"
+    },
+    {
+      "mistake": "`Task.Delay` без токена отмены",
+      "correct": "`Task.Delay(ms, ct)`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 17
+}

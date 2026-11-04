@@ -1,0 +1,349 @@
+{
+  "title": "Урок 12: Типовая система C# — value/reference types, nullable, boxing/unboxing, struct/record/class, immutability",
+  "slug": "tipovaya-sistema-c-valuereference-types-nullable-boxingunboxing-structrecordclass-immutability",
+  "short_description": "value/reference types, nullable, boxing/unboxing, struct/record/class, immutability",
+  "goals": [
+    "Понимать разницу между value types и reference types",
+    "Работать с nullable типами и операторами ?. ??",
+    "Понимать boxing/unboxing и их влияние на производительность",
+    "Выбирать между struct, record и class",
+    "Применять паттерны неизменяемости (immutability)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать разницу между value types и reference types",
+        "Работать с nullable типами и операторами ?. ??",
+        "Понимать boxing/unboxing и их влияние на производительность",
+        "Выбирать между struct, record и class",
+        "Применять паттерны неизменяемости (immutability)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Value Types vs Reference Types"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Value Types (struct, enum, примитивы)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Хранятся в стеке (обычно), копируются по значению\nint a = 42;\nint b = a;        // b — копия a\nb = 100;\nConsole.WriteLine(a); // 42 (не изменилось)\n\nstruct Point { public int X, Y; }\nvar p1 = new Point { X = 1, Y = 2 };\nvar p2 = p1;      // полная копия структуры\np2.X = 99;\nConsole.WriteLine(p1.X); // 1"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Reference Types (class, interface, delegate, array, string)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Хранятся в куче, переменная — ссылка\nvar list1 = new List<int> { 1, 2 };\nvar list2 = list1; // list2 ссылается на ТОТ ЖЕ объект\nlist2.Add(3);\nConsole.WriteLine(list1.Count); // 3 (изменилось!)\n\n// string — reference type, но immutable (ведёт себя как value type)\nstring s1 = \"hello\";\nstring s2 = s1;\ns2 = \"world\"; // создаёт НОВУЮ строку\nConsole.WriteLine(s1); // \"hello\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Таблица сравнения"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Характеристика",
+        "Value Type",
+        "Reference Type"
+      ],
+      "rows": [
+        [
+          "Хранение",
+          "Стек (обычно)",
+          "Куча"
+        ],
+        [
+          "Присваивание",
+          "Копия данных",
+          "Копия ссылки"
+        ],
+        [
+          "Null по умолчанию",
+          "Нет (кроме nullable)",
+          "Да"
+        ],
+        [
+          "Наследование",
+          "Нет (sealed)",
+          "Да"
+        ],
+        [
+          "Примеры",
+          "int, bool, struct, enum",
+          "class, string, array, delegate"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Nullable Types (Nullable Value Types)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Два эквивалентных способа\nint? age = null;        // синтаксический сахар\nNullable<int> age2 = null; // полная форма\n\n// Проверка\nif (age.HasValue) { Console.WriteLine(age.Value); }\nif (age is not null) { Console.WriteLine(age.Value); }\n\n// Операторы\nint? x = null;\nint y = x ?? 42;           // null-coalescing: 42\nint z = x.GetValueOrDefault(); // 0 (default(int))\n\n// Null-conditional operator\nPerson? person = null;\nConsole.WriteLine(person?.Name?.Length); // null, не исключение"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Nullable Reference Types (C# 8+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Включить в .csproj: <Nullable>enable</Nullable>\n\n#nullable enable\nstring? nullableString = null;  // может быть null\nstring notNullString = \"hello\"; // не может быть null (предупреждение компилятора)\n\nvoid PrintLength(string s) => Console.WriteLine(s.Length);\n// PrintLength(nullableString); // Warning: possible null reference\nPrintLength(nullableString!);   // ! — \"я знаю, что не null\" (null-forgiving)\n#nullable restore"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Boxing и Unboxing"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что происходит"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "int value = 42;\nobject boxed = value;    // BOXING: int → object (аллокация в куче!)\nint unboxed = (int)boxed; // UNBOXING: object → int (проверка типа + копия)\n\n// С générics — избегаем boxing\nList<int> list = new();  // нет boxing\nlist.Add(42);            // напрямую в массиве int[]\n\n// Плохо: boxing в цикле\nobject sum = 0;\nfor (int i = 0; i < 1000; i++)\n    sum = (int)sum + i;  // boxing/unboxing каждую итерацию!\n\n// Хорошо: используйте примитив или generic\nint sum2 = 0;\nfor (int i = 0; i < 1000; i++)\n    sum2 += i;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда происходит boxing"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// 1. Присваивание value type в object/interface\nobject o = 42;\nIComparable c = 42;\n\n// 2. Вызов метода object (ToString, GetHashCode, Equals)\nint x = 42;\nConsole.WriteLine(x.ToString()); // boxing! (вызывает object.ToString)\n\n// 3. В не-generic коллекциях\nArrayList list = new();\nlist.Add(42); // boxing!\n\n// 4. String interpolation/concat с value types\nConsole.WriteLine(\"Value: \" + 42); // boxing!\nConsole.WriteLine($\"Value: {42}\"); // тоже boxing (вызывает ToString)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Struct vs Record vs Class"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Class (Reference Type)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "class Person\n{\n    public string Name { get; set; }\n    public int Age { get; set; }\n\n    // Референс-семантика\n    public override bool Equals(object? obj) =>\n        obj is Person p && p.Name == Name && p.Age == Age;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Struct (Value Type)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// C# 10+: record struct\nreadonly record struct Point(int X, int Y);\n\n// Традиционный struct\nstruct Rectangle\n{\n    public int Width, Height;\n    public readonly int Area => Width * Height; // readonly метод\n\n    // struct не может иметь параметризованный конструктор без параметров (до C# 10)\n    // но может иметь static фабрики\n    public static Rectangle Square(int size) => new() { Width = size, Height = size };\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Record (Reference Type с value-семантикой равенства)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Record class (reference type)\nrecord Person(string Name, int Age);\n\n// Record struct (value type) — C# 10+\nreadonly record struct Point(int X, int Y);\n\n// Инициализация с with-выражением (immutability)\nvar p1 = new Person(\"Alice\", 30);\nvar p2 = p1 with { Age = 31 }; // новый объект, Name скопирован\n\n// Positional records — деконструкция\nvar (name, age) = p1;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда что использовать"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Сценарий",
+        "Выбор"
+      ],
+      "rows": [
+        [
+          "Данные, передаваемые по значению, малые (< 16 байт)",
+          "`struct` / `record struct`"
+        ],
+        [
+          "DTO, сущности с идентичностью по данным",
+          "`record` / `record struct`"
+        ],
+        [
+          "Бизнес-объекты с поведением, изменяемое состояние",
+          "`class`"
+        ],
+        [
+          "Полиморфизм, наследование",
+          "`class` / `record` (record может наследовать record)"
+        ],
+        [
+          "Высокая производительность, массивы",
+          "`struct` / `record struct`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Immutability (Неизменяемость)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Init-only свойства (C# 9+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "class ImmutablePerson\n{\n    public string Name { get; init; }\n    public int Age { get; init; }\n\n    // Можно задать только в инициализаторе\n    var p = new ImmutablePerson { Name = \"Alice\", Age = 30 };\n    // p.Age = 31; // Ошибка компиляции!\n}\n\n// With-выражения работают с init-only (C# 10+ для class)\nvar p2 = p with { Age = 31 };"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Readonly struct"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "readonly struct ImmutablePoint\n{\n    public int X { get; }\n    public int Y { get; }\n\n    public ImmutablePoint(int x, int y) => (X, Y) = (x, y);\n\n    // Все методы неявно readonly\n    public double DistanceFromOrigin() => Math.Sqrt(X * X + Y * Y);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Record — встроенная неизменяемость"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "record User(string Name, string Email)\n{\n    // Можно добавить вычисляемые свойства\n    public string Domain => Email.Split('@')[1];\n\n    // Init-only setter для изменения через with\n    public string? Phone { get; init; }\n}\n\nvar u1 = new User(\"Alice\", \"alice@example.com\");\nvar u2 = u1 with { Phone = \"+1234567890\" }; // новый объект"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Frozen Collections (C# 10+ / .NET 8)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Collections.Frozen;\n\n// Оптимизированы для чтения, быстрый поиск\nFrozenSet<int> frozen = [1, 2, 3, 4, 5].ToFrozenSet();\nFrozenDictionary<string, int> dict = new Dictionary<string, int>\n{\n    [\"a\"] = 1, [\"b\"] = 2\n}.ToFrozenDictionary();\n\nConsole.WriteLine(frozen.Contains(3)); // O(1), очень быстро"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Ref Struct и Stack-Only Types (C# 7.2+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Только стек, не может быть полем класса, в async, в boxed\nref struct SpanWrapper\n{\n    public Span<int> Span { get; }\n\n    public SpanWrapper(Span<int> span) => Span = span;\n\n    // Нельзя: public List<SpanWrapper> list; // ошибка!\n}\n\n// Span<T> — пример ref struct\nvoid Process(Span<int> data)\n{\n    // Работа с памятью без аллокаций\n    for (int i = 0; i < data.Length; i++)\n        data[i] *= 2;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`struct` с большими данными (> 16 байт)",
+          "`class` или `record`"
+        ],
+        [
+          "`class` для DTO без поведения",
+          "`record` / `record struct`"
+        ],
+        [
+          "Мутация struct через свойство",
+          "`readonly struct` или `with`"
+        ],
+        [
+          "Игнорирование nullable warnings",
+          "Включите `<Nullable>enable</Nullable>`"
+        ],
+        [
+          "`object` вместо generic в коллекциях",
+          "`List<T>`, `Dictionary<TKey, TValue>`"
+        ],
+        [
+          "Boxing в горячем пути (циклы, hot path)",
+          "Примитивы, `Span<T>`, generic"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`struct` с большими данными (> 16 байт)",
+      "correct": "`class` или `record`"
+    },
+    {
+      "mistake": "`class` для DTO без поведения",
+      "correct": "`record` / `record struct`"
+    },
+    {
+      "mistake": "Мутация struct через свойство",
+      "correct": "`readonly struct` или `with`"
+    },
+    {
+      "mistake": "Игнорирование nullable warnings",
+      "correct": "Включите `<Nullable>enable</Nullable>`"
+    },
+    {
+      "mistake": "`object` вместо generic в коллекциях",
+      "correct": "`List<T>`, `Dictionary<TKey, TValue>`"
+    },
+    {
+      "mistake": "Boxing в горячем пути (циклы, hot path)",
+      "correct": "Примитивы, `Span<T>`, generic"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 12
+}

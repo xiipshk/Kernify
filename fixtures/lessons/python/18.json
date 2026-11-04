@@ -1,0 +1,406 @@
+{
+  "title": "Урок 2.7: Тестирование — pytest, unittest, mock, coverage, TDD",
+  "slug": "testirovanie-pytest-unittest-mock-coverage-tdd",
+  "short_description": "pytest, unittest, mock, coverage, TDD",
+  "goals": [
+    "Писать тесты с pytest (фикстуры, параметризация, маркеры)",
+    "Использовать unittest.mock для изоляции (patch, MagicMock)",
+    "Измерять покрытие кода (coverage)",
+    "Понимать TDD (Test-Driven Development)",
+    "Организовывать тесты в проекте"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Писать тесты с pytest (фикстуры, параметризация, маркеры)",
+        "Использовать unittest.mock для изоляции (patch, MagicMock)",
+        "Измерять покрытие кода (coverage)",
+        "Понимать TDD (Test-Driven Development)",
+        "Организовывать тесты в проекте"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. pytest — современный фреймворк"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка и запуск"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pytest\npytest                    # найти и запустить все test_*.py\npytest test_module.py     # конкретный файл\npytest -k \"test_add\"      # только тесты с \"add\" в имени\npytest -v                 # verbose\npytest --tb=short         # короткий трейсбек"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый тест"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Assert — понятные сообщения об ошибках"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def test_list_contains():\n    lst = [1, 2, 3]\n    assert 2 in lst\n    assert 4 not in lst\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Фикстуры (fixtures) — подготовка и очистка"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простая фикстура"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import pytest\n\n@pytest.fixture\ndef sample_data():\n    return {\"users\": [\"Анна\", \"Борис\"], \"count\": 2}\n\ndef test_users(sample_data):\n    assert sample_data[\"count\"] == 2\n    assert \"Анна\" in sample_data[\"users\"]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фикстура с очисткой (yield)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@pytest.fixture\ndef temp_file(tmp_path):\n    f = tmp_path / \"test.txt\"\n    f.write_text(\"hello\")\n    yield f"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Scope — область действия"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@pytest.fixture(scope=\"session\")      # на всю сессию\ndef db_connection():\n    conn = connect_to_db()\n    yield conn\n    conn.close()\n\n@pytest.fixture(scope=\"module\")       # на модуль\ndef api_client():\n    return APIClient()\n\n@pytest.fixture(scope=\"function\")     # на каждый тест (по умолчанию)\ndef fresh_list():\n    return []"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Автоматические фикстуры (autouse)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@pytest.fixture(autouse=True)\ndef reset_singleton():\n    Singleton._instance = None\n    yield\n    Singleton._instance = None"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Параметризация — запуск одного теста с разными данными"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import pytest\n\n@pytest.mark.parametrize(\"a,b,expected\", [\n    (1, 2, 3),\n    (0, 0, 0),\n    (-1, 1, 0),\n    (100, 200, 300),\n])\ndef test_add(a, b, expected):\n    assert add(a, b) == expected\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Маркеры (marks) — метаданные тестов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import pytest\n\n@pytest.mark.slow\ndef test_heavy_computation():\n    ...\n\n@pytest.mark.skip(reason=\"не реализовано\")\ndef test_future_feature():\n    ...\n\n@pytest.mark.skipif(sys.version_info < (3, 10), reason=\"нужен Python 3.10+\")\ndef test_match_statement():\n    ...\n\n@pytest.mark.xfail(reason=\"известный баг #123\")\ndef test_buggy_behavior():\n    assert False  # ожидаемо падает\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфигурация маркеров (pyproject.toml)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[tool.pytest.ini_options]\nmarkers = [\n    \"slow: marks tests as slow\",\n    \"integration: marks tests as integration tests\",\n    \"unit: marks tests as unit tests\",\n]"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. unittest.mock — изоляция зависимостей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "patch — подмена объекта"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from unittest.mock import patch, MagicMock\nimport requests\n\ndef get_user(user_id):\n    resp = requests.get(f\"https://api.example.com/users/{user_id}\")\n    return resp.json()\n\n@patch(\"requests.get\")\ndef test_get_user(mock_get):\n    mock_get.return_value.json.return_value = {\"id\": 1, \"name\": \"Анна\"}\n\n    user = get_user(1)\n\n    assert user == {\"id\": 1, \"name\": \"Анна\"}\n    mock_get.assert_called_once_with(\"https://api.example.com/users/1\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "patch как контекстный менеджер"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def test_with_context_manager():\n    with patch(\"requests.get\") as mock_get:\n        mock_get.return_value.status_code = 200\n        mock_get.return_value.json.return_value = {\"ok\": True}\n\n        result = fetch_data()\n\n        assert result == {\"ok\": True}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "patch.object — подмена атрибута объекта"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class PaymentProcessor:\n    def charge(self, amount):\n        return api.charge(amount)\n\ndef test_payment():\n    processor = PaymentProcessor()\n    with patch.object(processor, \"charge\", return_value=True):\n        assert processor.charge(100) is True"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MagicMock — гибкий мок"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from unittest.mock import MagicMock\n\nmock = MagicMock()\nmock.method.return_value = 42\nmock.method(1, 2, key=\"val\")\nmock.method.assert_called_with(1, 2, key=\"val\")\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "side_effect — побочные эффекты"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "mock = MagicMock()\nmock.side_effect = [1, 2, 3]  # последовательные возвраты\nmock()  # 1\nmock()  # 2\nmock()  # 3\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Тестирование асинхронного кода"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import pytest\nimport asyncio\n\n@pytest.mark.asyncio\nasync def test_async_function():\n    result = await async_func()\n    assert result == \"ok\"\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Coverage — измерение покрытия"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pytest-cov\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфигурация (pyproject.toml)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[tool.coverage.run]\nsource = [\"my_package\"]\nomit = [\"*/tests/*\", \"*/migrations/*\"]\n\n[tool.coverage.report]\nexclude_lines = [\n    \"pragma: no cover\",\n    \"def __repr__\",\n    \"raise AssertionError\",\n    \"raise NotImplementedError\",\n]"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. TDD (Test-Driven Development)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Цикл Red-Green-Refactor"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "1. RED:    Напишите падающий тест\n2. GREEN:  Напишите минимальный код для прохождения теста\n3. REFACTOR: Улучшите код, сохраняя тесты зелёными"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: калькулятор"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Организация тестов в проекте"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "project/\n├── src/\n│   └── mypackage/\n│       ├── __init__.py\n│       ├── core.py\n│       └── utils.py\n├── tests/\n│   ├── __init__.py\n│   ├── conftest.py          # общие фикстуры\n│   ├── unit/\n│   │   ├── test_core.py\n│   │   └── test_utils.py\n│   └── integration/\n│       └── test_api.py\n├── pyproject.toml\n└── pytest.ini (или в pyproject.toml)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "conftest.py — общие фикстуры"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Продвинутые темы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Property-based testing (hypothesis)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install hypothesis"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from hypothesis import given, strategies as st\n\n@given(st.integers(), st.integers())\ndef test_add_commutative(a, b):\n    assert add(a, b) == add(b, a)\n\n@given(st.lists(st.integers()))\ndef test_sort_idempotent(lst):\n    assert sorted(sorted(lst)) == sorted(lst)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Snapshot testing (syrupy)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install syrupy"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def test_user_snapshot(snapshot):\n    user = create_user(\"Анна\", 25)\n    assert user == snapshot"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Mutation testing (mutmut)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install mutmut\nmutmut run"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Тесты зависят друг от друга",
+          "Каждый тест изолирован, фикстуры дают свежие данные"
+        ],
+        [
+          "Моки не проверяют вызов",
+          "`mock.assert_called_once_with(...)`"
+        ],
+        [
+          "Патч не там, где используется",
+          "`@patch(\"module.where.used.Class\", ...)` не где определено"
+        ],
+        [
+          "Фикстура `scope=\"session\"` меняет состояние",
+          "Используйте `function` scope или сбрасывайте состояние"
+        ],
+        [
+          "Тестируют приватные методы",
+          "Тестируйте публичный API"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**pytest docs** — https://docs.pytest.org/",
+        "**unittest.mock docs** — https://docs.python.org/3/library/unittest.mock.html",
+        "**Real Python: pytest** — https://realpython.com/pytest-python-testing/",
+        "**pytest-cov** — https://pytest-cov.readthedocs.io/",
+        "**hypothesis** — https://hypothesis.readthedocs.io/",
+        "**Test-Driven Development by Example** — Kent Beck"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Тесты зависят друг от друга",
+      "correct": "Каждый тест изолирован, фикстуры дают свежие данные"
+    },
+    {
+      "mistake": "Моки не проверяют вызов",
+      "correct": "`mock.assert_called_once_with(...)`"
+    },
+    {
+      "mistake": "Патч не там, где используется",
+      "correct": "`@patch(\"module.where.used.Class\", ...)` не где определено"
+    },
+    {
+      "mistake": "Фикстура `scope=\"session\"` меняет состояние",
+      "correct": "Используйте `function` scope или сбрасывайте состояние"
+    },
+    {
+      "mistake": "Тестируют приватные методы",
+      "correct": "Тестируйте публичный API"
+    }
+  ],
+  "resources": [
+    "**pytest docs** — https://docs.pytest.org/",
+    "**unittest.mock docs** — https://docs.python.org/3/library/unittest.mock.html",
+    "**Real Python: pytest** — https://realpython.com/pytest-python-testing/",
+    "**pytest-cov** — https://pytest-cov.readthedocs.io/",
+    "**hypothesis** — https://hypothesis.readthedocs.io/",
+    "**Test-Driven Development by Example** — Kent Beck"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 18
+}

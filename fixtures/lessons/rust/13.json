@@ -1,0 +1,538 @@
+{
+  "title": "Урок 13: Продвинутые типы (Advanced Types)",
+  "slug": "prodvinutye-tipy-advanced-types",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Newtype Pattern (Обёртки для типовобезопасности)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый пример"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Проблема: easy to mix up\nfn set_age(age: u32) {}\nfn set_id(id: u32) {}\nset_age(42); // Ошибка не поймается\n\n// Решение: Newtype\nstruct UserId(u64);\nstruct Age(u8);\n\nfn set_age(age: Age) {}\nfn set_id(id: UserId) {}\n\nfn main() {\n    let id = UserId(42);\n    let age = Age(30);\n    set_id(id);\n    set_age(age);\n    // set_id(age); // ОШИБКА: mismatched types\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Реализация трейтов для Newtype"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ops::{Add, Deref};\n\nstruct Meters(f64);\n\nimpl Deref for Meters {\n    type Target = f64;\n    fn deref(&self) -> &f64 { &self.0 }\n}\n\nimpl Add for Meters {\n    type Output = Meters;\n    fn add(self, other: Meters) -> Meters {\n        Meters(self.0 + other.0)\n    }\n}\n\nfn main() {\n    let a = Meters(10.0);\n    let b = Meters(5.0);\n    let c = a + b; // Meters(15.0)\n    println!(\"{}\", *c); // Deref -> f64\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Tuple struct vs struct с одним полем"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Tuple — удобно для Deref\nstruct Wrapper(T);\n\n// Named — удобно для документации и расширения\nstruct Wrapper { value: T }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Type Aliases (Алиасы типов)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "type Kilometers = i64;\ntype Result<T> = std::result::Result<T, MyError>;\n\n// Упрощение сложных типов\ntype BoxedCallback = Box<dyn FnOnce() + Send + 'static>;\ntype Thunk = Box<dyn FnOnce() + Send + 'static>;\n\n// В сигнатурах\nfn takes_long_type(f: Thunk) {}\nfn returns_long_type() -> Thunk { Box::new(|| {}) }"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Важно:</strong> Type aliases — НЕ создают новые типы, просто альтернативные имена!"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "type Meters = u32;\nfn takes_meters(m: Meters) {}\nfn takes_u32(u: u32) {}\n\nfn main() {\n    takes_meters(5);\n    takes_u32(5); // Оба работают — это ОДИН тип!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Never Type (`!`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Функции, которые никогда не возвращаются"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn panic_fn() -> ! {\n    panic!(\"Never returns!\");\n}\n\nfn exit_fn() -> ! {\n    std::process::exit(0);\n}\n\nfn infinite_loop() -> ! {\n    loop {}\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование в `match`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn get_or_default(opt: Option<i32>) -> i32 {\n    match opt {\n        Some(v) => v,\n        None => panic_fn(), // Тип ! совместим с любым\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`!` как тип ошибки (infallible)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::convert::Infallible;\n\nfn never_fails() -> Result<i32, Infallible> {\n    Ok(42)\n}\n\nfn main() {\n    let x: i32 = never_fails().unwrap(); // Гарантированно Ok\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Dynamically Sized Types (DST)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое DST"
+    },
+    {
+      "type": "text",
+      "content": "Типы, размер которых известен только в runtime:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`str` — не `&str`, а сам `str` (unsized)",
+        "`[T]` — срез, не `&[T]`",
+        "`dyn Trait` — trait object"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Работа с DST — только через указатели"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// НЕЛЬЗЯ:\n// let s: str = * \"hello\"; // ошибка: size not known\n// let arr: [i32] = [1,2,3]; // ошибка\n\n// МОЖНО через указатели:\nlet s: &str = \"hello\";\nlet boxed_str: Box<str> = Box::from(\"hello\");\nlet rc_str: std::rc::Rc<str> = std::rc::Rc::from(\"hello\");\n\nlet slice: &[i32] = &[1,2,3];\nlet boxed_slice: Box<[i32]> = Box::new([1,2,3]);\n\nlet trait_obj: &dyn std::fmt::Debug = &42;\nlet boxed_trait: Box<dyn std::fmt::Debug> = Box::new(42);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Sized` trait bound"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// По умолчанию все generic параметры: T: Sized\nfn generic<T>(t: T) {} // T: Sized подразумевается\n\n// Чтобы разрешить DST:\nfn generic_unsized<T: ?Sized>(t: &T) {}\n// Теперь можно: generic_unsized(\"hello\") — &str"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кастомные DST (редко)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct MyDST {\n    len: usize,\n    data: [u8], // unsized tail\n}\n\n// Использование только через Box/MyDST, Rc<MyDST> и т.д."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Variance (Вариантность)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ковариантность (Covariance) — `&T`, `Box<T>`, `Vec<T>`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Если U подтип T, то &U подтип &T\nfn take_ref(s: &str) {}\nlet s: &'static str = \"hello\";\ntake_ref(s); // OK: &'static str -> &str"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контрвариантность (Contravariance) — `Fn(T)`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Если U подтип T, то Fn(T) подтип Fn(U)\nfn call_with_static(f: fn(&'static str)) {}\nfn takes_any(s: &str) {}\ncall_with_static(takes_any); // OK: fn(&str) -> fn(&'static str)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инвариантность (Invariance) — `&mut T`, `Cell<T>`, `RefCell<T>`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// &mut T инвариантен — НИКАКИХ приведений!\nfn take_mut(s: &mut String) {}\nlet mut s = String::new();\n// take_mut(&mut s as &mut dyn Any); // ОШИБКА!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Таблица вариативности"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тип",
+        "Вариантность по T"
+      ],
+      "rows": [
+        [
+          "`&T`, `&mut T` (shared)",
+          "Ковариантен"
+        ],
+        [
+          "`&mut T`",
+          "Инвариантен"
+        ],
+        [
+          "`Box<T>`, `Vec<T>`, `Rc<T>`, `Arc<T>`",
+          "Ковариантны"
+        ],
+        [
+          "`Cell<T>`, `RefCell<T>`, `UnsafeCell<T>`",
+          "Инвариантны"
+        ],
+        [
+          "`fn(T) -> U`",
+          "Контрвариантен по T, ковариантен по U"
+        ],
+        [
+          "`*const T`",
+          "Ковариантен"
+        ],
+        [
+          "`*mut T`",
+          "Инвариантен"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. `PhantomData<T>` — маркер владения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда нужно"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\n// Структура не хранит T, но должна вести себя так, будто хранит\nstruct MyIter<'a, T> {\n    ptr: *const T,\n    _marker: PhantomData<&'a T>, // Указывает на заимствование &'a T\n}\n\nimpl<'a, T> Iterator for MyIter<'a, T> {\n    type Item = &'a T;\n    fn next(&mut self) -> Option<&'a T> { /* unsafe */ }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основные паттерны"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Владеет T (как Box<T>)\nPhantomData<T>\n\n// Заимствует &T (как &T)\nPhantomData<&T>\n\n// Заимствует &mut T (как &mut T)\nPhantomData<&mut T>\n\n// Send/Sync маркеры\nPhantomData<*const T> // не Send, не Sync\nPhantomData<*mut T>   // не Send, не Sync"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: Typed Builder"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\nstruct Builder<HasName, HasAge> {\n    name: Option<String>,\n    age: Option<u32>,\n    _marker: PhantomData<(HasName, HasAge)>,\n}\n\nstruct Yes;\nstruct No;\n\nimpl Builder<No, No> {\n    fn new() -> Self {\n        Builder { name: None, age: None, _marker: PhantomData }\n    }\n}\n\nimpl<HasAge> Builder<No, HasAge> {\n    fn name(mut self, n: String) -> Builder<Yes, HasAge> {\n        self.name = Some(n);\n        Builder { name: self.name, age: self.age, _marker: PhantomData }\n    }\n}\n\nimpl<HasName> Builder<HasName, No> {\n    fn age(mut self, a: u32) -> Builder<HasName, Yes> {\n        self.age = Some(a);\n        Builder { name: self.name, age: self.age, _marker: PhantomData }\n    }\n}\n\nimpl Builder<Yes, Yes> {\n    fn build(self) -> User {\n        User { name: self.name.unwrap(), age: self.age.unwrap() }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Function Pointers vs Function Items"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Function Item (уникальный тип для каждой функции)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn add(a: i32, b: i32) -> i32 { a + b }\nfn sub(a: i32, b: i32) -> i32 { a - b }\n\n// Тип add — уникальный zero-sized type\n// Тип sub — другой уникальный тип"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Function Pointer (`fn(Args) -> Ret`)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Приведение function item -> function pointer\nlet op: fn(i32, i32) -> i32 = add; // Коэрция\nlet ops = [add, sub]; // Массив function pointers"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Разница"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Аспект",
+        "Function Item",
+        "Function Pointer"
+      ],
+      "rows": [
+        [
+          "Тип",
+          "Уникальный для каждой fn",
+          "`fn(Args) -> Ret`"
+        ],
+        [
+          "Размер",
+          "0 (ZST)",
+          "1 указатель (8 байт)"
+        ],
+        [
+          "Generic",
+          "Может быть generic",
+          "Не может быть generic"
+        ],
+        [
+          "Capture",
+          "Не может захватывать",
+          "Не может захватывать"
+        ],
+        [
+          "Инлайнинг",
+          "Всегда",
+          "Зависит от оптимизатора"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование в generics"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Принимает function pointer\nfn apply_ptr(f: fn(i32) -> i32, x: i32) -> i32 { f(x) }\n\n// Принимает любой callable (generic)\nfn apply_generic<F>(f: F, x: i32) -> i32\nwhere F: Fn(i32) -> i32\n{ f(x) }\n\nfn main() {\n    apply_ptr(add, 5); // OK\n    apply_generic(add, 5); // OK\n    apply_generic(|x| x * 2, 5); // OK (closure)\n    // apply_ptr(|x| x * 2, 5); // ОШИБКА: closure не fn pointer\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Опасные (unsafe) типы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`*const T` / `*mut T` — raw pointers"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let x = 42;\nlet raw_const: *const i32 = &x;\nlet raw_mut: *mut i32 = &mut x;\n\n// Разыменование только в unsafe\nunsafe {\n    println!(\"{}\", *raw_const);\n    *raw_mut = 100;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`NonNull<T>` — ненулевой указатель (оптимизация Option)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr::NonNull;\n\nlet ptr = NonNull::new(Box::into_raw(Box::new(42))).unwrap();\n// Option<NonNull<T>> = 1 слово (null pointer optimization)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Newtype для валидации"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[derive(Debug, Clone, PartialEq, Eq)]\nstruct Email(String);\n\nimpl Email {\n    fn new(s: String) -> Result<Self, String> {\n        if s.contains('@') && s.contains('.') {\n            Ok(Email(s))\n        } else { Err(\"Invalid email\".into()) }\n    }\n    fn as_str(&self) -> &str { &self.0 }\n}\n\nfn send_email(to: Email) { println!(\"Sending to {}\", to.as_str()); }\n\nfn main() {\n    let email = Email::new(\"test@example.com\".into()).unwrap();\n    send_email(email);\n    // send_email(Email::new(\"invalid\".into()).unwrap()); // Err\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: DST в trait objects"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Draw {\n    fn draw(&self);\n}\n\nstruct Circle { r: f64 }\nstruct Square { s: f64 }\n\nimpl Draw for Circle { fn draw(&self) { println!(\"Circle {}\", self.r); } }\nimpl Draw for Square { fn draw(&self) { println!(\"Square {}\", self.s); } }\n\nfn main() {\n    let shapes: Vec<Box<dyn Draw>> = vec![\n        Box::new(Circle { r: 5.0 }),\n        Box::new(Square { s: 3.0 }),\n    ];\n    for s in shapes { s.draw(); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: PhantomData для FFI wrapper"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\nstruct Handle<T> {\n    ptr: *mut std::ffi::c_void,\n    _phantom: PhantomData<T>,\n}\n\nimpl<T> Handle<T> {\n    unsafe fn from_raw(ptr: *mut std::ffi::c_void) -> Self {\n        Handle { ptr, _phantom: PhantomData }\n    }\n    fn as_ptr(&self) -> *mut std::ffi::c_void { self.ptr }\n}\n\n// Handle<T> ведёт себя так, будто владеет T"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`type alias not allowed here`",
+          "Алиас в недопустимом месте"
+        ],
+        [
+          "`the size for values of type T cannot be known`",
+          "DST без указателя"
+        ],
+        [
+          "`expected fn pointer, found fn item`",
+          "Замыкание вместо fn pointer"
+        ],
+        [
+          "`PhantomData` не влияет на variance",
+          "Неправильный маркер"
+        ],
+        [
+          "`invariance` ошибка с `&mut`",
+          "Попытка covariance для &mut"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Шпаргалка: Advanced Types"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Конструкция",
+        "Назначение",
+        "Создаёт новый тип?"
+      ],
+      "rows": [
+        [
+          "`struct Foo(T)`",
+          "Newtype",
+          "Да"
+        ],
+        [
+          "`type Foo = T`",
+          "Алиас",
+          "Нет"
+        ],
+        [
+          "`!`",
+          "Never (diverging)",
+          "Примитив"
+        ],
+        [
+          "`dyn Trait`",
+          "Trait object (DST)",
+          "Нет (unsized)"
+        ],
+        [
+          "`PhantomData<T>`",
+          "Marker для variance/drop",
+          "Нет (ZST)"
+        ],
+        [
+          "`fn(...) -> ...`",
+          "Function pointer",
+          "Нет (примитив)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Newtype pattern для типовобезопасности и реализации трейтов",
+        "Type aliases — только синтаксический сахар",
+        "Never type `!` для diverging функций и infallible Result",
+        "DST: `str`, `[T]`, `dyn Trait` — работа только через указатели",
+        "`?Sized` bound для generic над DST",
+        "Variance: ковариантность, контрвариантность, инвариантность",
+        "`PhantomData<T>` — маркер для variance, dropck, Send/Sync",
+        "Function items vs function pointers",
+        "Raw pointers и `NonNull<T>`"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`type alias not allowed here`",
+      "correct": "Алиас в недопустимом месте"
+    },
+    {
+      "mistake": "`the size for values of type T cannot be known`",
+      "correct": "DST без указателя"
+    },
+    {
+      "mistake": "`expected fn pointer, found fn item`",
+      "correct": "Замыкание вместо fn pointer"
+    },
+    {
+      "mistake": "`PhantomData` не влияет на variance",
+      "correct": "Неправильный маркер"
+    },
+    {
+      "mistake": "`invariance` ошибка с `&mut`",
+      "correct": "Попытка covariance для &mut"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 13
+}

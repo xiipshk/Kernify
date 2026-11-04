@@ -1,0 +1,472 @@
+{
+  "title": "Урок 21: Concurrency (Параллелизм и многопоточность)",
+  "slug": "concurrency-parallelizm-i-mnogopotochnost",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Потоки (`std::thread`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Создание потоков"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::thread;\nuse std::time::Duration;\n\nfn main() {\n    // Простой поток\n    let handle = thread::spawn(|| {\n        for i in 1..=5 {\n            println!(\"Thread: {}\", i);\n            thread::sleep(Duration::from_millis(100));\n        }\n    });\n\n    // Основной поток\n    for i in 1..=3 {\n        println!(\"Main: {}\", i);\n        thread::sleep(Duration::from_millis(100));\n    }\n\n    // Ждём завершения\n    handle.join().unwrap();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Передача данных в поток (move)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let data = vec![1, 2, 3];\n\nlet handle = thread::spawn(move || {\n    println!(\"Data in thread: {:?}\", data);\n    data // Можно вернуть владение\n});\n\nlet returned = handle.join().unwrap();\nprintln!(\"Returned: {:?}\", returned);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Scoped threads (все потоки завершаются перед выходом из scope)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::thread;\n\nfn main() {\n    let mut data = vec![1, 2, 3];\n\n    thread::scope(|s| {\n        s.spawn(|| {\n            println!(\"Read: {:?}\", data);\n        });\n        s.spawn(|| {\n            // Можно мутировать, если нет других доступов\n            data.push(4);\n        });\n    });\n\n    // Гарантированно все потоки завершены здесь\n    println!(\"Final: {:?}\", data);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. `Send` и `Sync` — маркеры потокобезопасности"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Определения"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Send: можно передать владение (move) в другой поток\n// Почти все типы: Send, кроме Rc, RefCell, *const T, *mut T\n\n// Sync: безопасно делить &T между потоками\n// T: Sync <=> &T: Send\n// Почти все типы: Sync, кроме Cell, RefCell, MutexGuard (в некоторых случаях)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проверка"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn assert_send<T: Send>() {}\nfn assert_sync<T: Sync>() {}\n\nassert_send::<i32>();        // OK\nassert_send::<String>();     // OK\nassert_send::<Vec<i32>>();   // OK\n// assert_send::<Rc<i32>>();  // Error: Rc не Send\n\nassert_sync::<i32>();        // OK\nassert_sync::<Mutex<i32>>(); // OK\n// assert_sync::<RefCell<i32>>(); // Error: RefCell не Sync"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Реализация вручную (unsafe)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\nstruct MyPtr<T> {\n    ptr: *mut T,\n    _marker: PhantomData<T>, // Для dropck\n}\n\nunsafe impl<T: Send> Send for MyPtr<T> {}\nunsafe impl<T: Sync> Sync for MyPtr<T> {}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Разделяемое состояние"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Arc<Mutex<T>>` — классический паттерн"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::{Arc, Mutex};\nuse std::thread;\n\nfn main() {\n    let counter = Arc::new(Mutex::new(0));\n    let mut handles = vec![];\n\n    for _ in 0..10 {\n        let counter = Arc::clone(&counter);\n        handles.push(thread::spawn(move || {\n            let mut num = counter.lock().unwrap();\n            *num += 1;\n        }));\n    }\n\n    for h in handles { h.join().unwrap(); }\n    println!(\"Result: {}\", *counter.lock().unwrap()); // 10\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Arc<RwLock<T>>` — много читателей"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::{Arc, RwLock};\n\nfn main() {\n    let data = Arc::new(RwLock::new(vec![1, 2, 3]));\n    let mut handles = vec![];\n\n    // Читатели\n    for _ in 0..5 {\n        let data = Arc::clone(&data);\n        handles.push(thread::spawn(move || {\n            let read = data.read().unwrap();\n            println!(\"Read: {:?}\", *read);\n        }));\n    }\n\n    // Писатель\n    let data = Arc::clone(&data);\n    handles.push(thread::spawn(move || {\n        let mut write = data.write().unwrap();\n        write.push(4);\n    }));\n\n    for h in handles { h.join().unwrap(); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Каналы (`std::sync::mpsc`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый канал"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::mpsc;\nuse std::thread;\n\nfn main() {\n    let (tx, rx) = mpsc::channel();\n\n    thread::spawn(move || {\n        let vals = vec![1, 2, 3];\n        for v in vals {\n            tx.send(v).unwrap();\n        }\n    });\n\n    // rx — итератор, блокируется до получения\n    for received in rx {\n        println!(\"Got: {}\", received);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Множественные отправители"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let (tx, rx) = mpsc::channel();\n\nfor i in 0..3 {\n    let tx = tx.clone();\n    thread::spawn(move || {\n        tx.send(i).unwrap();\n    });\n}\n\ndrop(tx); // Важно! Иначе rx никогда не закончится\nfor v in rx { println!(\"{}\", v); }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`sync_channel` — с буфером (backpressure)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let (tx, rx) = mpsc::sync_channel(2); // Буфер 2\n\ntx.send(1).unwrap(); // Сразу\ntx.send(2).unwrap(); // Сразу\n// tx.send(3).unwrap(); // Блокирует, пока не освободится место"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Атомарные типы (`std::sync::atomic`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовые атомарные"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU64, Ordering};\nuse std::thread;\n\nfn main() {\n    let flag = AtomicBool::new(false);\n    let counter = AtomicUsize::new(0);\n\n    let handles: Vec<_> = (0..10).map(|_| {\n        let flag = &flag;\n        let counter = &counter;\n        thread::spawn(move || {\n            if !flag.load(Ordering::Acquire) {\n                flag.store(true, Ordering::Release);\n                println!(\"First!\");\n            }\n            counter.fetch_add(1, Ordering::SeqCst);\n        })\n    }).collect();\n\n    for h in handles { h.join().unwrap(); }\n    println!(\"Counter: {}\", counter.load(Ordering::SeqCst));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Memory Ordering"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// SeqCst — последовательная согласованность (самое строгое, дефолт)\n// Acquire — загрузка: видит все записи перед Release в другом потоке\n// Release — запись: все предыдущие записи видны после Acquire в другом потоке\n// AcqRel — комбинация для RMW операций\n// Relaxed — без гарантий упорядочивания (только атомарность)\n\n// Пример: Spinlock с Acquire/Release\nstruct Spinlock {\n    locked: AtomicBool,\n}\n\nimpl Spinlock {\n    fn new() -> Self {\n        Spinlock { locked: AtomicBool::new(false) }\n    }\n\n    fn lock(&self) {\n        while self.locked.compare_exchange_weak(\n            false, true,\n            Ordering::Acquire,  // Success: acquire\n            Ordering::Relaxed   // Failure: relaxed\n        ).is_err() {\n            std::hint::spin_loop(); // Подсказка процессору\n        }\n    }\n\n    fn unlock(&self) {\n        self.locked.store(false, Ordering::Release);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Атомарные операции"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let atomic = AtomicUsize::new(10);\n\natomic.load(Ordering::SeqCst);           // Чтение\natomic.store(20, Ordering::SeqCst);      // Запись\natomic.swap(30, Ordering::SeqCst);       // Обмен\natomic.fetch_add(5, Ordering::SeqCst);   // +5, вернуть старое\natomic.fetch_sub(3, Ordering::SeqCst);   // -3\natomic.fetch_and(0b111, Ordering::SeqCst);\natomic.fetch_or(0b100, Ordering::SeqCst);\natomic.fetch_xor(0b010, Ordering::SeqCst);\n\n// Compare-and-swap\natomic.compare_exchange(\n    15, 20,           // expected, new\n    Ordering::SeqCst, Ordering::SeqCst  // success, failure\n);\natomic.compare_exchange_weak(...);       // Слабая версия (может spuriously fail)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. `Rayon` — параллельные итераторы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[dependencies]\nrayon = \"1.10\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use rayon::prelude::*;\n\nfn main() {\n    let data: Vec<i32> = (0..1_000_000).collect();\n\n    // Последовательно\n    let sum: i32 = data.iter().sum();\n\n    // Параллельно\n    let sum: i32 = data.par_iter().sum();\n\n    // Map/Filter\n    let squares: Vec<i32> = data.par_iter()\n        .map(|x| x * x)\n        .filter(|x| *x % 2 == 0)\n        .collect();\n\n    // for_each\n    data.par_iter().for_each(|x| {\n        // параллельно\n    });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`par_sort`, `par_chunks`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let mut v = vec![5, 3, 1, 4, 2];\nv.par_sort(); // Параллельная сортировка\nv.par_sort_unstable();\n\n// Chunks\nfor chunk in v.par_chunks_mut(2) {\n    chunk.sort();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`join` — рекурсивное разделение"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use rayon::join;\n\nfn quicksort(v: &mut [i32]) {\n    if v.len() <= 1 { return; }\n    let mid = partition(v);\n    let (left, right) = v.split_at_mut(mid);\n    join(|| quicksort(left), || quicksort(right));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. `crossbeam` — продвинутые примитивы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[dependencies]\ncrossbeam = \"0.8\"\ncrossbeam-channel = \"0.5\"\ncrossbeam-utils = \"0.8\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Scoped threads (лучше чем std)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use crossbeam::scope;\n\nfn main() {\n    let mut data = vec![1, 2, 3];\n\n    scope(|s| {\n        s.spawn(|_| {\n            println!(\"Read: {:?}\", data);\n        });\n        s.spawn(|_| {\n            data.push(4);\n        });\n    }).unwrap();\n\n    println!(\"Final: {:?}\", data);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Каналы `crossbeam-channel`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use crossbeam_channel::{bounded, unbounded, select};\n\nfn main() {\n    let (tx, rx) = unbounded();\n\n    // select! — мультиплексирование\n    select! {\n        recv(rx) -> msg => println!(\"Got: {:?}\", msg),\n        default => println!(\"Nothing yet\"),\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Lock-free структуры"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use crossbeam::queue::SegQueue;\nuse crossbeam::epoch::{self, Atomic, Owned};\n\nlet queue = SegQueue::new();\nqueue.push(1);\nqueue.push(2);\n\nwhile let Some(v) = queue.pop() {\n    println!(\"{}\", v);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Lock-free программирование"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Arc<AtomicPtr<T>>` — простой lock-free stack"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::atomic::{AtomicPtr, Ordering};\nuse std::ptr;\n\nstruct Node<T> {\n    value: T,\n    next: AtomicPtr<Node<T>>,\n}\n\nstruct LockFreeStack<T> {\n    head: AtomicPtr<Node<T>>,\n}\n\nimpl<T> LockFreeStack<T> {\n    fn new() -> Self {\n        LockFreeStack { head: AtomicPtr::new(ptr::null_mut()) }\n    }\n\n    fn push(&self, value: T) {\n        let node = Box::into_raw(Box::new(Node {\n            value,\n            next: AtomicPtr::new(ptr::null_mut()),\n        }));\n        loop {\n            let head = self.head.load(Ordering::Acquire);\n            unsafe { (*node).next.store(head, Ordering::Relaxed); }\n            if self.head.compare_exchange_weak(\n                head, node,\n                Ordering::Release,\n                Ordering::Acquire\n            ).is_ok() {\n                break;\n            }\n        }\n    }\n\n    fn pop(&self) -> Option<T> {\n        loop {\n            let head = self.head.load(Ordering::Acquire);\n            if head.is_null() { return None; }\n            let next = unsafe { (*head).next.load(Ordering::Acquire) };\n            if self.head.compare_exchange_weak(\n                head, next,\n                Ordering::Release,\n                Ordering::Acquire\n            ).is_ok() {\n                let node = unsafe { Box::from_raw(head) };\n                return Some(node.value);\n            }\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Избегание Deadlock"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Порядок захвата блокировок"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// ПЛОХО: deadlock возможен\nfn transfer_bad(from: &Mutex<i32>, to: &Mutex<i32>, amount: i32) {\n    let mut f = from.lock().unwrap();\n    let mut t = to.lock().unwrap();\n    *f -= amount;\n    *t += amount;\n}\n\n// ХОРОШО: всегда в одном порядке\nfn transfer_good(a: &Mutex<i32>, b: &Mutex<i32>, amount: i32) {\n    let (first, second) = if (a as *const _) < (b as *const _) {\n        (a, b)\n    } else {\n        (b, a)\n    };\n    let mut f = first.lock().unwrap();\n    let mut s = second.lock().unwrap();\n    *f -= amount;\n    *s += amount;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`try_lock` — неблокирующая попытка"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::Mutex;\n\nlet mutex = Mutex::new(0);\n\nif let Ok(mut guard) = mutex.try_lock() {\n    *guard += 1;\n} else {\n    println!(\"Could not acquire lock\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Параллельный MapReduce"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use rayon::prelude::*;\nuse std::collections::HashMap;\n\nfn word_count_parallel(texts: &[String]) -> HashMap<String, usize> {\n    texts.par_iter()\n        .flat_map(|s| s.split_whitespace())\n        .fold(HashMap::new, |mut map, word| {\n            *map.entry(word.to_lowercase()).or_insert(0) += 1;\n            map\n        })\n        .reduce(HashMap::new, |mut a, b| {\n            for (k, v) in b { *a.entry(k).or_insert(0) += v; }\n            a\n        })\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Thread pool с работниками"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::{Arc, Mutex, mpsc};\nuse std::thread;\n\nstruct ThreadPool {\n    workers: Vec<Worker>,\n    sender: mpsc::Sender<Job>,\n}\n\ntype Job = Box<dyn FnOnce() + Send + 'static>;\n\nimpl ThreadPool {\n    fn new(size: usize) -> Self {\n        let (sender, receiver) = mpsc::channel();\n        let receiver = Arc::new(Mutex::new(receiver));\n        let mut workers = Vec::with_capacity(size);\n\n        for id in 0..size {\n            workers.push(Worker::new(id, Arc::clone(&receiver)));\n        }\n\n        ThreadPool { workers, sender }\n    }\n\n    fn execute<F>(&self, f: F) where F: FnOnce() + Send + 'static {\n        self.sender.send(Box::new(f)).unwrap();\n    }\n}\n\nstruct Worker {\n    id: usize,\n    thread: Option<thread::JoinHandle<()>>,\n}\n\nimpl Worker {\n    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Self {\n        let thread = thread::spawn(move || loop {\n            let job = receiver.lock().unwrap().recv().unwrap();\n            println!(\"Worker {} got job\", id);\n            job();\n        });\n        Worker { id, thread: Some(thread) }\n    }\n}\n\nimpl Drop for ThreadPool {\n    fn drop(&mut self) {\n        for worker in &mut self.workers {\n            if let Some(t) = worker.thread.take() {\n                t.join().unwrap();\n            }\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Lock-free счетчик с пакетной обработкой"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::sync::atomic::{AtomicUsize, Ordering};\nuse std::thread;\n\nstruct BatchedCounter {\n    local: AtomicUsize,\n    global: AtomicUsize,\n    batch_size: usize,\n}\n\nimpl BatchedCounter {\n    fn new(batch_size: usize) -> Self {\n        BatchedCounter {\n            local: AtomicUsize::new(0),\n            global: AtomicUsize::new(0),\n            batch_size,\n        }\n    }\n\n    fn increment(&self) {\n        let local = self.local.fetch_add(1, Ordering::Relaxed) + 1;\n        if local % self.batch_size == 0 {\n            self.global.fetch_add(self.batch_size, Ordering::Relaxed);\n            self.local.fetch_sub(self.batch_size, Ordering::Relaxed);\n        }\n    }\n\n    fn get(&self) -> usize {\n        self.global.load(Ordering::Relaxed) + self.local.load(Ordering::Relaxed)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`cannot move out of captured variable`",
+          "Захват по ссылке в `move` замыкании"
+        ],
+        [
+          "`deadlock`",
+          "Два потока ждут друг друга"
+        ],
+        [
+          "`data race`",
+          "Несинхронизированный доступ"
+        ],
+        [
+          "`channel closed`",
+          "Все `Sender` дропнуты"
+        ],
+        [
+          "`thread panicked`",
+          "Паника в потоке"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Шпаргалка: Concurrency API"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Типы/Функции"
+      ],
+      "rows": [
+        [
+          "Потоки",
+          "`thread::spawn`, `thread::scope`, `JoinHandle`, `thread::sleep`"
+        ],
+        [
+          "Разделяемое состояние",
+          "`Arc`, `Mutex`, `RwLock`, `Condvar`, `OnceLock`"
+        ],
+        [
+          "Каналы",
+          "`mpsc::channel`, `mpsc::sync_channel`, `Sender`, `Receiver`"
+        ],
+        [
+          "Атомарные",
+          "`AtomicBool`, `AtomicUsize`, `AtomicPtr`, `Ordering`"
+        ],
+        [
+          "Rayon",
+          "`par_iter`, `par_iter_mut`, `join`, `par_sort`"
+        ],
+        [
+          "Crossbeam",
+          "`scope`, `SegQueue`, `ArrayQueue`, `channel`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`std::thread::spawn`, `scope`, `join`, передача владения через `move`",
+        "`Send` / `Sync` — маркеры потокобезопасности",
+        "`Arc<Mutex<T>>`, `Arc<RwLock<T>>` для разделяемого мутабельного состояния",
+        "`mpsc` каналы: unbounded, bounded (sync_channel), множественные отправители",
+        "Атомарные типы: `AtomicBool`, `AtomicUsize`, операции CAS, memory ordering",
+        "`Rayon`: `par_iter`, `join`, параллельные алгоритмы",
+        "`crossbeam`: scoped threads, lock-free структуры, select",
+        "Lock-free программирование: принципы, пример stack",
+        "Предотвращение deadlock: порядок блокировок, `try_lock`"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`cannot move out of captured variable`",
+      "correct": "Захват по ссылке в `move` замыкании"
+    },
+    {
+      "mistake": "`deadlock`",
+      "correct": "Два потока ждут друг друга"
+    },
+    {
+      "mistake": "`data race`",
+      "correct": "Несинхронизированный доступ"
+    },
+    {
+      "mistake": "`channel closed`",
+      "correct": "Все `Sender` дропнуты"
+    },
+    {
+      "mistake": "`thread panicked`",
+      "correct": "Паника в потоке"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 21
+}

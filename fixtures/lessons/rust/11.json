@@ -1,0 +1,227 @@
+{
+  "title": "Урок 11: Проект уровня Beginner — Консольный Todo-менеджер",
+  "slug": "proekt-urovnya-beginner-konsolnyy-todo-menedzher",
+  "short_description": "Консольный Todo-менеджер",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели проекта"
+    },
+    {
+      "type": "text",
+      "content": "Закрепить все изученные навыки:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Переменные, типы, контроль потока",
+        "Функции, замыкания",
+        "Ownership, borrowing, slices",
+        "Строки, Vec, HashMap",
+        "Structs, Enums, Pattern Matching",
+        "Обработка ошибок (Result, ?)",
+        "Модули, Cargo",
+        "Трейты, дженерики"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Требования к приложению"
+    },
+    {
+      "type": "text",
+      "content": "Консольное приложение для управления задачами с командами:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`add \"text\"` — добавить задачу",
+        "`list` — показать все задачи",
+        "`done <id>` — отметить выполненной",
+        "`remove <id>` — удалить",
+        "`help` — справка",
+        "`quit` — выход"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Данные сохраняются в JSON файл."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Структура проекта"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "todo_cli/\n├── Cargo.toml\n├── src/\n│   ├── main.rs\n│   ├── lib.rs\n│   ├── models/\n│   │   ├── mod.rs\n│   │   └── task.rs\n│   ├── storage/\n│   │   ├── mod.rs\n│   │   └── json_storage.rs\n│   └── commands/\n│       ├── mod.rs\n│       ├── add.rs\n│       ├── list.rs\n│       ├── done.rs\n│       └── remove.rs"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[package]\nname = \"todo_cli\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde = { version = \"1.0\", features = [\"derive\"] }\nserde_json = \"1.0\"\nanyhow = \"1.0\"\nclap = { version = \"4.4\", features = [\"derive\"] }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/models/task.rs"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use serde::{Deserialize, Serialize};\nuse std::fmt;\n\n#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]\npub struct Task {\n    pub id: u64,\n    pub text: String,\n    pub completed: bool,\n    pub created_at: String,\n}\n\nimpl Task {\n    pub fn new(id: u64, text: String) -> Self {\n        use chrono::Local;\n        Task {\n            id,\n            text,\n            completed: false,\n            created_at: Local::now().format(\"%Y-%m-%d %H:%M\").to_string(),\n        }\n    }\n}\n\nimpl fmt::Display for Task {\n    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {\n        let status = if self.completed { \"✓\" } else { \"○\" };\n        write!(f, \"[{}] {}: {} ({})\", status, self.id, self.text, self.created_at)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/storage/json_storage.rs"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use anyhow::Result;\nuse serde::{Deserialize, Serialize};\nuse std::collections::HashMap;\nuse std::fs;\nuse std::path::Path;\n\nuse crate::models::Task;\n\n#[derive(Serialize, Deserialize, Default)]\npub struct TaskStore {\n    tasks: HashMap<u64, Task>,\n    next_id: u64,\n}\n\npub struct JsonStorage {\n    path: String,\n}\n\nimpl JsonStorage {\n    pub fn new(path: impl Into<String>) -> Self {\n        Self { path: path.into() }\n    }\n\n    fn load(&self) -> Result<TaskStore> {\n        if !Path::new(&self.path).exists() {\n            return Ok(TaskStore::default());\n        }\n        let content = fs::read_to_string(&self.path)?;\n        if content.trim().is_empty() {\n            return Ok(TaskStore::default());\n        }\n        Ok(serde_json::from_str(&content)?)\n    }\n\n    fn save(&self, store: &TaskStore) -> Result<()> {\n        let content = serde_json::to_string_pretty(store)?;\n        fs::write(&self.path, content)?;\n        Ok(())\n    }\n\n    pub fn get_all(&self) -> Result<Vec<Task>> {\n        let store = self.load()?;\n        let mut tasks: Vec<_> = store.tasks.into_values().collect();\n        tasks.sort_by_key(|t| t.id);\n        Ok(tasks)\n    }\n\n    pub fn add(&self, text: String) -> Result<Task> {\n        let mut store = self.load()?;\n        let task = Task::new(store.next_id, text);\n        store.tasks.insert(store.next_id, task.clone());\n        store.next_id += 1;\n        self.save(&store)?;\n        Ok(task)\n    }\n\n    pub fn complete(&self, id: u64) -> Result<()> {\n        let mut store = self.load()?;\n        if let Some(task) = store.tasks.get_mut(&id) {\n            task.completed = true;\n            self.save(&store)?;\n            Ok(())\n        } else {\n            Err(anyhow::anyhow!(\"Task {} not found\", id))\n        }\n    }\n\n    pub fn remove(&self, id: u64) -> Result<()> {\n        let mut store = self.load()?;\n        if store.tasks.remove(&id).is_some() {\n            self.save(&store)?;\n            Ok(())\n        } else {\n            Err(anyhow::anyhow!(\"Task {} not found\", id))\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/commands/*.rs (пример add.rs)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/commands/add.rs\nuse anyhow::Result;\nuse crate::storage::JsonStorage;\n\npub fn execute(storage: &JsonStorage, text: String) -> Result<()> {\n    let task = storage.add(text)?;\n    println!(\"Added task: {}\", task);\n    Ok(())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/commands/mod.rs"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub mod add;\npub mod list;\npub mod done;\npub mod remove;\n\nuse anyhow::Result;\nuse crate::storage::JsonStorage;\n\npub enum Command {\n    Add(String),\n    List,\n    Done(u64),\n    Remove(u64),\n    Help,\n    Quit,\n}\n\npub fn parse(input: &str) -> Option<Command> {\n    let parts: Vec<_> = input.split_whitespace().collect();\n    match parts.as_slice() {\n        [\"add\", rest @ ..] if !rest.is_empty() => Some(Command::Add(rest.join(\" \"))),\n        [\"list\"] => Some(Command::List),\n        [\"done\", id] => id.parse().ok().map(Command::Done),\n        [\"remove\" | \"rm\", id] => id.parse().ok().map(Command::Remove),\n        [\"help\"] => Some(Command::Help),\n        [\"quit\" | \"exit\"] => Some(Command::Quit),\n        _ => None,\n    }\n}\n\npub fn execute(cmd: Command, storage: &JsonStorage) -> Result<bool> {\n    match cmd {\n        Command::Add(text) => add::execute(storage, text).map(|_| true),\n        Command::List => list::execute(storage).map(|_| true),\n        Command::Done(id) => done::execute(storage, id).map(|_| true),\n        Command::Remove(id) => remove::execute(storage, id).map(|_| true),\n        Command::Help => { print_help(); Ok(true) }\n        Command::Quit => Ok(false),\n    }\n}\n\nfn print_help() {\n    println!(r#\"\nTodo CLI — управление задачами\n\nCommands:\n  add \"text\"     — добавить задачу\n  list           — показать все задачи\n  done <id>      — отметить выполненной\n  remove <id>    — удалить задачу\n  help           — эта справка\n  quit           — выход\n\"#);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/lib.rs"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub mod models;\npub mod storage;\npub mod commands;\n\npub use models::Task;\npub use storage::JsonStorage;\npub use commands::{Command, parse, execute};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/main.rs"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use anyhow::Result;\nuse todo_cli::{JsonStorage, Command, parse, execute};\nuse std::io::{self, Write};\n\nconst STORAGE_PATH: &str = \"tasks.json\";\n\nfn main() -> Result<()> {\n    let storage = JsonStorage::new(STORAGE_PATH);\n    println!(\"Todo CLI — type 'help' for commands\");\n\n    loop {\n        print!(\"> \");\n        io::stdout().flush()?;\n\n        let mut input = String::new();\n        io::stdin().read_line(&mut input)?;\n        let input = input.trim();\n\n        if input.is_empty() { continue; }\n\n        match parse(input) {\n            Some(cmd) => {\n                let continue_loop = execute(cmd, &storage)?;\n                if !continue_loop { break; }\n            }\n            None => println!(\"Unknown command. Type 'help' for usage.\"),\n        }\n    }\n\n    println!(\"Goodbye!\");\n    Ok(())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Запуск и тестирование"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo run"
+    },
+    {
+      "type": "text",
+      "content": "Пример сессии:"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "> add \"Learn Rust\"\nAdded task: [○] 1: Learn Rust (2024-01-15 10:30)\n\n> add \"Build a project\"\nAdded task: [○] 2: Build a project (2024-01-15 10:31)\n\n> list\n[○] 1: Learn Rust (2024-01-15 10:30)\n[○] 2: Build a project (2024-01-15 10:31)\n\n> done 1\nTask 1 marked as done\n\n> list\n[✓] 1: Learn Rust (2024-01-15 10:30)\n[○] 2: Build a project (2024-01-15 10:31)\n\n> remove 2\nTask 2 removed\n\n> quit\nGoodbye!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Дополнительные задания (для углубления)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Фильтрация**: `list --pending` / `list --completed`",
+        "**Редактирование**: `edit <id> \"new text\"`",
+        "**Приоритеты**: добавить поле `priority: u8` (1-3)",
+        "**Теги**: `add \"task\" #work #urgent`",
+        "**Поиск**: `search \"keyword\"`",
+        "**Экспорт**: `export csv` / `export markdown`",
+        "**TUI**: использовать `ratatui` для интерфейса в терминале",
+        "**Тесты**: написать unit-тесты для storage и commands"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Чек-лист навыков (проверь себя)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] Создал проект с `cargo new`",
+        "[ ] Разбил код на модули (`mod`, `pub`, `use`)",
+        "[ ] Использовал `struct` + `impl` + `#[derive]`",
+        "[ ] Работал с `Option` / `Result` / `?`",
+        "[ ] Сериализовал данные через `serde`",
+        "[ ] Использовал `HashMap` для хранения",
+        "[ ] Обработал ошибки с `anyhow`",
+        "[ ] Парсил CLI аргументы (ручной парсинг или `clap`)",
+        "[ ] Читал/писал файлы",
+        "[ ] Запускал `cargo run`, `cargo test`, `cargo build --release`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме Beginner-уроков"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Вы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Введение, установка, Cargo",
+        "Переменные, типы, shadowing, константы",
+        "`if`/`else`, `loop`/`while`/`for`, `break`/`continue`, `match`",
+        "Функции, замыкания, `fn` pointers, `!` type",
+        "Ownership, move, clone, references, borrowing rules, slices, lifetimes",
+        "`String`/`&str`, `Vec`, `HashMap`, `HashSet`",
+        "`struct`/`enum`, pattern matching, `Option`/`Result`",
+        "`panic!` vs `Result`, `?`, custom errors, `thiserror`/`anyhow`",
+        "Modules, visibility, `Cargo.toml`, workspace, editions",
+        "Traits, generics, associated types, `impl Trait`, `dyn Trait`"
+      ],
+      "ordered": true
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 11
+}

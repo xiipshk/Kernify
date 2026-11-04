@@ -1,0 +1,354 @@
+{
+  "title": "Урок 13: Move Semantics — семантика перемещения",
+  "slug": "move-semantics-semantika-peremescheniya",
+  "short_description": "семантика перемещения",
+  "goals": [
+    "Понять разницу между lvalue и rvalue",
+    "Освоить `std::move` и `std::forward`",
+    "Реализовать перемещающие конструкторы и присваивание",
+    "Понять perfect forwarding и universal references",
+    "Избегать лишних копирований и знать про RVO/NRVO"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять разницу между lvalue и rvalue",
+        "Освоить `std::move` и `std::forward`",
+        "Реализовать перемещающие конструкторы и присваивание",
+        "Понять perfect forwarding и universal references",
+        "Избегать лишних копирований и знать про RVO/NRVO"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Value Categories (Категории значений)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int x = 42;           // x — lvalue (имеет имя, адрес, живёт до конца области)\nint& ref = x;         // lvalue reference\nint&& rref = 42;      // rvalue reference к временному (продлевает жизнь)\nint&& rref2 = std::move(x); // xvalue — \"eXpiring\" value\n\n// Классификация (C++11):\n// glvalue (generalized lvalue) = lvalue + xvalue\n// rvalue = prvalue + xvalue\n// prvalue (pure rvalue) — временные, литералы: 42, std::string(\"hi\"), Foo()\n// xvalue (eXpiring value) — результат std::move, T&& функции"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Пример",
+        "Можно перемещать?"
+      ],
+      "rows": [
+        [
+          "lvalue",
+          "`x`, `*ptr`, `arr[i]`, `func()` (возвращает `T&`)",
+          "Нет (нужен `std::move`)"
+        ],
+        [
+          "prvalue",
+          "`42`, `Foo()`, `std::string(\"hi\")`, лямбда",
+          "Да (неявно)"
+        ],
+        [
+          "xvalue",
+          "`std::move(x)`, `static_cast<T&&>(x)`, `func()` (возвращает `T&&`)",
+          "Да"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::move` — приведение к rvalue reference"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <utility>\n#include <string>\n#include <vector>\n\nvoid moveDemo() {\n    std::string s1 = \"hello\";\n    std::string s2 = std::move(s1);  // s1 теперь в \"valid but unspecified state\"\n\n    std::vector<int> v1 = {1,2,3,4,5};\n    std::vector<int> v2 = std::move(v1); // v1 пуст, v2 захватил буфер\n\n    // Важно: std::move НЕ перемещает! Это просто static_cast<T&&>\n    // Перемещение происходит в перемещающем конструкторе/операторе\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Перемещающий конструктор и присваивание"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <algorithm>\n#include <cstring>\n#include <iostream>\n\nclass Buffer {\n    char* data_;\n    size_t size_;\npublic:\n    // Обычный конструктор\n    Buffer(size_t n = 0) : data_(n ? new char[n] : nullptr), size_(n) {\n        std::cout << \"Ctor \" << size_ << '\\n';\n    }\n\n    // Деструктор\n    ~Buffer() {\n        std::cout << \"Dtor \" << size_ << '\\n';\n        delete[] data_;\n    }\n\n    // Копирование (глубокое)\n    Buffer(const Buffer& other) : data_(other.size_ ? new char[other.size_] : nullptr), size_(other.size_) {\n        std::copy(other.data_, other.data_ + size_, data_);\n        std::cout << \"Copy ctor \" << size_ << '\\n';\n    }\n    Buffer& operator=(const Buffer& other) {\n        if (this != &other) {\n            char* newData = other.size_ ? new char[other.size_] : nullptr;\n            std::copy(other.data_, other.data_ + other.size_, newData);\n            delete[] data_;\n            data_ = newData;\n            size_ = other.size_;\n        }\n        return *this;\n    }\n\n    // ПЕРЕМЕЩЕНИЕ (noexcept — критично для STL контейнеров!)\n    Buffer(Buffer&& other) noexcept : data_(other.data_), size_(other.size_) {\n        other.data_ = nullptr;\n        other.size_ = 0;\n        std::cout << \"Move ctor \" << size_ << '\\n';\n    }\n    Buffer& operator=(Buffer&& other) noexcept {\n        if (this != &other) {\n            delete[] data_;\n            data_ = other.data_;\n            size_ = other.size_;\n            other.data_ = nullptr;\n            other.size_ = 0;\n        }\n        return *this;\n    }\n\n    size_t size() const { return size_; }\n    char* data() { return data_; }\n};\n\nvoid moveCtorDemo() {\n    Buffer b1(1000);\n    Buffer b2 = std::move(b1);      // Move ctor\n    Buffer b3(2000);\n    b3 = std::move(b2);             // Move assignment\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила хорошего перемещения"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**`noexcept`** — обязательно для перемещения в STL (vector реаллоцирует через move только если noexcept)",
+        "**Оставить объект в валидном состоянии** — обычно `nullptr`/`0`/пустой контейнер",
+        "**Не вызывать `std::move` на `const` объектах** — вызовет копирование",
+        "**Не использовать `std::move` на lvalue, если планируете его ещё использовать**"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Правило: noexcept по умолчанию для move\nclass Good {\n    std::vector<int> v_;\npublic:\n    Good(Good&&) noexcept = default;           // OK\n    Good& operator=(Good&&) noexcept = default; // OK\n};\n\n// Плохо: нет noexcept — vector будет копировать при реаллокации\nclass Bad {\n    std::vector<int> v_;\npublic:\n    Bad(Bad&&) { } // нет noexcept!\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Perfect Forwarding и Universal References"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <utility>\n#include <iostream>\n#include <memory>\n\n// Universal reference (T&& в шаблоне с type deduction)\ntemplate<typename T>\nvoid wrapper(T&& arg) {          // T&& — forwarding reference\n    process(std::forward<T>(arg)); // Сохраняет value category\n}\n\nvoid process(int& x) { std::cout << \"lvalue: \" << x << '\\n'; }\nvoid process(int&& x) { std::cout << \"rvalue: \" << x << '\\n'; }\n\nvoid forwardingDemo() {\n    int x = 10;\n    wrapper(x);        // T = int&, arg = int&, forward -> lvalue\n    wrapper(20);       // T = int, arg = int&&, forward -> rvalue\n    wrapper(std::move(x)); // T = int, arg = int&&, forward -> rvalue\n}\n\n// Реальный пример: фабрика с perfect forwarding\ntemplate<typename T, typename... Args>\nstd::unique_ptr<T> make_unique_custom(Args&&... args) {\n    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));\n}\n\n// std::forward работает так:\n// static_cast<T&&>(arg) если T не ссылка\n// arg (как lvalue) если T = U&"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Reference Collapsing Rules (Свёртывание ссылок)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "T&  &  -> T&\nT&  && -> T&\nT&& &  -> T&\nT&& && -> T&&"
+    },
+    {
+      "type": "text",
+      "content": "Поэтому <code>T&&</code> в шаблоне становится:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`U&` если передан lvalue (T выводится как `U&`)",
+        "`U&&` если передан rvalue (T выводится как `U`)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "RVO / NRVO / Copy Elision (C++17 гарантированное)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iostream>\n\nstruct Noisy {\n    Noisy() { std::cout << \"Default\\n\"; }\n    Noisy(const Noisy&) { std::cout << \"Copy\\n\"; }\n    Noisy(Noisy&&) noexcept { std::cout << \"Move\\n\"; }\n    ~Noisy() { std::cout << \"Dtor\\n\"; }\n};\n\n// C++17: гарантированное copy elision (prvalue материализуется сразу в цель)\nNoisy make() {\n    return Noisy(); // Ни копирования, ни перемещения — прямой конструктор в возвращаемое значение\n}\n\n// NRVO (Named RVO) — оптимизация, не гарантированная\nNoisy makeNamed() {\n    Noisy n;\n    return n; // Компилятор МОЖЕТ сконструировать сразу в возвращаемое значение\n}\n\nvoid rvoDemo() {\n    Noisy n1 = make();        // 1 Default, 1 Dtor (C++17 гарантирует)\n    Noisy n2 = makeNamed();   // Обычно 1 Default, 1 Dtor (NRVO)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::forward` vs `std::move`"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// std::move — безусловное приведение к rvalue\n// std::forward — условное (зависит от шаблонного параметра)\n\ntemplate<typename T>\nvoid setValue(T&& val) {\n    // ПЛОХО: всегда перемещает, даже если передан lvalue\n    // member_ = std::move(val);\n\n    // ХОРОШО: сохраняет категорию значения\n    member_ = std::forward<T>(val);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Реализация `Optional<T>` с move semantics"
+    },
+    {
+      "type": "text",
+      "content": "Создайте класс <code>MyOptional<T></code> с:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Хранением `aligned_storage` + флаг `has_value_`",
+        "Конструктором по умолчанию, от `T`, от `T&&`",
+        "Перемещающим конструктором/присваиванием (правильно перемещать contained value)",
+        "`value()`, `value_or()`, `reset()`, `emplace()`",
+        "`noexcept` спецификаторами, соответствующими `T`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Benchmark копирования vs перемещения"
+    },
+    {
+      "type": "text",
+      "content": "Напишите программу, замеряющую время:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Копирования `std::vector<int>(1'000'000)`",
+        "Перемещения того же вектора",
+        "Копирования `std::string` с длинным текстом (SSO vs heap)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Используйте <code>std::chrono::high<em>resolution</em>clock</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Perfect forwarding factory"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте шаблонную функцию <code>create<T>(Args&&... args)</code>, которая:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Принимает аргументы через universal reference",
+        "Перенаправляет их в конструктор `T` через `std::forward`",
+        "Возвращает `std::unique_ptr<T>`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Протестируйте с классом, имеющим конструкторы: <code>Foo(int)</code>, <code>Foo(int, double)</code>, <code>Foo(const std::string&)</code>, <code>Foo(std::string&&)</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Move-only тип"
+    },
+    {
+      "type": "text",
+      "content": "Создайте класс <code>UniqueResource</code>, который:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Не копируем (deleted copy ctor/assign)",
+        "Перемещаем (move ctor/assign noexcept)",
+        "Владеет `int* data_` (выделен в конструкторе, удалён в деструкторе)",
+        "Имеет метод `use()`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Поместите в <code>std::vector<UniqueResource></code>, добавьте 3 элемента через <code>emplace_back</code>, наблюдайте за отсутствием копирований."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Анализ value category"
+    },
+    {
+      "type": "text",
+      "content": "Напишите функцию <code>printCategory(auto&& x)</code>, которая выводит:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "\"lvalue\" если передан lvalue",
+        "\"prvalue\" если передан prvalue",
+        "\"xvalue\" если передан xvalue"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Используйте <code>std::is<em>lvalue</em>reference<em>v<decltype(x)></code> и проверку на <code>std::is</em>rvalue<em>reference</em>v</code>."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`std::move` на `const T&`",
+          "`const T&&` не биндится на move ctor"
+        ],
+        [
+          "Нет `noexcept` на move",
+          "STL использует копирование при реаллокации"
+        ],
+        [
+          "`std::forward` без шаблона",
+          "Не работает в нешаблонных функциях"
+        ],
+        [
+          "Двойное `std::move`",
+          "`std::move(std::move(x))`"
+        ],
+        [
+          "Использование после move",
+          "Объект в \"valid but unspecified state\""
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[cppreference: Move semantics](https://en.cppreference.com/w/cpp/language/move_constructor)",
+        "[cppreference: Forwarding](https://en.cppreference.com/w/cpp/utility/forward)",
+        "**Книга:** Meyers \"Effective Modern C++\", Items 23-30",
+        "**CppCon:** \"Move Semantics and Rvalue References\" (Howard Hinnant)",
+        "**CppCon:** \"Back to Basics: Move Semantics\" (Klaus Iglberger)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`std::move` на `const T&`",
+      "correct": "`const T&&` не биндится на move ctor"
+    },
+    {
+      "mistake": "Нет `noexcept` на move",
+      "correct": "STL использует копирование при реаллокации"
+    },
+    {
+      "mistake": "`std::forward` без шаблона",
+      "correct": "Не работает в нешаблонных функциях"
+    },
+    {
+      "mistake": "Двойное `std::move`",
+      "correct": "`std::move(std::move(x))`"
+    },
+    {
+      "mistake": "Использование после move",
+      "correct": "Объект в \"valid but unspecified state\""
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 13
+}

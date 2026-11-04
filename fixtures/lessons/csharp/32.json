@@ -1,0 +1,430 @@
+{
+  "title": "Урок 3.10: Platforms/Ecosystem — .NET Versions, Publishing, Containers, Cross-Platform, Dependency Compatibility",
+  "slug": "platformsecosystem-net-versions-publishing-containers-cross-platform-dependency-compatibility",
+  "short_description": ".NET Versions, Publishing, Containers, Cross-Platform, Dependency Compatibility",
+  "goals": [
+    "Понимать .NET release cadence: LTS, STS, preview, EOL",
+    "Публикация: self-contained, framework-dependent, trimmed, Native AOT",
+    "Контейнеризация: multi-stage Dockerfile, distroless, security scanning",
+    "Cross-platform: Linux, macOS, Windows, ARM64, browser (WASM)",
+    "Управление зависимостями: Central Package Management, version locking, vulnerability scanning"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать .NET release cadence: LTS, STS, preview, EOL",
+        "Публикация: self-contained, framework-dependent, trimmed, Native AOT",
+        "Контейнеризация: multi-stage Dockerfile, distroless, security scanning",
+        "Cross-platform: Linux, macOS, Windows, ARM64, browser (WASM)",
+        "Управление зависимостями: Central Package Management, version locking, vulnerability scanning"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. .NET Release Cadence"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Release Types"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ".NET 8 (LTS) ──────────────────────► Nov 2026 EOL\n    │\n    ├── 8.0.0 (Nov 2023)\n    ├── 8.0.1..8.0.x (monthly patches)\n    └── LTS = Long Term Support (3 years)\n\n.NET 9 (STS) ─────────────────────► May 2025 EOL\n    │\n    └── STS = Standard Term Support (18 months)\n\n.NET 10 (Preview) ────────────────►"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Versioning в проектах"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- Directory.Build.props (Central Package Management) -->\n<Project>\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n    <LangVersion>12</LangVersion>\n    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>\n  </PropertyGroup>\n\n  <!-- Версии пакетов в одном месте -->\n  <ItemGroup>\n    <PackageVersion Include=\"Microsoft.Extensions.*\" Version=\"8.0.*\" />\n    <PackageVersion Include=\"Serilog\" Version=\"3.1.*\" />\n    <PackageVersion Include=\"FluentValidation\" Version=\"11.9.*\" />\n    <PackageVersion Include=\"MediatR\" Version=\"12.2.*\" />\n  </ItemGroup>\n</Project>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Global.json для pin версии SDK"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "// global.json\n{\n  \"sdk\": {\n    \"version\": \"8.0.400\",\n    \"rollForward\": \"latestFeature\",\n    \"allowPrerelease\": false\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Publishing Strategies"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Framework-Dependent (требует установленного .NET)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Self-Contained (все включено)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Trimmed Self-Contained"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj -->\n<PropertyGroup>\n  <PublishTrimmed>true</PublishTrimmed>\n  <TrimMode>partial</TrimMode>           <!-- full = агрессивнее -->\n  <SuppressTrimAnalysisWarnings>false</SuppressTrimAnalysisWarnings>\n</PropertyGroup>\n\n<!-- Для библиотек, использующих рефлексию -->\n<ItemGroup>\n  <TrimmerRootAssembly Include=\"MyLibrary\" />\n</ItemGroup>"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "dotnet publish -c Release -r linux-x64 --self-contained true"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Native AOT (.NET 8+)"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj -->\n<PropertyGroup>\n  <PublishAot>true</PublishAot>\n  <StripSymbols>true</StripSymbols>\n  <InvariantGlobalization>true</InvariantGlobalization>\n  <IlcGenerateCompleteTypeMetadata>true</IlcGenerateCompleteTypeMetadata>\n</PropertyGroup>\n\n<!-- Для JSON сериализации -->\n<ItemGroup>\n  <PackageReference Include=\"System.Text.Json\" Version=\"8.0.*\" />\n</ItemGroup>"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "dotnet publish -c Release -r linux-x64"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ReadyToRun (R2R)"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<PropertyGroup>\n  <PublishReadyToRun>true</PublishReadyToRun>\n  <PublishReadyToRunComposite>true</PublishReadyToRunComposite>\n</PropertyGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Single File"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Docker — Multi-stage Builds"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Оптимизированный Dockerfile"
+    },
+    {
+      "type": "code",
+      "language": "dockerfile",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Distroless / Scratch для Native AOT"
+    },
+    {
+      "type": "code",
+      "language": "dockerfile",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Docker Compose для Development"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Security Scanning"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Cross-Platform Development"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Platform-Specific Code"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// RuntimeInformation\nif (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))\n{\n    // Windows-specific: registry, WMI, named pipes\n}\nelse if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))\n{\n    // Linux-specific: systemd, inotify, /proc\n}\nelse if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))\n{\n    // macOS-specific: launchd, keychain\n}\n\n// Architecture\nvar arch = RuntimeInformation.ProcessArchitecture; // X64, Arm64, Arm, Wasm"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Conditional Compilation"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "#if NET8_0_OR_GREATER\n// .NET 8+ APIs\nvar timeProvider = TimeProvider.System;\n#else\n// Fallback\nvar timeProvider = new LegacyTimeProvider();\n#endif\n\n// Или через TargetFramework\n#if NET8_0\n// Specific to .NET 8\n#elif NET7_0\n// Specific to .NET 7\n#endif"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "File Paths Cross-Platform"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Path.Combine работает везде\nvar path = Path.Combine(\"data\", \"config.json\"); // data/config.json или data\\config.json\n\n// Path.GetFullPath нормализует\nvar full = Path.GetFullPath(path);\n\n// Для путей в контейнерах — используйте абсолютные Linux пути\nvar dataDir = Environment.GetEnvironmentVariable(\"DATA_DIR\") ?? \"/app/data\";"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Globalization / Invariant Mode"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj для контейнеров без locale -->\n<PropertyGroup>\n  <InvariantGlobalization>true</InvariantGlobalization>\n  <!-- Или в runtimeconfig.json -->\n  <!-- \"configProperties\": { \"System.Globalization.Invariant\": true } -->\n</PropertyGroup>"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// При InvariantGlobalization:\nCultureInfo.CurrentCulture = CultureInfo.InvariantCulture;\n// Парсинг дат/чисел только в invariant формате\nDateTime.Parse(\"2024-01-15\", CultureInfo.InvariantCulture);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. ARM64 и Apple Silicon"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Building for ARM64"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Multi-Arch Docker Images"
+    },
+    {
+      "type": "code",
+      "language": "dockerfile",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. WebAssembly (Blazor WASM)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Publishing WASM"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "WASM Specifics"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Определение WASM runtime\nif (RuntimeInformation.ProcessArchitecture == Architecture.Wasm)\n{\n    // Нет: threads, SIMD (ограниченно), file system, sockets\n    // Есть: JS interop, IndexedDB, localStorage\n}\n\n// JS Interop\n[JSImport(\"console.log\")]\npublic static partial void Log(string message);\n\n[JSExport]\npublic static void CallFromJS(string data) { ... }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Dependency Management"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Central Package Management (CPM)"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- Directory.Packages.props (в корне решения) -->\n<Project>\n  <PropertyGroup>\n    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>\n    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>\n  </PropertyGroup>\n\n  <ItemGroup>\n    <!-- Versions -->\n    <PackageVersion Include=\"Microsoft.Extensions.*\" Version=\"8.0.0\" />\n    <PackageVersion Include=\"Serilog.AspNetCore\" Version=\"8.0.0\" />\n    <PackageVersion Include=\"FluentValidation\" Version=\"11.9.0\" />\n    <PackageVersion Include=\"MediatR\" Version=\"12.2.0\" />\n    <PackageVersion Include=\"Mapster\" Version=\"7.4.0\" />\n    <PackageVersion Include=\"Scrutor\" Version=\"4.2.2\" />\n\n    <!-- Test packages -->\n    <PackageVersion Include=\"xunit\" Version=\"2.7.0\" />\n    <PackageVersion Include=\"FluentAssertions\" Version=\"6.12.0\" />\n    <PackageVersion Include=\"Moq\" Version=\"4.20.70\" />\n    <PackageVersion Include=\"Testcontainers\" Version=\"3.7.0\" />\n  </ItemGroup>\n</Project>"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- В проекте — без версий -->\n<Project>\n  <ItemGroup>\n    <PackageReference Include=\"Microsoft.Extensions.DependencyInjection\" />\n    <PackageReference Include=\"Serilog.AspNetCore\" />\n    <PackageReference Include=\"FluentValidation\" />\n  </ItemGroup>\n</Project>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Version Locking и Reproducible Builds"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- Directory.Build.props -->\n<PropertyGroup>\n  <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>\n  <Deterministic>true</Deterministic>\n  <PublishRepositoryUrl>true</PublishRepositoryUrl>\n  <EmbedUntrackedSources>true</EmbedUntrackedSources>\n  <IncludeSymbols>true</IncludeSymbols>\n  <SymbolPackageFormat>snupkg</SymbolPackageFormat>\n</PropertyGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Vulnerability Scanning"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Private Feeds / Artifacts"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- NuGet.config -->\n<configuration>\n  <packageSources>\n    <add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />\n    <add key=\"MyPrivateFeed\" value=\"https://pkgs.dev.azure.com/org/_packaging/feed/nuget/v3/index.json\" />\n  </packageSources>\n  <packageSourceCredentials>\n    <MyPrivateFeed>\n      <add key=\"Username\" value=\"docker\" />\n      <add key=\"ClearTextPassword\" value=\"%PAT_TOKEN%\" />\n    </MyPrivateFeed>\n  </packageSourceCredentials>\n</configuration>"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. CI/CD Pipeline"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GitHub Actions для .NET"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Не используют global.json",
+          "Всегда pin SDK версию через global.json"
+        ],
+        [
+          "Публикуют без --self-contained для контейнеров",
+          "В контейнерах лучше self-contained или Native AOT"
+        ],
+        [
+          "Игнорируют trimming warnings",
+          "Исправляйте или используют [DynamicallyAccessedMembers]"
+        ],
+        [
+          "Не сканируют образы на уязвимости",
+          "Trivy/Snyk в CI pipeline"
+        ],
+        [
+          "Хардкодят пути с \\",
+          "Path.Combine, Environment.SpecialFolder"
+        ],
+        [
+          "Забывают про InvariantGlobalization в контейнерах",
+          "Включают для уменьшения размера и избежания locale issues"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Не используют global.json",
+      "correct": "Всегда pin SDK версию через global.json"
+    },
+    {
+      "mistake": "Публикуют без --self-contained для контейнеров",
+      "correct": "В контейнерах лучше self-contained или Native AOT"
+    },
+    {
+      "mistake": "Игнорируют trimming warnings",
+      "correct": "Исправляйте или используют [DynamicallyAccessedMembers]"
+    },
+    {
+      "mistake": "Не сканируют образы на уязвимости",
+      "correct": "Trivy/Snyk в CI pipeline"
+    },
+    {
+      "mistake": "Хардкодят пути с \\",
+      "correct": "Path.Combine, Environment.SpecialFolder"
+    },
+    {
+      "mistake": "Забывают про InvariantGlobalization в контейнерах",
+      "correct": "Включают для уменьшения размера и избежания locale issues"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 32
+}

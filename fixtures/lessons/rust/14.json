@@ -1,0 +1,458 @@
+{
+  "title": "Урок 14: Дженерики и трейты — продвинутый уровень",
+  "slug": "dzheneriki-i-treyty-prodvinutyy-uroven",
+  "short_description": "продвинутый уровень",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Higher-Ranked Trait Bounds (HRTB)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема: замыкания с жизненными циклами"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn call_with_ref<F>(f: F)\nwhere F: Fn(&i32)\n{\n    let x = 5;\n    f(&x);\n}\n\n// Это работает благодаря неявному HRTB:\n// for<'a> Fn(&'a i32)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Явный синтаксис `for<'a>`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Требует, чтобы замыкание работало для ЛЮБОГО 'a\nfn call_with_any_ref<F>(f: F)\nwhere F: for<'a> Fn(&'a i32)\n{\n    let x = 5;\n    f(&x);\n}\n\n// Без HRTB это не скомпилируется:\nfn bad_example<F>(f: F)\nwhere F: Fn(&'static i32) // Только 'static!\n{\n    let x = 5;\n    // f(&x); // ОШИБКА: x не 'static\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Где используется неявно"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Все эти эквивалентны:\nfn takes_closure(f: impl Fn(&i32)) {}\nfn takes_closure_explicit<F: Fn(&i32)>(f: F) {}\nfn takes_closure_hrtb<F: for<'a> Fn(&'a i32)>(f: F) {}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Generic Associated Types (GAT)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Associated Types vs GAT"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Обычный associated type — конкретный тип\ntrait Iterator {\n    type Item;\n    fn next(&mut self) -> Option<Self::Item>;\n}\n\n// GAT — associated type С generic параметрами\ntrait LendingIterator {\n    type Item<'a>; // Generic Associated Type!\n    fn next<'a>(&'a mut self) -> Option<Self::Item<'a>>;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: Lending Iterator (возвращает ссылку на себя)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Windows<'a, T> {\n    slice: &'a [T],\n    index: usize,\n}\n\nimpl<'a, T> LendingIterator for Windows<'a, T> {\n    type Item<'b> = &'b [T] where 'a: 'b;\n\n    fn next<'b>(&'b mut self) -> Option<Self::Item<'b>> {\n        if self.index + 2 <= self.slice.len() {\n            let window = &self.slice[self.index..self.index + 2];\n            self.index += 1;\n            Some(window)\n        } else { None }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GAT в стандартной библиотеке (Rust 1.65+)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// std::ops::Generator\ntrait Generator {\n    type Yield;\n    type Return;\n    fn resume(self: Pin<&mut Self>) -> GeneratorState<Self::Yield, Self::Return>;\n}\n\n// async fn использует GAT под капотом"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Const Generics"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn print_array<const N: usize>(arr: [i32; N]) {\n    println!(\"Length: {}\", N);\n    for x in arr { print!(\"{} \", x); }\n    println!();\n}\n\nfn main() {\n    print_array([1, 2, 3]);        // N = 3\n    print_array([1, 2, 3, 4, 5]);  // N = 5\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "В структурах"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct FixedArray<T, const N: usize> {\n    data: [T; N],\n}\n\nimpl<T, const N: usize> FixedArray<T, N> {\n    fn new(default: T) -> Self where T: Copy {\n        FixedArray { data: [default; N] }\n    }\n    fn len(&self) -> usize { N }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Const expressions"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn double<const N: usize>() -> usize { N * 2 }\n\nfn main() {\n    let _: [i32; double::<3>()] = [0; 6]; // const expression\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ограничения (Rust 1.75+)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// const generic bounds\nfn foo<const N: usize>() where Assert<{ N > 0 }>: IsTrue {}\n\n// Утилиты для const bounds\nstruct Assert<const B: bool>;\ntrait IsTrue;\nimpl IsTrue for Assert<true> {}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. `impl Trait` в type aliases (Type Ascription)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "RFC 2515 / 3470 (частично стабилизировано)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Type alias с impl Trait (Rust 1.74+ для opaque types)\ntype MyIterator = impl Iterator<Item = i32>;\n\nfn make_iter() -> MyIterator {\n    (0..10).map(|x| x * 2)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`impl Trait` в аргументах type alias"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "type Callback = impl Fn(i32) -> i32;\n\nfn apply(cb: Callback, x: i32) -> i32 {\n    cb(x)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Specialization (специализация) — нестабильно"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Концепция"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Требует #![feature(specialization)]\ntrait ToStringExt {\n    fn to_string_ext(&self) -> String;\n}\n\n// Общая реализация\nimpl<T: std::fmt::Display> ToStringExt for T {\n    default fn to_string_ext(&self) -> String {\n        format!(\"Display: {}\", self)\n    }\n}\n\n// Специализация для String\nimpl ToStringExt for String {\n    fn to_string_ext(&self) -> String {\n        format!(\"String: {}\", self)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила specialization"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`default` в базовой реализации",
+        "Более конкретная impl перекрывает",
+        "Всегда должен быть один \"наиболее конкретный\" вариант"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Coherence и Orphan Rules"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Orphan Rule (правило сироты)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// МОЖНО: наш трейт для нашего типа\nimpl MyTrait for MyType {}\n\n// МОЖНО: чужой трейт для нашего типа\nimpl std::fmt::Display for MyType {}\n\n// НЕЛЬЗЯ: наш трейт для чужого типа\n// impl MyTrait for String {} // ОШИБКА!\n\n// НЕЛЬЗЯ: чужой трейт для чужого типа\n// impl std::fmt::Display for Vec<i32> {} // ОШИБКА!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Обход через Newtype"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct MyVec(Vec<i32>);\n\nimpl std::fmt::Display for MyVec {\n    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {\n        write!(f, \"MyVec({:?})\", self.0)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Coherence — одна реализация на (trait, type)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Ошибка: overlapping implementations\n// impl From<u32> for i32 {} // Уже есть в std"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Marker Traits для compile-time проверок"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Send` / `Sync` — потокобезопасность"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Автоматически выводятся, но можно явно запретить\nstruct NotSend {\n    _marker: std::marker::PhantomData<*const ()>, // !Send\n}\n\nstruct NotSync {\n    _marker: std::marker::PhantomData<std::cell::Cell<()>>, // !Sync\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Unpin` — для Pin"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Большинство типов Unpin\n// !Unpin через PhantomPinned\nuse std::marker::PhantomPinned;\n\nstruct SelfRef {\n    data: String,\n    _pin: PhantomPinned, // !Unpin\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Copy` / `Clone` — семантика копирования"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Copy подразумевает Clone + битовое копирование\n// Нельзя реализовать вручную для типов с Drop"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Sized` / `?Sized`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// По умолчанию T: Sized\nfn generic<T>(t: T) {} // T: Sized\n\n// Для DST\nfn generic_unsized<T: ?Sized>(t: &T) {}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`UnwindSafe` / `RefUnwindSafe` — для catch_unwind"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::panic::{self, AssertUnwindSafe};\n\nfn main() {\n    let data = vec![1, 2, 3];\n    // AssertUnwindSafe оборачивает, утверждая что безопасно\n    let result = panic::catch_unwind(AssertUnwindSafe(|| {\n        // data используется тут\n    }));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Sealed Traits (закрытые трейты)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Паттерн: запрет внешних реализаций"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "mod private {\n    pub trait Sealed {}\n}\n\npub trait PublicTrait: private::Sealed {\n    fn method(&self);\n}\n\n// Внутренние реализации\nimpl private::Sealed for TypeA {}\nimpl PublicTrait for TypeA { fn method(&self) {} }\n\nimpl private::Sealed for TypeB {}\nimpl PublicTrait for TypeB { fn method(&self) {} }\n\n// Внешний код НЕ может реализовать PublicTrait\n// (не имеет доступа к private::Sealed)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: HRTB для callback с лендингом"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Buffer {\n    data: Vec<u8>,\n}\n\nimpl Buffer {\n    // Callback получает &mut self на время вызова\n    fn with_mut<F, R>(&mut self, f: F) -> R\n    where F: for<'a> FnOnce(&'a mut [u8]) -> R\n    {\n        f(&mut self.data)\n    }\n}\n\nfn main() {\n    let mut buf = Buffer { data: vec![1, 2, 3] };\n    let sum = buf.with_mut(|slice| {\n        slice[0] = 10;\n        slice.iter().sum::<u8>()\n    });\n    println!(\"Sum: {}\", sum);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Const generics для матриц"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ops::{Add, Mul};\n\n#[derive(Debug, Clone, Copy)]\nstruct Matrix<T, const R: usize, const C: usize> {\n    data: [[T; C]; R],\n}\n\nimpl<T, const R: usize, const C: usize> Matrix<T, R, C>\nwhere T: Copy + Default + Add<Output = T> + Mul<Output = T>\n{\n    fn identity() -> Self\n    where T: From<u8>, [(); R]: , [(); C]:  // требует R == C\n    {\n        let mut m = Matrix { data: [[T::default(); C]; R] };\n        for i in 0..R.min(C) {\n            m.data[i][i] = T::from(1);\n        }\n        m\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Sealed trait для внутреннего API"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// library crate\nmod internal {\n    pub trait Sealed {}\n}\n\npub trait Database: internal::Sealed {\n    fn query(&self, sql: &str) -> Vec<Row>;\n}\n\npub struct Postgres;\npub struct MySQL;\n\nimpl internal::Sealed for Postgres {}\nimpl Database for Postgres { fn query(&self, _: &str) -> Vec<Row> { vec![] } }\n\nimpl internal::Sealed for MySQL {}\nimpl Database for MySQL { fn query(&self, _: &str) -> Vec<Row> { vec![] } }\n\n// Пользователь не может сделать: impl Database for MyCustomDB {}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`const generics not supported`",
+          "Старый компилятор / фича"
+        ],
+        [
+          "`type parameter not constrained`",
+          "GAT не используется в методах"
+        ],
+        [
+          "`specialization is experimental`",
+          "Использование на stable"
+        ],
+        [
+          "`only traits defined in current crate`",
+          "Orphan rule"
+        ],
+        [
+          "`impl Trait not allowed here`",
+          "Неподдерживаемое место"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Шпаргалка: Advanced Generics"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Фича",
+        "Синтаксис",
+        "Стабильность",
+        "Использование"
+      ],
+      "rows": [
+        [
+          "HRTB",
+          "`for<'a> Fn(&'a T)`",
+          "Stable",
+          "Callbacks с любым lifetime"
+        ],
+        [
+          "GAT",
+          "`type Item<'a>`",
+          "Stable (1.65+)",
+          "Lending iterators, async"
+        ],
+        [
+          "Const generics",
+          "`const N: usize`",
+          "Stable (1.51+)",
+          "Array sizes, compile-time math"
+        ],
+        [
+          "`impl Trait` in type alias",
+          "`type Foo = impl Trait`",
+          "Partial",
+          "Opaque return types"
+        ],
+        [
+          "Specialization",
+          "`default fn`",
+          "Nightly only",
+          "Оптимизации для конкретных типов"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "HRTB (`for<'a>`) — higher-ranked trait bounds для замыканий с любыми lifetime",
+        "GAT (Generic Associated Types) — ассоциированные типы с параметрами",
+        "Const generics — значения на уровне типов (`const N: usize`)",
+        "`impl Trait` в type aliases — opaque types",
+        "Specialization — nightly-only оптимизация реализаций",
+        "Orphan rules и coherence — правила реализации трейтов",
+        "Marker traits: `Send`, `Sync`, `Unpin`, `UnwindSafe`, `Sized`",
+        "Sealed traits — паттерн для закрытия иерархии"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`const generics not supported`",
+      "correct": "Старый компилятор / фича"
+    },
+    {
+      "mistake": "`type parameter not constrained`",
+      "correct": "GAT не используется в методах"
+    },
+    {
+      "mistake": "`specialization is experimental`",
+      "correct": "Использование на stable"
+    },
+    {
+      "mistake": "`only traits defined in current crate`",
+      "correct": "Orphan rule"
+    },
+    {
+      "mistake": "`impl Trait not allowed here`",
+      "correct": "Неподдерживаемое место"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 14
+}

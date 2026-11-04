@@ -1,0 +1,257 @@
+{
+  "title": "Урок 18: Сборка — заголовки, единицы трансляции, ODR, CMake, библиотеки",
+  "slug": "sborka-zagolovki-edinitsy-translyatsii-odr-cmake-biblioteki",
+  "short_description": "заголовки, единицы трансляции, ODR, CMake, библиотеки",
+  "goals": [
+    "Понять модели компиляции: препроцессор, единицы трансляции, линковка",
+    "Освоить ODR (One Definition Rule) и избегать нарушений",
+    "Написать современный CMake (target-based, C++20)",
+    "Организовать проект: библиотеки, исполняемые файлы, установка",
+    "Работать с зависимостями: find_package, FetchContent, пакетные менеджеры"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять модели компиляции: препроцессор, единицы трансляции, линковка",
+        "Освоить ODR (One Definition Rule) и избегать нарушений",
+        "Написать современный CMake (target-based, C++20)",
+        "Организовать проект: библиотеки, исполняемые файлы, установка",
+        "Работать с зависимостями: find_package, FetchContent, пакетные менеджеры"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Модель компиляции C++"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "main.cpp          utils.cpp         math.cpp\n   |                 |                 |\n   v                 v                 v\n[Препроцессор]   [Препроцессор]    [Препроцессор]\n   |                 |                 |\n   v                 v                 v\nmain.i            utils.i           math.i\n   |                 |                 |\n   v                 v                 v\n[Компилятор]      [Компилятор]      [Компилятор]\n   |                 |                 |\n   v                 v                 v\nmain.o            utils.o           math.o    ← Объектные файлы (ELF/COFF)\n   |                 |                 |\n   +--------+--------+--------+--------+\n            |\n            v\n       [Линковщик]\n            |\n            v\n        app.exe       ← Исполняемый файл"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Заголовочные файлы и единицы трансляции"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// math.h — интерфейс (декларации)\n#pragma once  // или include guards\n#ifndef MATH_H\n#define MATH_H\n\nnamespace math {\n    int add(int a, int b);           // декларация\n    double sqrt(double x);           // декларация\n\n    // inline функция — определение в заголовке (ODR-safe)\n    inline int square(int x) { return x * x; }\n\n    // template — определение в заголовке\n    template<typename T>\n    T max(T a, T b) { return a > b ? a : b; }\n}\n\n#endif\n\n// math.cpp — реализация\n#include \"math.h\"\n#include <cmath>\n\nnamespace math {\n    int add(int a, int b) { return a + b; }\n    double sqrt(double x) { return std::sqrt(x); }\n}\n\n// main.cpp — использование\n#include \"math.h\"\n#include <iostream>\n\nint main() {\n    std::cout << math::add(2, 3) << '\\n';      // 5\n    std::cout << math::square(4) << '\\n';      // 16 (inline)\n    std::cout << math::max(3.14, 2.71) << '\\n'; // 3.14 (template)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ODR (One Definition Rule)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ПРАВИЛА ODR:\n// 1. В каждой единице трансляции: не более одного определения\n// 2. Во всей программе: ровно одно определение для non-inline сущностей\n// 3. inline функции/переменные, templates, классы — могут быть в нескольких TU,\n//    но определения должны быть ИДЕНТИЧНЫ (token-for-token)\n\n// НАРУШЕНИЯ:\n// --- a.cpp ---\nint global = 42;  // определение\n\n// --- b.cpp ---\nint global = 100; // ОШИБКА ODR: второе определение global\n// Линкер может: выбрать одно, упасть, UB\n\n// ПРАВИЛЬНО:\n// --- globals.h ---\nextern int global;  // только декларация\n\n// --- globals.cpp ---\nint global = 42;    // ЕДИНОЕ определение\n\n// C++17: inline variables — определение в заголовке\n// --- config.h ---\ninline constexpr int MAX_CONNECTIONS = 100; // OK в нескольких TU\ninline std::string appName = \"MyApp\";       // OK (один объект)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Современный CMake (3.15+)"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Target-based CMake — библиотеки и исполняемые"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование зависимостей"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Modules (C++20) — замена заголовков"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// math.ixx — module interface unit\nexport module math;\n\nexport namespace math {\n    int add(int a, int b) { return a + b; }\n\n    export template<typename T>\n    T max(T a, T b) { return a > b ? a : b; }\n\n    // не экспортируется — внутренняя деталь\n    namespace detail {\n        int internalHelper();\n    }\n}\n\n// main.cpp\nimport math;\nimport <iostream>;\n\nint main() {\n    std::cout << math::add(2, 3) << '\\n';\n}"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Компиляция и линковка вручную"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: CMake проект с библиотекой"
+    },
+    {
+      "type": "text",
+      "content": "Создайте структуру:"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "project/\n├── CMakeLists.txt\n├── include/myproject/math.h\n├── src/math.cpp\n├── src/main.cpp\n└── tests/test_math.cpp"
+    },
+    {
+      "type": "text",
+      "content": "Настройте: статическую lib, executable, тесты (gtest через FetchContent), установку, пакетный конфиг."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Header-only библиотека"
+    },
+    {
+      "type": "text",
+      "content": "Сделайте <code>string_utils</code> как header-only (только .h/.inl). Добавьте в CMake как INTERFACE библиотеку. Проверьте, что она не компилируется отдельно, но заголовки доступно."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: ODR violation hunt"
+    },
+    {
+      "type": "text",
+      "content": "Создайте два .cpp файла с одним и тем же <code>inline</code> функцией, но разным телом. Скомпилируйте и запустите — наблюдайте UB. Исправьте, вынеся в отдельный .cpp."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Зависимости через vcpkg/Conan"
+    },
+    {
+      "type": "text",
+      "content": "Подключите <code>fmt</code>, <code>spdlog</code>, <code>nlohmann/json</code> через vcpkg или Conan. Напишите программу, использующую все три. Настройте CMake toolchain file."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Module vs Header benchmark"
+    },
+    {
+      "type": "text",
+      "content": "Напишите простой модуль и заголовочный файл с одинаковым интерфейсом. Замерьте время компиляции (clean build) для 10, 50, 100 единиц трансляции, включающих их."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "ODR violation",
+          "Определение non-inline в заголовке без `inline`"
+        ],
+        [
+          "Circular dependency",
+          "A включает B, B включает A"
+        ],
+        [
+          "CMake: target_link_libraries до add_executable",
+          "Цель не существует"
+        ],
+        [
+          "Забытый PUBLIC/PRIVATE",
+          "Заголовки не попадают в потребителей"
+        ],
+        [
+          "Modules не находятся",
+          "CMAKE_CXX_SCAN_FOR_MODULES OFF"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[Modern CMake](https://cliutils.gitlab.io/modern-cmake/)",
+        "[CMake Documentation](https://cmake.org/cmake/help/latest/)",
+        "**Книга:** \"Professional CMake\" (Craig Scott)",
+        "**CppCon:** \"Modern CMake for Modular Design\" (Mathias Stearn)",
+        "[C++ Modules TS](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/n4842.pdf)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "ODR violation",
+      "correct": "Определение non-inline в заголовке без `inline`"
+    },
+    {
+      "mistake": "Circular dependency",
+      "correct": "A включает B, B включает A"
+    },
+    {
+      "mistake": "CMake: target_link_libraries до add_executable",
+      "correct": "Цель не существует"
+    },
+    {
+      "mistake": "Забытый PUBLIC/PRIVATE",
+      "correct": "Заголовки не попадают в потребителей"
+    },
+    {
+      "mistake": "Modules не находятся",
+      "correct": "CMAKE_CXX_SCAN_FOR_MODULES OFF"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 18
+}

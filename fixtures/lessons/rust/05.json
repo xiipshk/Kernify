@@ -1,0 +1,420 @@
+{
+  "title": "Урок 5: Владение, заимствование и ссылки",
+  "slug": "vladenie-zaimstvovanie-i-ssylki",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Концепция владения (Ownership)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Три правила владения"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Каждое значение имеет владельца** (переменную)",
+        "**Только один владелец** одновременно",
+        "**Когда владелец выходит из области видимости, значение уничтожается** (drop)"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let s = String::from(\"hello\"); // s владеет строкой\n    // ... работа с s\n} // s выходит из scope -> drop(s) -> память освобождена"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Перемещение (Move Semantics)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let s1 = String::from(\"hello\");\n    let s2 = s1; // s1 ПЕРЕМЕЩЁН в s2 (shallow copy + инвалидация s1)\n\n    // println!(\"{}\", s1); // ОШИБКА: value borrowed here after move\n    println!(\"{}\", s2); // OK\n}"
+    },
+    {
+      "type": "text",
+      "content": "<strong>В стеке</strong>: указатель, длина, ёмкость — копируются <strong>В куче</strong>: данные — <strong>не копируются</strong>, владение передаётся"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Клонирование (Deep Copy)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let s1 = String::from(\"hello\");\n    let s2 = s1.clone(); // Полное копирование данных в куче\n    println!(\"s1 = {}, s2 = {}\", s1, s2); // Оба валидны\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Copy trait — типы, которые копируются неявно"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let x = 5;\n    let y = x; // i32 реализует Copy — x остаётся валидным\n    println!(\"x = {}, y = {}\", x, y);\n\n    // Все примитивные типы: i32, f64, bool, char, &T, ()\n    // Кортежи/массивы Copy-типов тоже Copy\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Ссылки и заимствование (References & Borrowing)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Неизменяемые ссылки (`&T`)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let s1 = String::from(\"hello\");\n    let len = calculate_length(&s1); // Заимствование (&)\n    println!(\"Длина '{}' = {}\", s1, len);\n}\n\nfn calculate_length(s: &String) -> usize {\n    s.len()\n} // s выходит из scope, но НЕ владеет данными -> drop не вызывается"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Изменяемые ссылки (`&mut T`)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let mut s = String::from(\"hello\");\n    change(&mut s); // Изменяемое заимствование\n    println!(\"{}\", s); // \"hello, world\"\n}\n\nfn change(s: &mut String) {\n    s.push_str(\", world\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Правила заимствования (Borrow Checker)"
+    },
+    {
+      "type": "text",
+      "content": "В <strong>любой момент времени</strong> выполняется <strong>одно</strong> из:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Ноль или более** неизменяемых ссылок (`&T`) **ИЛИ**",
+        "**Ровно одна** изменяемая ссылка (`&mut T`)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Нарушение: мутация через `&`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let s = String::from(\"hello\");\n    // let r = &mut s; // ОШИБКА: cannot borrow as mutable\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Нарушение: `&mut` вместе с `&`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let mut s = String::from(\"hello\");\n    let r1 = &s;\n    let r2 = &s;\n    // let r3 = &mut s; // ОШИБКА: cannot borrow as mutable\n    println!(\"{}, {}\", r1, r2); // r1, r2 используются здесь\n} // r3 бы конфликтовал с r1, r2"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Нелексические времена жизни (NLL) — современный borrow checker"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let mut s = String::from(\"hello\");\n    let r1 = &s;\n    let r2 = &s;\n    println!(\"{} {}\", r1, r2); // Последний использование r1, r2\n\n    let r3 = &mut s; // OK! r1, r2 больше не используются\n    r3.push_str(\" world\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Висячие ссылки (Dangling References) — предотвращение"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let r = dangle(); // ОШИБКА компиляции!\n}\n\nfn dangle() -> &String {\n    let s = String::from(\"hello\");\n    &s // Возврат ссылки на локальную переменную\n} // s уничтожается здесь -> висячая ссылка"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Компилятор запрещает это!</strong> Правильное решение — вернуть владеющий тип:"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn no_dangle() -> String {\n    let s = String::from(\"hello\");\n    s // Передача владения\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Срезы (Slices) — `&[T]`, `&str`"
+    },
+    {
+      "type": "text",
+      "content": "Ссылка на непрерывную последовательность элементов <strong>без владения</strong>:"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let s = String::from(\"hello world\");\n    let hello = &s[0..5];  // &str — срез строки\n    let world = &s[6..11];\n    println!(\"{} {}\", hello, world);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Срезы массивов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let arr = [1, 2, 3, 4, 5];\n    let slice = &arr[1..3]; // &[2, 3] — тип &[i32]\n    println!(\"{:?}\", slice);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Функции, принимающие срезы (более общие)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn first_word(s: &str) -> &str { // Принимает &String, &str, строковый литерал\n    let bytes = s.as_bytes();\n    for (i, &item) in bytes.iter().enumerate() {\n        if item == b' ' {\n            return &s[0..i];\n        }\n    }\n    &s[..]\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Время жизни (Lifetimes) — базовое введение"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Каждая ссылка имеет время жизни"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let r;                // 'a\n    {                     // 'b\n        let x = 5;\n        r = &x;           // 'b не живет достаточно долго для 'a\n    }\n    // println!(\"{}\", r); // ОШИБКА: x dropped here while still borrowed\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Аннотации времени жизни в функциях"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// 'a — обобщённое время жизни\nfn longest<'a>(x: &'a str, y: &'a str) -> &'a str {\n    if x.len() > y.len() { x } else { y }\n}\n\nfn main() {\n    let s1 = String::from(\"long\");\n    let s2 = String::from(\"short\");\n    let result = longest(&s1, &s2); // Время жизни = min(s1, s2)\n    println!(\"Longest: {}\", result);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила эллизиса (elision) — когда можно не писать `'a`"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Каждому параметру-ссылке присваивается свое время жизни",
+        "Если **один** входной параметр — его время жизни присваивается всем выходным",
+        "Если есть `&self`/`&mut self` — его время жизни присваивается выходным"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Move vs Clone"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let v1 = vec![1, 2, 3];\n    let v2 = v1; // Move\n    // println!(\"{:?}\", v1); // Ошибка\n\n    let v3 = vec![4, 5, 6];\n    let v4 = v3.clone(); // Clone\n    println!(\"v3: {:?}, v4: {:?}\", v3, v4); // Оба работают\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Функции с заимствованием"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn append_world(s: &mut String) {\n    s.push_str(\" world\");\n}\n\nfn to_uppercase(s: &str) -> String {\n    s.to_uppercase()\n}\n\nfn main() {\n    let mut s = String::from(\"hello\");\n    append_world(&mut s);\n    let upper = to_uppercase(&s);\n    println!(\"{} -> {}\", s, upper);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Срезы"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn first_three(arr: &[i32]) -> &[i32] {\n    &arr[0..3.min(arr.len())]\n}\n\nfn main() {\n    let data = [10, 20, 30, 40, 50];\n    let slice = first_three(&data);\n    println!(\"{:?}\", slice); // [10, 20, 30]\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 4: Время жизни"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {\n    if x.len() > y.len() { x } else { y }\n}\n\nfn main() {\n    let string1 = String::from(\"abcd\");\n    let result;\n    {\n        let string2 = String::from(\"xyz\");\n        result = longest(&string1, &string2);\n        println!(\"Внутри блока: {}\", result);\n    }\n    // println!(\"Снаружи: {}\", result); // ОШИБКА: string2 не живет достаточно долго\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Типичные ошибки новичков"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`use of moved value`",
+          "Значение перемещено"
+        ],
+        [
+          "`cannot borrow as mutable`",
+          "Уже есть `&` ссылка"
+        ],
+        [
+          "`cannot borrow as immutable`",
+          "Уже есть `&mut` ссылка"
+        ],
+        [
+          "`returns a reference to owned data`",
+          "Возврат ссылки на локальную переменную"
+        ],
+        [
+          "`lifetime may not live long enough`",
+          "Несовпадение времен жизни"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Шпаргалка: Ownership & Borrowing"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ситуация",
+        "Код",
+        "Что происходит"
+      ],
+      "rows": [
+        [
+          "Присваивание не-Copy",
+          "`let y = x`",
+          "Move: `x` инвалидирован"
+        ],
+        [
+          "Присваивание Copy",
+          "`let y = x`",
+          "Copy: оба валидны"
+        ],
+        [
+          "Неизменяемая ссылка",
+          "`let r = &x`",
+          "Заимствование, `x` читаем"
+        ],
+        [
+          "Изменяемая ссылка",
+          "`let r = &mut x`",
+          "Эксклюзивный доступ, `x` меняем"
+        ],
+        [
+          "Передача в функцию",
+          "`foo(x)`",
+          "Move (если не Copy)"
+        ],
+        [
+          "Передача ссылки",
+          "`foo(&x)`",
+          "Заимствование"
+        ],
+        [
+          "Возврат из функции",
+          "`return x`",
+          "Move владения наружу"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Ownership**: каждый владелец — один, drop при выходе из scope",
+        "**Move**: передача владения (shallow copy + инвалидация источника)",
+        "**Copy**: неявное копирование для простых типов (стек)",
+        "**Clone**: явное глубокое копирование для кучи",
+        "**References**: `&T` (shared) и `&mut T` (exclusive)",
+        "**Borrow rules**: либо много `&`, либо один `&mut`",
+        "**Slices**: `&[T]`, `&str` — view без владения",
+        "**Lifetimes**: `'a` — статическая гарантия валидности ссылок"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`use of moved value`",
+      "correct": "Значение перемещено"
+    },
+    {
+      "mistake": "`cannot borrow as mutable`",
+      "correct": "Уже есть `&` ссылка"
+    },
+    {
+      "mistake": "`cannot borrow as immutable`",
+      "correct": "Уже есть `&mut` ссылка"
+    },
+    {
+      "mistake": "`returns a reference to owned data`",
+      "correct": "Возврат ссылки на локальную переменную"
+    },
+    {
+      "mistake": "`lifetime may not live long enough`",
+      "correct": "Несовпадение времен жизни"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 5
+}

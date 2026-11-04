@@ -1,0 +1,423 @@
+{
+  "title": "Урок 15: LINQ — query/method syntax, deferred execution, IEnumerable/IQueryable, grouping/join",
+  "slug": "linq-querymethod-syntax-deferred-execution-ienumerableiqueryable-groupingjoin",
+  "short_description": "query/method syntax, deferred execution, IEnumerable/IQueryable, grouping/join",
+  "goals": [
+    "Освоить оба синтаксиса LINQ: query syntax и method syntax",
+    "Понимать deferred execution (отложенное выполнение) и streaming",
+    "Различать IEnumerable (LINQ to Objects) и IQueryable (LINQ to SQL/EF)",
+    "Сложные запросы: grouping, join, set operations, aggregation",
+    "Оптимизация производительности и частые ошибки"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Освоить оба синтаксиса LINQ: query syntax и method syntax",
+        "Понимать deferred execution (отложенное выполнение) и streaming",
+        "Различать IEnumerable (LINQ to Objects) и IQueryable (LINQ to SQL/EF)",
+        "Сложные запросы: grouping, join, set operations, aggregation",
+        "Оптимизация производительности и частые ошибки"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Два синтаксиса LINQ"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Method Syntax (Fluent API) — более гибкий"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = new[] { 5, 2, 8, 1, 9, 3 };\n\nvar result = numbers\n    .Where(n => n > 3)\n    .OrderBy(n => n)\n    .Select(n => n * 2)\n    .ToList(); // [8, 10, 16, 18]\n\n// Чейнинг — читается слева направо"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Query Syntax (Comprehension Syntax) — ближе к SQL"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var result = from n in numbers\n             where n > 3\n             orderby n\n             select n * 2;\n\n// Компилируется в method syntax\n// Удобно для: join, group by, let, into"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда что использовать"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Сценарий",
+        "Рекомендация"
+      ],
+      "rows": [
+        [
+          "Простые цепочки (Where/Select/OrderBy)",
+          "Method syntax"
+        ],
+        [
+          "Join, GroupBy, сложные проекции",
+          "Query syntax"
+        ],
+        [
+          "Let (промежуточные переменные)",
+          "Query syntax"
+        ],
+        [
+          "Динамические запросы (условные Where)",
+          "Method syntax"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`let` — промежуточные вычисления (только query syntax)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var files = Directory.GetFiles(\".\", \"*.cs\");\n\nvar query = from file in files\n            let info = new FileInfo(file)\n            let length = info.Length\n            where length > 1000\n            orderby length descending\n            select new { file, length, info.CreationTime };"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`into` — продолжение запроса после group/join/select"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var grouped = from n in numbers\n              group n by n % 2 into g\n              where g.Count() > 1\n              select new { Key = g.Key, Count = g.Count(), Sum = g.Sum() };"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Deferred Execution (Отложенное выполнение)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как работает"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var numbers = new[] { 1, 2, 3 };\n\nvar query = numbers.Where(n => n > 1); // НИЧЕГО НЕ ВЫПОЛНЯЕТСЯ!\n\nConsole.WriteLine(\"Before enumeration\");\nforeach (var n in query) // ТУТ выполняется фильтрация\n    Console.WriteLine(n);\nConsole.WriteLine(\"After enumeration\");"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Streaming vs Buffering"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// STREAMING (lazy) — по одному элементу, память O(1)\nnumbers.Where(n => n > 1)           // streaming\nnumbers.Select(n => n * 2)          // streaming\nnumbers.Take(5)                     // streaming\nnumbers.Skip(3)                     // streaming (но пропускает)\n\n// BUFFERING (eager) — материализуют всю последовательность\nnumbers.OrderBy(n => n)             // buffering — нужен весь массив\nnumbers.GroupBy(n => n % 2)         // buffering\nnumbers.Distinct()                  // buffering (HashSet внутри)\nnumbers.ToList()                    // forcing execution\nnumbers.Count()                     // forcing execution"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Опасность: многократное перечисление"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var query = numbers.Where(n => n > 1).Select(n => ExpensiveOperation(n));\n\nConsole.WriteLine(query.Count());  // 1-й проход — ExpensiveOperation вызывается N раз\nConsole.WriteLine(query.First());  // 2-й проход — ExpensiveOperation вызывается ЕЩЁ РАЗ!\n\n// Исправление: материализуйте один раз\nvar list = query.ToList();\nConsole.WriteLine(list.Count());\nConsole.WriteLine(list.First());"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`IEnumerable` vs `IQueryable`"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// IEnumerable — LINQ to Objects, выполняется в памяти\nIEnumerable<User> users = GetUsersFromMemory();\nvar local = users.Where(u => u.Age > 18).ToList(); // весь Where в памяти\n\n// IQueryable — LINQ to SQL/EF, переводится в SQL\nIQueryable<User> dbUsers = context.Users;\nvar sql = dbUsers.Where(u => u.Age > 18).ToList(); // WHERE Age > 18 в SQL!\n\n// Разница в выражениях\nExpression<Func<User, bool>> expr = u => u.Age > 18; // Expression Tree\nFunc<User, bool> func = u => u.Age > 18;             // Delegate (скомпилирован)\n\n// IQueryable принимает Expression, IEnumerable — Func"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Основные операторы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фильтрация"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var adults = people.Where(p => p.Age >= 18);\nvar firstAdult = people.FirstOrDefault(p => p.Age >= 18);\nvar single = people.Single(p => p.Id == 1); // исключение, если 0 или >1\nvar byIndex = people.ElementAt(5);\nvar byIndexSafe = people.ElementAtOrDefault(100); // null/default"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проекция"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Select — 1 к 1\nvar names = people.Select(p => p.Name);\n\n// SelectMany — развертывание коллекций (flatten)\nvar allPhones = people.SelectMany(p => p.PhoneNumbers);\nvar flat = new[] { new[] {1,2}, new[] {3} }.SelectMany(x => x); // [1,2,3]\n\n// Анонимные типы\nvar dto = people.Select(p => new { p.Name, p.Age, IsAdult = p.Age >= 18 });\n\n// Index в Select\nvar indexed = people.Select((p, i) => new { Index = i, p.Name });"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сортировка"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var sorted = people\n    .OrderBy(p => p.LastName)\n    .ThenBy(p => p.FirstName)\n    .ThenByDescending(p => p.Age);\n\n// Random shuffle\nvar shuffled = people.OrderBy(_ => Guid.NewGuid());"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Группировка (GroupBy)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// По одному ключу\nvar byDept = employees.GroupBy(e => e.Department);\n\n// По составному ключу\nvar byDeptAndRole = employees.GroupBy(e => new { e.Department, e.Role });\n\n// Результат: IGrouping<TKey, TElement> — реализует IEnumerable<TElement>\nforeach (var group in byDept)\n{\n    Console.WriteLine($\"Department: {group.Key}, Count: {group.Count()}\");\n    foreach (var emp in group) Console.WriteLine($\"  {emp.Name}\");\n}\n\n// GroupBy с проекцией результата\nvar stats = employees\n    .GroupBy(e => e.Department)\n    .Select(g => new {\n        Department = g.Key,\n        Count = g.Count(),\n        AvgSalary = g.Average(e => e.Salary),\n        MaxSalary = g.Max(e => e.Salary)\n    });"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Соединения (Join)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Inner Join\nvar query = from e in employees\n            join d in departments on e.DeptId equals d.Id\n            select new { e.Name, DeptName = d.Name };\n\n// Method syntax\nvar query2 = employees.Join(\n    departments,\n    e => e.DeptId,\n    d => d.Id,\n    (e, d) => new { e.Name, DeptName = d.Name }\n);\n\n// Group Join (Left Outer Join)\nvar query3 = from d in departments\n             join e in employees on d.Id equals e.DeptId into emps\n             select new { Dept = d.Name, Employees = emps };\n\n// Cross Join (Cartesian product)\nvar pairs = from a in list1\n            from b in list2\n            select (a, b);\n\n// Zip — попарно (кратчайшая длина)\nvar zipped = list1.Zip(list2, (a, b) => a + b);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Set Operations (Множественные операции)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var a = new[] { 1, 2, 3, 4 };\nvar b = new[] { 3, 4, 5, 6 };\n\na.Union(b)        // 1,2,3,4,5,6 (distinct)\na.Intersect(b)    // 3,4\na.Except(b)       // 1,2\na.Concat(b)       // 1,2,3,4,3,4,5,6 (без distinct)\na.Distinct()      // 1,2,3,4"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Агрегация"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "numbers.Sum()\nnumbers.Average()\nnumbers.Min() / Max()\nnumbers.Count() / LongCount()\n\n// Aggregate — свертка (reduce)\nvar product = numbers.Aggregate(1, (acc, n) => acc * n); // 1*1*2*3*4 = 24\nvar csv = strings.Aggregate((a, b) => a + \", \" + b);\n\n// Seed + func + resultSelector\nvar stats = numbers.Aggregate(\n    (Count: 0, Sum: 0, Min: int.MaxValue, Max: int.MinValue),\n    (acc, n) => (acc.Count + 1, acc.Sum + n, Math.Min(acc.Min, n), Math.Max(acc.Max, n)),\n    acc => new { acc.Count, acc.Sum, Avg = (double)acc.Sum / acc.Count, acc.Min, acc.Max }\n);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кванторы (Quantifiers)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "numbers.All(n => n > 0)      // все\nnumbers.Any(n => n > 10)     // хотя бы один\nnumbers.Contains(5)          // равенство через EqualityComparer\nnumbers.SequenceEqual(other) // поэлементное сравнение"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генерация"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "Enumerable.Range(1, 10)           // 1..10\nEnumerable.Repeat(\"x\", 5)         // \"x\", \"x\", \"x\", \"x\", \"x\"\nEnumerable.Empty<int>()           // пустая последовательность\n\n// Бесконечные последовательности\nvar odds = Enumerable.Range(0, int.MaxValue).Where(n => n % 2 == 1);\nvar fibs = GenerateFibonacci().Take(20);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. IQueryable и Expression Trees"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как EF Core переводит в SQL"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Это создаёт Expression Tree, а не delegate\nIQueryable<User> query = context.Users\n    .Where(u => u.Age > 18 && u.IsActive)\n    .OrderBy(u => u.LastName)\n    .Take(10);\n\n// EF Core обходит Expression Tree и генерирует SQL:\n// SELECT TOP 10 * FROM Users WHERE Age > 18 AND IsActive = 1 ORDER BY LastName"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Client-side evaluation (опасно!)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ПЛОХО: метод не может быть переведён в SQL\nvar bad = context.Users\n    .Where(u => u.Name.Contains(GetPrefix())) // GetPrefix() — клиентский метод\n    .ToList(); // Выбросит исключение или загрузит ВСЕХ пользователей в память!\n\n// ХОРОШО: вычислите заранее\nvar prefix = GetPrefix();\nvar good = context.Users\n    .Where(u => u.Name.Contains(prefix))\n    .ToList();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "AsEnumerable() — принудительный переход к LINQ to Objects"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Сначала SQL, потом в памяти\nvar result = context.Users\n    .Where(u => u.Age > 18)           // SQL\n    .AsEnumerable()                   // переключение на IEnumerable\n    .Where(u => ComplexCheck(u))      // в памяти (не переводится в SQL)\n    .ToList();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Продвинутые сценарии"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pagination"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public PagedResult<T> GetPage(IQueryable<T> query, int page, int pageSize)\n{\n    var total = query.Count();\n    var items = query\n        .Skip((page - 1) * pageSize)\n        .Take(pageSize)\n        .ToList();\n    return new PagedResult<T>(items, total, page, pageSize);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dynamic LINQ (runtime queries)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Linq.Dynamic.Core; // NuGet: System.Linq.Dynamic.Core\n\nvar query = context.Users\n    .Where(\"Age > @0 and Name.Contains(@1)\", 18, \"John\")\n    .OrderBy(\"LastName desc, FirstName\")\n    .Select(\"new (Id, Name, Age)\");"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Chunk (обработка батчами) — .NET 6+"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "foreach (var chunk in largeCollection.Chunk(1000))\n{\n    await ProcessBatchAsync(chunk);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "DistinctBy / MaxBy / MinBy — .NET 6+"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var uniqueByEmail = users.DistinctBy(u => u.Email);\nvar oldest = users.MaxBy(u => u.Age);\nvar youngest = users.MinBy(u => u.Age);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Параллельный LINQ (PLINQ)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Linq.Parallel;\n\n// Автоматическая параллелизация\nvar result = numbers.AsParallel()\n    .Where(n => ExpensiveCheck(n))\n    .Select(n => ExpensiveTransform(n))\n    .ToList();\n\n// Управление степенью параллелизма\nvar result2 = numbers.AsParallel()\n    .WithDegreeOfParallelism(4)\n    .Where(...);\n\n// Сохранение порядка (медленнее)\nvar ordered = numbers.AsParallel()\n    .AsOrdered()\n    .Select(...);\n\n// Отмена\nvar cts = new CancellationTokenSource();\nvar result3 = numbers.AsParallel()\n    .WithCancellation(cts.Token)\n    .Select(...);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Многократное перечисление `IEnumerable`",
+          "`.ToList()` / `.ToArray()` один раз"
+        ],
+        [
+          "`Count() > 0` вместо `Any()`",
+          "`Any()` — останавливается на первом"
+        ],
+        [
+          "`Where(...).First()` вместо `FirstOrDefault(...)`",
+          "`FirstOrDefault(predicate)` — один проход"
+        ],
+        [
+          "`Select` в EF с сложной логикой (client eval)",
+          "Выносите вычисления или используйте SQL функции"
+        ],
+        [
+          "`OrderBy` без `ThenBy` для вторичных ключей",
+          "`OrderBy(p => p.A).ThenBy(p => p.B)`"
+        ],
+        [
+          "`GroupBy` без понимания buffering",
+          "Используйте `ToLookup` для многократного доступа"
+        ],
+        [
+          "`Concat` вместо `Union` когда нужны уникальные",
+          "`Union` для distinct, `Concat` для сохранения всех"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Многократное перечисление `IEnumerable`",
+      "correct": "`.ToList()` / `.ToArray()` один раз"
+    },
+    {
+      "mistake": "`Count() > 0` вместо `Any()`",
+      "correct": "`Any()` — останавливается на первом"
+    },
+    {
+      "mistake": "`Where(...).First()` вместо `FirstOrDefault(...)`",
+      "correct": "`FirstOrDefault(predicate)` — один проход"
+    },
+    {
+      "mistake": "`Select` в EF с сложной логикой (client eval)",
+      "correct": "Выносите вычисления или используйте SQL функции"
+    },
+    {
+      "mistake": "`OrderBy` без `ThenBy` для вторичных ключей",
+      "correct": "`OrderBy(p => p.A).ThenBy(p => p.B)`"
+    },
+    {
+      "mistake": "`GroupBy` без понимания buffering",
+      "correct": "Используйте `ToLookup` для многократного доступа"
+    },
+    {
+      "mistake": "`Concat` вместо `Union` когда нужны уникальные",
+      "correct": "`Union` для distinct, `Concat` для сохранения всех"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 15
+}

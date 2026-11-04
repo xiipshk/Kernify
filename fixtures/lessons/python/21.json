@@ -1,0 +1,370 @@
+{
+  "title": "Урок 2.10: Веб-разработка — FastAPI, Flask, маршрутизация, зависимость, деплой",
+  "slug": "veb-razrabotka-fastapi-flask-marshrutizatsiya-zavisimost-deploy",
+  "short_description": "FastAPI, Flask, маршрутизация, зависимость, деплой",
+  "goals": [
+    "Создавать REST API с FastAPI",
+    "Понимать Flask для простых приложений",
+    "Работать с зависимостями (Dependency Injection)",
+    "Валидация запросов (Pydantic)",
+    "Аутентификация (JWT, OAuth2)",
+    "Тестирование API",
+    "Деплой (Docker, uvicorn, gunicorn)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Создавать REST API с FastAPI",
+        "Понимать Flask для простых приложений",
+        "Работать с зависимостями (Dependency Injection)",
+        "Валидация запросов (Pydantic)",
+        "Аутентификация (JWT, OAuth2)",
+        "Тестирование API",
+        "Деплой (Docker, uvicorn, gunicorn)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. FastAPI — современный фреймворк"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install fastapi uvicorn[standard]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Минимальное приложение"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Запуск"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "uvicorn main:app --reload"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Path и Query параметры"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Path параметры с валидацией"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi import Path\n\n@app.get(\"/users/{user_id}\")\ndef get_user(\n    user_id: int = Path(..., ge=1, le=1000, description=\"ID пользователя\")\n):\n    return {\"user_id\": user_id}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Query параметры"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from typing import Optional\n\n@app.get(\"/items\")\ndef read_items(\n    skip: int = 0,\n    limit: int = 10,\n    search: Optional[str] = None\n):\n    return {\"skip\": skip, \"limit\": limit, \"search\": search}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Request Body — Pydantic модели"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from pydantic import BaseModel, EmailStr, Field\nfrom typing import Optional\nfrom datetime import datetime\n\nclass UserCreate(BaseModel):\n    name: str = Field(..., min_length=1, max_length=50)\n    email: EmailStr\n    age: Optional[int] = Field(None, ge=0, le=150)\n\nclass UserResponse(UserCreate):\n    id: int\n    created_at: datetime\n\n    class Config:\n        from_attributes = True  # для SQLAlchemy моделей\n\n@app.post(\"/users\", response_model=UserResponse, status_code=201)\ndef create_user(user: UserCreate):\n    new_user = User(id=1, **user.model_dump(), created_at=datetime.now())\n    return new_user"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Dependency Injection — Depends"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простая зависимость"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi import Depends\n\ndef get_db():\n    db = SessionLocal()\n    try:\n        yield db\n    finally:\n        db.close()\n\n@app.get(\"/users\")\ndef list_users(db: Session = Depends(get_db)):\n    return db.query(User).all()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Зависимость с параметрами"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi import Query\n\ndef pagination(skip: int = Query(0, ge=0), limit: int = Query(10, le=100)):\n    return {\"skip\": skip, \"limit\": limit}\n\n@app.get(\"/items\")\ndef read_items(paging: dict = Depends(pagination)):\n    return paging"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Классы-зависимости"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class CommonParams:\n    def __init__(self, skip: int = 0, limit: int = 10):\n        self.skip = skip\n        self.limit = limit\n\n@app.get(\"/items\")\ndef read_items(params: CommonParams = Depends()):\n    return {\"skip\": params.skip, \"limit\": params.limit}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Аутентификация и авторизация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "OAuth2 с JWT"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install python-jose[cryptography] passlib[bcrypt] python-multipart"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm\nfrom jose import jwt, JWTError\nfrom passlib.context import CryptContext\nfrom datetime import datetime, timedelta\n\nSECRET_KEY = \"your-secret-key\"\nALGORITHM = \"HS256\"\nACCESS_TOKEN_EXPIRE_MINUTES = 30\n\npwd_context = CryptContext(schemes=[\"bcrypt\"], deprecated=\"auto\")\noauth2_scheme = OAuth2PasswordBearer(tokenUrl=\"token\")\n\ndef verify_password(plain, hashed):\n    return pwd_context.verify(plain, hashed)\n\ndef get_password_hash(password):\n    return pwd_context.hash(password)\n\ndef create_access_token(data: dict):\n    to_encode = data.copy()\n    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)\n    to_encode.update({\"exp\": expire})\n    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)\n\n@app.post(\"/token\")\ndef login(form_data: OAuth2PasswordRequestForm = Depends()):\n    user = authenticate_user(form_data.username, form_data.password)\n    if not user:\n        raise HTTPException(status_code=401, detail=\"Неверные учётные данные\")\n    token = create_access_token(data={\"sub\": user.email})\n    return {\"access_token\": token, \"token_type\": \"bearer\"}\n\nasync def get_current_user(token: str = Depends(oauth2_scheme)):\n    credentials_exception = HTTPException(\n        status_code=401, detail=\"Не удалось проверить учётные данные\"\n    )\n    try:\n        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])\n        email: str = payload.get(\"sub\")\n        if email is None:\n            raise credentials_exception\n    except JWTError:\n        raise credentials_exception\n    user = get_user_by_email(email)\n    if user is None:\n        raise credentials_exception\n    return user\n\n@app.get(\"/users/me\")\ndef read_users_me(current_user: User = Depends(get_current_user)):\n    return current_user"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Обработка ошибок"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi import HTTPException, Request\nfrom fastapi.responses import JSONResponse\nfrom fastapi.exceptions import RequestValidationError\n\nclass UserNotFound(Exception):\n    def __init__(self, user_id: int):\n        self.user_id = user_id\n\n@app.exception_handler(UserNotFound)\nasync def user_not_found_handler(request: Request, exc: UserNotFound):\n    return JSONResponse(\n        status_code=404,\n        content={\"detail\": f\"User {exc.user_id} not found\"},\n    )\n\n@app.get(\"/users/{user_id}\")\ndef get_user(user_id: int):\n    user = find_user(user_id)\n    if not user:\n        raise UserNotFound(user_id)\n    return user\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Фоновые задачи"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi import BackgroundTasks\n\ndef send_email(email: str, message: str):\n    print(f\"Отправка email на {email}: {message}\")\n\n@app.post(\"/send-notification\")\ndef send_notification(email: str, background_tasks: BackgroundTasks):\n    background_tasks.add_task(send_email, email, \"Уведомление\")\n    return {\"message\": \"Уведомление будет отправлено\"}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Тестирование FastAPI"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install httpx pytest"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Flask — альтернатива для простых приложений"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install flask"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from flask import Flask, jsonify, request\n\napp = Flask(__name__)\n\n@app.route(\"/\")\ndef hello():\n    return jsonify(message=\"Hello from Flask\")\n\n@app.route(\"/users/<int:user_id>\")\ndef get_user(user_id):\n    return jsonify(id=user_id, name=f\"User {user_id}\")\n\nif __name__ == \"__main__\":\n    app.run(debug=True)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Деплой"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dockerfile"
+    },
+    {
+      "type": "code",
+      "language": "dockerfile",
+      "content": "FROM python:3.11-slim\n\nWORKDIR /app\n\nCOPY pyproject.toml poetry.lock* ./\nRUN pip install poetry && poetry config virtualenvs.create false && poetry install --no-dev\n\nCOPY . .\n\nEXPOSE 8000\n\nCMD [\"uvicorn\", \"main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "docker-compose.yml"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "version: '3.8'\nservices:\n  app:\n    build: .\n    ports:\n      - \"8000:8000\"\n    environment:\n      - DATABASE_URL=postgresql://user:pass@db:5432/app\n    depends_on:\n      - db\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_USER: user\n      POSTGRES_PASSWORD: pass\n      POSTGRES_DB: app\n    volumes:\n      - pgdata:/var/lib/postgresql/data\nvolumes:\n  pgdata:"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Gunicorn + Uvicorn workers (production)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. ASGI vs WSGI"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "",
+        "WSGI (Flask, Django)",
+        "ASGI (FastAPI, Starlette)"
+      ],
+      "rows": [
+        [
+          "Протокол",
+          "Синхронный",
+          "Асинхронный"
+        ],
+        [
+          "WebSockets",
+          "Нет/сложно",
+          "Да, нативно"
+        ],
+        [
+          "Concurrency",
+          "Threads/Processes",
+          "async/await"
+        ],
+        [
+          "Серверы",
+          "gunicorn, uwsgi",
+          "uvicorn, hypercorn, daphne"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Блокирующие вызовы в async эндпоинтах",
+          "Используйте `to_thread` или асинхронные драйверы"
+        ],
+        [
+          "Забыли `response_model`",
+          "Всегда указывайте для валидации и документации"
+        ],
+        [
+          "Хранение секретов в коде",
+          "Переменные окружения + `.env` (python-dotenv)"
+        ],
+        [
+          "N+1 запросы в ORM",
+          "`selectinload`, `joinedload`"
+        ],
+        [
+          "Нет обработки ошибок БД",
+          "try/except + rollback в зависимостях"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**FastAPI docs** — https://fastapi.tiangolo.com/",
+        "**FastAPI Tutorial** — https://fastapi.tiangolo.com/tutorial/",
+        "**SQLAlchemy + FastAPI** — https://fastapi.tiangolo.com/tutorial/sql-databases/",
+        "**Deploy FastAPI** — https://fastapi.tiangolo.com/deployment/",
+        "**Flask docs** — https://flask.palletsprojects.com/",
+        "**TestClient** — https://fastapi.tiangolo.com/tutorial/testing/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Блокирующие вызовы в async эндпоинтах",
+      "correct": "Используйте `to_thread` или асинхронные драйверы"
+    },
+    {
+      "mistake": "Забыли `response_model`",
+      "correct": "Всегда указывайте для валидации и документации"
+    },
+    {
+      "mistake": "Хранение секретов в коде",
+      "correct": "Переменные окружения + `.env` (python-dotenv)"
+    },
+    {
+      "mistake": "N+1 запросы в ORM",
+      "correct": "`selectinload`, `joinedload`"
+    },
+    {
+      "mistake": "Нет обработки ошибок БД",
+      "correct": "try/except + rollback в зависимостях"
+    }
+  ],
+  "resources": [
+    "**FastAPI docs** — https://fastapi.tiangolo.com/",
+    "**FastAPI Tutorial** — https://fastapi.tiangolo.com/tutorial/",
+    "**SQLAlchemy + FastAPI** — https://fastapi.tiangolo.com/tutorial/sql-databases/",
+    "**Deploy FastAPI** — https://fastapi.tiangolo.com/deployment/",
+    "**Flask docs** — https://flask.palletsprojects.com/",
+    "**TestClient** — https://fastapi.tiangolo.com/tutorial/testing/"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 21
+}

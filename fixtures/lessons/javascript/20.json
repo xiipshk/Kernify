@@ -1,0 +1,587 @@
+{
+  "title": "Урок 20: Security & Performance — Безопасность и производительность",
+  "slug": "security-performance-bezopasnost-i-proizvoditelnost",
+  "short_description": "Безопасность и производительность",
+  "goals": [
+    "Понять основные векторы атак: XSS, CSRF, Clickjacking, CSP",
+    "Научиться защищать приложения: санитизация, CSP, HttpOnly, SameSite",
+    "Освоить профилирование: Performance tab, Lighthouse, Web Vitals",
+    "Понять Critical Rendering Path, оптимизацию загрузки, кэширование",
+    "Научиться оптимизировать JS: code splitting, tree shaking, lazy loading"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять основные векторы атак: XSS, CSRF, Clickjacking, CSP",
+        "Научиться защищать приложения: санитизация, CSP, HttpOnly, SameSite",
+        "Освоить профилирование: Performance tab, Lighthouse, Web Vitals",
+        "Понять Critical Rendering Path, оптимизацию загрузки, кэширование",
+        "Научиться оптимизировать JS: code splitting, tree shaking, lazy loading"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Безопасность (Security)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.1 XSS (Cross-Site Scripting) — главный враг"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Типы XSS:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Reflected** — вредоносный скрипт в URL/параметрах, отражается в ответе",
+        "**Stored** — скрипт сохраняется в БД, выполняется при просмотре",
+        "**DOM-based** — клиентский JS небезопасно использует данные из URL"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ ОПАСНО — innerHTML с пользовательскими данными\nelement.innerHTML = userInput; // <img src=x onerror=alert(1)>\n\n// ✅ БЕЗОПАСНО — textContent\nelement.textContent = userInput;\n\n// ✅ БЕЗОПАСНО — создание элементов\nconst div = document.createElement('div');\ndiv.textContent = userInput;\ncontainer.append(div);\n\n// ✅ Если НУЖНО HTML — санитизация (DOMPurify)\nimport DOMPurify from 'dompurify';\nelement.innerHTML = DOMPurify.sanitize(userHtml);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.2 Content Security Policy (CSP)"
+    },
+    {
+      "type": "text",
+      "content": "Заголовок, ограничивающий источники скриптов, стилей, картинок."
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": "Content-Security-Policy:\n  default-src 'self';\n  script-src 'self' 'nonce-{random}' https://cdn.example.com;\n  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;\n  img-src 'self' data: https:;\n  font-src 'self' https://fonts.gstatic.com;\n  connect-src 'self' https://api.example.com;\n  frame-ancestors 'none';\n  base-uri 'self';\n  form-action 'self';"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Директивы:</strong>"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Директива",
+        "Назначение"
+      ],
+      "rows": [
+        [
+          "`default-src`",
+          "Фоллбэк для остальных"
+        ],
+        [
+          "`script-src`",
+          "Источники JS"
+        ],
+        [
+          "`style-src`",
+          "Источники CSS"
+        ],
+        [
+          "`img-src`",
+          "Источники изображений"
+        ],
+        [
+          "`connect-src`",
+          "fetch, XHR, WebSocket, EventSource"
+        ],
+        [
+          "`font-src`",
+          "Веб-шрифты"
+        ],
+        [
+          "`frame-ancestors`",
+          "Кто может вставить в iframe (замена X-Frame-Options)"
+        ],
+        [
+          "`base-uri`",
+          "Ограничение `<base>`"
+        ],
+        [
+          "`form-action`",
+          "Куда могут отправлять формы"
+        ]
+      ]
+    },
+    {
+      "type": "text",
+      "content": "<strong>Nonce/Hash для инлайн-скриптов:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Генерация nonce на сервере для каждого запроса -->\n<script nonce=\"r4nd0mN0nc3V4lu3\">console.log('allowed');</script>\n\n<!-- Или hash -->\n<script>console.log('allowed');</script>\n<!-- CSP: script-src 'sha256-...' -->"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.3 Cookies — безопасные флаги"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": "Set-Cookie: session=abc123;\n  HttpOnly;           /* JS не имеет доступа (защита от XSS) */\n  Secure;             /* Только HTTPS */\n  SameSite=Strict;    /* CSRF защита: Lax/Strict/None */\n  Path=/;             /* Область действия */\n  Max-Age=3600;       /* TTL в секундах */"
+    },
+    {
+      "type": "text",
+      "content": "<strong>SameSite:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`Strict` — куки не отправляются при кросс-сайтовых запросах (самое безопасное)",
+        "`Lax` — отправляются при безопасных навигациях (линки) — дефолт в современных браузерах",
+        "`None` — отправляются всегда (требует `Secure`)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.4 CSRF (Cross-Site Request Forgery)"
+    },
+    {
+      "type": "text",
+      "content": "Атака: злоумышленник заставляет браузер жертвы выполнить запрос к другому сайту."
+    },
+    {
+      "type": "text",
+      "content": "<strong>Защита:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**SameSite Cookies** (основная современная защита)",
+        "**CSRF Token** — уникальный токен в формах/заголовках",
+        "**Проверка Origin/Referer** заголовков",
+        "**Double Submit Cookie** — токен в куке + в заголовке"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Генерация токена (на сервере)\nconst csrfToken = crypto.randomBytes(32).toString('hex');\nres.cookie('csrf', csrfToken, { httpOnly: true, sameSite: 'strict' });\n// В форму / заголовок\nres.locals.csrfToken = csrfToken;\n\n// Проверка (middleware)\napp.use((req, res, next) => {\n  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {\n    const token = req.headers['x-csrf-token'] || req.body._csrf;\n    if (token !== req.cookies.csrf) {\n      return res.status(403).send('Invalid CSRF token');\n    }\n  }\n  next();\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.5 Clickjacking — защита фреймами"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": "X-Frame-Options: DENY\n/* или */\nContent-Security-Policy: frame-ancestors 'none';"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.6 Другие заголовки безопасности"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": "X-Content-Type-Options: nosniff        /* Не угадывать MIME */\nX-XSS-Protection: 1; mode=block        /* Устарел, но не мешает */\nReferrer-Policy: strict-origin-when-cross-origin\nPermissions-Policy: camera=(), microphone=(), geolocation=()  /* Feature Policy */\nCross-Origin-Opener-Policy: same-origin\nCross-Origin-Resource-Policy: same-origin\nCross-Origin-Embedder-Policy: require-corp"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.7 Subresource Integrity (SRI)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<script src=\"https://cdn.example.com/lib.js\"\n        integrity=\"sha384-...hash...\"\n        crossorigin=\"anonymous\"></script>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.8 Безопасность зависимостей"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Производительность (Performance)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.1 Web Vitals — ключевые метрики"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Метрика",
+        "Хорошо",
+        "Нормально",
+        "Плохо",
+        "Что измеряет"
+      ],
+      "rows": [
+        [
+          "**LCP** (Largest Contentful Paint)",
+          "≤2.5s",
+          "≤4s",
+          ">4s",
+          "Скорость загрузки главного контента"
+        ],
+        [
+          "**FID** (First Input Delay)",
+          "≤100ms",
+          "≤300ms",
+          ">300ms",
+          "Отзывчивость на первое взаимодействие"
+        ],
+        [
+          "**CLS** (Cumulative Layout Shift)",
+          "≤0.1",
+          "≤0.25",
+          ">0.25",
+          "Визуальная стабильность"
+        ],
+        [
+          "**FCP** (First Contentful Paint)",
+          "≤1.8s",
+          "≤3s",
+          ">3s",
+          "Первый контент на экране"
+        ],
+        [
+          "**TTFB** (Time to First Byte)",
+          "≤800ms",
+          "≤1.8s",
+          ">1.8s",
+          "Скорость сервера"
+        ],
+        [
+          "**INP** (Interaction to Next Paint)",
+          "≤200ms",
+          "≤500ms",
+          ">500ms",
+          "Отзывчивость всех взаимодействий"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.2 Critical Rendering Path"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "HTML → DOM → CSSOM → Render Tree → Layout → Paint → Composite"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Оптимизация:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Минимизировать критический CSS** — инлайн critical, остальное async",
+        "**Defer/async скрипты** — не блокировать парсинг",
+        "**Preload критичных ресурсов**",
+        "**Server-side rendering (SSR)** — быстрее FCP/LCP"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Критичный CSS инлайн -->\n<style>/* critical css */</style>\n\n<!-- Остальной CSS асинхронно -->\n<link rel=\"preload\" href=\"/styles.css\" as=\"style\" onload=\"this.rel='stylesheet'\">\n\n<!-- Скрипты -->\n<script defer src=\"app.js\"></script>          /* После парсинга HTML */\n<script async src=\"analytics.js\"></script>    /* Не блокирует, порядок не гарантирован */\n<script type=\"module\" src=\"app.js\"></script>  /* Автоматически defer */\n\n<!-- Preload -->\n<link rel=\"preload\" href=\"/font.woff2\" as=\"font\" type=\"font/woff2\" crossorigin>\n<link rel=\"preload\" href=\"/hero.jpg\" as=\"image\">\n<link rel=\"prefetch\" href=\"/next-page.js\">    /* Низкий приоритет */\n<link rel=\"preconnect\" href=\"https://api.example.com\"> /* DNS+TCP+TLS */"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.3 Code Splitting & Lazy Loading"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Динамический импорт (webpack, vite, rollup, esbuild)\nconst HeavyComponent = lazy(() import('./HeavyComponent'));\n\n// React Suspense\n<Suspense fallback={<Spinner />}>\n  <HeavyComponent />\n</Suspense>\n\n// Route-based splitting\nconst routes = [\n  { path: '/', component: () => import('./Home') },\n  { path: '/dashboard', component: () => import('./Dashboard') },\n];\n\n// Preload при наведении\n<link rel=\"prefetch\" href=\"/dashboard.js\">\n// или программно\nimport('/* webpackPrefetch: true */ ./Dashboard');"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.4 Tree Shaking — удаление мёртвого кода"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// package.json\n{\n  \"sideEffects\": false  // для webpack/rollup — модуль чистый\n}\n\n// Или массив файлов с сайд-эффектами\n{\n  \"sideEffects\": [\"./polyfills.js\", \"*.css\"]\n}"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Требования:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "ES Modules (`import`/`export`)",
+        "`mode: 'production'`",
+        "Нет CommonJS `require` в ESM коде",
+        "Babel: `@babel/preset-env` с `modules: false`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.5 Кэширование"
+    },
+    {
+      "type": "text",
+      "content": "<strong>HTTP кэш:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.6 Оптимизация изображений"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- Современные форматы -->\n<picture>\n  <source srcset=\"hero.avif\" type=\"image/avif\">\n  <source srcset=\"hero.webp\" type=\"image/webp\">\n  <img src=\"hero.jpg\" alt=\"Hero\" width=\"800\" height=\"400\" loading=\"lazy\">\n</picture>\n\n<!-- Responsive images -->\n<img srcset=\"\n  small.jpg 400w,\n  medium.jpg 800w,\n  large.jpg 1200w\n\" sizes=\"(max-width: 600px) 400px, 800px\"\nsrc=\"medium.jpg\" alt=\"...\">\n\n<!-- Lazy loading (нативное) -->\n<img src=\"...\" loading=\"lazy\" alt=\"...\">\n\n<!-- LCP изображение — eager! -->\n<img src=\"hero.jpg\" loading=\"eager\" fetchpriority=\"high\" alt=\"...\">"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.7 Шрифты"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* font-display: swap — показывает системный шрифт до загрузки */\n@font-face {\n  font-family: 'Inter';\n  src: url('inter.woff2') format('woff2');\n  font-display: swap;        /* или optional, fallback */\n  font-weight: 400 700;      /* variable font */\n}\n\n/* Preload критичного шрифта */\n<link rel=\"preload\" href=\"/inter.woff2\" as=\"font\" type=\"font/woff2\" crossorigin>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.8 Bundle Analysis"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.9 Профилирование в DevTools"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Performance Tab:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Record → взаимодействие → Stop",
+        "Анализ: Main thread, Frames, Network, Timings",
+        "Ищите: Long Tasks (>50ms), Forced Reflows, Excessive GC"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "text",
+      "content": "<strong>Memory Tab:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Heap Snapshot → сравнение (3 snapshot technique)",
+        "Allocation instrumentation on timeline"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "<strong>Lighthouse (в DevTools / CLI):</strong>"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npx lighthouse https://example.com --view"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// CI интеграция\n// .github/workflows/lighthouse.yml\n- uses: treosh/lighthouse-ci-action@v11\n  with:\n    urls: |\n      https://staging.example.com\n    budgetPath: ./lighthouse-budget.json"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.10 Оптимизация React/Vue/Svelte (кратко)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// React.memo — мемоизация компонента\nconst Button = React.memo(({ onClick, children }) => (\n  <button onClick={onClick}>{children}</button>\n));\n\n// useMemo / useCallback — мемоизация значений/функций\nconst value = useMemo(() => expensive(a, b), [a, b]);\nconst handler = useCallback(() => doSomething(a), [a]);\n\n// Virtualization (react-window, @tanstack/virtual)\nimport { FixedSizeList } from 'react-window';\n<FixedSizeList height={400} itemCount={10000} itemSize={35} width={300}>\n  {Row}\n</FixedSizeList>"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Практика"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Security Audit**: Прогоните `npm audit`, настройте CSP заголовки для своего проекта",
+        "**Performance Budget**: Создайте `lighthouse-budget.json` с лимитами для LCP, TBT, CLS",
+        "**Code Splitting**: Настройте route-based splitting в своём приложении",
+        "**Service Worker**: Добавьте Workbox для офлайн-кэширования",
+        "**Images**: Оптимизируйте все изображения (avif/webp, responsive, lazy)",
+        "**Bundle Analysis**: Найдите 3 самых тяжелых модуля и подумайте как уменьшить"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Нет CSP",
+          "Добавьте строгий CSP с nonce/hash для инлайн скриптов"
+        ],
+        [
+          "`innerHTML` с user input",
+          "`textContent` или DOMPurify"
+        ],
+        [
+          "Куки без HttpOnly/SameSite",
+          "Всегда ставьте `HttpOnly; Secure; SameSite=Lax`"
+        ],
+        [
+          "Нет `loading=\"lazy\"` на изображениях",
+          "Добавьте, кроме LCP изображения"
+        ],
+        [
+          "Блокирующие скрипты в `<head>`",
+          "`defer` или перенос в конец `<body>`"
+        ],
+        [
+          "Один огромный бандл",
+          "Code splitting, dynamic import"
+        ],
+        [
+          "Нет кэширования статики",
+          "`Cache-Control: public, max-age=31536000, immutable` + хеш в имени"
+        ],
+        [
+          "Шрифты блокируют рендер",
+          "`font-display: swap` + preload"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Контрольные вопросы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Чем Reflected XSS отличается от Stored и DOM-based?",
+        "Зачем нужен `nonce` в CSP?",
+        "В чём разница между `SameSite=Strict` и `Lax`?",
+        "Что такое LCP, FID, CLS и какие у них хорошие значения?",
+        "Как `defer` отличается от `async`?",
+        "Зачем нужен `sideEffects: false` в package.json?",
+        "Что делает `stale-while-revalidate` в Cache-Control?",
+        "Как Service Worker помогает производительности?"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Дополнительное чтение"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[OWASP Top 10](https://owasp.org/www-project-top-ten/)",
+        "[MDN: CSP](https://developer.mozilla.org/ru/docs/Web/HTTP/CSP)",
+        "[Web.dev: Performance](https://web.dev/performance/)",
+        "[Web Vitals](https://web.dev/vitals/)",
+        "[HTTP Caching](https://developer.mozilla.org/ru/docs/Web/HTTP/Caching)",
+        "[Workbox](https://developer.chrome.com/docs/workbox/)",
+        "[Bundle Analysis](https://webpack.js.org/guides/code-splitting/)",
+        "[Chrome DevTools Performance](https://developer.chrome.com/docs/devtools/performance/)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Нет CSP",
+      "correct": "Добавьте строгий CSP с nonce/hash для инлайн скриптов"
+    },
+    {
+      "mistake": "`innerHTML` с user input",
+      "correct": "`textContent` или DOMPurify"
+    },
+    {
+      "mistake": "Куки без HttpOnly/SameSite",
+      "correct": "Всегда ставьте `HttpOnly; Secure; SameSite=Lax`"
+    },
+    {
+      "mistake": "Нет `loading=\"lazy\"` на изображениях",
+      "correct": "Добавьте, кроме LCP изображения"
+    },
+    {
+      "mistake": "Блокирующие скрипты в `<head>`",
+      "correct": "`defer` или перенос в конец `<body>`"
+    },
+    {
+      "mistake": "Один огромный бандл",
+      "correct": "Code splitting, dynamic import"
+    },
+    {
+      "mistake": "Нет кэширования статики",
+      "correct": "`Cache-Control: public, max-age=31536000, immutable` + хеш в имени"
+    },
+    {
+      "mistake": "Шрифты блокируют рендер",
+      "correct": "`font-display: swap` + preload"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 20
+}

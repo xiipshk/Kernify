@@ -1,0 +1,468 @@
+{
+  "title": "Урок 3.2: C-расширения и Cython — ускорение Python, FFI, PyO3",
+  "slug": "c-rasshireniya-i-cython-uskorenie-python-ffi-pyo3",
+  "short_description": "ускорение Python, FFI, PyO3",
+  "goals": [
+    "Понимать, когда нужен C-код",
+    "Писать расширения на C (Python C API)",
+    "Использовать Cython для типизированного Python",
+    "Работать с ctypes/cffi для вызова C-библиотек",
+    "Знать про Rust/PyO3 как современную альтернативу"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать, когда нужен C-код",
+        "Писать расширения на C (Python C API)",
+        "Использовать Cython для типизированного Python",
+        "Работать с ctypes/cffi для вызова C-библиотек",
+        "Знать про Rust/PyO3 как современную альтернативу"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Зачем C-расширения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Узкие места Python"
+    },
+    {
+      "type": "list",
+      "items": [
+        "GIL — только один поток выполняет байт-код",
+        "Динамическая типизация — накладные расходы",
+        "Интерпретатор — медленнее нативного кода"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда стоит использовать"
+    },
+    {
+      "type": "text",
+      "content": "✅ Тяжёлые вычисления (матрицы, криптография, парсинг) ✅ Интеграция с C/C++ библиотеками ✅ Real-time системы ❌ Обычный веб-бэкенд (I/O bound) ❌ Прототипирование"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Python C API — ручное написание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Минимальное расширение"
+    },
+    {
+      "type": "code",
+      "language": "c",
+      "content": "// mymodule.c\n#include <Python.h>\n\nstatic PyObject* hello(PyObject* self, PyObject* args) {\n    const char* name;\n    if (!PyArg_ParseTuple(args, \"s\", &name))\n        return NULL;\n    return PyUnicode_FromFormat(\"Hello, %s!\", name);\n}\n\nstatic PyMethodDef methods[] = {\n    {\"hello\", hello, METH_VARARGS, \"Greet someone\"},\n    {NULL, NULL, 0, NULL}\n};\n\nstatic struct PyModuleDef module = {\n    PyModuleDef_HEAD_INIT,\n    \"mymodule\",\n    \"Example module\",\n    -1,\n    methods\n};\n\nPyMODINIT_FUNC PyInit_mymodule(void) {\n    return PyModule_Create(&module);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Компиляция (setup.py)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import mymodule\nprint(mymodule.hello(\"World\"))  # Hello, World!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Cython — Python с типизацией"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install cython"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый пример"
+    },
+    {
+      "type": "code",
+      "language": "cython",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "setup.py для Cython"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from setuptools import setup\nfrom Cython.Build import cythonize\n\nsetup(\n    ext_modules=cythonize(\"fast.pyx\", compiler_directives={'language_level': 3})\n)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Типизация для скорости"
+    },
+    {
+      "type": "code",
+      "language": "cython",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "memoryview — быстрый доступ к буферам"
+    },
+    {
+      "type": "code",
+      "language": "cython",
+      "content": "def sum_buffer(int[:] buf):\n    cdef int total = 0\n    cdef int i\n    for i in range(buf.shape[0]):\n        total += buf[i]\n    return total\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "nogil — освобождение GIL"
+    },
+    {
+      "type": "code",
+      "language": "cython",
+      "content": "from cython.parallel import prange\n\ndef parallel_sum(int[:] data):\n    cdef int total = 0\n    cdef int i\n    for i in prange(data.shape[0], nogil=True):\n        total += data[i]\n    return total"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. ctypes — встроенный FFI"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Загрузка библиотеки"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import ctypes\nimport platform\n\nif platform.system() == \"Windows\":\n    lib = ctypes.CDLL(\"./mylib.dll\")\nelse:\n    lib = ctypes.CDLL(\"./mylib.so\")\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структуры"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Point(ctypes.Structure):\n    _fields_ = [(\"x\", ctypes.c_double), (\"y\", ctypes.c_double)]\n\nlib.distance.argtypes = [ctypes.POINTER(Point), ctypes.POINTER(Point)]\nlib.distance.restype = ctypes.c_double\n\np1 = Point(0, 0)\np2 = Point(3, 4)\nprint(lib.distance(ctypes.byref(p1), ctypes.byref(p2)))  # 5.0"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Callback функции"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "CMPFUNC = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_int)\n\ndef py_compare(a, b):\n    return a - b\n\ncmp_func = CMPFUNC(py_compare)\nlib.qsort(array, len(array), ctypes.sizeof(ctypes.c_int), cmp_func)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. cffi — удобный FFI"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install cffi"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ABI mode (динамическая загрузка)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from cffi import FFI\n\nffi = FFI()\nffi.cdef(\"\"\"\n    int add(int a, int b);\n    double distance(double x1, double y1, double x2, double y2);\n\"\"\")\n\nlib = ffi.dlopen(\"./mylib.so\")  # или .dll/.dylib\nprint(lib.add(2, 3))"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "API mode (генерация C-кода)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. PyO3 — Rust + Python"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install maturin"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура проекта"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "maturin new --bindings pyo3 my_rust_lib\ncd my_rust_lib"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[package]\nname = \"my_rust_lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"my_rust_lib\"\ncrate-type = [\"cdylib\"]\n\n[dependencies]\npyo3 = { version = \"0.20\", features = [\"extension-module\"] }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Rust код"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/lib.rs\nuse pyo3::prelude::*;\n\n#[pyfunction]\nfn fib(n: usize) -> usize {\n    let mut a = 0;\n    let mut b = 1;\n    for _ in 0..n {\n        let tmp = a + b;\n        a = b;\n        b = tmp;\n    }\n    a\n}\n\n#[pymodule]\nfn my_rust_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {\n    m.add_function(wrap_pyfunction!(fib, m)?)?;\n    Ok(())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сборка и использование"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "maturin develop --release"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import my_rust_lib\nprint(my_rust_lib.fib(10))  # 55"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Параллелизм без GIL"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use pyo3::prelude::*;\nuse rayon::prelude::*;\n\n#[pyfunction]\nfn parallel_sum(data: Vec<usize>) -> usize {\n    data.par_iter().sum()  // Rayon использует все ядра!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Numba — JIT компиляция"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install numba"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from numba import jit, prange\nimport numpy as np\n\n@jit(nopython=True)\ndef fast_fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n\n@jit(nopython=True, parallel=True)\ndef parallel_sum(arr):\n    total = 0\n    for i in prange(arr.shape[0]):\n        total += arr[i]\n    return total\n\narr = np.arange(10_000_000)\nprint(parallel_sum(arr))"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Сравнение подходов"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Подход",
+        "Сложность",
+        "Скорость",
+        "GIL",
+        "Зависимости"
+      ],
+      "rows": [
+        [
+          "C API",
+          "Очень высокая",
+          "Максимальная",
+          "Ручное",
+          "Нет"
+        ],
+        [
+          "Cython",
+          "Средняя",
+          "Высокая",
+          "nogil",
+          "Cython"
+        ],
+        [
+          "ctypes",
+          "Низкая",
+          "Средняя",
+          "Да",
+          "Встроен"
+        ],
+        [
+          "cffi",
+          "Низкая",
+          "Высокая",
+          "Да",
+          "cffi"
+        ],
+        [
+          "PyO3/Rust",
+          "Средняя",
+          "Максимальная",
+          "Нет (по умолчанию)",
+          "Rust toolchain"
+        ],
+        [
+          "Numba",
+          "Очень низкая",
+          "Высокая (числ.)",
+          "Нет (nogil)",
+          "LLVM"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Профилирование C-кода"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Cython без типов — как обычный Python",
+          "Используйте `cdef`, типы аргументов, memoryview"
+        ],
+        [
+          "Забыли `nogil=True` в prange",
+          "GIL не отпустится!"
+        ],
+        [
+          "ctypes без argtypes/restype",
+          "UB, краши, неверные результаты"
+        ],
+        [
+          "Передача Python объектов в C без incref",
+          "Утечки памяти / use-after-free"
+        ],
+        [
+          "Смешивание аллокаторов (malloc/free vs PyMem)",
+          "Используйте PyMem_Malloc/PyMem_Free"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Cython Docs** — https://cython.readthedocs.io/",
+        "**Python C API** — https://docs.python.org/3/c-api/",
+        "**cffi Docs** — https://cffi.readthedocs.io/",
+        "**PyO3 Guide** — https://pyo3.rs/",
+        "**Numba Docs** — https://numba.readthedocs.io/",
+        "**Extending Python with C/C++** — https://docs.python.org/3/extending/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Cython без типов — как обычный Python",
+      "correct": "Используйте `cdef`, типы аргументов, memoryview"
+    },
+    {
+      "mistake": "Забыли `nogil=True` в prange",
+      "correct": "GIL не отпустится!"
+    },
+    {
+      "mistake": "ctypes без argtypes/restype",
+      "correct": "UB, краши, неверные результаты"
+    },
+    {
+      "mistake": "Передача Python объектов в C без incref",
+      "correct": "Утечки памяти / use-after-free"
+    },
+    {
+      "mistake": "Смешивание аллокаторов (malloc/free vs PyMem)",
+      "correct": "Используйте PyMem_Malloc/PyMem_Free"
+    }
+  ],
+  "resources": [
+    "**Cython Docs** — https://cython.readthedocs.io/",
+    "**Python C API** — https://docs.python.org/3/c-api/",
+    "**cffi Docs** — https://cffi.readthedocs.io/",
+    "**PyO3 Guide** — https://pyo3.rs/",
+    "**Numba Docs** — https://numba.readthedocs.io/",
+    "**Extending Python with C/C++** — https://docs.python.org/3/extending/"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 24
+}

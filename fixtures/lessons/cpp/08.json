@@ -1,0 +1,282 @@
+{
+  "title": "Урок 8: Указатели и ссылки",
+  "slug": "ukazateli-i-ssylki",
+  "short_description": "",
+  "goals": [
+    "Понять адреса памяти, операторы `&` (address-of) и `*` (dereference)",
+    "Изучить указатели: арифметика, nullptr, void*, указатели на функции",
+    "Освоить ссылки: lvalue, rvalue, const ссылки, привязка к временным",
+    "Научиться работать с динамической памятью: `new`, `delete`, `new[]`, `delete[]`",
+    "Понять базовую безопасность: владение, RAII, умные указатели (введение)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять адреса памяти, операторы `&` (address-of) и `*` (dereference)",
+        "Изучить указатели: арифметика, nullptr, void*, указатели на функции",
+        "Освоить ссылки: lvalue, rvalue, const ссылки, привязка к временным",
+        "Научиться работать с динамической памятью: `new`, `delete`, `new[]`, `delete[]`",
+        "Понять базовую безопасность: владение, RAII, умные указатели (введение)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Адреса и указатели"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iostream>\n\nint main() {\n    int x = 42;\n    int* ptr = &x;        // ptr хранит адрес x\n    std::cout << ptr;     // адрес (например, 0x7ffc1234)\n    std::cout << *ptr;    // 42 — разыменование (доступ к значению)\n\n    *ptr = 100;           // меняет x через указатель\n    std::cout << x;       // 100\n\n    // Нулевой указатель (C++11)\n    int* p1 = nullptr;    // лучше чем NULL или 0\n    int* p2 = nullptr;\n    if (!p1) std::cout << \"nullptr\\n\";\n\n    // void* — указатель на любой тип (нужен static_cast для разыменования)\n    void* vp = &x;\n    int* ip = static_cast<int*>(vp);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Указательная арифметика"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int arr[5] = {10, 20, 30, 40, 50};\nint* p = arr;           // p указывает на arr[0]\n\np + 1;      // адрес arr[1] (смещение на sizeof(int) байт)\np + 2;      // адрес arr[2]\n*(p + 2);   // 30 — то же что arr[2]\n\np++;        // теперь p указывает на arr[1]\n++p;        // arr[2]\np += 2;     // arr[4]\n\n// Разница указателей — количество элементов между ними\nint* p2 = arr + 4;\nstd::cout << p2 - p;    // 4 (ptrdiff_t)\n\n// Сравнение\np < p2;     // true"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ссылки"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int x = 10;\nint& ref = x;       // ref — другое имя для x (алиас)\nref = 20;           // x становится 20\n\n// Ссылка должна быть инициализирована при объявлении\n// int& bad; // ОШИБКА\n\n// const ссылка — может привязываться к временным и литералам\nconst int& cref = 42;           // OK: продлевает время жизни временного\nconst int& cref2 = x + y;       // OK\n// int& r = 42;                 // ОШИБКА: не-const ссылка не привязывается к rvalue\n\n// Ссылки не могут быть null, не могут быть перепривязаны"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "rvalue-ссылки (C++11) — основа move semantics"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int x = 10;\nint&& rref = 42;        // привязывается к rvalue (временному)\nint&& rref2 = std::move(x); // приведение lvalue к rvalue\n\n// std::move — не перемещает, а кастует к rvalue-ссылке\nstd::string s1 = \"hello\";\nstd::string s2 = std::move(s1); // s1 теперь в \"valid but unspecified state\"\n// s1 может быть пустой, но деструктор безопасен"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Указатели на функции"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int add(int a, int b) { return a + b; }\nint sub(int a, int b) { return a - b; }\n\nint (*func_ptr)(int, int) = add;  // тип: указатель на функцию(int,int)->int\nfunc_ptr = sub;                   // можно переназначать\n\nstd::cout << func_ptr(5, 3);      // 2\n\n// Использование с алгоритмами\n#include <algorithm>\n#include <vector>\nstd::vector<int> v = {3,1,4,1,5};\nstd::sort(v.begin(), v.end(), [](int a, int b){ return a > b; });\n// lambda неявно конвертируется в указатель на функцию (если не захватывает)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Динамическая память"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iostream>\n\n// Одиночный объект\nint* p = new int(42);     // выделяет память, вызывает конструктор\nstd::cout << *p;          // 42\ndelete p;                 // вызывает деструктор, освобождает память\np = nullptr;              // хорошая практика после delete\n\n// Массив\nint* arr = new int[5]{1,2,3,4,5};\ndelete[] arr;             // ВАЖНО: delete[] для массивов!\narr = nullptr;\n\n// Опасности:\n// 1. Утечка памяти: забыли delete\n// 2. Double delete: delete дважды\n// 3. Use after delete: обращение через висячий указатель\n// 4. Mismatch: new[] с delete или new с delete[]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Умные указатели (C++11) — RAII для памяти"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <memory>\n#include <iostream>\n\nclass Resource {\npublic:\n    Resource() { std::cout << \"Acquired\\n\"; }\n    ~Resource() { std::cout << \"Released\\n\"; }\n    void use() { std::cout << \"Using\\n\"; }\n};\n\nvoid demo() {\n    // unique_ptr — единственное владение (не копируется, только move)\n    std::unique_ptr<Resource> u1 = std::make_unique<Resource>();\n    u1->use();\n    // std::unique_ptr<Resource> u2 = u1; // ОШИБКА: копирование запрещено\n    std::unique_ptr<Resource> u2 = std::move(u1); // OK: передача владения\n    // u1 теперь nullptr\n\n    // shared_ptr — совместное владение (reference counting)\n    std::shared_ptr<Resource> s1 = std::make_shared<Resource>();\n    std::shared_ptr<Resource> s2 = s1; // копируется, счётчик = 2\n    std::cout << s1.use_count(); // 2\n    // Память освободится когда последний shared_ptr умрёт\n\n    // weak_ptr — слабая ссылка (не увеличивает счётчик, для кэшей, родителей)\n    std::weak_ptr<Resource> w = s1;\n    if (auto locked = w.lock()) { locked->use(); } // проверка жив ли объект\n}\n\n// Правила:\n// - По умолчанию используйте unique_ptr\n// - shared_ptr когда нужно совместное владение\n// - Никогда не делайте new/shared_ptr вручную — используйте make_unique/make_shared\n// - Избегайте raw new/delete в современном C++"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "RAII (Resource Acquisition Is Initialization)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Принцип: ресурс приобретается в конструкторе, освобождается в деструкторе\n// Гарантирует: никаких утечек при исключениях, раннем return и т.д.\n\nclass FileHandle {\n    FILE* f;\npublic:\n    FileHandle(const char* name) : f(std::fopen(name, \"r\")) {\n        if (!f) throw std::runtime_error(\"Cannot open\");\n    }\n    ~FileHandle() { if (f) std::fclose(f); }\n    // Запрет копирования\n    FileHandle(const FileHandle&) = delete;\n    FileHandle& operator=(const FileHandle&) = delete;\n    // Move разрешен\n    FileHandle(FileHandle&& other) noexcept : f(other.f) { other.f = nullptr; }\n    FILE* get() const { return f; }\n};\n\nvoid func() {\n    FileHandle f(\"data.txt\"); // при выходе из области — автоматическое закрытие\n    // даже если брошено исключение!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "this указатель"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct Counter {\n    int count = 0;\n    Counter& increment() {\n        ++count;\n        return *this; // возврат ссылки на себя для чейнинга\n    }\n    void print() const { std::cout << count; }\n};\n\nCounter c;\nc.increment().increment().print(); // 2"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Указательная арифметика"
+    },
+    {
+      "type": "text",
+      "content": "Дан <code>int arr[10] = {1,2,3,4,5,6,7,8,9,10};</code> Используя только указатели (не индексы <code>[]</code>):"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Выведите все элементы",
+        "Найдите максимум",
+        "Реверсните массив на месте"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Swap через указатели и ссылки"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте <code>void swap<em>ptr(int<em> a, int</em> b)</code> и <code>void swap</em>ref(int& a, int& b)</code>. Какая версия безопаснее? Почему?"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Динамический массив вручную"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте класс <code>DynamicArray</code> с <code>new[]</code>/<code>delete[]</code>, конструктором копирования, оператором присваивания, move-семантикой. Правило трёх/пяти."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: unique_ptr vs shared_ptr"
+    },
+    {
+      "type": "text",
+      "content": "Создайте <code>std::vector<std::unique<em>ptr<Resource>></code> с 1000 элементов. Замерьте время создания и уничтожения. Сравните с <code>shared</em>ptr</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Функция, возвращающая указатель"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int* create_array(int n, int init) {\n    // вернуть динамический массив, заполненный init\n}"
+    },
+    {
+      "type": "text",
+      "content": "Кто отвечает за <code>delete[]</code>? Как улучшить с <code>unique_ptr<int[]></code>?"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: this и method chaining"
+    },
+    {
+      "type": "text",
+      "content": "Создайте класс <code>Builder</code> с методами <code>set<em>name</code>, <code>set</em>age</code>, <code>set_email</code>, возвращающими <code>*this</code>. Постройте объект одной цепочкой."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки новичка"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Разыменование nullptr",
+          "UB, краш"
+        ],
+        [
+          "`delete` вместо `delete[]` для массива",
+          "UB, утечка/краш"
+        ],
+        [
+          "Возврат указателя на локальную переменную",
+          "Висячий указатель"
+        ],
+        [
+          "Копирование `unique_ptr`",
+          "Ошибка компиляции"
+        ],
+        [
+          "Циклические `shared_ptr`",
+          "Утечка памяти (счётчик никогда не 0)"
+        ],
+        [
+          "`new` без `delete` в исключительной ситуации",
+          "Утечка"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "cppreference: [Pointers](https://en.cppreference.com/w/cpp/language/pointer), [References](https://en.cppreference.com/w/cpp/language/reference), [Smart pointers](https://en.cppreference.com/w/cpp/memory)",
+        "C++ Core Guidelines: [R. Resource management](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r-resource-management)",
+        "[Rule of Zero/Five](https://en.cppreference.com/w/cpp/language/rule_of_three) — когда нужны специальные функции-члены"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Разыменование nullptr",
+      "correct": "UB, краш"
+    },
+    {
+      "mistake": "`delete` вместо `delete[]` для массива",
+      "correct": "UB, утечка/краш"
+    },
+    {
+      "mistake": "Возврат указателя на локальную переменную",
+      "correct": "Висячий указатель"
+    },
+    {
+      "mistake": "Копирование `unique_ptr`",
+      "correct": "Ошибка компиляции"
+    },
+    {
+      "mistake": "Циклические `shared_ptr`",
+      "correct": "Утечка памяти (счётчик никогда не 0)"
+    },
+    {
+      "mistake": "`new` без `delete` в исключительной ситуации",
+      "correct": "Утечка"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 8
+}

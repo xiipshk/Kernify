@@ -1,0 +1,396 @@
+{
+  "title": "Урок 29: Build/ABI — large CMake projects, ABI, symbols, modules, cross-compilation",
+  "slug": "buildabi-large-cmake-projects-abi-symbols-modules-cross-compilation",
+  "short_description": "large CMake projects, ABI, symbols, modules, cross-compilation",
+  "goals": [
+    "Освоить масштабируемую структуру CMake проектов",
+    "Понять ABI (Application Binary Interface) и совместимость",
+    "Изучить symbol visibility, versioning, mangling",
+    "Научиться работать с C++20 Modules",
+    "Разобраться в cross-compilation и toolchains"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Освоить масштабируемую структуру CMake проектов",
+        "Понять ABI (Application Binary Interface) и совместимость",
+        "Изучить symbol visibility, versioning, mangling",
+        "Научиться работать с C++20 Modules",
+        "Разобраться в cross-compilation и toolchains"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Large CMake Projects Structure"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Modern CMake (Target-based)"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Library Target"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Header-Only Library"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. ABI (Application Binary Interface)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что входит в ABI"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "- Name mangling схемы (Itanium C++ ABI для GCC/Clang, MSVC ABI)\n- Class layout: поля, vtable, virtual bases, padding\n- Calling convention: parameter passing, return values, stack cleanup\n- Exception handling: unwind tables, personality routines\n- RTTI: type_info layout\n- Template instantiation: exported vs implicit\n- Standard library ABI: libstdc++ vs libc++ vs MSVC STL"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Symbol Visibility"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// GCC/Clang visibility\n#define MYLIB_API __attribute__((visibility(\"default\")))\n#define MYLIB_INTERNAL __attribute__((visibility(\"hidden\")))\n\n// MSVC\n#ifdef _WIN32\n    #ifdef MYLIB_EXPORTS\n        #define MYLIB_API __declspec(dllexport)\n    #else\n        #define MYLIB_API __declspec(dllimport)\n    #endif\n    #define MYLIB_INTERNAL\n#else\n    #define MYLIB_API __attribute__((visibility(\"default\")))\n    #define MYLIB_INTERNAL __attribute__((visibility(\"hidden\")))\n#endif\n\n// Usage\nclass MYLIB_API PublicClass { ... };\nclass MYLIB_INTERNAL InternalImpl { ... };"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ABI Compatibility Rules"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// BREAKING changes (require SOVERSION bump):\n// - Add/remove virtual functions\n// - Change class size (add/remove non-static data members)\n// - Change base classes\n// - Change function signature (params, return type)\n// - Change enum underlying type\n// - Remove exported symbols\n\n// NON-BREAKING:\n// - Add non-virtual methods\n// - Add static members\n// - Add default parameter values (careful!)\n// - Change function body (implementation)\n// - Add new classes/functions (new symbols)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Version Scripts (Linux)"
+    },
+    {
+      "type": "code",
+      "language": "ld",
+      "content": "// mylib.version\nMYLIB_1.0 {\n    global:\n        PublicClass*;\n        public_function*;\n    local:\n        *;  // hide everything else\n};"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": "set_target_properties(mylib PROPERTIES\n    LINK_FLAGS \"-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/mylib.version\"\n)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. C++20 Modules"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Module Interface Unit"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// mylib.ixx (или .cppm)\nexport module mylib;\n\nimport <vector>;\nimport <string>;\nimport :internal;  // partition\n\nexport namespace mylib {\n\nexport class Widget {\n    int value_;\npublic:\n    Widget(int v = 0) : value_(v) {}\n    int get() const { return value_; }\n    void set(int v) { value_ = v; }\n};\n\nexport std::string format(const Widget& w);\n\n} // namespace mylib"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Module Partition"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// internal.ixx\nexport module mylib:internal;\n\nnamespace mylib::detail {\n    export int helper(int x) { return x * 2; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Module Implementation Unit"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// mylib_impl.cpp\nmodule mylib;\n\nimport <format>;\n\nnamespace mylib {\n    std::string format(const Widget& w) {\n        return std::format(\"Widget({})\", w.get());\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CMake Module Support (3.28+)"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Header Units (Import STL headers)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// std.ixx — std module (implementation-defined)\nexport module std;\nexport import <vector>;\nexport import <string>;\nexport import <memory>;\nexport import <algorithm>;\nexport import <iostream>;"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// usage.cpp\nimport std;  // вместо #include <...>\nimport mylib;\n\nint main() {\n    std::vector<int> v = {1,2,3};\n    mylib::Widget w(42);\n    std::cout << mylib::format(w) << '\\n';\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Cross-Compilation"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Toolchain File"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Building"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cmake -B build-arm64 -DCMAKE_TOOLCHAIN_FILE=toolchain-aarch64-linux.cmake .\ncmake --build build-arm64"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cross-Compiling with vcpkg"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "vcpkg install --triplet arm64-linux fmt spdlog\ncmake -B build -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \\\n      -DVCPKG_TARGET_TRIPLET=arm64-linux ."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Canadian Cross (build on A, for B, running on C)"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Symbol Management"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Name Mangling"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Itanium C++ ABI (GCC/Clang)\n// _ZN7MyClass4funcEi -> MyClass::func(int)\n// _ZN3Foo3BarC1Ev -> Foo::Bar::Bar()\n\n// Demangling\nextern \"C\" char* __cxa_demangle(const char* mangled, char* buf, size_t* n, int* status);\n\n// c++filt utility\n// $ c++filt _ZN7MyClass4funcEi\n// MyClass::func(int)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Symbol Inspection"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Version Symbols (Linux)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// symbol versioning в коде\n__asm__(\".symver old_func,old_func@MYLIB_1.0\");\n__asm__(\".symver new_func,new_func@MYLIB_2.0\");\n\n// или через .map file"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Packaging & Distribution"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CPack"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Conan v2 Recipe"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: CMake Project Structure"
+    },
+    {
+      "type": "text",
+      "content": "Создайте проект с структурой:"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "project/\n├── CMakeLists.txt\n├── src/\n│   ├── core/ (static lib)\n│   ├── network/ (shared lib, depends on core)\n│   └── cli/ (executable, depends on network)\n├── tests/\n└── third_party/"
+    },
+    {
+      "type": "text",
+      "content": "Настройте <code>target<em>link</em>libraries</code> с PUBLIC/PRIVATE/INTERFACE. Добавьте <code>install()</code> и <code>CPack</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: ABI Breakage Detection"
+    },
+    {
+      "type": "text",
+      "content": "Напишите скрипт, использующий <code>abi-dumper</code> / <code>abi-compliance-checker</code> для сравнения двух версий shared library. Найдите breaking changes."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Symbol Visibility"
+    },
+    {
+      "type": "text",
+      "content": "Создайте shared library с:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Public API (visible)",
+        "Internal implementation (hidden)",
+        "Plugin interface (visible, but not in main API)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Проверьте <code>nm -D</code> и <code>objdump -T</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: C++20 Modules"
+    },
+    {
+      "type": "text",
+      "content": "Создайте модуль <code>math</code> с partition <code>math:constants</code>, <code>math:algorithms</code>. Используйте в исполняемом файле. Настройте CMake 3.28+ для модулей."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Cross-Compilation"
+    },
+    {
+      "type": "text",
+      "content": "Настройте кросс-компиляцию под ARM64 (aarch64) используя toolchain file. Соберите проект с vcpkg dependencies. Запустите под QEMU user-mode."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Sanitizers in CI"
+    },
+    {
+      "type": "text",
+      "content": "Добавьте в CMake опции для AddressSanitizer, UBSan, TSan, MSan. Настройте CI (GitHub Actions) для запуска тестов под санитайзерами."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Modern CMake** — https://cliutils.gitlab.io/modern-cmake/",
+        "**CMake Documentation** — https://cmake.org/cmake/help/latest/",
+        "**Itanium C++ ABI** — https://itanium-cxx-abi.github.io/cxx-abi/",
+        "**C++ Modules** — https://en.cppreference.com/w/cpp/language/modules",
+        "**vcpkg** — https://vcpkg.io/",
+        "**Conan 2.0** — https://docs.conan.io/2/",
+        "**ABI Compliance Checker** — https://abi-laboratory.pro/",
+        "**P2300** — std::execution для унифицированного async"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [
+    "**Modern CMake** — https://cliutils.gitlab.io/modern-cmake/",
+    "**CMake Documentation** — https://cmake.org/cmake/help/latest/",
+    "**Itanium C++ ABI** — https://itanium-cxx-abi.github.io/cxx-abi/",
+    "**C++ Modules** — https://en.cppreference.com/w/cpp/language/modules",
+    "**vcpkg** — https://vcpkg.io/",
+    "**Conan 2.0** — https://docs.conan.io/2/",
+    "**ABI Compliance Checker** — https://abi-laboratory.pro/",
+    "**P2300** — std::execution для унифицированного async"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 29
+}

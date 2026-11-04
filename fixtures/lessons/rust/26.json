@@ -1,0 +1,509 @@
+{
+  "title": "Урок 26: Unsafe Rust",
+  "slug": "unsafe-rust",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Что такое `unsafe`?"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Два режима Rust"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Safe Rust — проверяется компилятором\n// - Ограничения владения и заимствования\n// - Проверка границ массивов\n// - Нет null pointer dereference\n// - Нет data races\n\n// Unsafe Rust — программист отвечает за безопасность\n// - Разрешает 5 операций, которые компилятор не может проверить"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5 вещей, которые можно делать в `unsafe`:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Разыменовать raw pointer** (`*const T`, `*mut T`)",
+        "**Вызвать unsafe функцию** (включая FFI)",
+        "**Доступ к mutable static переменной**",
+        "**Реализовать unsafe trait** (`Send`, `Sync`)",
+        "**Доступ к полям `union`**"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. `unsafe` блоки и функции"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`unsafe` блок"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let mut x = 42;\nlet raw = &mut x as *mut i32;\n\nunsafe {\n    *raw = 10; // Разыменование raw pointer\n    println!(\"{}\", *raw);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`unsafe fn`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "unsafe fn dangerous() {\n    // Внутри unsafe fn можно вызывать другие unsafe операции без блока\n    let ptr = std::ptr::null_mut::<i32>();\n    *ptr = 42; // OK внутри unsafe fn\n}\n\n// Вызов unsafe fn требует unsafe блока\nunsafe { dangerous(); }\n\n// Safe wrapper над unsafe fn\nfn safe_wrapper() {\n    unsafe { dangerous(); } // Инкапсуляция unsafe\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`unsafe trait` и `unsafe impl`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Marker trait, требующий unsafe impl\nunsafe trait MyUnsafeTrait {}\n\nstruct MyType;\n\nunsafe impl MyUnsafeTrait for MyType {} // Гарантируем контракт вручную"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Raw Pointers детально"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Создание"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let x = 42;\n\n// Из ссылок\nlet raw_const: *const i32 = &x as *const i32;\nlet raw_mut: *mut i32 = &mut x as *mut i32;\n\n// Из Box\nlet boxed = Box::new(42);\nlet raw: *mut i32 = Box::into_raw(boxed);\n\n// Null pointers\nlet null: *const i32 = std::ptr::null();\nlet null_mut: *mut i32 = std::ptr::null_mut();\n\n// NonNull\nuse std::ptr::NonNull;\nlet non_null = NonNull::new(raw); // Option<NonNull<T>>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Разыменование"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let x = 42;\nlet raw = &x as *const i32;\n\nunsafe {\n    let val = *raw; // Чтение\n    println!(\"{}\", val);\n}\n\nlet mut y = 0;\nlet raw_mut = &mut y as *mut i32;\n\nunsafe {\n    *raw_mut = 10; // Запись\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pointer arithmetic"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let arr = [1, 2, 3, 4, 5];\nlet ptr = arr.as_ptr();\n\nunsafe {\n    let second = ptr.add(1);      // ptr + 1 * size_of::<i32>()\n    let third = ptr.add(2);\n    println!(\"{} {}\", *second, *third);\n\n    // offset — signed arithmetic\n    let back = third.offset(-1);\n    println!(\"{}\", *back);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::ptr` функции"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr;\n\n// Чтение/запись без drop\nlet mut x = 42;\nlet ptr = &mut x as *mut i32;\n\nunsafe {\n    ptr::write(ptr, 100);        // Запись без drop старого\n    let val = ptr::read(ptr);    // Чтение без drop\n    println!(\"{}\", val);\n}\n\n// Копирование памяти\nlet src = [1, 2, 3];\nlet mut dst = [0, 0, 0];\nunsafe {\n    ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 3);\n}\n\n// Копирование с перекрытием (memmove)\nlet mut arr = [1, 2, 3, 4, 5];\nunsafe {\n    ptr::copy(arr.as_ptr(), arr.as_mut_ptr().add(1), 3);\n    // arr = [1, 1, 2, 3, 5]\n}\n\n// Замена значения\nlet mut x = 42;\nlet ptr = &mut x as *mut i32;\nunsafe {\n    let old = ptr::replace(ptr, 100); // x = 100, возвращает 42\n}\n\n// Swap\nlet mut a = 1;\nlet mut b = 2;\nunsafe {\n    ptr::swap(&mut a as *mut _, &mut b as *mut _);\n    // a = 2, b = 1\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. `union` — объединения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "union IntOrFloat {\n    i: i32,\n    f: f32,\n}\n\nfn main() {\n    let u = IntOrFloat { i: 42 };\n\n    unsafe {\n        println!(\"i: {}\", u.i);\n        // println!(\"f: {}\", u.f); // UB! Неактивное поле\n    }\n\n    // Активное поле можно менять\n    u.f = 3.14;\n    unsafe { println!(\"f: {}\", u.f); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pattern matching на union (Rust 1.44+)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "union IntOrFloat {\n    i: i32,\n    f: f32,\n}\n\nfn process(u: IntOrFloat) {\n    unsafe {\n        match u {\n            IntOrFloat { i: 42 } => println!(\"Answer!\"),\n            IntOrFloat { f } => println!(\"Float: {}\", f),\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Union для type punning"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "union FloatBits {\n    f: f32,\n    bits: u32,\n}\n\nfn float_to_bits(f: f32) -> u32 {\n    unsafe { FloatBits { f }.bits }\n}\n\nfn bits_to_float(bits: u32) -> f32 {\n    unsafe { FloatBits { bits }.f }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. FFI (Foreign Function Interface)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Вызов C функций"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// extern \"C\" — C calling convention\nextern \"C\" {\n    fn abs(input: i32) -> i32;\n    fn strlen(s: *const i8) -> usize;\n}\n\nfn main() {\n    unsafe {\n        println!(\"abs(-3) = {}\", abs(-3));\n\n        let s = std::ffi::CString::new(\"hello\").unwrap();\n        println!(\"strlen = {}\", strlen(s.as_ptr()));\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Экспорт Rust функций для C"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[no_mangle] // Не манглить имя\npub extern \"C\" fn rust_add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n// В C:\n// int rust_add(int a, int b);\n// int result = rust_add(2, 3);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структуры для FFI"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(C)] // C layout\npub struct Point {\n    pub x: f64,\n    pub y: f64,\n}\n\nextern \"C\" {\n    fn distance(p1: *const Point, p2: *const Point) -> f64;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Коллбеки из C"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "extern \"C\" fn callback(x: i32) {\n    println!(\"Callback called with {}\", x);\n}\n\nextern \"C\" {\n    fn register_callback(cb: extern \"C\" fn(i32));\n}\n\nfn main() {\n    unsafe { register_callback(callback); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Строки в FFI"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ffi::{CStr, CString};\n\n// Rust -> C\nlet c_string = CString::new(\"hello\").unwrap();\nlet raw_ptr = c_string.as_ptr(); // *const i8\n// Передаём в C функцию\n\n// C -> Rust\nunsafe {\n    let c_str = CStr::from_ptr(raw_ptr);\n    let rust_str = c_str.to_str().unwrap(); // &str\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Безопасные абстракции над unsafe"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Паттерн: Safe wrapper"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr::NonNull;\nuse std::marker::PhantomData;\n\npub struct MyBox<T> {\n    ptr: NonNull<T>,\n    _marker: PhantomData<T>,\n}\n\nimpl<T> MyBox<T> {\n    pub fn new(x: T) -> Self {\n        let ptr = NonNull::new(Box::into_raw(Box::new(x)))\n            .expect(\"Box::into_raw never returns null\");\n        MyBox { ptr, _marker: PhantomData }\n    }\n\n    pub fn as_ref(&self) -> &T {\n        unsafe { self.ptr.as_ref() }\n    }\n\n    pub fn as_mut(&mut self) -> &mut T {\n        unsafe { self.ptr.as_mut() }\n    }\n}\n\nimpl<T> Drop for MyBox<T> {\n    fn drop(&mut self) {\n        unsafe { drop(Box::from_raw(self.ptr.as_ptr())); }\n    }\n}\n\n// Теперь пользователь работает с безопасным API\nfn main() {\n    let mut boxed = MyBox::new(42);\n    *boxed.as_mut() += 1;\n    println!(\"{}\", boxed.as_ref());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Pin` projection в unsafe"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\n\nstruct MyStruct {\n    field: i32,\n}\n\nimpl MyStruct {\n    // Безопасно: field не содержит указателей на self\n    fn get_field(self: Pin<&Self>) -> &i32 {\n        // unsafe: мы гарантируем, что field не двигается\n        unsafe { &self.get_unchecked_mut().field }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Undefined Behavior (UB) — чего НЕЛЬЗЯ делать"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Список UB в Rust"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// 1. Разыменование null/dangling pointer\nlet ptr: *const i32 = std::ptr::null();\nunsafe { *ptr; } // UB!\n\n// 2. Use after free\nlet x = Box::new(42);\nlet raw = Box::into_raw(x);\ndrop(Box::from_raw(raw)); // Память освобождена\nunsafe { *raw; } // UB!\n\n// 3. Data race (два потока пишут в одно место без синхронизации)\n\n// 4. Нарушение aliasing rules\nlet mut x = 42;\nlet raw_mut = &mut x as *mut i32;\nlet raw_const = &x as *const i32; // UB! *mut и *const одновременно\n\n// 5. Неинициализированная память\nlet x: i32;\nprintln!(\"{}\", x); // UB! (но Rust не даст скомпилировать)\n\n// 6. Out of bounds access\nlet arr = [1, 2, 3];\nunsafe { *arr.as_ptr().add(10); } // UB!\n\n// 7. Invalid enum discriminant\nenum Foo { A, B }\nlet invalid = std::mem::transmute::<u8, Foo>(10); // UB!\n\n// 8. Violation of reference validity\nlet r: &i32 = unsafe { &*(std::ptr::null::<i32>()) }; // UB!\n\n// 9. Double free\nlet x = Box::new(42);\nlet raw = Box::into_raw(x);\nunsafe { drop(Box::from_raw(raw)); }\nunsafe { drop(Box::from_raw(raw)); } // UB!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Miri — интерпретатор для поиска UB"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo install miri\ncargo miri test\ncargo miri run"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. `Send` и `Sync` unsafe impl"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда нужен `unsafe impl`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr::NonNull;\n\nstruct MyPtr<T> {\n    ptr: NonNull<T>,\n}\n\n// MyPtr<T>: Send если T: Send\nunsafe impl<T: Send> Send for MyPtr<T> {}\n\n// MyPtr<T>: Sync если T: Sync\nunsafe impl<T: Sync> Sync for MyPtr<T> {}\n\n// НО: если T не Send/Sync, мы ВРУЧНУЮ гарантируем\nstruct SpecialPtr {\n    ptr: *mut (),\n}\n\n// Мы знаем, что этот указатель используется thread-safe\nunsafe impl Send for SpecialPtr {}\nunsafe impl Sync for SpecialPtr {}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила для `Send`/`Sync`"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тип",
+        "Send",
+        "Sync"
+      ],
+      "rows": [
+        [
+          "`&T`",
+          "да, если T: Sync",
+          "да, если T: Sync"
+        ],
+        [
+          "`&mut T`",
+          "да, если T: Send",
+          "да, если T: Send"
+        ],
+        [
+          "`*const T`",
+          "нет",
+          "нет"
+        ],
+        [
+          "`*mut T`",
+          "нет",
+          "нет"
+        ],
+        [
+          "`Box<T>`",
+          "да, если T: Send",
+          "да, если T: Sync"
+        ],
+        [
+          "`Rc<T>`",
+          "нет",
+          "нет"
+        ],
+        [
+          "`Arc<T>`",
+          "да, если T: Send+Sync",
+          "да, если T: Send+Sync"
+        ],
+        [
+          "`Mutex<T>`",
+          "да, если T: Send",
+          "да, если T: Send"
+        ],
+        [
+          "`RefCell<T>`",
+          "нет",
+          "нет"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Безопасный wrapper над C malloc/free"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::alloc::{Layout, alloc, dealloc};\nuse std::ptr::NonNull;\n\npub struct CAllocation {\n    ptr: NonNull<u8>,\n    layout: Layout,\n}\n\nimpl CAllocation {\n    pub fn new(size: usize) -> Option<Self> {\n        let layout = Layout::from_size_align(size, 8).ok()?;\n        let ptr = unsafe { alloc(layout) };\n        NonNull::new(ptr).map(|ptr| CAllocation { ptr, layout })\n    }\n\n    pub fn as_ptr(&self) -> *mut u8 {\n        self.ptr.as_ptr()\n    }\n\n    pub fn as_slice(&self) -> &[u8] {\n        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.layout.size()) }\n    }\n\n    pub fn as_mut_slice(&mut self) -> &mut [u8] {\n        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.layout.size()) }\n    }\n}\n\nimpl Drop for CAllocation {\n    fn drop(&mut self) {\n        unsafe { dealloc(self.ptr.as_ptr(), self.layout); }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Intrusive linked list с raw pointers"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr::NonNull;\n\nstruct Node<T> {\n    value: T,\n    next: Option<NonNull<Node<T>>>,\n    prev: Option<NonNull<Node<T>>>,\n}\n\nstruct LinkedList<T> {\n    head: Option<NonNull<Node<T>>>,\n    tail: Option<NonNull<Node<T>>>,\n    len: usize,\n}\n\nimpl<T> LinkedList<T> {\n    pub fn new() -> Self {\n        LinkedList { head: None, tail: None, len: 0 }\n    }\n\n    pub fn push_back(&mut self, value: T) {\n        let node = Box::new(Node { value, next: None, prev: self.tail });\n        let node_ptr = NonNull::new(Box::into_raw(node)).unwrap();\n\n        unsafe {\n            if let Some(mut tail) = self.tail {\n                tail.as_mut().next = Some(node_ptr);\n                node_ptr.as_mut().prev = Some(tail);\n            } else {\n                self.head = Some(node_ptr);\n            }\n            self.tail = Some(node_ptr);\n            self.len += 1;\n        }\n    }\n\n    pub fn pop_back(&mut self) -> Option<T> {\n        self.tail.map(|mut tail_ptr| {\n            unsafe {\n                let tail = Box::from_raw(tail_ptr.as_ptr());\n                self.tail = tail.prev;\n                if let Some(mut new_tail) = self.tail {\n                    new_tail.as_mut().next = None;\n                } else {\n                    self.head = None;\n                }\n                self.len -= 1;\n                tail.value\n            }\n        })\n    }\n}\n\nimpl<T> Drop for LinkedList<T> {\n    fn drop(&mut self) {\n        while self.pop_back().is_some() {}\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: FFI wrapper для простой C библиотеки"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// C header:\n// typedef struct { double x, y; } Point;\n// double distance(Point* a, Point* b);\n// Point* point_new(double x, double y);\n// void point_free(Point* p);\n\n#[repr(C)]\npub struct Point {\n    x: f64,\n    y: f64,\n}\n\nextern \"C\" {\n    fn distance(a: *const Point, b: *const Point) -> f64;\n    fn point_new(x: f64, y: f64) -> *mut Point;\n    fn point_free(p: *mut Point);\n}\n\npub struct PointHandle {\n    ptr: *mut Point,\n}\n\nimpl PointHandle {\n    pub fn new(x: f64, y: f64) -> Option<Self> {\n        let ptr = unsafe { point_new(x, y) };\n        if ptr.is_null() { None } else { Some(PointHandle { ptr }) }\n    }\n\n    pub fn distance(&self, other: &PointHandle) -> f64 {\n        unsafe { distance(self.ptr, other.ptr) }\n    }\n}\n\nimpl Drop for PointHandle {\n    fn drop(&mut self) {\n        unsafe { point_free(self.ptr); }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`dereference of null pointer`",
+          "`std::ptr::null()` разыменован"
+        ],
+        [
+          "`use after free`",
+          "Память освобождена, указатель жив"
+        ],
+        [
+          "`data race`",
+          "Несинхронизированный доступ из потоков"
+        ],
+        [
+          "`misaligned pointer`",
+          "`ptr::read` наunaligned адресе"
+        ],
+        [
+          "`invalid enum discriminant`",
+          "`transmute` невалидного значения"
+        ],
+        [
+          "`double free`",
+          "Два `Box::from_raw` на одном указателе"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Шпаргалка: Unsafe API"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Функции/Типы"
+      ],
+      "rows": [
+        [
+          "Raw pointers",
+          "`*const T`, `*mut T`, `NonNull<T>`"
+        ],
+        [
+          "Pointer ops",
+          "`ptr::read`, `ptr::write`, `ptr::copy`, `ptr::copy_nonoverlapping`, `ptr::swap`, `ptr::replace`, `ptr::addr_of!`, `ptr::addr_of_mut!`"
+        ],
+        [
+          "Allocation",
+          "`alloc`, `dealloc`, `Layout`, `GlobalAlloc`"
+        ],
+        [
+          "FFI",
+          "`extern \"C\"`, `#[no_mangle]`, `CString`, `CStr`, `c_int`, `c_void`"
+        ],
+        [
+          "Unions",
+          "`union`, pattern matching"
+        ],
+        [
+          "Traits",
+          "`unsafe trait`, `unsafe impl`, `Send`, `Sync`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**`unsafe`**: 5 разрешенных операций (raw pointers, unsafe fn, static mut, unsafe trait, union)",
+        "**Raw pointers**: создание, разыменование, арифметика, `std::ptr` функции",
+        "**Unions**: `union`, pattern matching, type punning",
+        "**FFI**: `extern \"C\"`, `#[no_mangle]`, `CString`/`CStr`, callbacks",
+        "**Safe abstractions**: инкапсуляция unsafe в safe API",
+        "**UB**: список видов UB, Miri для обнаружения",
+        "**`Send`/`Sync`**: `unsafe impl` для кастомных типов"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`dereference of null pointer`",
+      "correct": "`std::ptr::null()` разыменован"
+    },
+    {
+      "mistake": "`use after free`",
+      "correct": "Память освобождена, указатель жив"
+    },
+    {
+      "mistake": "`data race`",
+      "correct": "Несинхронизированный доступ из потоков"
+    },
+    {
+      "mistake": "`misaligned pointer`",
+      "correct": "`ptr::read` наunaligned адресе"
+    },
+    {
+      "mistake": "`invalid enum discriminant`",
+      "correct": "`transmute` невалидного значения"
+    },
+    {
+      "mistake": "`double free`",
+      "correct": "Два `Box::from_raw` на одном указателе"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 26
+}

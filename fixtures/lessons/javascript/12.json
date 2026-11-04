@@ -1,0 +1,312 @@
+{
+  "title": "Урок 12: Scope, Closures, Hoisting, Execution Context, this",
+  "slug": "scope-closures-hoisting-execution-context-this",
+  "short_description": "",
+  "goals": [
+    "Понимать лексическую область видимости и цепочку областей",
+    "Разбираться в hoisting (поднятии) переменных и функций",
+    "Осваивать замыкания (closures) и их практические применения",
+    "Понимать execution context и call stack",
+    "Правильно использовать `this` в разных контекстах"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать лексическую область видимости и цепочку областей",
+        "Разбираться в hoisting (поднятии) переменных и функций",
+        "Осваивать замыкания (closures) и их практические применения",
+        "Понимать execution context и call stack",
+        "Правильно использовать `this` в разных контекстах"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Лексическая область видимости (Lexical Scope)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Блочная область видимости (ES2015+)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// let, const — блочная область видимости\nif (true) {\n  let blockScoped = \"только в блоке\";\n  const alsoBlock = \"тоже в блоке\";\n  var functionScoped = \"видно во всей функции\";\n}\n\n// console.log(blockScoped); // ReferenceError\nconsole.log(functionScoped); // \"видно во всей функции\"\n\n// Циклы: let создаёт новую связь на каждой итерации\nfor (let i = 0; i < 3; i++) {\n  setTimeout(() => console.log(i), 100); // 0, 1, 2\n}\nfor (var j = 0; j < 3; j++) {\n  setTimeout(() => console.log(j), 100); // 3, 3, 3 (var — общая переменная)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Цепочка областей видимости (Scope Chain)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const global = \"global\";\n\nfunction outer() {\n  const outerVar = \"outer\";\n\n  function middle() {\n    const middleVar = \"middle\";\n\n    function inner() {\n      const innerVar = \"inner\";\n      console.log(global, outerVar, middleVar, innerVar);\n      // Все доступны — лексическое замыкание\n    }\n    inner();\n  }\n  middle();\n}\nouter();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Hoisting (Поднятие)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Переменные"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// var — поднимается и инициализируется undefined\nconsole.log(a); // undefined (не ReferenceError!)\nvar a = 5;\n\n// let, const — поднимаются, но в \"Temporal Dead Zone\" (TDZ)\nconsole.log(b); // ReferenceError: Cannot access 'b' before initialization\nlet b = 10;\n\nconsole.log(c); // ReferenceError\nconst c = 15;\n\n// TDZ заканчивается в месте объявления\n// typeof в TDZ — тоже ошибка для let/const\n// typeof x; // ReferenceError если x — let/const"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Функции"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Function Declaration — поднимается ВЦЕЛОМ (с телом)\nfoo(); // \"foo\"\nfunction foo() { console.log(\"foo\"); }\n\n// Function Expression — только переменная поднимается\nbar(); // TypeError: bar is not a function\nvar bar = function() { console.log(\"bar\"); };\n\n// Arrow function — как Function Expression\nbaz(); // ReferenceError (TDZ)\nconst baz = () => console.log(\"baz\");"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Порядок приоритета hoisting"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Function Declarations\n// 2. var / let / const (объявления)\n// 3. Function Expressions / Arrow functions (как переменные)\n\nfunction test() {\n  console.log(typeof foo); // \"function\" (Function Declaration)\n  console.log(typeof bar); // \"undefined\" (var)\n  console.log(typeof baz); // ReferenceError (let TDZ)\n\n  function foo() {}\n  var bar = function() {};\n  let baz = function() {};\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Замыкания (Closures)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое замыкание"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function outer(x) {\n  // x — свободная переменная\n  function inner(y) {\n    return x + y; // inner \"запоминает\" x\n  }\n  return inner;\n}\n\nconst add5 = outer(5);\nconsole.log(add5(3)); // 8 — x=5 \"замкнуто\" внутри add5\nconsole.log(add5.__proto__); // в консоли видно [[Scopes]] -> Closure (outer) -> x: 5"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Практический паттерн: фабрика функций"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function createCounter() {\n  let count = 0; // приватная переменная\n  return {\n    increment() { return ++count; },\n    decrement() { return --count; },\n    getCount() { return count; }\n  };\n}\n\nconst counter1 = createCounter();\nconst counter2 = createCounter();\nconsole.log(counter1.increment()); // 1\nconsole.log(counter1.increment()); // 2\nconsole.log(counter2.increment()); // 1 — изолированное состояние!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "⚠️ Ловушка: замыкание в цикле (классическая)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ПРОБЛЕМА: var — одна переменная на всех\nvar funcs = [];\nfor (var i = 0; i < 3; i++) {\n  funcs.push(function() { return i; });\n}\nconsole.log(funcs[0]()); // 3 (не 0!)\n\n// РЕШЕНИЕ 1: let — новая связь на итерацию (ES2015)\nlet funcs2 = [];\nfor (let i = 0; i < 3; i++) {\n  funcs2.push(() => i);\n}\nconsole.log(funcs2[0]()); // 0 ✓\n\n// РЕШЕНИЕ 2: IIFE (для var)\nvar funcs3 = [];\nfor (var i = 0; i < 3; i++) {\n  funcs3.push((function(x) { return () => x; })(i));\n}\nconsole.log(funcs3[0]()); // 0 ✓\n\n// РЕШЕНИЕ 3: bind\nvar funcs4 = [];\nfor (var i = 0; i < 3; i++) {\n  funcs4.push(function() { return this.i; }.bind({ i }));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Замыкание и память"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function heavy() {\n  const bigData = new Array(1000000).fill(\"x\");\n  return function() { return bigData.length; };\n}\n// bigData удерживается в памяти, пока живёт возвращённая функция!\n\n// Решение: занулить ссылку, когда не нужно\nlet getLength = heavy();\nconsole.log(getLength());\ngetLength = null; // bigData можно собрать GC"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Execution Context и Call Stack"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Этапы создания Execution Context"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Creation Phase (фаза создания):\n//    - Variable Environment (LexicalEnvironment)\n//    - This Binding\n//    - Outer Environment Reference\n\n// 2. Execution Phase (фаза выполнения):\n//    - Присваивание значений, выполнение кода\n\nfunction a() { b(); }\nfunction b() { c(); }\nfunction c() { console.trace(); } // стек: c -> b -> a -> global\n\na();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Call Stack (стек вызовов)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function first() { second(); }\nfunction second() { third(); }\nfunction third() { console.log(\"bottom\"); }\n\nfirst();\n// Stack: global -> first -> second -> third\n// После third: pop third -> pop second -> pop first"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Microtasks vs Macrotasks (предварительно для урока 16)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "console.log(\"1 sync\");\n\nsetTimeout(() => console.log(\"2 macrotask\"), 0);\n\nPromise.resolve().then(() => console.log(\"3 microtask\"));\n\nqueueMicrotask(() => console.log(\"4 microtask\"));\n\nconsole.log(\"5 sync\");\n// Вывод: 1, 5, 3, 4, 2"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Ключевое слово this"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила определения this (в порядке приоритета)"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "1. New binding (new)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function User(name) {\n  this.name = name;\n}\nconst user = new User(\"Анна\");\nconsole.log(user.name); // \"Анна\" — this = новый объект"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "2. Explicit binding (call, apply, bind)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function greet(greeting, punctuation) {\n  console.log(`${greeting}, ${this.name}${punctuation}`);\n}\nconst user = { name: \"Анна\" };\n\ngreet.call(user, \"Привет\", \"!\");        // \"Привет, Анна!\"\ngreet.apply(user, [\"Здравствуйте\", \".\"]); // \"Здравствуйте, Анна.\"\n\nconst bound = greet.bind(user, \"Hi\");\nbound(\"?\"); // \"Hi, Анна?\""
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "3. Implicit binding (метод объекта)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const user = {\n  name: \"Анна\",\n  greet() { console.log(this.name); }\n};\nuser.greet(); // \"Анна\" — this = user\n\n// Потеря контекста при передаче\nconst fn = user.greet;\nfn(); // undefined (strict) или window (sloppy) — this потерян!"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "4. Default binding (глобальный/undefined)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function foo() { console.log(this); }\nfoo(); // window (sloppy) или undefined (strict mode)\n\n// В строгом режиме this = undefined\n\"use strict\";\nfunction bar() { console.log(this); }\nbar(); // undefined"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "5. Arrow functions — лексическое this"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const user = {\n  name: \"Анна\",\n  // Обычная функция\n  greetRegular() {\n    setTimeout(function() {\n      console.log(this.name); // undefined — this = window/undefined\n    }, 100);\n  },\n  // Arrow — лексическое this\n  greetArrow() {\n    setTimeout(() => {\n      console.log(this.name); // \"Анна\" — this из внешней области\n    }, 100);\n  }\n};\n\n// Arrow НЕ имеет собственного this, arguments, super, new.target\nconst arrow = () => this;\nconsole.log(arrow() === window); // true (в глобальной области)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "this в классах"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class User {\n  constructor(name) { this.name = name; }\n\n  greet() { console.log(this.name); }\n\n  // Class fields (ES2022) — стрелочная функция = авто-биндинг\n  greetBound = () => console.log(this.name);\n\n  // Static метод — this = класс\n  static create(name) { return new this(name); }\n}\n\nconst user = new User(\"Анна\");\nconst fn = user.greet;\nfn(); // undefined — потеря контекста!\nuser.greetBound(); // \"Анна\" — работает"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`for (var i=0; i<3; i++) setTimeout(() => console.log(i))` → 3,3,3",
+          "Используйте `let` или IIFE"
+        ],
+        [
+          "`const fn = obj.method; fn()` — `this` потерян",
+          "`obj.method()` или `fn.call(obj)` или `bind`"
+        ],
+        [
+          "Arrow function как метод класса — `this` не работает",
+          "Arrow в class field = авто-биндинг, или `bind` в конструкторе"
+        ],
+        [
+          "`let x = x` в TDZ",
+          "ReferenceError — нельзя читать до инициализации"
+        ],
+        [
+          "`function f() { return function() { return this; } }` — this зависит от вызова",
+          "Arrow: `() => this` захватывает внешний this"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`for (var i=0; i<3; i++) setTimeout(() => console.log(i))` → 3,3,3",
+      "correct": "Используйте `let` или IIFE"
+    },
+    {
+      "mistake": "`const fn = obj.method; fn()` — `this` потерян",
+      "correct": "`obj.method()` или `fn.call(obj)` или `bind`"
+    },
+    {
+      "mistake": "Arrow function как метод класса — `this` не работает",
+      "correct": "Arrow в class field = авто-биндинг, или `bind` в конструкторе"
+    },
+    {
+      "mistake": "`let x = x` в TDZ",
+      "correct": "ReferenceError — нельзя читать до инициализации"
+    },
+    {
+      "mistake": "`function f() { return function() { return this; } }` — this зависит от вызова",
+      "correct": "Arrow: `() => this` захватывает внешний this"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 12
+}

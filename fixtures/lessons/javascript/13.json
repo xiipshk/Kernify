@@ -1,0 +1,247 @@
+{
+  "title": "Урок 13: Функциональный стиль — HOF, callbacks, pure functions, map/filter/reduce",
+  "slug": "funktsionalnyy-stil-hof-callbacks-pure-functions-mapfilterreduce",
+  "short_description": "HOF, callbacks, pure functions, map/filter/reduce",
+  "goals": [
+    "Понимать функции высшего порядка (Higher-Order Functions)",
+    "Писать чистые функции и избегать побочных эффектов",
+    "Мастерски использовать map, filter, reduce, find, some, every",
+    "Работать с композицией и каррированием",
+    "Применять функциональные паттерны в реальном коде"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать функции высшего порядка (Higher-Order Functions)",
+        "Писать чистые функции и избегать побочных эффектов",
+        "Мастерски использовать map, filter, reduce, find, some, every",
+        "Работать с композицией и каррированием",
+        "Применять функциональные паттерны в реальном коде"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Функции высшего порядка (Higher-Order Functions)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Определение"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// HOF — функция, которая:\n// 1. Принимает функцию как аргумент\n// 2. ИЛИ возвращает функцию\n\n// Пример 1: принимает функцию\nfunction map(arr, fn) {\n  const result = [];\n  for (const item of arr) result.push(fn(item));\n  return result;\n}\n\n// Пример 2: возвращает функцию (каррирование)\nfunction multiplyBy(factor) {\n  return function(n) { return n * factor; };\n}\nconst double = multiplyBy(2);\ndouble(5); // 10"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Встроенные HOF массивов (ES2015+)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const users = [\n  { name: \"Анна\", age: 25, active: true },\n  { name: \"Борис\", age: 17, active: false },\n  { name: \"Виктор\", age: 30, active: true },\n  { name: \"Галина\", age: 45, active: true }\n];\n\n// map — трансформация каждого элемента\nconst names = users.map(u => u.name);\n// [\"Анна\", \"Борис\", \"Виктор\", \"Галина\"]\n\n// filter — отбор по условию\nconst adults = users.filter(u => u.age >= 18);\n// [{ name: \"Анна\", ... }, { name: \"Виктор\", ... }, { name: \"Галина\", ... }]\n\n// find — первый подходящий\nconst firstActive = users.find(u => u.active);\n// { name: \"Анна\", age: 25, active: true }\n\n// some / every — проверка условия\nconst hasMinor = users.some(u => u.age < 18); // true\nconst allActive = users.every(u => u.active); // false\n\n// reduce — свёртка к единственному значению\nconst totalAge = users.reduce((sum, u) => sum + u.age, 0); // 117\nconst byActive = users.reduce((acc, u) => {\n  acc[u.active ? \"active\" : \"inactive\"].push(u);\n  return acc;\n}, { active: [], inactive: [] });\n\n// flatMap = map + flat (ES2019)\nconst tags = users.flatMap(u => u.tags || []); // если у каждого есть tags[]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Методы объектов (ES2017+)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const obj = { a: 1, b: 2, c: 3 };\n\nObject.entries(obj).map(([k, v]) => [k, v * 2]); // [[\"a\",2],[\"b\",4],[\"c\",6]]\nObject.fromEntries(Object.entries(obj).map(([k, v]) => [k, v * 2])); // {a:2,b:4,c:6}\n\nObject.keys(obj);   // [\"a\",\"b\",\"c\"]\nObject.values(obj); // [1,2,3]"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Чистые функции (Pure Functions)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Характеристики"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ✅ ЧИСТАЯ: тот же вход → тот же выход, нет side effects\nfunction add(a, b) { return a + b; }\nfunction double(arr) { return arr.map(x => x * 2); }\n\n// ❌ НЕЧИСТАЯ: мутирует аргумент\nfunction pushItem(arr, item) { arr.push(item); }\n\n// ❌ НЕЧИСТАЯ: зависит от внешнего состояния\nlet factor = 2;\nfunction multiply(x) { return x * factor; }\n\n// ❌ НЕЧИСТАЯ: side effect (I/O, логирование)\nfunction saveToDb(data) { db.write(data); return data; }\n\n// ❌ НЕЧИСТАЯ: случайность / дата\nfunction randomId() { return Math.random(); }\nfunction now() { return Date.now(); }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Преимущества чистых функций"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Тестируемость\nexpect(add(2, 3)).toBe(5); // всегда работает\n\n// 2. Кэшируемость (мемоизация)\nconst memoizedAdd = memoize(add);\n\n// 3. Параллелизуемость — нет гонок данных\nconst results = items.map(pureTransform); // можно распараллелить\n\n// 4. Композиция\nconst process = pipe(validate, transform, save);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Иммутабельность вместо мутации"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ Мутация\nconst arr = [1, 2, 3];\narr.push(4);\n\n// ✅ Иммутабельно\nconst newArr = [...arr, 4];\n// или\nconst newArr = arr.concat(4);\n\n// Объекты\nconst user = { name: \"Анна\", age: 25 };\n// ❌ user.age = 26;\n// ✅\nconst olderUser = { ...user, age: 26 };\n\n// Вложенные обновления (иммутабельно)\nconst state = {\n  user: { profile: { settings: { theme: \"light\" } } }\n};\n// ❌ state.user.profile.settings.theme = \"dark\";\n// ✅ с spread (verbose)\nconst newState = {\n  ...state,\n  user: {\n    ...state.user,\n    profile: {\n      ...state.user.profile,\n      settings: { ...state.user.profile.settings, theme: \"dark\" }\n    }\n  }\n};\n// ✅ с библиотекой (Immer, lodash.set, Ramda lens)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Каррирование и частичное применение"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Каррирование (currying)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Функция от N аргументов → N функций от 1 аргумента\nfunction curry(fn) {\n  return function curried(...args) {\n    if (args.length >= fn.length) return fn.apply(this, args);\n    return (...more) => curried.apply(this, [...args, ...more]);\n  };\n}\n\nconst add = (a, b, c) => a + b + c;\nconst curriedAdd = curry(add);\n\ncurriedAdd(1)(2)(3);   // 6\ncurriedAdd(1, 2)(3);   // 6\ncurriedAdd(1)(2, 3);   // 6\ncurriedAdd(1, 2, 3);   // 6\n\n// Практический пример: конфигурируемые валидаторы\nconst minLength = curry((min, str) => str.length >= min);\nconst maxLength = curry((max, str) => str.length <= max);\n\nconst validateName = pipe(\n  minLength(2),\n  maxLength(50)\n);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Частичное применение (partial application)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Фиксируем часть аргументов\nfunction partial(fn, ...presetArgs) {\n  return (...laterArgs) => fn(...presetArgs, ...laterArgs);\n}\n\nconst fetchUser = async (baseUrl, id) => {\n  const res = await fetch(`${baseUrl}/users/${id}`);\n  return res.json();\n};\n\nconst fetchFromAPI = partial(fetchUser, \"https://api.example.com\");\nconst user = await fetchFromAPI(42); // только id"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Композиция функций"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pipe / Compose"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// pipe: слева направо (как читаем)\nfunction pipe(...fns) {\n  return (value) => fns.reduce((acc, fn) => fn(acc), value);\n}\n\n// compose: справа налево (математическая традиция)\nfunction compose(...fns) {\n  return (value) => fns.reduceRight((acc, fn) => fn(acc), value);\n}\n\n// Пример: обработка строки\nconst process = pipe(\n  s => s.trim(),\n  s => s.toLowerCase(),\n  s => s.replace(/\\s+/g, \"-\"),\n  s => s.slice(0, 50)\n);\n\nprocess(\"  Hello   World  \"); // \"hello-world\"\n\n// С асинхронными функциями\nasync function pipeAsync(...fns) {\n  return (value) => fns.reduce(\n    (promise, fn) => promise.then(fn),\n    Promise.resolve(value)\n  );\n}\n\nconst processUser = pipeAsync(\n  fetchUser,\n  validateUser,\n  transformUser,\n  saveUser\n);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Комбинаторы (utils)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// identity\nconst identity = x => x;\n\n// constant\nconst constant = x => () => x;\n\n// tap — side effect в цепочке (логирование)\nconst tap = fn => x => { fn(x); return x; };\n\n// flip — меняет порядок аргументов\nconst flip = fn => (a, b) => fn(b, a);\n\n// props — извлечение свойств\nconst prop = key => obj => obj[key];\nconst props = (...keys) => obj => keys.map(k => obj[k]);\n\n// Использование\nconst getNames = users => users.map(prop(\"name\"));\nconst getNameAndAge = props(\"name\", \"age\");"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Продвинутые паттерны массивов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Reduce как универсальный инструмент"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Реализация других методов через reduce\nconst myMap = (arr, fn) => arr.reduce((acc, x, i, a) => [...acc, fn(x, i, a)], []);\nconst myFilter = (arr, fn) => arr.reduce((acc, x, i, a) => fn(x, i, a) ? [...acc, x] : acc, []);\nconst myFind = (arr, fn) => arr.reduce((acc, x, i, a) => acc !== undefined ? acc : fn(x, i, a) ? x : undefined, undefined);\n\n// Группировка\nconst groupBy = (arr, keyFn) => arr.reduce((acc, item) => {\n  const key = keyFn(item);\n  (acc[key] = acc[key] || []).push(item);\n  return acc;\n}, {});\n\nconst byFirstLetter = groupBy(users, u => u.name[0]);\n\n// Уникальные значения (через Set)\nconst unique = arr => [...new Set(arr)];\nconst uniqueBy = (arr, keyFn) => [...new Map(arr.map(x => [keyFn(x), x])).values()];\n\n// Топ N\nconst topN = (arr, n, compareFn = (a, b) => b - a) =>\n  [...arr].sort(compareFn).slice(0, n);\n\n// Chunk / partition\nconst chunk = (arr, size) => arr.reduce((acc, _, i) =>\n  i % size === 0 ? [...acc, arr.slice(i, i + size)] : acc, []);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ленивые вычисления (generators)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Бесконечные последовательности без переполнения памяти\nfunction* range(start, end) {\n  for (let i = start; i <= end; i++) yield i;\n}\n\nfunction* mapGen(iterable, fn) {\n  for (const x of iterable) yield fn(x);\n}\n\nfunction* filterGen(iterable, fn) {\n  for (const x of iterable) if (fn(x)) yield x;\n}\n\nfunction* takeGen(iterable, n) {\n  let i = 0;\n  for (const x of iterable) {\n    if (i++ >= n) break;\n    yield x;\n  }\n}\n\n// Использование: обрабатываем только нужно\nconst result = [...takeGen(filterGen(mapGen(range(1, Infinity), x => x * 2), x => x % 3 === 0), 5)];\n// [6, 12, 18, 24, 30] — только 5 первых чётных, делящихся на 3"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`arr.map(x => x.prop)` падает если `x` — `null`",
+          "`arr.map(x => x?.prop)` или `arr.filter(Boolean).map(...)`"
+        ],
+        [
+          "`reduce` без `initialValue` на пустом массиве → TypeError",
+          "Всегда передавайте начальное значение: `reduce(fn, [])`"
+        ],
+        [
+          "`sort` мутирует исходный массив",
+          "`[...arr].sort(...)` или `arr.toSorted(...)` (ES2023)"
+        ],
+        [
+          "`forEach` не возвращает значение, нельзя прервать",
+          "Используйте `for...of` или `some`/`every` для раннего выхода"
+        ],
+        [
+          "Каррирование: `fn.length` не работает с rest/spread",
+          "Явно указывайте арность: `curryN(3, fn)`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`arr.map(x => x.prop)` падает если `x` — `null`",
+      "correct": "`arr.map(x => x?.prop)` или `arr.filter(Boolean).map(...)`"
+    },
+    {
+      "mistake": "`reduce` без `initialValue` на пустом массиве → TypeError",
+      "correct": "Всегда передавайте начальное значение: `reduce(fn, [])`"
+    },
+    {
+      "mistake": "`sort` мутирует исходный массив",
+      "correct": "`[...arr].sort(...)` или `arr.toSorted(...)` (ES2023)"
+    },
+    {
+      "mistake": "`forEach` не возвращает значение, нельзя прервать",
+      "correct": "Используйте `for...of` или `some`/`every` для раннего выхода"
+    },
+    {
+      "mistake": "Каррирование: `fn.length` не работает с rest/spread",
+      "correct": "Явно указывайте арность: `curryN(3, fn)`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 13
+}

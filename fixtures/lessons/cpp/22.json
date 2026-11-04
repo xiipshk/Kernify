@@ -1,0 +1,342 @@
+{
+  "title": "Урок 22: Проект — многомодульная программа с тестами и сборкой",
+  "slug": "proekt-mnogomodulnaya-programma-s-testami-i-sborkoy",
+  "short_description": "многомодульная программа с тестами и сборкой",
+  "goals": [
+    "Спроектировать архитектуру многомодульного C++ проекта",
+    "Настроить современный CMake (target-based, C++20, modules support)",
+    "Организовать код: библиотеки, исполняемые файлы, тесты, benchmarks",
+    "Интегрировать CI/CD: сборка, тесты, санитайзеры, статический анализ",
+    "Применить всё пройденное: RAII, move, templates, STL, concurrency, testing"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Спроектировать архитектуру многомодульного C++ проекта",
+        "Настроить современный CMake (target-based, C++20, modules support)",
+        "Организовать код: библиотеки, исполняемые файлы, тесты, benchmarks",
+        "Интегрировать CI/CD: сборка, тесты, санитайзеры, статический анализ",
+        "Применить всё пройденное: RAII, move, templates, STL, concurrency, testing"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Архитектура проекта"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "my_project/\n├── CMakeLists.txt              # Корневой CMake\n├── cmake/                      # CMake модули\n│   ├── CompilerOptions.cmake\n│   ├── Sanitizers.cmake\n│   ├── Testing.cmake\n│   └── FetchDependencies.cmake\n├── include/                    # Публичные заголовки (install)\n│   └── myproject/\n│       ├── core.hpp\n│       ├── math.hpp\n│       └── api.hpp\n├── src/                        # Приватные исходники\n│   ├── core/\n│   │   ├── CMakeLists.txt\n│   │   ├── core.cpp\n│   │   └── detail/            # Внутренние детали (не устанавливаются)\n│   ├── math/\n│   │   ├── CMakeLists.txt\n│   │   ├── math.cpp\n│   │   └── math.ixx           # C++20 module (опционально)\n│   └── cli/\n│       ├── CMakeLists.txt\n│       └── main.cpp\n├── tests/                      # Unit/integration тесты\n│   ├── CMakeLists.txt\n│   ├── test_core.cpp\n│   ├── test_math.cpp\n│   └── test_integration.cpp\n├── benchmarks/                 # Performance benchmarks\n│   ├── CMakeLists.txt\n│   └── bench_math.cpp\n├── examples/                   # Примеры использования\n│   └── example.cpp\n├── docs/                       # Документация (Doxygen)\n├── scripts/                    # Вспомогательные скрипты\n│   ├── format.sh\n│   └── clang_tidy.sh\n├── .clang-format\n├── .clang-tidy\n├── .github/workflows/ci.yml    # CI/CD\n└── README.md"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Принципы модульного дизайна"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// include/myproject/core.hpp — ПУБЛИЧНЫЙ API\n#pragma once\n#include <string>\n#include <vector>\n#include <memory>\n\nnamespace myproject {\n\n// Forward declarations — уменьшают зависимости заголовков\nclass Logger;\nclass Config;\n\n// Интерфейс (abstract base) — для polymorphism и testing\nclass IDataProcessor {\npublic:\n    virtual ~IDataProcessor() = default;\n    virtual std::vector<double> process(const std::vector<double>& input) = 0;\n    virtual std::string name() const = 0;\n};\n\n// Фабрика — скрывает создание конкретных реализаций\nclass ProcessorFactory {\npublic:\n    static std::unique_ptr<IDataProcessor> create(const std::string& type);\n    static std::vector<std::string> available_types();\n};\n\n// Value types — передача по значению, тривиально копируемые\nstruct ProcessingResult {\n    std::vector<double> data;\n    double mean = 0.0;\n    double stddev = 0.0;\n    bool success = false;\n    std::string error_msg;\n};\n\n// RAII resource manager\nclass ResourceManager {\n    // Rule of 0 — используем умные указатели и RAII контейнеры\n    std::vector<std::unique_ptr<IDataProcessor>> processors_;\n    std::shared_ptr<Logger> logger_;\npublic:\n    ResourceManager() = default;\n    ~ResourceManager() = default;  // автоматически очистит всё\n\n    ResourceManager(const ResourceManager&) = delete;\n    ResourceManager& operator=(const ResourceManager&) = delete;\n    ResourceManager(ResourceManager&&) = default;\n    ResourceManager& operator=(ResourceManager&&) = default;\n\n    void register_processor(std::unique_ptr<IDataProcessor> p);\n    ProcessingResult run_all(const std::vector<double>& input);\n};\n\n} // namespace myproject"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// src/core/core.cpp — ПРИВАТНАЯ ИМПЛЕМЕНТАЦИЯ\n#include \"myproject/core.hpp\"\n#include \"myproject/math.hpp\"  // внутренняя зависимость\n#include <algorithm>\n#include <numeric>\n#include <cmath>\n\nnamespace myproject {\n\nclass MeanProcessor : public IDataProcessor {\npublic:\n    std::vector<double> process(const std::vector<double>& input) override {\n        if (input.empty()) return {};\n        double sum = std::accumulate(input.begin(), input.end(), 0.0);\n        double mean = sum / input.size();\n        return std::vector<double>(input.size(), mean);\n    }\n    std::string name() const override { return \"MeanProcessor\"; }\n};\n\nclass StdDevProcessor : public IDataProcessor {\npublic:\n    std::vector<double> process(const std::vector<double>& input) override {\n        if (input.size() < 2) return {};\n        double mean = std::accumulate(input.begin(), input.end(), 0.0) / input.size();\n        double sq_sum = 0.0;\n        for (double x : input) sq_sum += (x - mean) * (x - mean);\n        double stddev = std::sqrt(sq_sum / (input.size() - 1));\n        return std::vector<double>(input.size(), stddev);\n    }\n    std::string name() const override { return \"StdDevProcessor\"; }\n};\n\nstd::unique_ptr<IDataProcessor> ProcessorFactory::create(const std::string& type) {\n    if (type == \"mean\") return std::make_unique<MeanProcessor>();\n    if (type == \"stddev\") return std::make_unique<StdDevProcessor>();\n    return nullptr;\n}\n\nstd::vector<std::string> ProcessorFactory::available_types() {\n    return {\"mean\", \"stddev\"};\n}\n\nvoid ResourceManager::register_processor(std::unique_ptr<IDataProcessor> p) {\n    if (logger_) logger_->info(\"Registered processor: \" + p->name());\n    processors_.push_back(std::move(p));\n}\n\nProcessingResult ResourceManager::run_all(const std::vector<double>& input) {\n    ProcessingResult result;\n    result.data = input;\n    for (auto& proc : processors_) {\n        try {\n            auto processed = proc->process(result.data);\n            result.data = std::move(processed);\n        } catch (const std::exception& e) {\n            result.success = false;\n            result.error_msg = \"Processor \" + proc->name() + \" failed: \" + e.what();\n            if (logger_) logger_->error(result.error_msg);\n            return result;\n        }\n    }\n    // Compute stats\n    if (!result.data.empty()) {\n        result.mean = std::accumulate(result.data.begin(), result.data.end(), 0.0) / result.data.size();\n        double sq = 0;\n        for (double x : result.data) sq += (x - result.mean) * (x - result.mean);\n        result.stddev = std::sqrt(sq / result.data.size());\n    }\n    result.success = true;\n    return result;\n}\n\n} // namespace myproject"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Современный CMake (3.20+)"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unit тесты (GoogleTest)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// tests/test_core.cpp\n#include <gtest/gtest.h>\n#include <myproject/core.hpp>\n#include <myproject/math.hpp>\n#include <vector>\n#include <cmath>\n\nusing namespace myproject;\n\nTEST(ProcessorFactoryTest, CreatesKnownProcessors) {\n    auto mean = ProcessorFactory::create(\"mean\");\n    auto stddev = ProcessorFactory::create(\"stddev\");\n    auto unknown = ProcessorFactory::create(\"unknown\");\n\n    ASSERT_NE(mean, nullptr);\n    ASSERT_NE(stddev, nullptr);\n    EXPECT_EQ(unknown, nullptr);\n\n    EXPECT_EQ(mean->name(), \"MeanProcessor\");\n    EXPECT_EQ(stddev->name(), \"StdDevProcessor\");\n}\n\nTEST(ProcessorFactoryTest, AvailableTypes) {\n    auto types = ProcessorFactory::available_types();\n    EXPECT_THAT(types, testing::UnorderedElementsAre(\"mean\", \"stddev\"));\n}\n\nTEST(ResourceManagerTest, RegisterAndRun) {\n    ResourceManager rm;\n    rm.register_processor(ProcessorFactory::create(\"mean\"));\n    rm.register_processor(ProcessorFactory::create(\"stddev\"));\n\n    std::vector<double> input = {1.0, 2.0, 3.0, 4.0, 5.0};\n    auto result = rm.run_all(input);\n\n    EXPECT_TRUE(result.success);\n    EXPECT_NEAR(result.mean, 3.0, 1e-9);\n    EXPECT_NEAR(result.stddev, std::sqrt(2.0), 1e-9);\n    EXPECT_EQ(result.data.size(), input.size());\n}\n\nTEST(ResourceManagerTest, EmptyInput) {\n    ResourceManager rm;\n    rm.register_processor(ProcessorFactory::create(\"mean\"));\n\n    auto result = rm.run_all({});\n    EXPECT_TRUE(result.success);\n    EXPECT_EQ(result.data.size(), 0);\n}\n\nTEST(ResourceManagerTest, MoveSemantics) {\n    ResourceManager rm1;\n    rm1.register_processor(ProcessorFactory::create(\"mean\"));\n\n    ResourceManager rm2 = std::move(rm1);  // Move constructor\n    EXPECT_EQ(rm1.processors_.size(), 0);  // if accessible or via behavior\n\n    ResourceManager rm3;\n    rm3 = std::move(rm2);  // Move assignment\n    auto result = rm3.run_all({1.0, 2.0, 3.0});\n    EXPECT_TRUE(result.success);\n}"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// tests/test_math.cpp\n#include <gtest/gtest.h>\n#include <myproject/math.hpp>\n#include <vector>\n#include <cmath>\n\nusing namespace myproject::math;\n\nTEST(MathTest, BasicOperations) {\n    EXPECT_DOUBLE_EQ(add(2.0, 3.0), 5.0);\n    EXPECT_DOUBLE_EQ(multiply(4.0, 5.0), 20.0);\n}\n\nTEST(MathTest, Statistics) {\n    std::vector<double> data = {1.0, 2.0, 3.0, 4.0, 5.0};\n    EXPECT_DOUBLE_EQ(mean(data), 3.0);\n    EXPECT_NEAR(stddev(data), std::sqrt(2.0), 1e-9);\n}\n\nTEST(MathTest, EdgeCases) {\n    EXPECT_DOUBLE_EQ(mean({}), 0.0);\n    EXPECT_DOUBLE_EQ(stddev({}), 0.0);\n    EXPECT_DOUBLE_EQ(stddev({42.0}), 0.0);\n}\n\n// Параметризованный тест\nclass MathParamTest : public ::testing::TestWithParam<std::tuple<std::vector<double>, double>> {};\n\nTEST_P(MathParamTest, MeanMatchesExpected) {\n    auto [input, expected] = GetParam();\n    EXPECT_DOUBLE_EQ(mean(input), expected);\n}\n\nINSTANTIATE_TEST_SUITE_P(\n    MeanTests,\n    MathParamTest,\n    ::testing::Values(\n        std::make_tuple(std::vector<double>{1,2,3}, 2.0),\n        std::make_tuple(std::vector<double>{10}, 10.0),\n        std::make_tuple(std::vector<double>{-1,1}, 0.0),\n        std::make_tuple(std::vector<double>{}, 0.0)\n    )\n);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Интеграционные тесты"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// tests/test_integration.cpp\n#include <gtest/gtest.h>\n#include <myproject/core.hpp>\n#include <myproject/math.hpp>\n#include <fstream>\n#include <filesystem>\n\nnamespace fs = std::filesystem;\n\nclass IntegrationTest : public ::testing::Test {\nprotected:\n    fs::path temp_dir_;\n    void SetUp() override {\n        temp_dir_ = fs::temp_directory_path() / \"myproject_test_XXXXXX\";\n        fs::create_directory(temp_dir_);\n    }\n    void TearDown() override {\n        fs::remove_all(temp_dir_);\n    }\n};\n\nTEST_F(IntegrationTest, EndToEndProcessing) {\n    ResourceManager rm;\n    rm.register_processor(ProcessorFactory::create(\"mean\"));\n    rm.register_processor(ProcessorFactory::create(\"stddev\"));\n\n    // Генерация тестовых данных\n    std::vector<double> input(1000);\n    for (size_t i = 0; i < input.size(); ++i) input[i] = static_cast<double>(i);\n\n    auto result = rm.run_all(input);\n\n    EXPECT_TRUE(result.success);\n    EXPECT_NEAR(result.mean, 499.5, 1e-6);\n    EXPECT_NEAR(result.stddev, std::sqrt(1000*1000/12.0), 1e-3); // variance of uniform\n}\n\nTEST_F(IntegrationTest, FileIO) {\n    fs::path input_file = temp_dir_ / \"input.txt\";\n    fs::path output_file = temp_dir_ / \"output.txt\";\n\n    // Write test data\n    std::ofstream out(input_file);\n    out << \"1 2 3 4 5\\n\";\n    out.close();\n\n    // Process (would use actual file I/O from library)\n    // auto data = read_numbers(input_file);\n    // write_results(output_file, process(data));\n\n    // Verify\n    EXPECT_TRUE(fs::exists(input_file));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Benchmarks (Google Benchmark)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// benchmarks/bench_math.cpp\n#include <benchmark/benchmark.h>\n#include <myproject/math.hpp>\n#include <vector>\n#include <random>\n#include <algorithm>\n\nstatic void BM_Mean(benchmark::State& state) {\n    std::vector<double> data(state.range(0));\n    std::mt19937 gen(42);\n    std::uniform_real_distribution<> dis(0.0, 100.0);\n    std::generate(data.begin(), data.end(), [&] { return dis(gen); });\n\n    for (auto _ : state) {\n        benchmark::DoNotOptimize(myproject::math::mean(data));\n    }\n    state.SetItemsProcessed(state.iterations() * data.size());\n}\nBENCHMARK(BM_Mean)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000);\n\nstatic void BM_StdDev(benchmark::State& state) {\n    std::vector<double> data(state.range(0));\n    std::mt19937 gen(42);\n    std::uniform_real_distribution<> dis(0.0, 100.0);\n    std::generate(data.begin(), data.end(), [&] { return dis(gen); });\n\n    for (auto _ : state) {\n        benchmark::DoNotOptimize(myproject::math::stddev(data));\n    }\n    state.SetItemsProcessed(state.iterations() * data.size());\n}\nBENCHMARK(BM_StdDev)->Arg(100)->Arg(1000)->Arg(10000)->Arg(100000);\n\nstatic void BM_ProcessorPipeline(benchmark::State& state) {\n    myproject::ResourceManager rm;\n    rm.register_processor(myproject::ProcessorFactory::create(\"mean\"));\n    rm.register_processor(myproject::ProcessorFactory::create(\"stddev\"));\n\n    std::vector<double> data(state.range(0));\n    std::iota(data.begin(), data.end(), 1.0);\n\n    for (auto _ : state) {\n        auto result = rm.run_all(data);\n        benchmark::DoNotOptimize(result);\n    }\n    state.SetItemsProcessed(state.iterations() * data.size());\n}\nBENCHMARK(BM_ProcessorPipeline)->Arg(100)->Arg(1000)->Arg(10000);\n\nBENCHMARK_MAIN();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CI/CD (GitHub Actions)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Форматирование и хуки"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Создание проекта с нуля"
+    },
+    {
+      "type": "text",
+      "content": "Создайте структуру проекта как выше. Реализуйте:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Библиотеку `core` с `ResourceManager`, `ProcessorFactory`, интерфейсами",
+        "Библиотеку `math` со статистическими функциями",
+        "CLI приложение, читающее числа из stdin/файла, обрабатывающее через pipeline, выводящее результат",
+        "Unit тесты (покрытие > 80%)",
+        "Интеграционный тест с временными файлами"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: CMake mastery"
+    },
+    {
+      "type": "text",
+      "content": "Настройте CMake так, чтобы:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`make install` устанавливал заголовки, библиотеки, cmake config",
+        "`find_package(MyProject)` работал в другом проекте",
+        "Поддерживались конфигурации Debug/Release/RelWithDebInfo",
+        "Включались санитайзеры опцией `-DENABLE_SANITIZERS=ON`",
+        "Генерировался `compile_commands.json` для clangd"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: CI/CD pipeline"
+    },
+    {
+      "type": "text",
+      "content": "Настройте GitHub Actions workflow:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Сборка на 3 OS (Linux, Windows, macOS)",
+        "Debug + Release конфигурации",
+        "ASan/UBSan в Debug на Linux",
+        "clang-tidy + cppcheck на Linux",
+        "Coverage report (lcov + codecov)",
+        "Benchmark прогон в Release",
+        "Артефакты: исполняемые файлы, coverage report"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Профилирование и оптимизация"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Запустите бенчмарки, найдите bottleneck",
+        "Оптимизируйте горячие пути (reserve, move, algorithm choice, SoA)",
+        "Сравните производительность до/после",
+        "Документируйте изменения в CHANGELOG.md"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Документация и пакетирование"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Настройте Doxygen для генерации HTML документации",
+        "Добавьте README с badge'ами (build, coverage, version)",
+        "Создайте CPack конфигурацию для .deb/.rpm/.tar.gz/NSIS installer",
+        "Опубликуйте пакет в GitHub Releases через CI"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Чеклист готового проекта"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] CMake ≥ 3.20, target-based, C++20",
+        "[ ] Библиотеки: статические/динамические, правильные PUBLIC/PRIVATE зависимости",
+        "[ ] Установка: заголовки, cmake config, pkg-config",
+        "[ ] Тесты: unit (gtest), integration, coverage > 80%",
+        "[ ] Бенчмарки: Google Benchmark, регрессионное тестирование производительности",
+        "[ ] Санитайзеры: ASan+UBSan в Debug CI, TSan для concurrency тестов",
+        "[ ] Статический анализ: clang-tidy, cppcheck в CI",
+        "[ ] Форматирование: clang-format, pre-commit hook",
+        "[ ] CI: Linux/Windows/macOS, Debug/Release, параллельные тесты",
+        "[ ] Документация: Doxygen, README, CHANGELOG",
+        "[ ] Пакетирование: CPack, GitHub Releases",
+        "[ ] Семантическое версионирование (MAJOR.MINOR.PATCH)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`target_link_libraries` до `add_library`",
+          "Неправильный порядок в CMake"
+        ],
+        [
+          "Заголовки не найдены при install",
+          "`PUBLIC` include dirs не установлены"
+        ],
+        [
+          "ODR violation в тестах",
+          "Определения в заголовках без `inline`"
+        ],
+        [
+          "Тесты флакают",
+          "Зависимость от глобального состояния / случайности"
+        ],
+        [
+          "CI зелёный, локально крашится",
+          "Разные компиляторы/флаги"
+        ],
+        [
+          "Benchmark шум",
+          "Turbo boost, фоновые процессы"
+        ],
+        [
+          "`fmt`/`spdlog` не линкуются",
+          "Не переданы PUBLIC депенденси"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[Modern CMake](https://cliutils.gitlab.io/modern-cmake/)",
+        "[CMake Documentation](https://cmake.org/cmake/help/latest/)",
+        "**Книга:** \"Professional CMake\" (Craig Scott)",
+        "[GoogleTest Advanced](https://google.github.io/googletest/advanced.html)",
+        "[Google Benchmark](https://github.com/google/benchmark)",
+        "**CppCon:** \"Modern CMake for Modular Design\" (Mathias Stearn)",
+        "**CppCon:** \"Building C++ Modules\" (Bryce Adelstein Lelbach)",
+        "[GitHub Actions for C++](https://github.com/marketplace?category=continuous-integration&query=c%2B%2B)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`target_link_libraries` до `add_library`",
+      "correct": "Неправильный порядок в CMake"
+    },
+    {
+      "mistake": "Заголовки не найдены при install",
+      "correct": "`PUBLIC` include dirs не установлены"
+    },
+    {
+      "mistake": "ODR violation в тестах",
+      "correct": "Определения в заголовках без `inline`"
+    },
+    {
+      "mistake": "Тесты флакают",
+      "correct": "Зависимость от глобального состояния / случайности"
+    },
+    {
+      "mistake": "CI зелёный, локально крашится",
+      "correct": "Разные компиляторы/флаги"
+    },
+    {
+      "mistake": "Benchmark шум",
+      "correct": "Turbo boost, фоновые процессы"
+    },
+    {
+      "mistake": "`fmt`/`spdlog` не линкуются",
+      "correct": "Не переданы PUBLIC депенденси"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 22
+}

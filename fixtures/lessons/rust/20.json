@@ -1,0 +1,514 @@
+{
+  "title": "Урок 20: Async Rust (Асинхронное программирование)",
+  "slug": "async-rust-asinhronnoe-programmirovanie",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Основы: `Future`, `async`/`await`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое `Future`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::future::Future;\nuse std::pin::Pin;\nuse std::task::{Context, Poll};\n\n// Фьючерс — это trait с методом poll\ntrait Future {\n    type Output;\n    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;\n}\n\n// Poll может быть:\nenum Poll<T> {\n    Ready(T),     // Готово\n    Pending,      // Ещё не готово, пробудите когда будет\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`async`/`await` синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "async fn fetch_data() -> String {\n    // Этот код компилируется в state machine, реализующую Future\n    let data = download().await; // .await ждёт завершения Future\n    process(data).await\n}\n\n// Эквивалентно:\nfn fetch_data() -> impl Future<Output = String> {\n    async move {\n        let data = download().await;\n        process(data).await\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Запуск фьючерса"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[tokio::main]\nasync fn main() {\n    // Просто вызов async fn НЕ запускает её!\n    let future = fetch_data(); // Future<Output = String>\n\n    // Нужно .await чтобы запустить\n    let result = future.await;\n    println!(\"{}\", result);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Tokio Runtime"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый запуск"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// #[tokio::main] — макрос, создающий runtime\n#[tokio::main]\nasync fn main() {\n    println!(\"Hello async!\");\n}\n\n// Или вручную:\nfn main() {\n    let rt = tokio::runtime::Runtime::new().unwrap();\n    rt.block_on(async {\n        println!(\"Hello async!\");\n    });\n}\n\n// Multi-threaded runtime (по умолчанию)\n#[tokio::main(flavor = \"multi_thread\", worker_threads = 4)]\nasync fn main() { ... }\n\n// Current-thread runtime\n#[tokio::main(flavor = \"current_thread\")]\nasync fn main() { ... }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`spawn` — запуск задачи в фоне"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[tokio::main]\nasync fn main() {\n    let handle = tokio::spawn(async {\n        // Эта задача выполняется параллельно\n        tokio::time::sleep(std::time::Duration::from_secs(1)).await;\n        println!(\"Background task done\");\n        42\n    });\n\n    // Можно делать другое здесь\n    println!(\"Main continues...\");\n\n    // Ждём завершения\n    let result = handle.await.unwrap(); // Result<Output, JoinError>\n    println!(\"Result: {}\", result);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`join!` — параллельное ожидание нескольких фьючерсов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::join;\n\nasync fn task1() -> i32 {\n    tokio::time::sleep(Duration::from_millis(100)).await;\n    1\n}\nasync fn task2() -> i32 {\n    tokio::time::sleep(Duration::from_millis(200)).await;\n    2\n}\n\n#[tokio::main]\nasync fn main() {\n    // Выполняются параллельно! Общее время ~200мс, не 300мс\n    let (a, b) = join!(task1(), task2());\n    println!(\"{} {}\", a, b); // 1 2\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`select!` — ожидание первого готового"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::select;\nuse tokio::time::{sleep, Duration};\n\n#[tokio::main]\nasync fn main() {\n    let mut a = sleep(Duration::from_millis(100));\n    let mut b = sleep(Duration::from_millis(200));\n\n    select! {\n        _ = &mut a => println!(\"A finished first\"),\n        _ = &mut b => println!(\"B finished first\"),\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`try_join!` — с обработкой ошибок"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::try_join;\n\nasync fn fallible() -> Result<i32, &'static str> {\n    Err(\"error\")\n}\n\n#[tokio::main]\nasync fn main() {\n    let result: Result<(i32, i32), _> = try_join!(fallible(), fallible());\n    // Err(\"error\") — останавливается на первой ошибке\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Таймеры и таймауты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`sleep`, `interval`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::time::{sleep, interval, Duration, Instant};\n\n#[tokio::main]\nasync fn main() {\n    // Одноразовый таймер\n    sleep(Duration::from_secs(1)).await;\n\n    // Периодический\n    let mut interval = interval(Duration::from_millis(500));\n    for _ in 0..5 {\n        interval.tick().await;\n        println!(\"Tick at {:?}\", Instant::now());\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`timeout` — ограничение времени выполнения"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::time::timeout;\n\nasync fn slow_operation() -> i32 {\n    sleep(Duration::from_secs(10)).await;\n    42\n}\n\n#[tokio::main]\nasync fn main() {\n    match timeout(Duration::from_secs(1), slow_operation()).await {\n        Ok(result) => println!(\"Result: {}\", result),\n        Err(_) => println!(\"Timed out!\"),\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Примитивы синхронизации (`tokio::sync`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Mutex` — взаимное исключение (async)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::Mutex;\nuse std::sync::Arc;\n\n#[tokio::main]\nasync fn main() {\n    let data = Arc::new(Mutex::new(0));\n    let mut handles = vec![];\n\n    for _ in 0..10 {\n        let data = data.clone();\n        handles.push(tokio::spawn(async move {\n            let mut guard = data.lock().await; // .await, не блокирует поток!\n            *guard += 1;\n        }));\n    }\n\n    for h in handles { h.await.unwrap(); }\n    println!(\"Final: {}\", *data.lock().await); // 10\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`RwLock` — nhiều читатели, один писатель"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::RwLock;\n\n#[tokio::main]\nasync fn main() {\n    let data = Arc::new(RwLock::new(vec![1, 2, 3]));\n\n    // Множественные читатели\n    let r1 = data.read().await;\n    let r2 = data.read().await;\n    println!(\"{:?}, {:?}\", *r1, *r2);\n    drop((r1, r2));\n\n    // Один писатель\n    let mut w = data.write().await;\n    w.push(4);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Semaphore` — ограничение параллелизма"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::Semaphore;\n\n#[tokio::main]\nasync fn main() {\n    let semaphore = Arc::new(Semaphore::new(3)); // Макс 3 одновременно\n    let mut handles = vec![];\n\n    for i in 0..10 {\n        let sem = semaphore.clone();\n        handles.push(tokio::spawn(async move {\n            let _permit = sem.acquire().await.unwrap(); // Ждёт если 3 уже занято\n            println!(\"Task {} running\", i);\n            sleep(Duration::from_millis(100)).await;\n            println!(\"Task {} done\", i);\n        }));\n    }\n    for h in handles { h.await.unwrap(); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Notify` — простое уведомление"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::Notify;\n\n#[tokio::main]\nasync fn main() {\n    let notify = Arc::new(Notify::new());\n    let notify2 = notify.clone();\n\n    tokio::spawn(async move {\n        sleep(Duration::from_secs(1)).await;\n        notify2.notify_one(); // Пробуждает один waiter\n    });\n\n    notify.notified().await; // Ждёт уведомления\n    println!(\"Notified!\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Barrier` — барьер синхронизации"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::Barrier;\n\n#[tokio::main]\nasync fn main() {\n    let barrier = Arc::new(Barrier::new(3));\n    let mut handles = vec![];\n\n    for i in 0..3 {\n        let b = barrier.clone();\n        handles.push(tokio::spawn(async move {\n            println!(\"Task {} waiting at barrier\", i);\n            b.wait().await;\n            println!(\"Task {} passed barrier\", i);\n        }));\n    }\n    for h in handles { h.await.unwrap(); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Каналы (`tokio::sync`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`mpsc` — Multi-Producer Single-Consumer"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::mpsc;\n\n#[tokio::main]\nasync fn main() {\n    let (tx, mut rx) = mpsc::channel::<String>(32); // buffer = 32\n\n    // Producer\n    tokio::spawn(async move {\n        for i in 0..10 {\n            tx.send(format!(\"Message {}\", i)).await.unwrap();\n        }\n    });\n\n    // Consumer\n    while let Some(msg) = rx.recv().await {\n        println!(\"Received: {}\", msg);\n    }\n    println!(\"Channel closed\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`oneshot` — однократная отправка"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::oneshot;\n\n#[tokio::main]\nasync fn main() {\n    let (tx, rx) = oneshot::channel();\n\n    tokio::spawn(async move {\n        sleep(Duration::from_millis(100)).await;\n        tx.send(42).unwrap();\n    });\n\n    let result = rx.await.unwrap();\n    println!(\"Result: {}\", result);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`broadcast` — один отправитель, много получателей"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::broadcast;\n\n#[tokio::main]\nasync fn main() {\n    let (tx, mut rx1) = broadcast::channel(16);\n    let mut rx2 = tx.subscribe();\n\n    tokio::spawn(async move {\n        tx.send(\"Hello all!\").unwrap();\n    });\n\n    println!(\"rx1: {}\", rx1.recv().await.unwrap());\n    println!(\"rx2: {}\", rx2.recv().await.unwrap());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`watch` — текущее значение + уведомления об изменениях"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::watch;\n\n#[tokio::main]\nasync fn main() {\n    let (tx, mut rx) = watch::channel(0);\n\n    tokio::spawn(async move {\n        for i in 1..=5 {\n            tx.send(i).unwrap();\n            sleep(Duration::from_millis(100)).await;\n        }\n    });\n\n    while rx.changed().await.is_ok() {\n        println!(\"Value: {}\", *rx.borrow());\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. `Pin` и `Unpin`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Зачем нужен `Pin`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\nuse std::marker::PhantomPinned;\n\n// Самозареференцирующаяся структура\nstruct SelfRef {\n    data: String,\n    ptr: *const String, // Указатель на data\n    _pin: PhantomPinned, // Делает !Unpin\n}\n\nimpl SelfRef {\n    fn new() -> Pin<Box<Self>> {\n        let mut boxed = Box::pin(SelfRef {\n            data: String::from(\"hello\"),\n            ptr: std::ptr::null(),\n            _pin: PhantomPinned,\n        });\n        // Безопасно, так как boxed закреплён (pinned)\n        let ptr = &boxed.data as *const String;\n        unsafe { boxed.as_mut().get_unchecked_mut().ptr = ptr; }\n        boxed\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Unpin` — маркер \"можно двигать\""
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Большинство типов: Unpin\n// Фьючерсы от async fn: !Unpin (если имеют локальные переменные через await)\n\n// Проверка\nfn needs_unpin<T: Unpin>() {}\nfn needs_pin<T>() {}\n\nneeds_unpin::<i32>();     // OK\nneeds_unpin::<String>();  // OK\n// needs_unpin::<async { ... }>(); // Ошибка: !Unpin"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Работа с `Pin<&mut Future>`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::future::Future;\nuse std::pin::Pin;\nuse std::task::{Context, Poll};\n\nfn poll_future<F: Future>(mut fut: Pin<&mut F>, cx: &mut Context<'_>) -> Poll<F::Output> {\n    fut.as_mut().poll(cx)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Async трейты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`async fn` в трейтах (Rust 1.75+)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Database {\n    async fn get_user(&self, id: u64) -> Result<User, Error>;\n    async fn save_user(&self, user: &User) -> Result<(), Error>;\n}\n\nstruct PostgresDb;\nimpl Database for PostgresDb {\n    async fn get_user(&self, id: u64) -> Result<User, Error> {\n        // ... SQL запрос\n        Ok(User { id, name: \"Alice\".into() })\n    }\n    async fn save_user(&self, user: &User) -> Result<(), Error> { Ok(()) }\n}\n\n// Использование\nasync fn process(db: &impl Database) {\n    let user = db.get_user(1).await?;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`async_trait` крейт (для старых версий / dyn)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use async_trait::async_trait;\n\n#[async_trait]\ntrait Database {\n    async fn get_user(&self, id: u64) -> Result<User, Error>;\n}\n\n// dyn Database требует async_trait\nasync fn process(db: &dyn Database) {\n    let user = db.get_user(1).await?;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Отмена задач (Cancellation)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Drop = отмена"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[tokio::main]\nasync fn main() {\n    let handle = tokio::spawn(async {\n        loop {\n            println!(\"Working...\");\n            tokio::time::sleep(Duration::from_millis(100)).await;\n        }\n    });\n\n    sleep(Duration::from_millis(350)).await;\n    handle.abort(); // Отменяет задачу (drop future)\n    println!(\"Cancelled\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`CancellationToken` (patтерн)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio_util::sync::CancellationToken;\n\n#[tokio::main]\nasync fn main() {\n    let token = CancellationToken::new();\n    let token2 = token.clone();\n\n    let handle = tokio::spawn(async move {\n        loop {\n            tokio::select! {\n                _ = token2.cancelled() => {\n                    println!(\"Cancelled!\");\n                    break;\n                }\n                _ = sleep(Duration::from_millis(100)) => {\n                    println!(\"Working...\");\n                }\n            }\n        }\n    });\n\n    sleep(Duration::from_millis(350)).await;\n    token.cancel();\n    handle.await.unwrap();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Streams (асинхронные итераторы)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Stream` trait"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use futures::stream::{Stream, StreamExt};\nuse tokio::time::{interval, Duration};\n\nasync fn number_stream() -> impl Stream<Item = i32> {\n    let mut interval = interval(Duration::from_millis(100));\n    let mut i = 0;\n    async_stream::stream! {\n        loop {\n            interval.tick().await;\n            yield i;\n            i += 1;\n        }\n    }\n}\n\n#[tokio::main]\nasync fn main() {\n    let mut stream = number_stream().await;\n    while let Some(n) = stream.next().await {\n        if n > 5 { break; }\n        println!(\"{}\", n);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Полезные адаптеры"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use futures::stream::StreamExt;\n\nstream\n    .filter(|x| *x % 2 == 0)      // Фильтр\n    .map(|x| x * 2)               // Мап\n    .take(10)                     // Первые 10\n    .collect::<Vec<_>>()          // В Vec\n    .await;"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Пулл воркеров с семафором"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::Semaphore;\nuse std::sync::Arc;\n\nasync fn worker_pool<T, F, Fut>(items: Vec<T>, concurrency: usize, f: F) -> Vec<Fut::Output>\nwhere\n    F: Fn(T) -> Fut + Send + Sync + 'static,\n    Fut: Future + Send + 'static,\n    T: Send + 'static,\n    Fut::Output: Send + 'static,\n{\n    let sem = Arc::new(Semaphore::new(concurrency));\n    let mut handles = vec![];\n\n    for item in items {\n        let sem = sem.clone();\n        let f = &f;\n        handles.push(tokio::spawn(async move {\n            let _permit = sem.acquire().await.unwrap();\n            f(item).await\n        }));\n    }\n\n    let mut results = Vec::with_capacity(handles.len());\n    for h in handles {\n        results.push(h.await.unwrap());\n    }\n    results\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Graceful shutdown"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::{mpsc, watch};\nuse tokio::signal;\n\nstruct Server {\n    shutdown_tx: watch::Sender<bool>,\n}\n\nimpl Server {\n    fn new() -> Self {\n        let (tx, _) = watch::channel(false);\n        Self { shutdown_tx: tx }\n    }\n\n    async fn run(&self) {\n        let mut shutdown_rx = self.shutdown_tx.subscribe();\n\n        tokio::select! {\n            _ = self.accept_loop() => {},\n            _ = shutdown_rx.changed() => {\n                println!(\"Shutdown signal received\");\n            }\n        }\n    }\n\n    async fn accept_loop(&self) {\n        // ... accept connections\n    }\n\n    fn shutdown(&self) {\n        self.shutdown_tx.send(true).ok();\n    }\n}\n\n#[tokio::main]\nasync fn main() {\n    let server = Server::new();\n    let server_handle = tokio::spawn(server.run());\n\n    // Ждём Ctrl+C\n    signal::ctrl_c().await.unwrap();\n    server.shutdown();\n    server_handle.await.unwrap();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Rate limiter с токенами"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use tokio::sync::Mutex;\nuse std::time::Instant;\n\nstruct TokenBucket {\n    capacity: u32,\n    tokens: Mutex<u32>,\n    refill_rate: u32, // tokens per second\n    last_refill: Mutex<Instant>,\n}\n\nimpl TokenBucket {\n    fn new(capacity: u32, refill_rate: u32) -> Self {\n        Self {\n            capacity,\n            tokens: Mutex::new(capacity),\n            refill_rate,\n            last_refill: Mutex::new(Instant::now()),\n        }\n    }\n\n    async fn try_take(&self) -> bool {\n        let mut tokens = self.tokens.lock().await;\n        let mut last = self.last_refill.lock().await;\n\n        let now = Instant::now();\n        let elapsed = now.duration_since(*last).as_secs_f64();\n        let new_tokens = (elapsed * self.refill_rate as f64) as u32;\n\n        *tokens = (*tokens + new_tokens).min(self.capacity);\n        *last = now;\n\n        if *tokens > 0 {\n            *tokens -= 1;\n            true\n        } else {\n            false\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`future cannot be sent between threads`",
+          "Future не `Send`"
+        ],
+        [
+          "`blocking call in async context`",
+          "`std::fs::read`, `sleep` (std)"
+        ],
+        [
+          "`Future not Unpin`",
+          "Самореференция или async block"
+        ],
+        [
+          "`JoinError::Cancelled`",
+          "Задача была отменена"
+        ],
+        [
+          "`mpsc::Sender` клонируется, но `Receiver` нет",
+          "`mpsc` — single consumer"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Шпаргалка: Tokio API"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Модуль",
+        "Основные типы"
+      ],
+      "rows": [
+        [
+          "`tokio::task`",
+          "`spawn`, `spawn_blocking`, `yield_now`, `JoinHandle`"
+        ],
+        [
+          "`tokio::time`",
+          "`sleep`, `interval`, `timeout`, `Instant`, `Duration`"
+        ],
+        [
+          "`tokio::sync::mpsc`",
+          "`channel`, `Sender`, `Receiver`"
+        ],
+        [
+          "`tokio::sync::oneshot`",
+          "`channel`, `Sender`, `Receiver`"
+        ],
+        [
+          "`tokio::sync::broadcast`",
+          "`channel`, `Sender`, `Receiver`"
+        ],
+        [
+          "`tokio::sync::watch`",
+          "`channel`, `Sender`, `Receiver`"
+        ],
+        [
+          "`tokio::sync`",
+          "`Mutex`, `RwLock`, `Semaphore`, `Notify`, `Barrier`"
+        ],
+        [
+          "`tokio::fs`",
+          "`File`, `read`, `write`, `read_dir`, `OpenOptions`"
+        ],
+        [
+          "`tokio::io`",
+          "`AsyncReadExt`, `AsyncWriteExt`, `AsyncBufReadExt`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`Future` trait, `async`/`await`, state machines",
+        "Tokio runtime: `#[tokio::main]`, `spawn`, `join!`, `select!`, `try_join!`",
+        "Таймеры: `sleep`, `interval`, `timeout`",
+        "Синхронизация: `Mutex`, `RwLock`, `Semaphore`, `Notify`, `Barrier`",
+        "Каналы: `mpsc`, `oneshot`, `broadcast`, `watch`",
+        "`Pin` / `Unpin` для самозареференцирующихся фьючерсов",
+        "Async трейты: нативные (1.75+) и `async_trait`",
+        "Отмена задач: `abort()`, `CancellationToken`",
+        "Streams: `Stream`, `StreamExt`, `async_stream`"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`future cannot be sent between threads`",
+      "correct": "Future не `Send`"
+    },
+    {
+      "mistake": "`blocking call in async context`",
+      "correct": "`std::fs::read`, `sleep` (std)"
+    },
+    {
+      "mistake": "`Future not Unpin`",
+      "correct": "Самореференция или async block"
+    },
+    {
+      "mistake": "`JoinError::Cancelled`",
+      "correct": "Задача была отменена"
+    },
+    {
+      "mistake": "`mpsc::Sender` клонируется, но `Receiver` нет",
+      "correct": "`mpsc` — single consumer"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 20
+}

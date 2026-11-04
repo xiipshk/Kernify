@@ -1,0 +1,653 @@
+{
+  "title": "Урок 26: Анимация/эффекты — compositing, 3D трансформации, маски, фильтры, производительность, reduced motion",
+  "slug": "animatsiyaeffekty-compositing-3d-transformatsii-maski-filtry-proizvoditelnost-reduced-motion",
+  "short_description": "compositing, 3D трансформации, маски, фильтры, производительность, reduced motion",
+  "goals": [
+    "Изучить compositing и какие свойства анимируются на GPU (дешево)",
+    "Освоить 3D трансформации (rotateX, rotateY, rotateZ, perspective, transform-style)",
+    "Научиться использовать CSS-маски (mask-image, mask-border) и фильтры (filter, backdrop-filter)",
+    "Обеспечить производительность анимаций (will-change, contain, избегать layout thrashing)",
+    "Уважать настройку prefers-reduced-motion"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Изучить compositing и какие свойства анимируются на GPU (дешево)",
+        "Освоить 3D трансформации (rotateX, rotateY, rotateZ, perspective, transform-style)",
+        "Научиться использовать CSS-маски (mask-image, mask-border) и фильтры (filter, backdrop-filter)",
+        "Обеспечить производительность анимаций (will-change, contain, избегать layout thrashing)",
+        "Уважать настройку prefers-reduced-motion"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Compositing конвейер браузера"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конвейер рендеринга"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "JavaScript → Style → Layout → Paint → Composite → Display\n     ↑                                                    │\n     └── Свойства, затрагивающие конвейер ──→             │"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Какие свойства затрагивают какой этап"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Этап",
+        "Свойства",
+        "Стоимость"
+      ],
+      "rows": [
+        [
+          "**Layout**",
+          "width, height, margin, padding, top, left, font-size, flex, grid",
+          "🔴 Дорого"
+        ],
+        [
+          "**Paint**",
+          "color, background, box-shadow, border-radius, border",
+          "🟡 Средне"
+        ],
+        [
+          "**Composite**",
+          "transform, opacity, filter, will-change",
+          "🟢 Дешево (GPU)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что анимировать — дешево vs дорого"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* 🟢 ДЕШЕВО — compositing поток (GPU, 60fps) */\n.good {\n  animation: move 1s;\n}\n@keyframes move {\n  to {\n    transform: translate3d(100px, 0, 0);  /* translateX + translateZ для принудительного слоя */\n    opacity: 0.5;\n    filter: blur(2px);  /* С осторожностью —blur может быть дорог */\n  }\n}\n\n/* 🔴 ДОРОГО — главный поток (layout/paint, дроп кадров) */\n.bad {\n  animation: move 1s;\n}\n@keyframes move {\n  to {\n    width: 200px;           /* Layout */\n    height: 200px;          /* Layout */\n    margin-left: 100px;     /* Layout */\n    top: 50px;              /* Layout (если position: absolute) */\n    left: 50px;             /* Layout (если position: absolute) */\n    background: red;        /* Paint */\n    box-shadow: 0 10px 20px rgb(0 0 0 / 0.3);  /* Paint */\n    border-radius: 10px;    /* Paint */\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "rules for performant animation"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Анимируй только `transform` и `opacity` (и `filter` аккуратно)",
+        "Используй `translate3d(x, y, 0)` или `will-change: transform` для создания отдельного compositing слоя",
+        "Не анимируй `width`, `height`, `top`, `left`, `margin` — используй `transform: scale()`, `transform: translate()`",
+        "Используй `contain: strict` для изоляции дорогостоящих элементов",
+        "Проверяй в DevTools → Performance → Animations (badge GPU)"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. will-change и contain"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "will-change — сообщи браузеру заранее"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Правильно — только перед анимацией, сбрасываем после */\n.will-animate {\n  will-change: transform, opacity;\n}\n\n.will-animate:hover {\n  will-change: transform;\n  transition: transform 0.3s ease;\n}\n\n.will-animate {\n  will-change: auto;  /* Сбрасываем после анимации */\n}\n\n/* Через JavaScript — точный контроль */\nfunction animate(el) {\n  el.style.willChange = 'transform, opacity';\n  el.animate(\n    [{ transform: 'translateX(0)' }, { transform: 'translateX(100px)' }],\n    { duration: 500, fill: 'forwards' }\n  ).finished.then(() => {\n    el.style.willChange = 'auto';\n  });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Антипаттерн will-change"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* ПЛОХО — на всё подряд, пожирает память */\n.bad {\n  will-change: all;\n  will-change: transform, opacity, filter, width, height; /* Лишние свойства */\n}\n\n/* ПЛОХО — никогда не сбрасывается */\n.stuck {\n  will-change: transform;  /* Остаётся навсегда — память не освобождается */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "contain — изоляция для производительности"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Layout containment — изменения внутри не влияют на родителя */\n.card {\n  contain: layout;\n}\n\n/*Layout + paint */\n.card {\n  contain: layout paint;\n}\n\n/* Strict — layout + paint + size + style */\n.card {\n  contain: strict;\n}\n\n/* Content — layout + paint + style (без size) */\n.card {\n  contain: content;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Практический кейс — список с анимациями"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".list {\n  contain: strict;  /* Анимация одной карточки не пересчитывает весь список */\n}\n\n.list-item {\n  animation: slide 0.3s ease;\n}\n\n@keyframes slide {\n  from { transform: translateX(-20px); opacity: 0; }\n  to { transform: translateX(0); opacity: 1; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. 3D трансформации"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "perspective — глубина сцены"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".scene {\n  perspective: 1000px;  /* Чем меньше — тем выраженнее эффект глубины */\n  /* perspective: none — нет 3D эффекта */\n}\n\n/* perspective-origin — точка наблюдения */\n.scene {\n  perspective-origin: 50% 50%;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "transform-style: preserve-3d — дочерние элементы в 3D пространстве"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  transform-style: preserve-3d;  /* Дети существуют в 3D пространстве */\n  /* transform-style: flat — дети приплюсовываются к плоскости родителя (по умолчанию) */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "backface-visibility — обратная сторона элемента"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card__face {\n  backface-visibility: hidden;  /* Скрыть обратную сторону при повороте */\n  /* backface-visibility: visible — показать обратную сторону (по умолчанию) */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "rotateX, rotateY, rotateZ — вращение вокруг осей"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".box {\n  transform: rotateX(45deg);  /* Вращение вокруг горизонтальной оси */\n  transform: rotateY(45deg);  /* Вращение вокруг вертикальной оси */\n  transform: rotateZ(45deg);  /* Вращение вокруг оси Z (как 2D rotate) */\n  transform: rotate3d(1, 1, 0, 45deg);  /* Вращение вокруг произвольной оси */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "translateZ — движение вдоль оси Z (вперед/назад)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".box {\n  transform: translateZ(100px);  /* Ближе к наблюдателю */\n  transform: translate3d(100px, 50px, -100px);  /* X, Y, Z */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "scale3d — масштабирование в 3D"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".box {\n  transform: scale3d(1.2, 1.2, 1.2);\n  transform: scaleZ(1.5);  /* Только по Z */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: переворачивающаяся карточка (Flip Card)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"flip-card\">\n  <div class=\"flip-card__inner\">\n    <div class=\"flip-card__face flip-card__face--front\">Лицевая сторона</div>\n    <div class=\"flip-card__face flip-card__face--back\">Обратная сторона</div>\n  </div>\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".flip-card {\n  perspective: 1000px;\n  width: 300px;\n  height: 200px;\n}\n\n.flip-card__inner {\n  position: relative;\n  width: 100%;\n  height: 100%;\n  text-align: center;\n  transition: transform 0.6s;\n  transform-style: preserve-3d;\n  cursor: pointer;\n}\n\n.flip-card:hover .flip-card__inner {\n  transform: rotateY(180deg);\n}\n\n.flip-card__face {\n  position: absolute;\n  width: 100%;\n  height: 100%;\n  backface-visibility: hidden;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  border-radius: 1rem;\n  color: white;\n  font-size: 1.5rem;\n  font-weight: 600;\n}\n\n.flip-card__face--front {\n  background: oklch(0.62 0.22 264);\n}\n\n.flip-card__face--back {\n  background: oklch(0.65 0.22 20);\n  transform: rotateY(180deg);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: 3D куб"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"cube-scene\">\n  <div class=\"cube\">\n    <div class=\"cube__face face--front\">Front</div>\n    <div class=\"cube__face face--back\">Back</div>\n    <div class=\"cube__face face--right\">Right</div>\n    <div class=\"cube__face face--left\">Left</div>\n    <div class=\"cube__face face--top\">Top</div>\n    <div class=\"cube__face face--bottom\">Bottom</div>\n  </div>\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".cube-scene {\n  perspective: 600px;\n  width: 200px;\n  height: 200px;\n}\n\n.cube {\n  position: relative;\n  width: 100%;\n  height: 100%;\n  transform-style: preserve-3d;\n  animation: spin 10s linear infinite;\n}\n\n.cube__face {\n  position: absolute;\n  width: 200px;\n  height: 200px;\n  border: 2px solid oklch(0.62 0.22 264);\n  background: color-mix(in oklch, oklch(0.62 0.22 264), white 70%);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-weight: 600;\n}\n\n.face--front  { transform: rotateY(0deg) translateZ(100px); }\n.face--back   { transform: rotateY(180deg) translateZ(100px); }\n.face--right  { transform: rotateY(90deg) translateZ(100px); }\n.face--left   { transform: rotateY(-90deg) translateZ(100px); }\n.face--top    { transform: rotateX(90deg) translateZ(100px); }\n.face--bottom { transform: rotateX(-90deg) translateZ(100px); }\n\n@keyframes spin {\n  from { transform: rotateX(0deg) rotateY(0deg); }\n  to { transform: rotateX(360deg) rotateY(360deg); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. CSS-маски (mask-image, mask-border)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "mask-image — маска для отображения части элемента"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  mask-image: linear-gradient(black 50%, transparent 50%);\n  /* Черное = видимое, прозрачное = скрытое */\n}\n\n.avatar {\n  mask-image: url('mask.png');  /* PNG с прозрачностью */\n  mask-size: cover;\n  mask-position: center;\n  mask-repeat: no-repeat;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "mask-composite — как соединять несколько масок"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".complex-mask {\n  mask-image: url('shape1.png'), url('shape2.png');\n  mask-composite: exclude;  /* exclude, add, intersect, subtract */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "mask-border — граничная маска (как border-image, но для маски)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".card {\n  mask-border: url('frame.png') 30 round;\n  mask-border-slice: 30;\n  mask-border-width: 10px;\n  mask-border-outset: 5px;\n  mask-border-repeat: round;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: текст с маской изображения"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<h1 class=\"masked-text\">Заголовок</h1>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".masked-text {\n  font-size: 4rem;\n  font-weight: 900;\n  text-align: center;\n  margin: 0;\n\n  /* Маска — картинка показывается только внутри букв */\n  -webkit-mask-image: url('texture.jpg');  /* Safari prefixed */\n  mask-image: url('texture.jpg');\n  -webkit-mask-size: cover;\n  mask-size: cover;\n  -webkit-mask-position: center;\n  mask-position: center;\n\n  color: transparent;  /* Текст прозрачный, видно только маску */\n  background: linear-gradient(135deg, #667eea, #764ba2);\n  /* Или background-clip: text для поддержки */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Поддержка масок"
+    },
+    {
+      "type": "text",
+      "content": "Chrome 18+ (с -webkit-), Firefox 53+, Safari 4+. Для production — проверяй caniuse и имей фолбэк."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. CSS-фильтры (filter и backdrop-filter)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "filter — фильтр элемента"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Размытие */\n.blur {\n  filter: blur(4px);\n}\n\n/* Яркость */\n.brightness {\n  filter: brightness(1.5);  /* 1.0 = без изменений, 0 = чёрный, >1 = ярче */\n}\n\n/* Контраст */\n.contrast {\n  filter: contrast(1.2);\n}\n\n/* Оттенок серого */\n.grayscale {\n  filter: grayscale(100%);  /* 0% = цвет, 100% = Ч/Б */\n}\n\n/* Сепия */\n.sepia {\n  filter: sepia(80%);\n}\n\n/* Насыщенность */\n.saturate {\n  filter: saturate(2);  /* 1 = без изменений, 0 = Ч/Б, >1 = насыщеннее */\n}\n\n/* Оттенок (hue-rotate) */\n.hue-rotate {\n  filter: hue-rotate(90deg);\n}\n\n/* Инверсия */\n.invert {\n  filter: invert(100%);\n}\n\n/* Непрозрачность (альтернатива opacity) */\n.opacity {\n  filter: opacity(50%);\n}\n\n/* Комбинирование */\n.combined {\n  filter: grayscale(50%) contrast(1.2) blur(1px);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "backdrop-filter — фильтр фона за элементом"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".glass {\n  background: rgba(255, 255, 255, 0.3);\n  backdrop-filter: blur(10px);\n  -webkit-backdrop-filter: blur(10px);  /* Safari */\n\n  border: 1px solid rgba(255, 255, 255, 0.2);\n  border-radius: 1rem;\n}"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Стекло с насыщенностью и контрастом */\n.glass-card {\n  background: rgba(255, 255, 255, 0.25);\n  backdrop-filter: blur(12px) saturate(1.8) contrast(1.2);\n  -webkit-backdrop-filter: blur(12px) saturate(1.8) contrast(1.2);\n  border: 1px solid rgba(255, 255, 255, 0.3);\n  border-radius: 1rem;\n  color: white;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Производительность фильтров"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`blur()` — может быть дорогим, особенно с большими радиусами",
+        "`backdrop-filter` — дороже, чем `filter`, так как требует сэмплирования области за элементом",
+        "Используй `will-change: filter` если анимируешь фильтр",
+        "На мобильных устройствах backdrop-filter может снижать FPS"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. prefers-reduced-motion — уважение пользователя"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Обнаружение настройки"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Пользователь включил «Уменьшить движение» в ОС */\n@media (prefers-reduced-motion: reduce) {\n  *,\n  *::before,\n  *::after {\n    animation-duration: 0.01ms !important;\n    animation-iteration-count: 1 !important;\n    transition-duration: 0.01ms !important;\n    scroll-behavior: auto !important;\n  }\n}\n\n/* Конкретный элемент */\n.slider {\n  transition: transform 0.3s ease;\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .slider {\n    transition: none;\n  }\n\n  .animated {\n    animation: none;\n  }\n}\n\n/* Пустая строка = нет предпочтений (показывать анимации) */\n@media (prefers-reduced-motion: no-preference) {\n  .fancy {\n    animation: fade-in 0.5s ease;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "JavaScript проверка"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');\n\nif (prefersReducedMotion.matches) {\n  // Отключить анимации в JS\n  element.style.animation = 'none';\n}\n\n// Слушать изменения настройки\nprefersReducedMotion.addEventListener('change', (e) => {\n  if (e.matches) {\n    // Отключить анимации\n  } else {\n    // Включить анимации\n  }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что отключать при reduced motion"
+    },
+    {
+      "type": "list",
+      "items": [
+        "autoplay анимации (carousel, parallax)",
+        "transition на hover/ focus (опционально, можно оставить мгновенные)",
+        "parallax эффекты",
+        "애니메이션 при скролле",
+        "кнопочные микро-анимации (можно оставить, если не раздражают)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что оставить"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Мгновенные переходы (transition: none, но цвет может меняться сразу)",
+        "Funktionalные анимации (загрузка, отправка формы)",
+        "Видео и GIF (пользователь контролирует паузу)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. animation и transition — детали"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "animation — свойства"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".element {\n  animation-name: fade-in;\n  animation-duration: 0.5s;\n  animation-timing-function: ease;\n  animation-delay: 0.2s;\n  animation-iteration-count: 3;  /* infinite для бесконечной */\n  animation-direction: alternate;  /* normal, reverse, alternate, alternate-reverse */\n  animation-fill-mode: forwards;  /* none, forwards, backwards, both */\n  animation-play-state: running;  /* paused */\n\n  /* Шортхэнд */\n  animation: fade-in 0.5s ease 0.2s 3 alternate forwards;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "animation-composition — как комбинировать анимации"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".element {\n  animation: move 1s, scale 1s;\n\n  /* replace — по умолчанию, последняя анимация побеждает */\n  /* add — анимации складываются (transform) */\n  /* accumulate — как add, но для filter и др. */\n  animation-composition: add;\n}\n\n.card {\n  animation:\n    float 3s ease-in-out infinite,\n    rotate 10s linear infinite;\n  animation-composition: add;  /* Обе работают одновременно! */\n}\n\n@keyframes float {\n  0%, 100% { transform: translateY(0); }\n  50% { transform: translateY(-10px); }\n}\n@keyframes rotate {\n  to { transform: rotate(360deg); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "transition — свойства"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".btn {\n  transition-property: background, transform, opacity;\n  transition-duration: 0.2s;\n  transition-timing-function: ease;\n  transition-delay: 0s;\n\n  /* Шортхэнд */\n  transition: background 0.2s, transform 0.2s, opacity 0.2s;\n\n  /* transition-behavior: allow-discrete — для анимации display */\n  transition: display 0.3s allow-discrete;\n}\n\n.btn:hover {\n  background: oklch(0.55 0.22 264);\n  transform: scale(1.05);\n  opacity: 0.9;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "@starting-style — для анимации входа (display: none → block)"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".modal {\n  display: none;\n  opacity: 0;\n  transition: opacity 0.3s, display 0.3s allow-discrete;\n}\n\n/* Начальное состояние перед появлением */\n@starting-style {\n  .modal {\n    opacity: 0;\n    transform: scale(0.9);\n  }\n}\n\n.modal.is-open {\n  display: block;\n  opacity: 1;\n  transform: scale(1);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Комплексный пример: производительная карточка с эффектами"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<div class=\"perf-card\">\n  <div class=\"perf-card__media\">\n    <img src=\"photo.jpg\" alt=\"\" class=\"perf-card__img\">\n    <div class=\"perf-card__badge\">Новинка</div>\n  </div>\n  <div class=\"perf-card__body\">\n    <h3 class=\"perf-card__title\">Название товара</h3>\n    <p class=\"perf-card__text\">Описание товара...</p>\n    <button class=\"perf-card__btn\">Подробнее</button>\n  </div>\n</div>"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": ".perf-card {\n  container-type: inline-size;\n  display: flex;\n  flex-direction: column;\n  gap: 1rem;\n  padding: 1.5rem;\n  border: 1px solid oklch(0.88 0.006 285);\n  border-radius: 1rem;\n  background: white;\n\n  /* Дешёвые анимации — только transform и opacity */\n  transition:\n    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),\n    box-shadow 0.3s ease,\n    border-color 0.3s ease;\n\n  will-change: auto;  /* Сбрасываем по умолчанию */\n}\n\n.perf-card:hover {\n  will-change: transform, box-shadow;  /* Включаем перед ховером */\n  transform: translateY(-4px);\n  box-shadow: 0 12px 28px rgb(0 0 0 / 0.1);\n  border-color: oklch(0.62 0.22 264);\n}\n\n.perf-card:focus-within {\n  outline: 3px solid oklch(0.62 0.22 264);\n  outline-offset: 2px;\n}\n\n.perf-card:active {\n  transform: translateY(-2px) scale(0.98);\n}\n\n/* Сбрасываем will-change после взаимодействия */\n.perf-card:not(:hover):not(:focus-within) {\n  will-change: auto;\n}\n\n.perf-card__media {\n  position: relative;\n  aspect-ratio: 16 / 9;\n  width: 100%;\n  background: oklch(0.97 0.001 285);\n  border-radius: 0.75rem;\n  overflow: hidden;\n}\n\n.perf-card__img {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n  object-position: center;\n  display: block;\n\n  /* Дешёвая анимация масштабирования при ховере */\n  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);\n}\n\n.perf-card:hover .perf-card__img {\n  transform: scale(1.05);\n}\n\n.perf-card__badge {\n  position: absolute;\n  top: 0.5rem;\n  left: 0.5rem;\n  background: oklch(0.65 0.22 20);\n  color: white;\n  font-size: 0.75rem;\n  font-weight: 600;\n  padding: 2px 8px;\n  border-radius: 999px;\n}\n\n/* Маска для изображения (опциональный эффект) */\n.perf-card__img--masked {\n  -webkit-mask-image: linear-gradient(black 80%, transparent 100%);\n  mask-image: linear-gradient(black 80%, transparent 100%);\n}\n\n/* Фильтр на изображение — используй осторожно, может быть дорого */\n.perf-card:hover .perf-card__img {\n  filter: brightness(1.1);\n}\n\n/* Анимация входа */\n@keyframes card-appear {\n  from {\n    opacity: 0;\n    transform: translateY(20px);\n  }\n  to {\n    opacity: 1;\n    transform: translateY(0);\n  }\n}\n\n.perf-card {\n  animation: card-appear 0.5s ease forwards;\n  animation-delay: 0.1s;\n  opacity: 0;  /* Начальное состояние для JS или CSS */\n}\n\n/* Respect prefers-reduced-motion */\n@media (prefers-reduced-motion: reduce) {\n  .perf-card,\n  .perf-card__img {\n    transition: none;\n    animation: none;\n  }\n\n  .perf-card:hover {\n    transform: none;\n    box-shadow: none;\n  }\n\n  .perf-card:hover .perf-card__img {\n    transform: none;\n    filter: none;\n  }\n}\n\n/* Forced colors (Windows High Contrast) */\n@media (forced-colors: active) {\n  .perf-card {\n    border: 1px solid CanvasText;\n    background: Canvas;\n  }\n\n  .perf-card__badge {\n    background: Highlight;\n    color: HighlightText;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Чек-лист производительности анимаций"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Проверка",
+        "Как проверить"
+      ],
+      "rows": [
+        [
+          "Анимирую только transform и opacity",
+          "Поиск `width`, `height`, `top`, `left`, `margin` в @keyframes"
+        ],
+        [
+          "will-change сбрасывается после анимации",
+          "Нет永久 will-change: transform"
+        ],
+        [
+          "contain на контейнерах со списками",
+          "contain: layout paint на списках"
+        ],
+        [
+          "GPU-слой создан",
+          "DevTools → Animations → бейдж «GPU»"
+        ],
+        [
+          "FPS стабильно 60",
+          "DevTools → Performance → запись анимации"
+        ],
+        [
+          "prefers-reduced-motion respected",
+          "Включить в ОС, анимации отключаются"
+        ],
+        [
+          "Нет layout thrashing",
+          "Чтение/запись layout-свойств разделены в JS"
+        ],
+        [
+          "backface-visibility: hidden для 3D",
+          "На элементах с rotateY/rotateX"
+        ],
+        [
+          "perspective на сцене 3D",
+          "perspective у родителя 3D элементов"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практическое задание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 1: Анимация только на GPU-свойствах"
+    },
+    {
+      "type": "text",
+      "content": "Создай карточку, при ховере на которую:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Поднимается вверх (transform: translateY)",
+        "Появляется тень (box-shadow — paint, но только при ховере, не анимируется continuously)",
+        "Изображение масштабируется (transform: scale)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Проверь в DevTools, что анимация идет на compositing потоке (бейдж GPU)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 2: will-change контроль"
+    },
+    {
+      "type": "text",
+      "content": "Реализуй кнопку, при клике на которую:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "will-change включается через JS перед анимацией",
+        "will-change сбрасывается после завершения анимации (.finished.then)",
+        "Измерь потребление памяти до и после"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 3: 3D Flip Card"
+    },
+    {
+      "type": "text",
+      "content": "Создай переворачивающуюся карточку с:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "perspective на контейнере",
+        "transform-style: preserve-3d на внутреннем элементе",
+        "backface-visibility: hidden на гранях",
+        "rotateY(180deg) при ховере"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 4: Маска и фильтр"
+    },
+    {
+      "type": "text",
+      "content": "Создай элемент с:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "mask-image (линейный градиент или картинка)",
+        "filter: blur() или grayscale() при ховере",
+        "backdrop-filter для стеклянного эффекта"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Проверь производительность на больших элементах."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 5: prefers-reduced-motion"
+    },
+    {
+      "type": "text",
+      "content": "Создай страницу с анимациями:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Автопрокрутка карусели — отключается при reduced motion",
+        "Плавный скролл — становится мгновенным",
+        "Hover-анимации — остаются или отключаются (на твой выбор)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Проверь в настройках ОС (Windows: Параметры → Доступность → Эффекты анимации; macOS: Доступность → Дисплей → Уменьшить движение)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задача 6: Contain для списка"
+    },
+    {
+      "type": "text",
+      "content": "Создай список из 50 элементов с анимацией появления:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "contain: strict на контейнере списка",
+        "contain: layout paint на элементах списка",
+        "Сравните производительность с и без contain в DevTools Performance"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Ключевые выводы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "css",
+  "lesson_order": 26
+}

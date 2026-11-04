@@ -1,0 +1,514 @@
+{
+  "title": "Урок 18: Тестирование (Testing)",
+  "slug": "testirovanie-testing",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Unit Tests (модульные тесты)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/lib.rs или внутри модуля\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn test_add() {\n        assert_eq!(add(2, 3), 5);\n    }\n\n    #[test]\n    fn test_add_negative() {\n        assert_eq!(add(-1, 1), 0);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Макросы проверки"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[test]\nfn assertions() {\n    // assert! — проверка булева выражения\n    assert!(2 + 2 == 4);\n\n    // assert_eq! — равенство (использует Debug + PartialEq)\n    assert_eq!(add(2, 3), 5);\n\n    // assert_ne! — неравенство\n    assert_ne!(add(2, 3), 6);\n\n    // Пользовательское сообщение\n    assert_eq!(add(2, 3), 5, \"Addition failed: 2+3 should be 5\");\n\n    // debug_assert! — только в debug builds (optimized out в release)\n    debug_assert!(expensive_check());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Тестирование паник"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[test]\n#[should_panic(expected = \"divide by zero\")]\nfn test_divide_by_zero() {\n    divide(10, 0);\n}\n\nfn divide(a: i32, b: i32) -> i32 {\n    if b == 0 { panic!(\"divide by zero\"); }\n    a / b\n}\n\n// Тест, который должен паниковать с любым сообщением\n#[test]\n#[should_panic]\nfn test_any_panic() {\n    panic!(\"something went wrong\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Result<T, E>` в тестах (Rust 2018+)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[test]\nfn test_with_result() -> Result<(), String> {\n    let result = risky_operation()?;\n    assert_eq!(result, 42);\n    Ok(())\n}\n\nfn risky_operation() -> Result<i32, String> {\n    Ok(42)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Организация тестов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Модуль `tests` внутри кода"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/lib.rs\npub struct Calculator;\n\nimpl Calculator {\n    pub fn add(&self, a: i32, b: i32) -> i32 { a + b }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn test_add() {\n        let calc = Calculator;\n        assert_eq!(calc.add(1, 2), 3);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Вложенные модули тестов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    mod add_tests {\n        use super::*;\n\n        #[test]\n        fn positive() { assert_eq!(add(1, 2), 3); }\n        #[test]\n        fn negative() { assert_eq!(add(-1, -2), -3); }\n    }\n\n    mod mul_tests {\n        use super::*;\n\n        #[test]\n        fn basic() { assert_eq!(mul(2, 3), 6); }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Integration Tests (интеграционные тесты)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "project/\n├── Cargo.toml\n├── src/\n│   └── lib.rs\n└── tests/\n    ├── integration_test.rs\n    └── common/\n        └── mod.rs"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример интеграционного теста"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// tests/integration_test.rs\nuse my_crate::Calculator;\n\n#[test]\nfn test_calculator_integration() {\n    let calc = Calculator::new();\n    assert_eq!(calc.add(10, 20), 30);\n    assert_eq!(calc.mul(5, 6), 30);\n}\n\n// Несколько тестов в одном файле\n#[test]\nfn test_feature_a() { /* ... */ }\n\n#[test]\nfn test_feature_b() { /* ... */ }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Общий код для тестов (`tests/common/mod.rs`)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// tests/common/mod.rs\npub fn setup_test_db() -> Database {\n    Database::new_test()\n}\n\npub fn create_test_user() -> User {\n    User { name: \"test\".into(), id: 1 }\n}"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// tests/integration_test.rs\nmod common; // Подключает tests/common/mod.rs\n\nuse common::{setup_test_db, create_test_user};\n\n#[test]\nfn test_with_common() {\n    let db = setup_test_db();\n    let user = create_test_user();\n    // ...\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Documentation Tests (Doc tests)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовые doc-тесты"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "/// Складывает два числа.\n///\n/// # Examples\n///\n/// ```\n/// let result = my_crate::add(2, 3);\n/// assert_eq!(result, 5);\n/// ```\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n/// # Panics\n/// Паникует если `b == 0`.\n///\n/// ```should_panic\n/// my_crate::divide(10, 0);\n/// ```\npub fn divide(a: i32, b: i32) -> i32 {\n    if b == 0 { panic!(\"divide by zero\"); }\n    a / b\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Скрытые строки (`#`)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "/// ```\n/// # use my_crate::Config;\n/// # let config = Config::default();\n/// let result = config.compute();\n/// assert_eq!(result, 42);\n/// ```\npub fn compute(&self) -> i32 { 42 }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Тестирование `Result` в doc-тестах"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "/// ```\n/// # use std::io;\n/// # fn main() -> io::Result<()> {\n/// let result = my_crate::read_file(\"test.txt\")?;\n/// assert!(result.contains(\"hello\"));\n/// # Ok(())\n/// # }\n/// ```\npub fn read_file(path: &str) -> std::io::Result<String> { ... }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[doc = include_str!]` для больших примеров"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[doc = include_str!(\"../examples/advanced_usage.rs\")]\npub fn advanced_function() { ... }"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Property-Based Testing (Proptest)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[cfg(test)]\nmod tests {\n    use proptest::prelude::*;\n\n    proptest! {\n        #[test]\n        fn test_add_commutative(a: i32, b: i32) {\n            prop_assert_eq!(add(a, b), add(b, a));\n        }\n\n        #[test]\n        fn test_add_associative(a: i32, b: i32, c: i32) {\n            prop_assert_eq!(add(add(a, b), c), add(a, add(b, c)));\n        }\n\n        #[test]\n        fn test_reverse_twice(v in proptest::collection::vec(0..100, 0..10)) {\n            let mut v1 = v.clone();\n            v1.reverse();\n            v1.reverse();\n            prop_assert_eq!(v, v1);\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стратегии генерации"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use proptest::prelude::*;\n\n// Диапазоны\n(0..100)                    // i32 от 0 до 99\n(-100..100)                 // i32 от -100 до 99\n\n// Коллекции\nproptest::collection::vec(0..10, 0..20)  // Vec<i32>, len 0..20\nproptest::collection::hash_set(0..10, 0..10)\n\n// Строки\n\"[a-z]*\"                    // Regex strategy\n\"\\\\PC*\"                     // Any non-control chars\n\n// Option/Result\nproptest::option::of(0..100)\nproptest::result::of(0..100, \"-100..-1\")\n\n// Комбинаторы\nprop::array::uniform32(0..10)  // [i32; 32]\nprop::tuple((0..10, \"abc\", true))"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Shrinking (уменьшение counterexample)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "proptest! {\n    #[test]\n    fn test_sort_preserves_length(v in prop::collection::vec(0..100, 0..100)) {\n        let mut sorted = v.clone();\n        sorted.sort();\n        prop_assert_eq!(v.len(), sorted.len());\n    }\n}\n// При падении proptest автоматически найдёт минимальный failing case"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Mocking с `mockall`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Автоматический мок для trait"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use mockall::automock;\n\n#[automock]\ntrait Database {\n    fn get_user(&self, id: u32) -> Option<User>;\n    fn save_user(&self, user: &User) -> Result<(), Error>;\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use mockall::predicate::*;\n\n    #[test]\n    fn test_user_service() {\n        let mut mock_db = MockDatabase::new();\n\n        // Expectation\n        mock_db.expect_get_user()\n            .with(eq(1))\n            .times(1)\n            .returning(|_| Some(User { id: 1, name: \"Alice\".into() }));\n\n        let service = UserService::new(mock_db);\n        let user = service.get_user(1).unwrap();\n        assert_eq!(user.name, \"Alice\");\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ручной мок"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "mock! {\n    Database {\n        fn get_user(&self, id: u32) -> Option<User>;\n        fn save_user(&self, user: &User) -> Result<(), Error>;\n    }\n}\n\nimpl Database for MockDatabase { /* auto-impl */ }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сложные expectations"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "mock_db.expect_get_user()\n    .withf(|id| *id > 10)           // предикат-функция\n    .times(2..=5)                   // диапазон вызовов\n    .returning(|id| Some(User { id, name: format!(\"User{}\", id) }));\n\n// Последовательность вызовов\nlet mut seq = mockall::Sequence::new();\nmock_db.expect_get_user()\n    .once()\n    .in_sequence(&mut seq)\n    .returning(|_| Some(User::default()));\nmock_db.expect_save_user()\n    .once()\n    .in_sequence(&mut seq)\n    .returning(|_| Ok(()));"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Конфигурация тестов в `Cargo.toml`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Отключение тестов для конкретного пакета"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Отдельные бинарники для тестов"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[[test]]\nname = \"my_test\"\npath = \"tests/custom_main.rs\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфигурация `cargo test`"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[profile.test]\ndebug = true          # Debug symbols\nopt-level = 1         # Оптимизация\noverflow-checks = true"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фичи для тестов"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[features]\ndefault = []\ntest-utils = [\"dep:proptest\", \"dep:mockall\"]\n"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Запуск тестов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основные команды"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Вывод тестов"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "running 3 tests\ntest tests::add_tests::positive ... ok\ntest tests::add_tests::negative ... ok\ntest tests::mul_tests::basic ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Benchmarking (Bencher) — nightly only"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#![feature(test)]\nextern crate test;\n\n#[cfg(test)]\nmod benches {\n    use super::*;\n    use test::Bencher;\n\n    #[bench]\n    fn bench_add(b: &mut Bencher) {\n        b.iter(|| add(2, 3));\n    }\n\n    #[bench]\n    fn bench_fibonacci(b: &mut Bencher) {\n        b.iter(|| fibonacci(20));\n    }\n}"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo bench"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Тестирование калькулятора"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/calculator.rs\npub struct Calculator;\n\nimpl Calculator {\n    pub fn add(&self, a: f64, b: f64) -> f64 { a + b }\n    pub fn div(&self, a: f64, b: f64) -> Result<f64, String> {\n        if b == 0.0 { Err(\"Division by zero\".into()) }\n        else { Ok(a / b) }\n    }\n}\n\n// src/calculator.rs (продолжение)\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn test_add() {\n        let calc = Calculator;\n        assert_eq!(calc.add(1.0, 2.0), 3.0);\n    }\n\n    #[test]\n    fn test_div_ok() {\n        let calc = Calculator;\n        assert_eq!(calc.div(10.0, 2.0).unwrap(), 5.0);\n    }\n\n    #[test]\n    fn test_div_by_zero() {\n        let calc = Calculator;\n        assert!(calc.div(10.0, 0.0).is_err());\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Property-based тест для сортировки"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[cfg(test)]\nmod prop_tests {\n    use proptest::prelude::*;\n\n    proptest! {\n        #[test]\n        fn sort_is_idempotent(v in prop::collection::vec(-100..100, 0..100)) {\n            let mut v1 = v.clone();\n            v1.sort();\n            let mut v2 = v1.clone();\n            v2.sort();\n            prop_assert_eq!(v1, v2);\n        }\n\n        #[test]\n        fn sort_preserves_elements(v in prop::collection::vec(-100..100, 0..100)) {\n            let mut sorted = v.clone();\n            sorted.sort();\n\n            let mut v_count = std::collections::HashMap::new();\n            for &x in &v { *v_count.entry(x).or_insert(0) += 1; }\n            let mut s_count = std::collections::HashMap::new();\n            for &x in &sorted { *s_count.entry(x).or_insert(0) += 1; }\n\n            prop_assert_eq!(v_count, s_count);\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Mock тест для сервиса"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/service.rs\npub trait EmailSender {\n    fn send(&self, to: &str, subject: &str, body: &str) -> Result<(), String>;\n}\n\npub struct NotificationService<E: EmailSender> {\n    sender: E,\n}\n\nimpl<E: EmailSender> NotificationService<E> {\n    pub fn new(sender: E) -> Self { Self { sender } }\n\n    pub fn notify(&self, user: &User, message: &str) -> Result<(), String> {\n        self.sender.send(&user.email, \"Notification\", message)\n    }\n}\n\n// tests/service_test.rs\nuse mockall::automock;\nuse my_crate::{EmailSender, NotificationService, User};\n\n#[automock]\nimpl EmailSender for MockEmailSender {}\n\n#[test]\nfn test_notification() {\n    let mut mock = MockEmailSender::new();\n    mock.expect_send()\n        .with(eq(\"test@example.com\"), eq(\"Notification\"), eq(\"Hello\"))\n        .returning(|_, _, _| Ok(()));\n\n    let service = NotificationService::new(mock);\n    let user = User { email: \"test@example.com\".into() };\n    service.notify(&user, \"Hello\").unwrap();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`unused import` в `#[cfg(test)]`",
+          "Импорт не используется"
+        ],
+        [
+          "`cannot find function` в doc-тесте",
+          "Функция не публичная"
+        ],
+        [
+          "`test harness panic`",
+          "Паника в setup/teardown"
+        ],
+        [
+          "`mockall: trait not object safe`",
+          "Trait имеет generic методы"
+        ],
+        [
+          "`proptest: test takes too long`",
+          "Слишком большие генераторы"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Шпаргалка: cargo test"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Команда",
+        "Описание"
+      ],
+      "rows": [
+        [
+          "`cargo test`",
+          "Все тесты"
+        ],
+        [
+          "`cargo test --lib`",
+          "Только lib tests"
+        ],
+        [
+          "`cargo test --test name`",
+          "Конкретный integration test"
+        ],
+        [
+          "`cargo test --doc`",
+          "Только doc tests"
+        ],
+        [
+          "`cargo test name`",
+          "Фильтр по имени"
+        ],
+        [
+          "`cargo test -- --nocapture`",
+          "Показать println!"
+        ],
+        [
+          "`cargo test -- --test-threads=N`",
+          "N потоков"
+        ],
+        [
+          "`cargo test -- --list`",
+          "Список тестов"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Unit tests: `#[test]`, `#[should_panic]`, `assert!` макросы, `Result` в тестах",
+        "Организация: `#[cfg(test)]`, вложенные модули",
+        "Integration tests: `tests/` директория, общий код в `tests/common/`",
+        "Documentation tests: примеры в `///`, `should_panic`, скрытые строки `#`",
+        "Property-based testing: `proptest`, стратегии, shrinking",
+        "Mocking: `mockall` с `#[automock]`, expectations, sequences",
+        "Конфигурация: `Cargo.toml`, profiles, features",
+        "Запуск: флаги `cargo test`, параллелизм, фильтрация"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`unused import` в `#[cfg(test)]`",
+      "correct": "Импорт не используется"
+    },
+    {
+      "mistake": "`cannot find function` в doc-тесте",
+      "correct": "Функция не публичная"
+    },
+    {
+      "mistake": "`test harness panic`",
+      "correct": "Паника в setup/teardown"
+    },
+    {
+      "mistake": "`mockall: trait not object safe`",
+      "correct": "Trait имеет generic методы"
+    },
+    {
+      "mistake": "`proptest: test takes too long`",
+      "correct": "Слишком большие генераторы"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 18
+}

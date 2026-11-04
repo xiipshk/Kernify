@@ -1,0 +1,512 @@
+{
+  "title": "Урок 28: Performance — Profiling, Memory Leaks, Rendering, JIT Concepts, Data Structures",
+  "slug": "performance-profiling-memory-leaks-rendering-jit-concepts-data-structures",
+  "short_description": "Profiling, Memory Leaks, Rendering, JIT Concepts, Data Structures",
+  "goals": [
+    "Освоить профилирование: CPU, Memory, Network — инструменты и методики",
+    "Понять Memory Leaks: типы утечек, обнаружение, предотвращение",
+    "Глубоко разобрать Rendering Performance: 60fps, compositor, layout thrashing",
+    "Изучить JIT компиляцию: V8 pipeline, hidden classes, inline caching, deoptimization",
+    "Научиться выбирать правильные Data Structures для производительности"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Освоить профилирование: CPU, Memory, Network — инструменты и методики",
+        "Понять Memory Leaks: типы утечек, обнаружение, предотвращение",
+        "Глубоко разобрать Rendering Performance: 60fps, compositor, layout thrashing",
+        "Изучить JIT компиляцию: V8 pipeline, hidden classes, inline caching, deoptimization",
+        "Научиться выбирать правильные Data Structures для производительности"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Profiling Tools & Methodology"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.1 Chrome DevTools Performance Panel"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Workflow:\n// 1. Открыть DevTools → Performance\n// 2. Settings: \"Capture screenshots\", \"Enable advanced paint instrumentation\"\n// 3. Record → взаимодействие → Stop\n// 4. Анализ: Flame Chart, Call Tree, Bottom-Up, Event Log\n\n// Key metrics в Summary:\n// - Scripting: JS execution time\n// - Rendering: Style + Layout + Paint + Composite\n// - Painting: Paint time\n// - System: GC, прочее\n// - Idle: свободное время\n\n// Long Tasks (>50ms) — красные треугольники на Flame Chart\n// INP проблемы → ищите Long Tasks во время взаимодействий"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.2 Console Performance API"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// User Timing API:\nperformance.mark('start:data-fetch');\nconst data = await fetchData();\nperformance.mark('end:data-fetch');\nperformance.measure('data-fetch', 'start:data-fetch', 'end:data-fetch');\n\n// Получение измерений:\nconst entries = performance.getEntriesByType('measure');\nentries.forEach(e => console.log(`${e.name}: ${e.duration.toFixed(2)}ms`));\n\n// Navigation Timing (page load):\nconst nav = performance.getEntriesByType('navigation')[0];\nconsole.log({\n  dns: nav.domainLookupEnd - nav.domainLookupStart,\n  tcp: nav.connectEnd - nav.connectStart,\n  tls: nav.secureConnectionStart ? nav.connectEnd - nav.secureConnectionStart : 0,\n  ttfb: nav.responseStart - nav.requestStart,\n  download: nav.responseEnd - nav.responseStart,\n  domInteractive: nav.domInteractive,\n  domComplete: nav.domComplete,\n  loadEventEnd: nav.loadEventEnd\n});\n\n// Resource Timing:\nperformance.getEntriesByType('resource').forEach(r => {\n  if (r.duration > 100) console.log(`Slow resource: ${r.name} (${r.duration}ms)`);\n});\n\n// Memory (Chrome only):\nconsole.log(performance.memory);\n// { usedJSHeapSize, totalJSHeapSize, jsHeapSizeLimit }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.3 Node.js Profiling"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.4 Continuous Profiling (Production)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Используйте: 0x, clinic.js, datadog, new relic, elastic APM\n\n// clinic.js — визуализация:\nnpx clinic doctor -- node app.js\nnpx clinic flame -- node app.js\nnpx clinic bubbleprof -- node app.js\n\n// 0x — flame graphs:\nnpx 0x app.js"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Memory Leaks — Detection & Prevention"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.1 Types of Memory Leaks"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Global variables / accidental globals\nfunction leak() {\n  leaky = 'oops'; // global в sloppy mode!\n}\n\n// 2. Forgotten timers / intervals\nsetInterval(() => { /* heavy work */ }, 1000);\n// Никогда не очищен!\n\n// 3. Event listeners не удалены\nelement.addEventListener('click', handler);\n// element.removeEventListener('click', handler) — забыли!\n\n// 4. Closures захватывают лишнее\nfunction createHandler(data) {\n  const huge = new Array(1000000).fill('x');\n  return () => console.log(data); // huge захвачен в замыкании!\n}\n\n// 5. Caches без лимита / WeakMap\nconst cache = new Map(); // растёт бесконечно\n// Правильно: WeakMap или LRU cache с лимитом\n\n// 6. Detached DOM nodes\nconst detached = document.createElement('div');\ndetached.innerHTML = '<div>'.repeat(10000);\n// detached нигде не используется, но в памяти если на него есть ссылка\n\n// 7. Console.log в продакшене держит ссылки!\nconsole.log(hugeObject); // DevTools держит ссылку для инспекции"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.2 Heap Snapshot Analysis (3-Snapshot Technique)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Load page → Heap Snapshot #1\n// 2. Perform action (open/close modal, navigate) → Heap Snapshot #2\n// 3. Repeat action → Heap Snapshot #3\n// 4. Filter: \"Objects allocated between Snapshot 1 and 2\"\n//    И \"Objects allocated between Snapshot 2 and 3\"\n//    Пересечение = подозрительные объекты (не собраны GC)\n\n// В DevTools Memory panel:\n// - Comparison view (dropdown: Summary → Comparison)\n// - Filter by constructor name: \"Detached\", \"Closure\", \"Array\", \"Object\"\n// - Retainers path: почему объект не собран? (GC roots → ... → object)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.3 Common Leak Patterns & Fixes"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ Leak: Event listener на window/document не очищен\nclass Component {\n  constructor() {\n    window.addEventListener('resize', this.onResize);\n  }\n  onResize = () => { /* ... */ };\n  destroy() {\n    // Забыли: window.removeEventListener('resize', this.onResize);\n  }\n}\n\n// ✅ Fix: AbortController (modern) или cleanup в destroy\nclass Component {\n  constructor() {\n    this.controller = new AbortController();\n    window.addEventListener('resize', this.onResize, { signal: this.controller.signal });\n  }\n  destroy() {\n    this.controller.abort(); // Удаляет ВСЕ listeners с этим signal\n  }\n}\n\n// ❌ Leak: setInterval без clearInterval\nclass Poller {\n  start() { this.id = setInterval(this.poll, 5000); }\n  // stop() забыли!\n}\n\n// ✅ Fix:\nclass Poller {\n  start() { this.id = setInterval(this.poll, 5000); }\n  stop() { clearInterval(this.id); }\n}\n\n// ❌ Leak: Closure захватывает огромный объект\nfunction setupButton(btn, hugeData) {\n  btn.onclick = () => {\n    console.log(hugeData.id); // hugeData захвачен целиком!\n  };\n}\n\n// ✅ Fix: захватывайте только нужное\nfunction setupButton(btn, hugeData) {\n  const id = hugeData.id; // только примитив!\n  btn.onclick = () => console.log(id);\n}\n\n// ❌ Leak: Кэш без ограничений\nconst userCache = new Map();\nfunction getUser(id) {\n  if (!userCache.has(id)) userCache.set(id, fetchUser(id));\n  return userCache.get(id);\n}\n\n// ✅ Fix: LRU Cache или WeakMap\nclass LRUCache {\n  constructor(maxSize = 100) { this.maxSize = maxSize; this.map = new Map(); }\n  get(key) {\n    if (!this.map.has(key)) return undefined;\n    const val = this.map.get(key);\n    this.map.delete(key);\n    this.map.set(key, val); // move to end\n    return val;\n  }\n  set(key, val) {\n    if (this.map.has(key)) this.map.delete(key);\n    else if (this.map.size >= this.maxSize) {\n      this.map.delete(this.map.keys().next().value); // удаляем самый старый\n    }\n    this.map.set(key, val);\n  }\n}\n\n// Для привязки к объектам — WeakMap (не препятствует GC):\nconst elementData = new WeakMap();\nelementData.set(element, { data: '...' }); // когда element собран — данные тоже"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.4 V8 Garbage Collection"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// V8 Generational GC:\n// - Young Generation (New Space): малые объекты, частый Scavenge (minor GC)\n// - Old Generation: пережившие несколько GC, Mark-Sweep-Compact (major GC)\n\n// GC Triggers:\n// - Allocation limit reached (heap growing)\n// - Idle time (background GC)\n// - Manual: global.gc() (только с --expose-gc)\n\n// Monitoring GC:\nconst v8 = require('v8');\nv8.setFlagsFromString('--trace_gc'); // логи GC в консоль\n\n// или программно:\nconst { PerformanceObserver } = require('perf_hooks');\nnew PerformanceObserver(list => {\n  for (const entry of list.getEntries()) {\n    if (entry.entryType === 'gc') {\n      console.log(`${entry.kind} GC: ${entry.duration.toFixed(2)}ms`);\n    }\n  }\n}).observe({ entryTypes: ['gc'] });\n\n// GC Kinds:\n// - Scavenge: minor GC (young gen) — быстрый\n// - MarkSweepCompact: major GC (old gen) — медленный, может вызывать pause\n// - IncrementalMarking: фоновый marking\n// - WeakCallback: обработка WeakRef/FinalizationRegistry"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Rendering Performance — 60fps Target"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.1 Frame Budget (16.67ms per frame)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Frame (16.67ms @ 60fps):\n┌─────────────────────────────────────────────────────────────┐\n│  JS (10ms)  │  Style (2ms)  │ Layout (3ms) │ Paint (1ms)  │\n├─────────────┴───────────────┴──────────────┴────────────────┤\n│                    Composite (GPU) ~0.5ms                    │\n└─────────────────────────────────────────────────────────────┘\n\nЕсли JS > 16ms → dropped frames → jank\nTarget: JS < 10ms (оставляем запас на style/layout/paint)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.2 Avoiding Layout Thrashing"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ Layout Thrashing: Read → Write → Read → Write\nfunction bad() {\n  for (let i = 0; i < 100; i++) {\n    const h = element.clientHeight; // READ → force layout\n    element.style.height = h + 10 + 'px'; // WRITE\n  }\n}\n\n// ✅ Batch reads, then writes\nfunction good() {\n  const heights = [];\n  for (let i = 0; i < 100; i++) {\n    heights.push(element.clientHeight); // READ (cached)\n  }\n  for (let i = 0; i < 100; i++) {\n    element.style.height = heights[i] + 10 + 'px'; // WRITE\n  }\n}\n\n// ✅ Better: requestAnimationFrame для анимаций\nfunction animate() {\n  const h = element.clientHeight;\n  element.style.height = h + 1 + 'px';\n  requestAnimationFrame(animate);\n}\n\n// ✅ Best: CSS transform/opacity (compositor only)\nelement.style.transform = 'translateY(100px)';\nelement.style.opacity = '0.5';"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.3 CSS Containment"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* contain: layout paint size style — изоляция поддерева */\n.widget {\n  contain: content; /* layout + paint + style */\n  /* или строго: */\n  contain: strict;  /* layout + paint + size + style */\n}\n\n/* content-visibility: auto — пропускает рендер off-screen */\n.heavy-section {\n  content-visibility: auto;\n  contain-intrinsic-size: 1000px; /* предсказанный размер для layout */\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.4 will-change & Layer Promotion"
+    },
+    {
+      "type": "code",
+      "language": "css",
+      "content": "/* Подсказка браузеру: это свойство будет анимироваться */\n.animated {\n  will-change: transform, opacity;\n  /* Создаёт compositor layer заранее */\n}\n\n/* Не злоупотребляйте! Каждый layer = память + GPU overhead */\n/* Убирайте после анимации: */\n.animated.done {\n  will-change: auto;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.5 Virtual Scrolling (Large Lists)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Вместо рендера 10000 элементов — рендерим только видимые\nclass VirtualList {\n  constructor(container, items, rowHeight) {\n    this.container = container;\n    this.items = items;\n    this.rowHeight = rowHeight;\n    this.visibleCount = Math.ceil(container.clientHeight / rowHeight) + 2;\n    this.scrollTop = 0;\n\n    container.addEventListener('scroll', () => this.render());\n    this.render();\n  }\n\n  render() {\n    this.scrollTop = this.container.scrollTop;\n    const start = Math.floor(this.scrollTop / this.rowHeight);\n    const end = Math.min(start + this.visibleCount, this.items.length);\n\n    // Создаём/переиспользуем DOM узлы\n    this.container.innerHTML = `\n      <div style=\"height: ${this.items.length * this.rowHeight}px; position: relative;\">\n        ${this.items.slice(start, end).map((item, i) => `\n          <div style=\"position: absolute; top: ${(start + i) * this.rowHeight}px; height: ${this.rowHeight}px;\">\n            ${item.content}\n          </div>\n        `).join('')}\n      </div>\n    `;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. JIT Compilation — V8 Deep Dive"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.1 V8 Compilation Pipeline"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "JavaScript Source\n       │\n       ▼\n   Parser (Lazy parsing для функций)\n       │\n       ▼\n   Ignition Interpreter (Bytecode)\n       │\n       ▼  (Hot functions → TurboFan)\n   TurboFan Optimizing Compiler (Machine Code)\n       │\n       ▼  (Deoptimization → back to Ignition)\n   Optimized Machine Code"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.2 Hidden Classes (Maps) & Inline Caching"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// V8 создаёт Hidden Classes (Maps) для объектов с одинаковой структурой\nfunction Point(x, y) {\n  this.x = x;\n  this.y = y;\n}\n\nconst p1 = new Point(1, 2); // Map: { x, y }\nconst p2 = new Point(3, 4); // Тот же Map!\n\n// Добавление свойства = новый Map (transition)\np1.z = 5; // p1 получает новый Map: { x, y, z }\n\n// Inline Caching (IC):\nfunction getX(obj) { return obj.x; }\n\ngetX(p1); // IC: Miss → создаёт кэш для Map(p1)\ngetX(p2); // IC: Hit! (тот же Map)\ngetX({ x: 1, y: 2, z: 3 }); // IC: Miss (другой Map) → Megamorphic (4+ shapes)\n\n// Оптимизация: используйте одинаковую структуру объектов\n// Плохо: условное добавление свойств\nfunction createUser(data) {\n  const user = { id: data.id };\n  if (data.isAdmin) user.admin = true; // Разные shapes!\n  return user;\n}\n// Хорошо: всегда одинаковые свойства\nfunction createUser(data) {\n  return { id: data.id, admin: data.isAdmin || false };\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.3 TurboFan Optimizations"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// TurboFan оптимизирует \"hot\" функции (много вызовов)\n// Ключевые оптимизации:\n\n// 1. Speculative optimization (type feedback)\n// function add(a, b) { return a + b; }\n// add(1, 2) → оптимизирует для number + number\n// add('a', 'b') → deoptimization! (string конкатенация)\n\n// 2. Inlining (встраивание)\nfunction square(x) { return x * x; }\nfunction sumOfSquares(a, b) { return square(a) + square(b); }\n// TurboFan встраивает square в sumOfSquares\n\n// 3. Escape Analysis (stack allocation)\nfunction createPoint(x, y) {\n  return { x, y }; // Может быть allocated на стеке, не в куче!\n}\n\n// 4. Range Analysis (bounds check elimination)\nfunction sumArray(arr) {\n  let sum = 0;\n  for (let i = 0; i < arr.length; i++) sum += arr[i];\n  // length check может быть убран если доказано что i < arr.length\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.4 Deoptimization — Why Fast Code Becomes Slow"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Deoptimization = возврат от optimized code к Interpreter\n// Причины:\n// 1. Type change (number → string)\n// 2. New hidden class (добавление свойства)\n// 3. Arguments leak (arguments object escaping)\n// 4. eval / with / try-catch (в некоторых случаях)\n// 5. Stack overflow protection\n\n// Детектирование deoptimization:\n// node --trace-deopt app.js\n// В DevTools: Settings → \"Show deoptimizations\"\n\n// Пример:\nfunction add(a, b) { return a + b; }\n\nfor (let i = 0; i < 100000; i++) add(i, i); // Optimized для SMI (small integers)\nadd('hello', 'world'); // DEOPT! Тип изменился\n\n// Избегайте:\n// - Полиморфные функции (много типов аргументов)\n// - Меняющуюся структуру объектов\n// - arguments leak\nfunction bad(a, b) {\n  return arguments[0] + arguments[1]; // arguments escaping!\n}\nfunction good(a, b) {\n  return a + b;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.5 Writing JIT-Friendly Code"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Monomorphic call sites — одинаковые типы\n// 2. Stable object shapes — не добавляйте свойства динамически\n// 3. Avoid arguments, eval, with\n// 4. Use typed arrays для числовых данных\n// 5. Prefer for-of / forEach над for-in (for-in не оптимизируется)\n\n// Microbenchmarks — ОСТОРОЖНО!\n// V8 может убрать \"мёртвый\" код, inline всё, etc.\n// Используйте benchmark.js с правильным setup/teardown"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Data Structures & Algorithms for Performance"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.1 Choosing the Right Structure"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Поиск (O(1)):\nconst map = new Map(); // или Object для строковых ключей\nmap.set(key, value);\nmap.get(key); // O(1)\n\n// Уникальные значения:\nconst set = new Set();\nset.add(value);\nset.has(value); // O(1)\n\n// Упорядоченные данные (sorted):\n// - Array + sort() — O(n log n) при вставке\n// - Вручную поддерживаемый sorted array (binary search insert) — O(n)\n// - TreeMap (нет в stdlib, есть в npm: @datastructures-js/tree-map)\n\n// Очередь (Queue):\n// - Array: push/pop — O(1), но shift/unshift — O(n)!\n// - Singly linked list или circular buffer для O(1) enqueue/dequeue\n\n// Стеки:\nconst stack = [];\nstack.push(x); // O(1)\nstack.pop();   // O(1)\n\n// Priority Queue (Heap):\nclass MinHeap {\n  constructor() { this.data = []; }\n  push(val) { this.data.push(val); this.bubbleUp(this.data.length - 1); }\n  pop() { const min = this.data[0]; this.data[0] = this.data.pop(); this.sinkDown(0); return min; }\n  // O(log n) для push/pop\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.2 Typed Arrays & ArrayBuffers"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Для числовых данных — TypedArrays (ближе к металлу, меньше overhead)\nconst arr = new Float64Array(1000000); // 8MB, не 16MB+ как Array чисел\n\n// Math operations:\nconst a = new Float32Array([1, 2, 3]);\nconst b = new Float32Array([4, 5, 6]);\nconst c = new Float32Array(a.length);\nfor (let i = 0; i < a.length; i++) c[i] = a[i] + b[i];\n\n// SIMD (WASM) — для heavy math:\n// WebAssembly SIMD intrinsics\n\n// Zero-copy views:\nconst buffer = new ArrayBuffer(1024);\nconst view8 = new Uint8Array(buffer);\nconst view32 = new Uint32Array(buffer); // та же память!\nview32[0] = 0xFF00FF00;\nconsole.log(view8[0], view8[1], view8[2], view8[3]); // 0, 255, 0, 255"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.3 Object Pooling (Reduce GC Pressure)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Для часто создаваемых/уничтожаемых объектов (particles, bullets, etc.)\nclass Pool {\n  constructor(factory, resetFn, initialSize = 100) {\n    this.factory = factory;\n    this.resetFn = resetFn;\n    this.free = [];\n    for (let i = 0; i < initialSize; i++) this.free.push(factory());\n  }\n\n  acquire() {\n    return this.free.pop() || this.factory();\n  }\n\n  release(obj) {\n    this.resetFn(obj);\n    this.free.push(obj);\n  }\n}\n\n// Usage:\nconst particlePool = new Pool(\n  () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0 }),\n  p => { p.x = p.y = p.vx = p.vy = p.life = 0; }\n);\n\nfunction spawnParticle(x, y) {\n  const p = particlePool.acquire();\n  p.x = x; p.y = y; p.vx = Math.random(); p.vy = Math.random(); p.life = 100;\n  return p;\n}\n\nfunction updateParticles(particles) {\n  for (let i = particles.length - 1; i >= 0; i--) {\n    const p = particles[i];\n    p.x += p.vx; p.y += p.vy; p.life--;\n    if (p.life <= 0) {\n      particlePool.release(p);\n      particles.splice(i, 1);\n    }\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.4 String Building"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ Плохо: строка immutable, конкатенация = новая строка каждый раз\nlet result = '';\nfor (const item of items) result += item; // O(n²)!\n\n// ✅ Хорошо: Array.join\nconst parts = [];\nfor (const item of items) parts.push(item);\nconst result = parts.join(''); // O(n)\n\n// ✅ Для огромных строк: StringBuilder pattern\nclass StringBuilder {\n  constructor() { this.parts = []; this.length = 0; }\n  append(str) { this.parts.push(str); this.length += str.length; return this; }\n  toString() { return this.parts.join(''); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Network Performance"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.1 HTTP/2 & HTTP/3"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.2 Resource Hints"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<!-- DNS Prefetch -->\n<link rel=\"dns-prefetch\" href=\"https://api.example.com\">\n\n<!-- Preconnect (DNS + TCP + TLS) -->\n<link rel=\"preconnect\" href=\"https://cdn.example.com\" crossorigin>\n\n<!-- Prefetch (низкий приоритет, для следующей навигации) -->\n<link rel=\"prefetch\" href=\"/next-page.html\">\n\n<!-- Preload (высокий приоритет, для текущей страницы) -->\n<link rel=\"preload\" href=\"/critical.js\" as=\"script\">\n<link rel=\"preload\" href=\"/font.woff2\" as=\"font\" crossorigin>\n<link rel=\"preload\" href=\"/hero.jpg\" as=\"image\">\n\n<!-- Modulepreload (для ES modules) -->\n<link rel=\"modulepreload\" href=\"/app.mjs\">"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.3 Compression & Caching"
+    },
+    {
+      "type": "code",
+      "language": "http",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Web Workers & Off-Main-Thread"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "7.1 Moving Heavy Work to Workers"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// main.js\nconst worker = new Worker('worker.js');\n\nworker.postMessage({ type: 'process', data: hugeArray });\n\nworker.onmessage = (e) => {\n  if (e.data.type === 'result') {\n    render(e.data.payload);\n  }\n};\n\n// worker.js\nself.onmessage = (e) => {\n  if (e.data.type === 'process') {\n    const result = heavyComputation(e.data.data);\n    self.postMessage({ type: 'result', payload: result });\n  }\n};\n\n// Transferable objects (zero-copy):\nconst buffer = new ArrayBuffer(1000000);\nworker.postMessage({ buffer }, [buffer]); // владение переходит в worker!\n// buffer в main thread становится detached (недоступен)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "7.2 Comlink (RPC for Workers)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// main.js\nimport * as Comlink from 'comlink';\nconst worker = new Worker('worker.js');\nconst api = Comlink.wrap(worker);\n\nconst result = await api.heavyComputation(data);\n\n// worker.js\nimport * as Comlink from 'comlink';\nconst api = {\n  async heavyComputation(data) { /* ... */ }\n};\nComlink.expose(api, self);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Browser vs Node.js Performance Differences"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Aspect",
+        "Browser",
+        "Node.js"
+      ],
+      "rows": [
+        [
+          "**JIT**",
+          "V8 (same)",
+          "V8 (same)"
+        ],
+        [
+          "**GC Pause**",
+          "May drop frames",
+          "Latency spikes in HTTP"
+        ],
+        [
+          "**Profiling**",
+          "DevTools",
+          "--inspect, clinic.js, 0x"
+        ],
+        [
+          "**Workers**",
+          "Web Workers (no shared memory by default)",
+          "Worker Threads (SharedArrayBuffer!)"
+        ],
+        [
+          "**I/O**",
+          "Network only",
+          "File, Network, Child processes"
+        ],
+        [
+          "**Event Loop**",
+          "HTML Spec",
+          "libuv phases"
+        ],
+        [
+          "**Memory Limit**",
+          "~2-4GB (tab)",
+          "--max-old-space-size (default ~1.4GB/2GB)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Memory Leak Hunt"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Дан код с утечкой памяти:\n// - Создайте страницу, которая каждую секунду добавляет 1000 div'ов\n// - Удаляет их через 5 секунд\n// - Но есть утечка: event listeners не удаляются\n// Используйте DevTools Memory: 3 snapshot technique\n// Найдите и исправьте утечку"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: JIT Deoptimization"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Напишите функцию, которая:\n// 1. Вызывается 100000 раз с числами (оптимизируется)\n// 2. Затем вызывается со строками (deoptimization)\n// Измерьте время до и после deopt через performance.now()\n// Добавьте --trace-deopt и проанализируйте лог"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Virtual List Implementation"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Реализуйте VirtualList для 1,000,000 элементов\n// - Только видимые + buffer рендерятся\n// - Плавный скролл (requestAnimationFrame)\n// - Измерьте FPS в DevTools Performance"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 4: Worker Offloading"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Перенесите тяжелую обработку (например, CSV парсинг 10MB) в Worker\n// Используйте Comlink для удобного API\n// Измерьте главную поток блокировку (Long Tasks) до и после"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Дополнительные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**V8 Blog**: https://v8.dev/blog (JIT, GC, performance posts)",
+        "**Chrome DevTools Performance**: https://developer.chrome.com/docs/devtools/performance/",
+        "**Web Performance**: https://web.dev/performance/",
+        "**Node.js Performance**: https://nodejs.org/en/docs/guides/simple-profiling/",
+        "**\"High Performance Browser Networking\"** — Ilya Grigorik",
+        "**\"JavaScript Engine Fundamentals\"** — Benedikt Meurer (v8.dev)",
+        "**clinic.js**: https://clinicjs.org/"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Контрольные вопросы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Что такое Inline Caching и как оно ускоряет доступ к свойствам?",
+        "Почему изменение формы объекта (добавление свойства) вызывает deoptimization?",
+        "В чём разница между Scavenge и MarkSweepCompact GC?",
+        "Как content-visibility: auto улучшает производительность рендеринга?",
+        "Почему string конкатенация в цикле O(n²), а Array.join — O(n)?",
+        "Что такое Transferable Objects в Web Workers и зачем они нужны?",
+        "Как Hidden Classes (Maps) работают в V8?",
+        "В чём разница между HTTP/2 и HTTP/3 для производительности?"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "📝 Саммари"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Концепция",
+        "Ключевой момент"
+      ],
+      "rows": [
+        [
+          "**Profiling**",
+          "DevTools Performance, --prof, clinic.js; ищите Long Tasks > 50ms"
+        ],
+        [
+          "**Memory Leaks**",
+          "3-snapshot technique; частые причины: listeners, timers, closures, caches, console.log"
+        ],
+        [
+          "**Rendering**",
+          "16.67ms/frame; избегайте layout thrashing; transform/opacity на compositor; virtual scrolling"
+        ],
+        [
+          "**JIT (V8)**",
+          "Ignition → TurboFan; Hidden Classes + IC; мономорфные call sites; избегайте deopt"
+        ],
+        [
+          "**Data Structures**",
+          "Map/Set O(1); TypedArrays для чисел; Object Pooling снижает GC pressure"
+        ],
+        [
+          "**Network**",
+          "HTTP/2/3 multiplexing; preload/prefetch/preconnect; Brotli compression"
+        ]
+      ]
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 28
+}

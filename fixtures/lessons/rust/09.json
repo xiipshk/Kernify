@@ -1,0 +1,526 @@
+{
+  "title": "Урок 9: Модули и Cargo",
+  "slug": "moduli-i-cargo",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Модули (Modules)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Объявление модулей"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Внутри файла\nmod front_of_house {\n    pub mod hosting {\n        pub fn add_to_waitlist() {}\n        fn seat_at_table() {}\n    }\n    mod serving {\n        fn take_order() {}\n        fn serve_order() {}\n        fn take_payment() {}\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Файловая структура (Rust 2018+)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "src/\n├── main.rs / lib.rs (корень crate)\n├── front_of_house.rs (или front_of_house/mod.rs)\n│   └── hosting.rs\n│   └── serving.rs"
+    },
+    {
+      "type": "text",
+      "content": "<strong>front<em>of</em>house.rs:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub mod hosting;\npub mod serving;"
+    },
+    {
+      "type": "text",
+      "content": "<strong>front<em>of</em>house/hosting.rs:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub fn add_to_waitlist() {}\nfn seat_at_table() {}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Видимость (Visibility)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила"
+    },
+    {
+      "type": "list",
+      "items": [
+        "По умолчанию: **private** (только внутри модуля и детей)",
+        "`pub` — публичный везде",
+        "`pub(crate)` — публичный внутри текущего crate",
+        "`pub(super)` — публичный в родительском модуле",
+        "`pub(in path::to::module)` — публичный в конкретном модуле"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "mod outer {\n    pub mod inner {\n        pub(super) fn inner_fn() {} // Видно в outer\n        pub(crate) fn crate_fn() {} // Видно во всем crate\n        pub(in crate::outer) fn specific_fn() {} // Только в outer\n    }\n    fn outer_fn() {\n        inner::inner_fn(); // OK\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Structs и enums"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub struct PublicStruct {\n    pub public_field: i32,\n    private_field: i32, // private по умолчанию\n}\n\npub enum PublicEnum {\n    Variant1,      // pub если enum pub\n    Variant2(i32), // поле pub\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Импорт через `use`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use crate::front_of_house::hosting;\n\nfn main() {\n    hosting::add_to_waitlist();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Идиоматичные паттерны"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Функции/типы — до родителя\nuse std::collections::HashMap;\nuse std::io::{self, Read, Write};\n\n// Реэкспорт (pub use)\npub use self::front_of_house::hosting;\n\n// as — переименование\nuse std::io::Result as IoResult;\n\n// glob — всё из модуля (редко)\nuse std::collections::*;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`use` в `extern crate` (до Rust 2018)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// В Rust 2018+ extern crate не нужен для стандартной библиотеки\n// extern crate rand; // только для Rust 2015 edition\nuse rand::Rng;"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Пути (Paths)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Абсолютные (от корня crate)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "crate::front_of_house::hosting::add_to_waitlist();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Относительные (от текущего модуля)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Внутри front_of_house\nsuper::hosting::add_to_waitlist(); // родитель\nself::hosting::add_to_waitlist();  // текущий"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Cargo.toml — детально"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовые поля"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[package]\nname = \"my_project\"\nversion = \"0.1.0\"\nedition = \"2021\"\nauthors = [\"You <you@example.com>\"]\ndescription = \"A cool project\"\nlicense = \"MIT OR Apache-2.0\"\nrepository = \"https://github.com/user/repo\"\nhomepage = \"https://example.com\"\ndocumentation = \"https://docs.rs/my_project\"\nreadme = \"README.md\"\nkeywords = [\"cli\", \"tool\"]\ncategories = [\"command-line-utilities\"]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Зависимости"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[dependencies]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dev-зависимости (только для тестов/примеров)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[dev-dependencies]\npretty_assertions = \"1.0\"\ntokio = { version = \"1.0\", features = [\"test-util\"] }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Build-зависимости (build.rs)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[build-dependencies]\ncc = \"1.0\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фичи (Features)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[features]\ndefault = [\"std\"]\nstd = [\"serde/std\"]\nasync = [\"tokio\"]\nfull = [\"std\", \"async\"]\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Профили (Profiles)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[profile.dev]\nopt-level = 0\ndebug = true\n\n[profile.release]\nopt-level = 3\ndebug = false\nlto = true          # Link Time Optimization\ncodegen-units = 1   # Лучше оптимизация\npanic = \"abort\"     # Меньший бинарник\n\n[profile.test]\nopt-level = 2\n\n[profile.bench]\nopt-level = 3"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Workspace (много пакетов)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Cargo команды — продвинутые"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сборка и проверка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo check              # Быстрая проверка типов\ncargo build              # Debug\ncargo build --release    # Release\ncargo build --all-targets # Включая тесты, бенчмарки\ncargo build --target x86_64-unknown-linux-gnu # Кросскомпиляция"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Тестирование"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo test               # Все тесты\ncargo test --lib         # Только lib тесты\ncargo test --bins        # Только бинарники\ncargo test my_test       # Фильтр по имени\ncargo test -- --nocapture # Показать println в тестах\ncargo test -- --test-threads=1 # Последовательно"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Документация"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo doc                # Генерация\ncargo doc --open         # Генерация + открыть в браузере\ncargo doc --no-deps      # Без зависимостей\ncargo doc --document-private-items # Включая private"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Публикация"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo login              # Сохранить токен\ncargo publish --dry-run  # Проверка\ncargo publish            # Публикация на crates.io\ncargo yank --vers 1.0.0  # Отозвать версию"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Информация"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo tree               # Дерево зависимостей\ncargo tree -d            # Только дубликаты\ncargo metadata --format-version=1 | jq . # JSON метаданные\ncargo outdated           # Требует cargo-outdated\ncargo audit              # Требует cargo-audit (безопасность)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Edition'ы Rust"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Edition",
+        "Год",
+        "Ключевые изменения"
+      ],
+      "rows": [
+        [
+          "2015",
+          "2015",
+          "Базовая"
+        ],
+        [
+          "2018",
+          "2018",
+          "NLL, модули без `mod.rs`, `try` -> `?`, `dyn Trait`"
+        ],
+        [
+          "2021",
+          "2021",
+          "Прелюдия 2021, `IntoIterator` для массивов, резолвер 2"
+        ],
+        [
+          "2024",
+          "2024",
+          "(планируется)"
+        ]
+      ]
+    },
+    {
+      "type": "text",
+      "content": "<strong>Указание в Cargo.toml:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[package]\nedition = \"2021\""
+    },
+    {
+      "type": "text",
+      "content": "<strong>Миграция:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo fix --edition"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Примеры, тесты и бенчмарки"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура проекта"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "src/\n├── lib.rs\n├── main.rs\n├── bin/\n│   └── tool.rs        # Дополнительные бинарники\nexamples/\n├── simple.rs          # cargo run --example simple\ntests/\n├── integration.rs     # Интеграционные тесты\nbenches/\n├── bench.rs           # Бенчмарки (nightly)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Интеграционные тесты (tests/)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// tests/integration.rs\nuse my_crate::public_api;\n\n#[test]\nfn test_public_api() {\n    assert_eq!(public_api(), 42);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Примеры (examples/)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// examples/simple.rs\nuse my_crate::Client;\n\nfn main() {\n    let client = Client::new();\n    client.do_something();\n}"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo run --example simple\ncargo test --example simple # Компиляция примеров как тестов"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Модульная структура"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "src/\n├── lib.rs\n├── models/\n│   ├── mod.rs\n│   ├── user.rs\n│   └── post.rs\n├── services/\n│   ├── mod.rs\n│   └── auth.rs\n└── utils/\n    └── mod.rs"
+    },
+    {
+      "type": "text",
+      "content": "<strong>src/lib.rs:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub mod models;\npub mod services;\nmod utils; // private\n\npub use models::User;\npub use services::auth::authenticate;"
+    },
+    {
+      "type": "text",
+      "content": "<strong>src/models/user.rs:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[derive(Debug)]\npub struct User {\n    pub id: u64,\n    pub name: String,\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Cargo features"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Workspace"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки новичков"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`module not found`",
+          "Неправильный путь/файл"
+        ],
+        [
+          "`item is private`",
+          "Нет `pub`"
+        ],
+        [
+          "`unused import`",
+          "`use` не используется"
+        ],
+        [
+          "`cyclic dependency`",
+          "Крейты зависят друг от друга"
+        ],
+        [
+          "`feature not found`",
+          "Опечатка в имени фичи"
+        ],
+        [
+          "`version solving failed`",
+          "Конфликт версий"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`mod` — объявление модулей, файловая структура",
+        "Видимость: `pub`, `pub(crate)`, `pub(super)`, `pub(in path)`",
+        "`use` — импорт, реэкспорт (`pub use`), glob, `as`",
+        "Пути: абсолютные (`crate::`), относительные (`super::`, `self::`)",
+        "`Cargo.toml`: зависимости, фичи, профили, workspace",
+        "Edition'ы: 2015, 2018, 2021",
+        "Примеры (`examples/`), интеграционные тесты (`tests/`)",
+        "Публикация: `cargo login`, `cargo publish`"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`module not found`",
+      "correct": "Неправильный путь/файл"
+    },
+    {
+      "mistake": "`item is private`",
+      "correct": "Нет `pub`"
+    },
+    {
+      "mistake": "`unused import`",
+      "correct": "`use` не используется"
+    },
+    {
+      "mistake": "`cyclic dependency`",
+      "correct": "Крейты зависят друг от друга"
+    },
+    {
+      "mistake": "`feature not found`",
+      "correct": "Опечатка в имени фичи"
+    },
+    {
+      "mistake": "`version solving failed`",
+      "correct": "Конфликт версий"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 9
+}

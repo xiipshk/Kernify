@@ -1,0 +1,357 @@
+{
+  "title": "Урок 16: Async — Event Loop, Task/Microtask Queues, Promises, Errors, Concurrent Requests",
+  "slug": "async-event-loop-taskmicrotask-queues-promises-errors-concurrent-requests",
+  "short_description": "Event Loop, Task/Microtask Queues, Promises, Errors, Concurrent Requests",
+  "goals": [
+    "Глубоко понимать Event Loop: call stack, macrotasks, microtasks",
+    "Мастерски работать с Promise API, async/await",
+    "Правильно обрабатывать ошибки в асинхронном коде",
+    "Управлять конкурентностью: Promise.all, allSettled, race, any",
+    "Использовать AbortController для отмены"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубоко понимать Event Loop: call stack, macrotasks, microtasks",
+        "Мастерски работать с Promise API, async/await",
+        "Правильно обрабатывать ошибки в асинхронном коде",
+        "Управлять конкурентностью: Promise.all, allSettled, race, any",
+        "Использовать AbortController для отмены"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Event Loop: под капотом"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Архитектура JavaScript Runtime"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "┌─────────────────────────────────────────────────────────────┐\n│                      JavaScript Engine                       │\n│  ┌──────────────┐    ┌──────────────────────────────────┐   │\n│  │  Call Stack  │    │         Heap (memory)            │   │\n│  └──────────────┘    └──────────────────────────────────┘   │\n└─────────────────────────────────────────────────────────────┘\n                              │\n                    ┌─────────┴─────────┐\n                    ▼                   ▼\n            ┌──────────────┐     ┌──────────────┐\n            │ Microtask    │     │ Macrotask    │\n            │ Queue        │     │ Queue        │\n            │ (Promises,   │     │ (setTimeout, │\n            │  queueMicro- │     │  setInterval,│\n            │  task,       │     │  I/O, UI     │\n            │  MutationOb) │     │  events)     │\n            └──────────────┘     └──────────────┘\n                    │                   │\n                    └─────────┬─────────┘\n                              ▼\n                     ┌──────────────┐\n                     │  Event Loop  │\n                     └──────────────┘"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Порядок выполнения"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "console.log(\"1. Sync start\");\n\nsetTimeout(() => console.log(\"2. Macrotask: setTimeout\"), 0);\n\nPromise.resolve().then(() => console.log(\"3. Microtask: Promise\"));\n\nqueueMicrotask(() => console.log(\"4. Microtask: queueMicrotask\"));\n\nsetTimeout(() => console.log(\"5. Macrotask: setTimeout 2\"), 0);\n\nconsole.log(\"6. Sync end\");\n\n// Вывод:\n// 1. Sync start\n// 6. Sync end\n// 3. Microtask: Promise\n// 4. Microtask: queueMicrotask\n// 2. Macrotask: setTimeout\n// 5. Macrotask: setTimeout 2"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Микрозадачи выполняются ПОСЛЕ каждого макрозадачи"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "setTimeout(() => {\n  console.log(\"Macrotask 1\");\n  Promise.resolve().then(() => console.log(\"Microtask в macrotask 1\"));\n}, 0);\n\nsetTimeout(() => console.log(\"Macrotask 2\"), 0);\n\n// Вывод:\n// Macrotask 1\n// Microtask в macrotask 1\n// Macrotask 2"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Promise API (ES2015+)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Создание и состояния"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Promise constructor\nconst promise = new Promise((resolve, reject) => {\n  // executor выполняется синхронно!\n  console.log(\"Executor\");\n  setTimeout(() => resolve(\"Готово\"), 100);\n});\n\nconsole.log(\"After constructor\");\n// Executor → After constructor → (через 100мс) Готово\n\n// Статические методы\nPromise.resolve(42);           // resolved promise\nPromise.reject(new Error(\"Ошибка\")); // rejected promise\nPromise.all([...]);            // все успешны\nPromise.allSettled([...]);     // ждём все, не падаем\nPromise.race([...]);           // первый завершившийся\nPromise.any([...]);            // первый успешный (ES2021)\nPromise.withResolvers();       // ES2024: { promise, resolve, reject }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "then / catch / finally"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "fetchData()\n  .then(data => transform(data))\n  .then(transformed => save(transformed))\n  .catch(err => {\n    console.error(err);\n    return fallback(); // recovery\n  })\n  .finally(() => {\n    loading = false; // cleanup всегда\n  });\n\n// Цепочка промисов — плоская, не вложенная!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Promise.prototype методы"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const p = fetchData();\n\n// then(onFulfilled, onRejected)\np.then(\n  data => console.log(data),\n  err => console.error(err)\n);\n\n// catch = then(undefined, onRejected)\np.catch(err => console.error(err));\n\n// finally — не получает аргумент\np.finally(() => hideSpinner());"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Async/Await (ES2017)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "async function fetchUser(id) {\n  const response = await fetch(`/api/users/${id}`);\n  if (!response.ok) throw new Error(`HTTP ${response.status}`);\n  return response.json();\n}\n\n// await работает только внутри async функции\n// (или топ-уровня модуля: <script type=\"module\">)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Обработка ошибок"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// try/catch — синхронный стиль\nasync function getData() {\n  try {\n    const a = await fetchA();\n    const b = await fetchB(a);\n    return b;\n  } catch (err) {\n    if (err instanceof NetworkError) return fallback();\n    throw err; // rethrow\n  }\n}\n\n// catch в выражении (IIFE)\nconst data = (async () => {\n  try { return await fetchData(); }\n  catch { return defaultData; }\n})();\n\n// Promise.catch для одной операции\nconst user = await fetchUser(id).catch(() => null);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Параллельность vs Последовательность"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ❌ ПОСЛЕДОВАТЕЛЬНО (медленно)\nconst user = await fetchUser(id);\nconst posts = await fetchPosts(id);\nconst comments = await fetchComments(id);\n\n// ✅ ПАРАЛЛЕЛЬНО (быстро)\nconst [user, posts, comments] = await Promise.all([\n  fetchUser(id),\n  fetchPosts(id),\n  fetchComments(id)\n]);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Управление конкурентностью"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Promise.all — все или ничего"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const results = await Promise.all([\n  fetchUser(1),\n  fetchUser(2),\n  fetchUser(3)\n]);\n// Если ОДИН rejected — ВСЕ падают, остальные игнорируются!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Promise.allSettled — ждём все, анализируем результат"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const results = await Promise.allSettled([\n  fetchUser(1),\n  fetchUser(2), // может упасть\n  fetchUser(3)\n]);\n\nresults.forEach((r, i) => {\n  if (r.status === \"fulfilled\") {\n    console.log(`User ${i}:`, r.value);\n  } else {\n    console.error(`User ${i} failed:`, r.reason);\n  }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Promise.race — первый завершившийся (успех или ошибка)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Таймаут для fetch\nconst response = await Promise.race([\n  fetch(\"/api/data\"),\n  new Promise((_, reject) =>\n    setTimeout(() => reject(new Error(\"Timeout\")), 5000)\n  )\n]);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Promise.any — первый УСПЕШНЫЙ (игнорирует ошибки)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Пробуем несколько CDN\nconst data = await Promise.any([\n  fetch(\"https://cdn1.example.com/data\"),\n  fetch(\"https://cdn2.example.com/data\"),\n  fetch(\"https://cdn3.example.com/data\")\n]);\n// Если ВСЕ упали → AggregateError"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Promise.withResolvers (ES2024) — внешний контроль"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const { promise, resolve, reject } = Promise.withResolvers();\n\n// Где угодно позже:\nbutton.onclick = () => resolve(\"clicked\");\nsetTimeout(() => reject(new Error(\"timeout\")), 10000);\n\nconst result = await promise;"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Отмена: AbortController / AbortSignal"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const controller = new AbortController();\nconst signal = controller.signal;\n\nfetch(\"/api/data\", { signal })\n  .then(r => r.json())\n  .catch(err => {\n    if (err.name === \"AbortError\") console.log(\"Отменено\");\n    else throw err;\n  });\n\n// Отмена через 5 секунд\nsetTimeout(() => controller.abort(), 5000);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Отмена в своих асинхронных функциях"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "async function longTask(signal) {\n  for (let i = 0; i < 100; i++) {\n    if (signal?.aborted) throw new DOMException(\"Aborted\", \"AbortError\");\n    await doWork();\n    // или проверка на каждой итерации\n    signal?.throwIfAborted(); // ES2024\n  }\n}\n\nconst controller = new AbortController();\ntry {\n  await longTask(controller.signal);\n} catch (e) {\n  if (e.name === \"AbortError\") { /* handled */ }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "AbortSignal.any / timeout (ES2023+)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Несколько сигналов — отмена если ХОТЯ БЫ ОДИН.abort()\nconst signal = AbortSignal.any([signal1, signal2]);\n\n// Авто-таймаут\nconst signal = AbortSignal.timeout(5000);\nfetch(url, { signal });"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Паттерны конкурентности"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Очередь с лимитом (concurrency pool)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "async function pool(tasks, limit) {\n  const results = [];\n  const executing = [];\n\n  for (const task of tasks) {\n    const p = task().then(result => {\n      results.push(result);\n      executing.splice(executing.indexOf(p), 1);\n    });\n    executing.push(p);\n    if (executing.length >= limit) {\n      await Promise.race(executing);\n    }\n  }\n  return Promise.all(executing).then(() => results);\n}\n\n// Использование\nconst urls = Array(100).fill().map((_, i) => `/api/item/${i}`);\nconst data = await pool(urls.map(u => () => fetch(u).then(r => r.json())), 5);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Retry с backoff"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "async function retry(fn, { retries = 3, delay = 1000, backoff = 2 } = {}) {\n  try {\n    return await fn();\n  } catch (err) {\n    if (retries === 0) throw err;\n    await new Promise(r => setTimeout(r, delay));\n    return retry(fn, { retries: retries - 1, delay: delay * backoff, backoff });\n  }\n}\n\nconst data = await retry(() => fetch(\"/api/data\").then(r => r.json()), { retries: 3 });"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Batch / debounce запросов"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Собираем запросы за 10мс в один батч\nconst batchedFetch = (() => {\n  let queue = [];\n  let timeout;\n\n  return (id) => new Promise((resolve, reject) => {\n    queue.push({ id, resolve, reject });\n    clearTimeout(timeout);\n    timeout = setTimeout(async () => {\n      const batch = queue.splice(0);\n      try {\n        const res = await fetch(\"/api/batch\", {\n          method: \"POST\",\n          body: JSON.stringify({ ids: batch.map(b => b.id) })\n        });\n        const data = await res.json();\n        batch.forEach((b, i) => b.resolve(data[i]));\n      } catch (e) { batch.forEach(b => b.reject(e)); }\n    }, 10);\n  });\n})();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Ошибки в асинхронном коде"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Виды ошибок"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Operational errors — ожидаемые (network, validation, not found)\nclass AppError extends Error {\n  constructor(message, code, statusCode) {\n    super(message);\n    this.code = code;\n    this.statusCode = statusCode;\n  }\n}\n\n// 2. Programmer errors — баги (TypeError, ReferenceError)\n// НЕ ловить! Пусть падает и рестартует процесс.\n\n// Правильная обработка\nasync function handleRequest(req) {\n  try {\n    return await process(req);\n  } catch (err) {\n    if (err instanceof AppError) {\n      return { error: err.code, status: err.statusCode };\n    }\n    // Programmer error — логируем и падаем\n    logger.error(err);\n    throw err;\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unhandled Rejection — ловим глобально"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Node.js\nprocess.on(\"unhandledRejection\", (reason, promise) => {\n  console.error(\"Unhandled Rejection:\", reason);\n  // process.exit(1) в продакшене\n});\n\n// Браузер\nwindow.addEventListener(\"unhandledrejection\", event => {\n  console.error(\"Unhandled Rejection:\", event.reason);\n  event.preventDefault(); // не показывать в консоли\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`await` в цикле `forEach` — не ждёт!",
+          "`for (const item of items) await process(item)` или `Promise.all(items.map(...))`"
+        ],
+        [
+          "`Promise.all` падает при одной ошибке",
+          "Используйте `Promise.allSettled` если нужны все результаты"
+        ],
+        [
+          "`catch` не ловит ошибку из `setTimeout`",
+          "Ошибки в макрозадачах не попадают в цепочку промисов — оборачивайте в Promise"
+        ],
+        [
+          "`AbortController` не отменяет уже запущенный `fetch`",
+          "`fetch` поддерживает `signal` нативно — передавайте `{ signal }`"
+        ],
+        [
+          "`async` функция без `await` — лишний Promise wrapper",
+          "Убирайте `async` если нет `await`, или используйте `Promise.resolve()`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`await` в цикле `forEach` — не ждёт!",
+      "correct": "`for (const item of items) await process(item)` или `Promise.all(items.map(...))`"
+    },
+    {
+      "mistake": "`Promise.all` падает при одной ошибке",
+      "correct": "Используйте `Promise.allSettled` если нужны все результаты"
+    },
+    {
+      "mistake": "`catch` не ловит ошибку из `setTimeout`",
+      "correct": "Ошибки в макрозадачах не попадают в цепочку промисов — оборачивайте в Promise"
+    },
+    {
+      "mistake": "`AbortController` не отменяет уже запущенный `fetch`",
+      "correct": "`fetch` поддерживает `signal` нативно — передавайте `{ signal }`"
+    },
+    {
+      "mistake": "`async` функция без `await` — лишний Promise wrapper",
+      "correct": "Убирайте `async` если нет `await`, или используйте `Promise.resolve()`"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 16
+}

@@ -1,0 +1,339 @@
+{
+  "title": "Урок 3.1: Метаклассы и дескрипторы — продвинутая объектная модель",
+  "slug": "metaklassy-i-deskriptory-prodvinutaya-obektnaya-model",
+  "short_description": "продвинутая объектная модель",
+  "goals": [
+    "Понимать, что такое type и как создаются классы",
+    "Писать собственные метаклассы",
+    "Использовать __prepare__, __new__, __init__ в метаклассах",
+    "Создавать дескрипторы (data/non-data)",
+    "Применять __get__, __set__, __delete__, __set_name__"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать, что такое type и как создаются классы",
+        "Писать собственные метаклассы",
+        "Использовать __prepare__, __new__, __init__ в метаклассах",
+        "Создавать дескрипторы (data/non-data)",
+        "Применять __get__, __set__, __delete__, __set_name__"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Всё — объект, классы тоже"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class MyClass:\n    pass\n"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как создаётся класс"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Метаклассы — кастомизация создания классов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый метакласс"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Meta(type):\n    def __new__(mcs, name, bases, namespace):\n        print(f\"Создаём класс {name}\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "__prepare__ — кастомный namespace (Python 3+)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class OrderedMeta(type):\n    @classmethod\n    def __prepare__(mcs, name, bases):\n        from collections import OrderedDict\n        return OrderedDict()  # сохраняет порядок атрибутов!\n\n    def __new__(mcs, name, bases, namespace):\n        cls = super().__new__(mcs, name, bases, dict(namespace))\n        cls._field_order = list(namespace.keys())\n        return cls\n\nclass Form(metaclass=OrderedMeta):\n    name = \"field1\"\n    email = \"field2\"\n    age = \"field3\"\n\nprint(Form._field_order)  # ['__module__', '__qualname__', 'name', 'email', 'age']"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Практические примеры метаклассов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Singleton метакласс"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class SingletonMeta(type):\n    _instances = {}\n\n    def __call__(cls, *args, **kwargs):\n        if cls not in cls._instances:\n            cls._instances[cls] = super().__call__(*args, **kwargs)\n        return cls._instances[cls]\n\nclass Database(metaclass=SingletonMeta):\n    def __init__(self):\n        self.connected = False\n\ndb1 = Database()\ndb2 = Database()\nprint(db1 is db2)  # True"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Автоматическая регистрация классов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class PluginMeta(type):\n    plugins = {}\n\n    def __new__(mcs, name, bases, namespace):\n        cls = super().__new__(mcs, name, bases, namespace)\n        if name != 'BasePlugin':\n            PluginMeta.plugins[name] = cls\n        return cls\n\nclass BasePlugin(metaclass=PluginMeta):\n    pass\n\nclass AuthPlugin(BasePlugin):\n    pass\n\nclass CachePlugin(BasePlugin):\n    pass\n\nprint(PluginMeta.plugins)  # {'AuthPlugin': <class...>, 'CachePlugin': <class...>}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Валидация атрибутов класса"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class ValidatedMeta(type):\n    def __new__(mcs, name, bases, namespace):\n        for key, value in namespace.items():\n            if key.startswith('MAX_') and not isinstance(value, int):\n                raise TypeError(f\"{key} должен быть int\")\n        return super().__new__(mcs, name, bases, namespace)\n\nclass Config(metaclass=ValidatedMeta):\n    MAX_USERS = 100"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Дескрипторы — протокол доступа к атрибутам"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое дескриптор"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый дескриптор"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Descriptor:\n    def __get__(self, obj, objtype=None):\n        print(\"__get__ вызван\")\n        return self.value\n\n    def __set__(self, obj, value):\n        print(f\"__set__ вызван с {value}\")\n        self.value = value\n\n    def __delete__(self, obj):\n        print(\"__delete__ вызван\")\n        del self.value\n\nclass MyClass:\n    attr = Descriptor()\n\nobj = MyClass()\nobj.attr = 42      # __set__ вызван с 42\nprint(obj.attr)    # __get__ вызван, 42\ndel obj.attr       # __delete__ вызван"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "__set_name__ (Python 3.6+) — имя атрибута"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class ValidatedField:\n    def __init__(self, validator=None):\n        self.validator = validator\n        self.name = None\n\n    def __set_name__(self, owner, name):\n        self.name = name\n        self.storage_name = f'_{name}'\n\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        return getattr(obj, self.storage_name, None)\n\n    def __set__(self, obj, value):\n        if self.validator and not self.validator(value):\n            raise ValueError(f\"Невалидное значение для {self.name}: {value}\")\n        setattr(obj, self.storage_name, value)\n\nclass User:\n    name = ValidatedField(lambda x: len(x) > 0)\n    age = ValidatedField(lambda x: 0 <= x <= 150)\n\nu = User()\nu.name = \"Анна\"\nu.age = 25"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Типы дескрипторов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Data descriptor (приоритет над __dict__)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class DataDescriptor:\n    def __get__(self, obj, objtype=None):\n        return f\"data: {obj._value}\"\n    def __set__(self, obj, value):\n        obj._value = value\n\nclass NonDataDescriptor:\n    def __get__(self, obj, objtype=None):\n        return \"non-data\"\n\nclass Test:\n    data = DataDescriptor()\n    non_data = NonDataDescriptor()\n\nt = Test()\nt.data = 10\nt.non_data = \"ignored\"  # запишется в __dict__!\n\nprint(t.data)      # \"data: 10\" — дескриптор\nprint(t.non_data)  # \"non-data\" — дескриптор (нет в __dict__)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "property — это дескриптор!"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Property:\n    def __init__(self, fget=None, fset=None, fdel=None):\n        self.fget, self.fset, self.fdel = fget, fset, fdel\n\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        if self.fget is None:\n            raise AttributeError(\"unreadable attribute\")\n        return self.fget(obj)\n\n    def __set__(self, obj, value):\n        if self.fset is None:\n            raise AttributeError(\"can't set attribute\")\n        self.fset(obj, value)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Продвинутые паттерны"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ленивая инициализация"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class LazyProperty:\n    def __init__(self, func):\n        self.func = func\n        self.name = func.__name__\n\n    def __set_name__(self, owner, name):\n        self.name = name\n\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        value = self.func(obj)\n        setattr(obj, self.name, value)  # кэшируем\n        return value\n\nclass Expensive:\n    @LazyProperty\n    def data(self):\n        print(\"Вычисляем...\")\n        return [i**2 for i in range(1000000)]\n\ne = Expensive()\nprint(e.data)  # Вычисляем... [0, 1, 4, ...]\nprint(e.data)  # [0, 1, 4, ...] — мгновенно!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Типизированные атрибуты (как в dataclass)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class TypedField:\n    def __init__(self, type_):\n        self.type = type_\n\n    def __set_name__(self, owner, name):\n        self.name = name\n        self.storage = f'_typed_{name}'\n\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        return getattr(obj, self.storage, None)\n\n    def __set__(self, obj, value):\n        if not isinstance(value, self.type):\n            raise TypeError(f\"{self.name} должен быть {self.type.__name__}, не {type(value).__name__}\")\n        setattr(obj, self.storage, value)\n\nclass Person:\n    name = TypedField(str)\n    age = TypedField(int)\n\np = Person()\np.name = \"Анна\"\np.age = 25"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Дескриптор только для чтения"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class ReadOnly:\n    def __init__(self, value):\n        self.value = value\n\n    def __get__(self, obj, objtype=None):\n        return self.value\n\n    def __set__(self, obj, value):\n        raise AttributeError(\"Только для чтения\")\n\nclass Config:\n    VERSION = ReadOnly(\"1.0.0\")\n\nc = Config()\nprint(c.VERSION)  # \"1.0.0\""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Метаклассы vs Дескрипторы"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "",
+        "Метакласс",
+        "Дескриптор"
+      ],
+      "rows": [
+        [
+          "Уровень",
+          "Класс",
+          "Атрибут"
+        ],
+        [
+          "Когда срабатывает",
+          "Создание класса",
+          "Доступ к атрибуту экземпляра"
+        ],
+        [
+          "Использование",
+          "Изменение структуры класса",
+          "Контроль доступа к данным"
+        ],
+        [
+          "Примеры",
+          "Singleton, Registry, Validation",
+          "property, classmethod, ORM fields"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. __init_subclass__ — альтернатива метаклассам (Python 3.6+)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Base:\n    subclasses = []\n\n    def __init_subclass__(cls, **kwargs):\n        super().__init_subclass__(**kwargs)\n        Base.subclasses.append(cls)\n        print(f\"Зарегистрирован подкласс: {cls.__name__}\")\n\nclass ChildA(Base):\n    pass\n\nclass ChildB(Base):\n    pass\n\nprint(Base.subclasses)  # [<class 'ChildA'>, <class 'ChildB'>]"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Забыли `super().__new__` в метаклассе",
+          "Всегда вызывайте родительский метод"
+        ],
+        [
+          "Дескриптор хранит состояние на себе",
+          "Храните в `obj.__dict__` под уникальным ключом"
+        ],
+        [
+          "`__set_name__` не определён",
+          "Нужен для знания имени атрибута (Python 3.6+)"
+        ],
+        [
+          "Конфликт data/non-data дескрипторов",
+          "Data descriptor побеждает __dict__, non-data — проигрывает"
+        ],
+        [
+          "Метакласс для простых задач",
+          "Используйте `__init_subclass__` или декораторы классов"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Docs: Metaclasses** — https://docs.python.org/3/reference/datamodel.html#metaclasses",
+        "**Python Docs: Descriptors** — https://docs.python.org/3/howto/descriptor.html",
+        "**Real Python: Metaclasses** — https://realpython.com/python-metaclasses/",
+        "**Real Python: Descriptors** — https://realpython.com/python-descriptors/",
+        "**PEP 487 — Simpler customization of class creation** — https://peps.python.org/pep-0487/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Забыли `super().__new__` в метаклассе",
+      "correct": "Всегда вызывайте родительский метод"
+    },
+    {
+      "mistake": "Дескриптор хранит состояние на себе",
+      "correct": "Храните в `obj.__dict__` под уникальным ключом"
+    },
+    {
+      "mistake": "`__set_name__` не определён",
+      "correct": "Нужен для знания имени атрибута (Python 3.6+)"
+    },
+    {
+      "mistake": "Конфликт data/non-data дескрипторов",
+      "correct": "Data descriptor побеждает __dict__, non-data — проигрывает"
+    },
+    {
+      "mistake": "Метакласс для простых задач",
+      "correct": "Используйте `__init_subclass__` или декораторы классов"
+    }
+  ],
+  "resources": [
+    "**Python Docs: Metaclasses** — https://docs.python.org/3/reference/datamodel.html#metaclasses",
+    "**Python Docs: Descriptors** — https://docs.python.org/3/howto/descriptor.html",
+    "**Real Python: Metaclasses** — https://realpython.com/python-metaclasses/",
+    "**Real Python: Descriptors** — https://realpython.com/python-descriptors/",
+    "**PEP 487 — Simpler customization of class creation** — https://peps.python.org/pep-0487/"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "python",
+  "lesson_order": 23
+}

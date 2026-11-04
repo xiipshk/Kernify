@@ -1,0 +1,318 @@
+{
+  "title": "Урок 27: Продвинутая STL — allocators, ranges/views, coroutines, iterator categories, time/format",
+  "slug": "prodvinutaya-stl-allocators-rangesviews-coroutines-iterator-categories-timeformat",
+  "short_description": "allocators, ranges/views, coroutines, iterator categories, time/format",
+  "goals": [
+    "Понять allocator model и писать custom allocators",
+    "Освоить Ranges/Views (C++20) — ленивые композируемые алгоритмы",
+    "Изучить Coroutines (C++20) — генераторы, async, lazy evaluation",
+    "Разобраться в iterator categories и их требованиях",
+    "Научиться работать с <chrono> и <format> (C++20)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять allocator model и писать custom allocators",
+        "Освоить Ranges/Views (C++20) — ленивые композируемые алгоритмы",
+        "Изучить Coroutines (C++20) — генераторы, async, lazy evaluation",
+        "Разобраться в iterator categories и их требованиях",
+        "Научиться работать с <chrono> и <format> (C++20)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Allocators (Аллокаторы)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Allocator Model ([allocator.requirements])"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Minimal allocator interface\ntemplate <typename T>\nstruct MyAllocator {\n    using value_type = T;\n    using pointer = T*;\n    using const_pointer = const T*;\n    using size_type = std::size_t;\n    using difference_type = std::ptrdiff_t;\n\n    MyAllocator() noexcept = default;\n    template <typename U> MyAllocator(const MyAllocator<U>&) noexcept {}\n\n    T* allocate(std::size_t n) {\n        if (n > std::size_t(-1) / sizeof(T)) throw std::bad_array_new_length();\n        if (auto p = std::malloc(n * sizeof(T))) return static_cast<T*>(p);\n        throw std::bad_alloc();\n    }\n\n    void deallocate(T* p, std::size_t) noexcept { std::free(p); }\n\n    // Optional: construct/destroy (C++17 deprecated, используй construct_at/destroy_at)\n    template <typename U, typename... Args>\n    void construct(U* p, Args&&... args) { ::new (p) U(std::forward<Args>(args)...); }\n    template <typename U> void destroy(U* p) { p->~U(); }\n};\n\n// Equality comparison required\ntemplate <typename T, typename U>\nbool operator==(const MyAllocator<T>&, const MyAllocator<U>&) noexcept { return true; }\ntemplate <typename T, typename U>\nbool operator!=(const MyAllocator<T>&, const MyAllocator<U>&) noexcept { return false; }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Stateful Allocators"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "template <typename T>\nclass ArenaAllocator {\n    Arena* arena_; // внешний arena\npublic:\n    using value_type = T;\n    ArenaAllocator(Arena* a) noexcept : arena_(a) {}\n    template <typename U> ArenaAllocator(const ArenaAllocator<U>& other) noexcept : arena_(other.arena_) {}\n\n    T* allocate(std::size_t n) { return arena_->allocate(n * sizeof(T), alignof(T)); }\n    void deallocate(T* p, std::size_t n) noexcept { arena_->deallocate(p, n * sizeof(T)); }\n\n    Arena* get_arena() const noexcept { return arena_; }\n};\n\n// Использование\nArena arena(1024 * 1024);\nstd::vector<int, ArenaAllocator<int>> v(&arena);\nv.push_back(42); // память из arena"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Polymorphic Allocator (C++17) — `std::pmr`"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <memory_resource>\n\nstd::pmr::monotonic_buffer_resource pool(1024 * 1024);\nstd::pmr::polymorphic_allocator<int> alloc(&pool);\n\nstd::pmr::vector<int> vec(&pool);\nvec.push_back(1);\nvec.push_back(2);\n\n// string с pmr\nstd::pmr::string s(&pool);\ns = \"hello world\"; // память из pool"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Allocator-Aware Containers"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Контейнеры используют allocator_traits\ntemplate <typename T, typename Alloc = std::allocator<T>>\nclass MyVector {\n    using Traits = std::allocator_traits<Alloc>;\n    Alloc alloc_;\n    T* data_;\n    size_t size_, capacity_;\n\n    void reallocate(size_t new_cap) {\n        T* new_data = Traits::allocate(alloc_, new_cap);\n        // move construct элементы\n        for (size_t i = 0; i < size_; ++i)\n            Traits::construct(alloc_, new_data + i, std::move(data_[i]));\n        // destroy старые\n        for (size_t i = 0; i < size_; ++i)\n            Traits::destroy(alloc_, data_ + i);\n        Traits::deallocate(alloc_, data_, capacity_);\n        data_ = new_data;\n        capacity_ = new_cap;\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Ranges & Views (C++20)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Range Concepts"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <ranges>\n#include <vector>\n#include <iostream>\n\nnamespace rv = std::ranges::views;\n\n// Range — что-то, что имеет begin/end\nstd::vector<int> v = {1, 2, 3, 4, 5};\n\n// View — lightweight range adapter (O(1) copy/assign)\nauto even = rv::filter([](int x) { return x % 2 == 0; });\nauto squared = rv::transform([](int x) { return x * x; });\n\n// Composition (pipe syntax)\nfor (int x : v | even | squared) {\n    std::cout << x << ' '; // 4 16\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Common Views"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <ranges>\n\nstd::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};\n\nrv::filter([](int x) { return x > 5; })           // {6,7,8,9,10}\nrv::transform([](int x) { return x * 2; })        // {2,4,6,...}\nrv::take(3)                                       // first 3\nrv::drop(2)                                       // skip first 2\nrv::take_while([](int x) { return x < 5; })       // {1,2,3,4}\nrv::drop_while([](int x) { return x < 5; })       // {5,6,7,8,9,10}\nrv::reverse                                       // reversed\nrv::keys / rv::values                             // для map/pairs\nrv::enumerate (C++23)                             // (index, value) pairs\nrv::slide(n) (C++23)                              // sliding window\nrv::chunk(n) (C++23)                              // chunks of size n\nrv::stride(n) (C++23)                             // every n-th element"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Range Algorithms (std::ranges::)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <algorithm>\n#include <ranges>\n\nstd::vector<int> v = {5, 2, 8, 1, 9};\n\nstd::ranges::sort(v);                    // sort range\nstd::ranges::find(v, 8);                 // find value\nstd::ranges::copy(v, std::ostream_iterator<int>(std::cout, \" \"));\nstd::ranges::for_each(v, [](int& x){ x *= 2; });\n\n// Projections\nstruct Person { std::string name; int age; };\nstd::vector<Person> people = {{\"Alice\", 30}, {\"Bob\", 25}};\n\nstd::ranges::sort(people, {}, &Person::age); // sort by age (projection)\nauto names = people | rv::transform(&Person::name); // view of names"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Custom View"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <ranges>\n\ntemplate <std::ranges::range R>\nclass ChunkView : public std::ranges::view_interface<ChunkView<R>> {\n    R base_;\n    std::size_t chunk_size_;\npublic:\n    ChunkView(R base, std::size_t n) : base_(std::move(base)), chunk_size_(n) {}\n\n    class Iterator {\n        std::ranges::iterator_t<R> it_, end_;\n        std::size_t chunk_size_;\n    public:\n        using iterator_category = std::input_iterator_tag;\n        using value_type = std::ranges::subrange<std::ranges::iterator_t<R>>;\n        using difference_type = std::ptrdiff_t;\n\n        Iterator(std::ranges::iterator_t<R> it, std::ranges::iterator_t<R> end, std::size_t n)\n            : it_(it), end_(end), chunk_size_(n) {}\n\n        value_type operator*() const {\n            auto next = it_;\n            std::ranges::advance(next, chunk_size_, end_);\n            return {it_, next};\n        }\n        Iterator& operator++() {\n            std::ranges::advance(it_, chunk_size_, end_);\n            return *this;\n        }\n        bool operator==(const Iterator& other) const { return it_ == other.it_; }\n    };\n\n    Iterator begin() { return Iterator(std::ranges::begin(base_), std::ranges::end(base_), chunk_size_); }\n    Iterator end() { return Iterator(std::ranges::end(base_), std::ranges::end(base_), chunk_size_); }\n};\n\ntemplate <std::ranges::viewable_range R>\nauto chunk(R&& r, std::size_t n) {\n    return ChunkView<std::views::all_t<R>>(std::views::all(std::forward<R>(r)), n);\n}\n\n// Использование\nfor (auto chunk : std::vector{1,2,3,4,5,6} | chunk(2)) {\n    // chunk = {1,2}, {3,4}, {5,6}\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Coroutines (C++20)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Basics: co_await, co_yield, co_return"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <coroutine>\n#include <iostream>\n\n// Generator — lazy sequence\ntemplate <typename T>\nstruct Generator {\n    struct promise_type {\n        T current_value;\n        Generator get_return_object() { return Generator{std::coroutine_handle<promise_type>::from_promise(*this)}; }\n        std::suspend_always initial_suspend() { return {}; }\n        std::suspend_always final_suspend() noexcept { return {}; }\n        void unhandled_exception() { std::terminate(); }\n        std::suspend_always yield_value(T value) {\n            current_value = std::move(value);\n            return {};\n        }\n        void return_void() {}\n    };\n\n    std::coroutine_handle<promise_type> coro_;\n    Generator(std::coroutine_handle<promise_type> h) : coro_(h) {}\n    ~Generator() { if (coro_) coro_.destroy(); }\n\n    Generator(Generator&& other) noexcept : coro_(std::exchange(other.coro_, nullptr)) {}\n    Generator& operator=(Generator&& other) noexcept {\n        if (this != &other) { if (coro_) coro_.destroy(); coro_ = std::exchange(other.coro_, nullptr); }\n        return *this;\n    }\n\n    // Range interface\n    struct Iterator {\n        std::coroutine_handle<promise_type> coro_;\n        Iterator(std::coroutine_handle<promise_type> h) : coro_(h) {}\n        Iterator& operator++() { coro_.resume(); return *this; }\n        T operator*() const { return coro_.promise().current_value; }\n        bool operator==(std::default_sentinel_t) const { return coro_.done(); }\n    };\n    Iterator begin() { if (coro_) coro_.resume(); return Iterator{coro_}; }\n    std::default_sentinel_t end() { return {}; }\n};\n\n// Генератор Фибоначчи\nGenerator<int> fibonacci() {\n    int a = 0, b = 1;\n    while (true) {\n        co_yield a;\n        int next = a + b;\n        a = b;\n        b = next;\n    }\n}\n\n// Использование\nfor (int x : fibonacci() | rv::take(10)) {\n    std::cout << x << ' '; // 0 1 1 2 3 5 8 13 21 34\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Async Coroutines (Task)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <coroutine>\n#include <future>\n\ntemplate <typename T>\nstruct Task {\n    struct promise_type {\n        T value_;\n        std::exception_ptr exc_;\n        Task get_return_object() { return Task{std::coroutine_handle<promise_type>::from_promise(*this)}; }\n        std::suspend_always initial_suspend() { return {}; }\n        std::suspend_always final_suspend() noexcept { return {}; }\n        void unhandled_exception() { exc_ = std::current_exception(); }\n        void return_value(T v) { value_ = std::move(v); }\n    };\n\n    std::coroutine_handle<promise_type> coro_;\n    Task(std::coroutine_handle<promise_type> h) : coro_(h) {}\n    ~Task() { if (coro_) coro_.destroy(); }\n\n    T get() {\n        if (coro_ && !coro_.done()) coro_.resume();\n        if (coro_.promise().exc_) std::rethrow_exception(coro_.promise().exc_);\n        return std::move(coro_.promise().value_);\n    }\n};\n\nTask<int> async_add(int a, int b) {\n    co_await std::suspend_always{}; // simulate async\n    co_return a + b;\n}\n\n// C++20: std::coroutine_handle, std::suspend_always, std::suspend_never\n// C++23: std::generator<T> — стандартный генератор"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::generator (C++23)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <generator>\n\nstd::generator<int> fibonacci() {\n    int a = 0, b = 1;\n    while (true) {\n        co_yield a;\n        auto next = a + b;\n        a = b;\n        b = next;\n    }\n}\n\nstd::generator<std::string> read_lines(std::istream& is) {\n    std::string line;\n    while (std::getline(is, line)) co_yield line;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Iterator Categories"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Иерархия итераторов"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "input_iterator\n    ↓\nforward_iterator (multi-pass)\n    ↓\nbidirectional_iterator (--it)\n    ↓\nrandom_access_iterator (it + n, it[n], it - it)\n    ↓\ncontiguous_iterator (data() -> T*)  // C++20"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Требования (C++20 Concepts)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iterator>\n#include <concepts>\n\n// Input iterator: *it, ++it, it==it\n// Forward: + default constructible, multi-pass\n// Bidirectional: --it\n// Random access: it + n, it - n, it[n], it < it\n// Contiguous: std::to_address(it) == &*it\n\ntemplate <std::input_iterator I>\nvoid algo_input(I first, I last) { /* single pass */ }\n\ntemplate <std::forward_iterator I>\nvoid algo_forward(I first, I last) { /* multi-pass */ }\n\ntemplate <std::random_access_iterator I>\nvoid algo_random(I first, I last) { /* O(1) advance */ }\n\n// Tag dispatching (legacy)\ntemplate <typename I>\nvoid advance_impl(I& it, std::size_t n, std::input_iterator_tag) { while (n--) ++it; }\n\ntemplate <typename I>\nvoid advance_impl(I& it, std::size_t n, std::random_access_iterator_tag) { it += n; }\n\ntemplate <typename I>\nvoid advance(I& it, std::size_t n) {\n    advance_impl(it, n, typename std::iterator_traits<I>::iterator_category{});\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Custom Iterator"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iterator>\n\nclass IntRangeIterator {\n    int current_;\npublic:\n    using iterator_category = std::random_access_iterator_tag;\n    using value_type = int;\n    using difference_type = std::ptrdiff_t;\n    using pointer = const int*;\n    using reference = const int&;\n\n    IntRangeIterator(int v = 0) : current_(v) {}\n    reference operator*() const { return current_; }\n    pointer operator->() const { return &current_; }\n\n    IntRangeIterator& operator++() { ++current_; return *this; }\n    IntRangeIterator operator++(int) { auto tmp = *this; ++current_; return tmp; }\n    IntRangeIterator& operator--() { --current_; return *this; }\n    IntRangeIterator operator--(int) { auto tmp = *this; --current_; return tmp; }\n\n    IntRangeIterator& operator+=(difference_type n) { current_ += n; return *this; }\n    IntRangeIterator& operator-=(difference_type n) { current_ -= n; return *this; }\n    friend IntRangeIterator operator+(IntRangeIterator it, difference_type n) { return it += n; }\n    friend IntRangeIterator operator+(difference_type n, IntRangeIterator it) { return it += n; }\n    friend IntRangeIterator operator-(IntRangeIterator it, difference_type n) { return it -= n; }\n    friend difference_type operator-(IntRangeIterator a, IntRangeIterator b) { return a.current_ - b.current_; }\n    reference operator[](difference_type n) const { return current_ + n; }\n\n    bool operator==(const IntRangeIterator& other) const { return current_ == other.current_; }\n    auto operator<=>(const IntRangeIterator& other) const = default;\n};\n\nclass IntRange {\n    int begin_, end_;\npublic:\n    IntRange(int b, int e) : begin_(b), end_(e) {}\n    IntRangeIterator begin() const { return IntRangeIterator{begin_}; }\n    IntRangeIterator end() const { return IntRangeIterator{end_}; }\n};\n\n// Использование\nfor (int x : IntRange{0, 10}) { /* 0..9 */ }\nstd::vector<int> v(IntRange{0, 100}); // works!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Time & Format (<chrono>, <format>)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::chrono (C++11/20)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <chrono>\n#include <iostream>\n\nusing namespace std::chrono;\nusing namespace std::chrono_literals;\n\n// Durations\nauto d1 = 42ms;\nauto d2 = 1.5s;\nauto d3 = d1 + d2; // 1542ms\nauto d4 = duration_cast<seconds>(d3); // 1s (truncates)\n\n// Time points\nauto now = system_clock::now();\nauto tp = system_clock::time_point{seconds{1000000}};\n\n// Clocks\nsystem_clock::now();      // wall clock (can jump)\nsteady_clock::now();      // monotonic (for intervals)\nhigh_resolution_clock::now(); // highest precision\nutc_clock::now();         // C++20: UTC time\ntai_clock::now();         // C++20: International Atomic Time\n\n// Formatting time (C++20)\n#include <format>\nauto now = system_clock::now();\nstd::cout << std::format(\"{:%Y-%m-%d %H:%M:%S}\", now) << '\\n'; // 2024-01-15 14:30:45\n\n// Zoned time (C++20)\n#include <chrono>\nauto zt = std::chrono::zoned_time{\"Europe/Moscow\", system_clock::now()};\nstd::cout << std::format(\"{:%Y-%m-%d %H:%M:%S %Z}\", zt) << '\\n';\n\n// Parsing\nstd::chrono::sys_seconds tp;\nstd::from_format(\"{:%Y-%m-%d %H:%M:%S}\", \"2024-01-15 14:30:45\", tp);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::format (C++20)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <format>\n#include <iostream>\n#include <vector>\n\n// Basic\nstd::format(\"Hello {}!\", \"world\"); // \"Hello world!\"\nstd::format(\"{:+06d}\", 42);        // \"+00042\"\nstd::format(\"{:.2f}\", 3.14159);    // \"3.14\"\nstd::format(\"{:x}\", 255);          // \"ff\"\n\n// Containers (C++23)\nstd::vector<int> v = {1, 2, 3};\nstd::format(\"{}\", v);              // \"[1, 2, 3]\"\n\n// Custom formatting\nstruct Point { int x, y; };\ntemplate <> struct std::formatter<Point> : std::formatter<std::string> {\n    auto format(const Point& p, auto& ctx) const {\n        return std::format_to(ctx.out(), \"({}, {})\", p.x, p.y);\n    }\n};\nPoint p{3, 4};\nstd::format(\"{}\", p); // \"(3, 4)\"\n\n// Compile-time format string checking (C++26 / fmt)\nstd::format(FMT_STRING(\"{:d}\"), \"not an int\"); // compile error with fmt::format"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Custom Allocator"
+    },
+    {
+      "type": "text",
+      "content": "Напишите <code>PoolAllocator<T></code> — пул фиксированных блоков для объектов одного размера. Используйте его с <code>std::vector</code> и <code>std::list</code>. Измерьте производительность vs <code>std::allocator</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Ranges Pipeline"
+    },
+    {
+      "type": "text",
+      "content": "Дан <code>std::vector<int></code> 1M элементов. Напишите pipeline: filter чётные → transform (x*2) → take 100 → collect в vector. Сравните производительность с ручным циклом."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Coroutine Generator"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте <code>std::generator<std::string> read<em>csv</em>lines(std::istream&)</code> — ленивое чтение CSV по строкам. Добавьте парсинг полей через <code>std::string_view</code> (zero-copy)."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Custom View"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте <code>stride_view</code> — view, выдающий каждый N-й элемент. Сделайте его composable с другими views."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Iterator Adapter"
+    },
+    {
+      "type": "text",
+      "content": "Напишите <code>TransformIterator<I, F></code> — итератор, применяющий функцию <code>F</code> к результату разыменования базового итератора <code>I</code>. Должен моделировать тот же category, что и <code>I</code>."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Chrono Benchmark"
+    },
+    {
+      "type": "text",
+      "content": "Напишите микробенчмарк с <code>steady_clock</code>, измеряющий latency пустой функции. Выведите статистику: min, max, mean, median, p99 в наносекундах. Используйте <code>std::format</code> для красивого вывода."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 7: PMR Containers"
+    },
+    {
+      "type": "text",
+      "content": "Создайте <code>std::pmr::vector<std::pmr::string></code> с <code>monotonic<em>buffer</em>resource</code> 64KB. Добавьте 1000 строк. Проверьте, что никаких аллокаций на heap не происходит (valgrind/ASan)."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**C++ Reference: Ranges** — https://en.cppreference.com/w/cpp/ranges",
+        "**C++ Reference: Coroutines** — https://en.cppreference.com/w/cpp/language/coroutines",
+        "**C++ Reference: Allocator** — https://en.cppreference.com/w/cpp/memory/allocator",
+        "**CppCon: \"Ranges for the Standard Library\" (Eric Niebler)**",
+        "**CppCon: \"Coroutines in C++20\" (Gor Nishanov)**",
+        "**P2503R1** — `std::generator` (C++23)",
+        "**fmtlib / {fmt}** — reference implementation для std::format",
+        "**date.h (Howard Hinnant)** — расширения для chrono (включены в C++20)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [],
+  "resources": [
+    "**C++ Reference: Ranges** — https://en.cppreference.com/w/cpp/ranges",
+    "**C++ Reference: Coroutines** — https://en.cppreference.com/w/cpp/language/coroutines",
+    "**C++ Reference: Allocator** — https://en.cppreference.com/w/cpp/memory/allocator",
+    "**CppCon: \"Ranges for the Standard Library\" (Eric Niebler)**",
+    "**CppCon: \"Coroutines in C++20\" (Gor Nishanov)**",
+    "**P2503R1** — `std::generator` (C++23)",
+    "**fmtlib / {fmt}** — reference implementation для std::format",
+    "**date.h (Howard Hinnant)** — расширения для chrono (включены в C++20)"
+  ],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 27
+}

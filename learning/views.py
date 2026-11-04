@@ -143,14 +143,13 @@ class LessonCompleteView(LoginRequiredMixin, View):
         progress, _ = LessonProgress.objects.get_or_create(
             user=request.user,
             lesson=lesson,
-            defaults={'status': 'completed', 'completed_at': timezone.now(), 'score': 100, 'xp_earned': lesson.xp_reward}
+            defaults={'status': 'completed', 'completed_at': timezone.now(), 'score': 100}
         )
 
         if progress.status != 'completed':
             progress.status = 'completed'
             progress.completed_at = timezone.now()
             progress.score = 100
-            progress.xp_earned = lesson.xp_reward
             progress.save()
 
             # Update user progress
@@ -158,9 +157,8 @@ class LessonCompleteView(LoginRequiredMixin, View):
                 user=request.user,
                 language=lesson.subtopic.topic.program.language
             )
-            user_progress.total_xp += lesson.xp_reward
             user_progress.lessons_completed += 1
-            user_progress.last_activity_date = timezone.now().date()
+            user_progress.last_activity_at = timezone.now()
             user_progress.save()
 
         return redirect('learning:lesson_learn', slug=slug)

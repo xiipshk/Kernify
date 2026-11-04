@@ -1,0 +1,355 @@
+{
+  "title": "Урок 3.8: Advanced .NET — ASP.NET Core, EF Core, Networking, Background Services, Observability",
+  "slug": "advanced-net-aspnet-core-ef-core-networking-background-services-observability",
+  "short_description": "ASP.NET Core, EF Core, Networking, Background Services, Observability",
+  "goals": [
+    "Глубокое понимание ASP.NET Core pipeline, Minimal APIs, endpoints",
+    "Продвинутый EF Core: performance, compiled queries, interceptors, migrations",
+    "Сетевое программирование: sockets, HTTP/2, gRPC, SignalR",
+    "Background Services: IHostedService, periodic tasks, distributed locks",
+    "Observability: OpenTelemetry, structured logging, metrics, distributed tracing"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубокое понимание ASP.NET Core pipeline, Minimal APIs, endpoints",
+        "Продвинутый EF Core: performance, compiled queries, interceptors, migrations",
+        "Сетевое программирование: sockets, HTTP/2, gRPC, SignalR",
+        "Background Services: IHostedService, periodic tasks, distributed locks",
+        "Observability: OpenTelemetry, structured logging, metrics, distributed tracing"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. ASP.NET Core — Pipeline и Minimal APIs"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Request Pipeline"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var builder = WebApplication.CreateBuilder(args);\n\n// Services\nbuilder.Services.AddControllers();\nbuilder.Services.AddEndpointsApiExplorer();\nbuilder.Services.AddSwaggerGen();\n\nvar app = builder.Build();\n\n// Middleware order MATTERS!\nif (app.Environment.IsDevelopment())\n{\n    app.UseSwagger();\n    app.UseSwaggerUI();\n}\n\napp.UseHttpsRedirection();\napp.UseRouting();              // Endpoint routing\napp.UseAuthentication();       // Must be before Authorization\napp.UseAuthorization();\napp.UseRateLimiter();          // .NET 7+\napp.MapControllers();          // Attribute routing\napp.MapHealthChecks(\"/health\");\n\napp.Run();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Minimal APIs (.NET 6+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var app = WebApplication.CreateBuilder(args).Build();\n\n// Простой endpoint\napp.MapGet(\"/hello\", () => \"Hello World!\");\n\n// С параметрами и валидацией\napp.MapGet(\"/users/{id:guid}\", async (Guid id, IUserService service, CancellationToken ct) =>\n{\n    var user = await service.GetAsync(id, ct);\n    return user is not null ? Results.Ok(user) : Results.NotFound();\n})\n.WithName(\"GetUser\")\n.Produces<User>(200)\n.Produces(404);\n\n// Группы и фильтры\nvar api = app.MapGroup(\"/api/v1\").RequireAuthorization();\n\napi.MapPost(\"/users\", async (CreateUserDto dto, IMediator mediator, CancellationToken ct) =>\n{\n    var id = await mediator.Send(new CreateUserCommand(dto.Email, dto.Name), ct);\n    return Results.Created($\"/api/v1/users/{id}\", id);\n})\n.RequireAuthorization(\"AdminPolicy\")\n.AddEndpointFilter<ValidationFilter<CreateUserDto>>();\n\n// Binding sources\napp.MapGet(\"/search\", ([AsParameters] SearchRequest request) => ...); // Query + Header + Route"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Endpoint Filters"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class ValidationFilter<T> : IEndpointFilter\n{\n    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)\n    {\n        var validator = context.HttpContext.RequestServices.GetService<IValidator<T>>();\n        if (validator is null) return await next(context);\n\n        var argument = context.Arguments.OfType<T>().FirstOrDefault();\n        if (argument is not null)\n        {\n            var result = await validator.ValidateAsync(argument, context.HttpContext.RequestAborted);\n            if (!result.IsValid)\n                return Results.ValidationProblem(result.ToDictionary());\n        }\n        return await next(context);\n    }\n}\n\n// Global filter\napp.AddEndpointFilter(async (ctx, next) =>\n{\n    var logger = ctx.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();\n    logger.LogInformation(\"Executing {Endpoint}\", ctx.HttpContext.GetEndpoint()?.DisplayName);\n    return await next(ctx);\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Result Types и ProblemDetails"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Typed Results\napp.MapGet(\"/users/{id}\", async (Guid id, IUserService service, CancellationToken ct) =>\n{\n    var user = await service.GetAsync(id, ct);\n    return user is not null ? TypedResults.Ok(user) : TypedResults.NotFound();\n});\n\n// ProblemDetails (RFC 7807)\napp.MapPost(\"/users\", async (CreateUserDto dto, IUserService service, CancellationToken ct) =>\n{\n    var result = await service.CreateAsync(dto, ct);\n    return result.IsSuccess\n        ? TypedResults.Created($\"/users/{result.Value.Id}\", result.Value)\n        : TypedResults.Problem(result.Error.Message, statusCode: 400);\n});\n\n// Custom ProblemDetails\nbuilder.Services.AddProblemDetails(options =>\n{\n    options.CustomizeProblemDetails = ctx =>\n    {\n        ctx.ProblemDetails.Instance = $\"{ctx.HttpContext.Request.Method} {ctx.HttpContext.Request.Path}\";\n        ctx.ProblemDetails.Extensions[\"traceId\"] = ctx.HttpContext.TraceIdentifier;\n    };\n});"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. EF Core — Advanced"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Compiled Queries"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Компилируем один раз, используем много раз\nprivate static readonly Func<AppDbContext, Guid, Task<User?>> _getUserById =\n    EF.CompileAsyncQuery((AppDbContext ctx, Guid id) =>\n        ctx.Users.FirstOrDefault(u => u.Id == id));\n\n// Использование\nvar user = await _getUserById(_context, userId);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Interceptors"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class AuditingInterceptor : SaveChangesInterceptor\n{\n    public override InterceptionResult<int> SavingChanges(\n        DbContextEventData eventData, InterceptionResult<int> result)\n    {\n        var entries = eventData.Context!.ChangeTracker.Entries<IAuditable>();\n        foreach (var entry in entries)\n        {\n            if (entry.State == EntityState.Added)\n            {\n                entry.Entity.CreatedAt = DateTimeOffset.UtcNow;\n                entry.Entity.CreatedBy = _currentUserService.UserId;\n            }\n            else if (entry.State == EntityState.Modified)\n            {\n                entry.Entity.UpdatedAt = DateTimeOffset.UtcNow;\n                entry.Entity.UpdatedBy = _currentUserService.UserId;\n            }\n        }\n        return base.SavingChanges(eventData, result);\n    }\n}\n\n// Регистрация\nbuilder.Services.AddDbContext<AppDbContext>((sp, options) =>\n{\n    options.UseNpgsql(connectionString)\n           .AddInterceptors(sp.GetRequiredService<AuditingInterceptor>());\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Query Splitting и AsSplitQuery"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Single query (cartesian explosion risk)\nvar users = await _context.Users\n    .Include(u => u.Orders)\n    .ThenInclude(o => o.Items)\n    .ToListAsync();\n\n// Split query (multiple SQL queries, better for large collections)\nvar users = await _context.Users\n    .Include(u => u.Orders)\n    .ThenInclude(o => o.Items)\n    .AsSplitQuery()\n    .ToListAsync();\n\n// Global config\noptions.UseNpgsql(connectionString, o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Bulk Operations (EFCore.BulkExtensions)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using EFCore.BulkExtensions;\n\nawait _context.BulkInsertAsync(entities);\nawait _context.BulkUpdateAsync(entities);\nawait _context.BulkDeleteAsync(entities);\nawait _context.BulkReadAsync(list => list.Where(e => ids.Contains(e.Id)));"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Raw SQL и FromSql"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Параметризованный SQL\nvar users = await _context.Users\n    .FromSqlRaw(\"SELECT * FROM \\\"Users\\\" WHERE \\\"Email\\\" LIKE {0}\", \"%@example.com\")\n    .ToListAsync();\n\n// Stored procedure\nvar count = await _context.Database\n    .ExecuteSqlRawAsync(\"CALL \\\"RefreshMaterializedViews\\\"()\");\n\n// Dapper для сложных запросов\nusing var connection = _context.Database.GetDbConnection();\nvar results = await connection.QueryAsync<CustomDto>(sql, parameters);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Change Tracking Optimization"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// NoTracking для read-only\nvar users = await _context.Users\n    .AsNoTracking()\n    .Where(u => u.IsActive)\n    .ToListAsync();\n\n// Identity Resolution (default) vs NoTrackingWithIdentityResolution\nvar users = await _context.Users\n    .AsNoTrackingWithIdentityResolution()\n    .ToListAsync();\n\n// Explicit loading\nvar user = await _context.Users.FindAsync(id);\nawait _context.Entry(user).Collection(u => u.Orders).LoadAsync();\n\n// AutoDetectChanges\n_context.ChangeTracker.AutoDetectChangesEnabled = false;\n// ... bulk operations ...\n_context.ChangeTracker.AutoDetectChangesEnabled = true;\n_context.ChangeTracker.DetectChanges();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Migrations Best Practices"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Идемпотентные миграции\npublic partial class AddUserIndex : Migration\n{\n    protected override void Up(MigrationBuilder migrationBuilder)\n    {\n        // Проверка существования\n        migrationBuilder.Sql(@\"\n            DO $$\n            BEGIN\n                IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'IX_Users_Email') THEN\n                    CREATE INDEX \"\"IX_Users_Email\"\" ON \"\"Users\"\" (\"\"Email\"\");\n                END IF;\n            END $$;\n        \");\n    }\n}\n\n// Seed data через HasData\nmodelBuilder.Entity<Role>().HasData(\n    new Role { Id = 1, Name = \"Admin\" },\n    new Role { Id = 2, Name = \"User\" }\n);"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Networking — Sockets, HTTP/2, gRPC, SignalR"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Sockets / TCP"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// TCP Server\nvar listener = new TcpListener(IPAddress.Any, 5000);\nlistener.Start();\n\nwhile (true)\n{\n    var client = await listener.AcceptTcpClientAsync();\n    _ = HandleClientAsync(client); // Fire and forget\n}\n\nasync Task HandleClientAsync(TcpClient client)\n{\n    using var stream = client.GetStream();\n    var buffer = new byte[4096];\n    int read;\n    while ((read = await stream.ReadAsync(buffer)) > 0)\n    {\n        var message = Encoding.UTF8.GetString(buffer, 0, read);\n        await stream.WriteAsync(Encoding.UTF8.GetBytes($\"Echo: {message}\"));\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "HTTP/2 и HttpClient"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// HttpClient с HTTP/2\nvar handler = new SocketsHttpHandler\n{\n    EnableMultipleHttp2Connections = true,\n    PooledConnectionLifetime = TimeSpan.FromMinutes(15),\n    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),\n    MaxConnectionsPerServer = 100\n};\n\nvar client = new HttpClient(handler)\n{\n    DefaultRequestVersion = HttpVersion.Version20,\n    DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher\n};\n\n// HttpClientFactory (рекомендуемый способ)\nbuilder.Services.AddHttpClient<GitHubClient>(c =>\n{\n    c.BaseAddress = new Uri(\"https://api.github.com/\");\n    c.DefaultRequestHeaders.UserAgent.ParseAdd(\"MyApp/1.0\");\n})\n.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler\n{\n    PooledConnectionLifetime = TimeSpan.FromMinutes(15)\n})\n.AddStandardResilienceHandler(); // .NET 8+ Polly integration"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "gRPC Server/Client"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Server\npublic class UserService : UserProtoService.UserProtoServiceBase\n{\n    public override async Task<UserResponse> GetUser(GetUserRequest request, ServerCallContext context)\n    {\n        var user = await _repo.GetAsync(Guid.Parse(request.Id), context.CancellationToken);\n        return user.ToProto();\n    }\n\n    // Server streaming\n    public override async Task GetUsers(GetUsersRequest request,\n        IServerStreamWriter<UserResponse> responseStream, ServerCallContext context)\n    {\n        await foreach (var user in _repo.GetAllAsync(context.CancellationToken))\n        {\n            await responseStream.WriteAsync(user.ToProto());\n        }\n    }\n}\n\n// Client\nvar channel = GrpcChannel.ForAddress(\"https://localhost:5001\");\nvar client = new UserProtoService.UserProtoServiceClient(channel);\nvar user = await client.GetUserAsync(new GetUserRequest { Id = id.ToString() });"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SignalR — Real-time"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Hub\npublic class ChatHub : Hub\n{\n    public async Task SendMessage(string user, string message)\n    {\n        await Clients.All.SendAsync(\"ReceiveMessage\", user, message);\n    }\n\n    public async Task JoinGroup(string groupName)\n    {\n        await Groups.AddToGroupAsync(Context.ConnectionId, groupName);\n    }\n\n    public override async Task OnConnectedAsync()\n    {\n        await Clients.Caller.SendAsync(\"Connected\", Context.ConnectionId);\n        await base.OnConnectedAsync();\n    }\n}\n\n// Client (JS)\n// const connection = new signalR.HubConnectionBuilder()\n//     .withUrl(\"/chathub\")\n//     .build();\n// await connection.start();\n// connection.on(\"ReceiveMessage\", (user, message) => { ... });\n\n// Регистрация\napp.MapHub<ChatHub>(\"/chathub\");\n\n// Scale-out с Redis\nbuilder.Services.AddSignalR().AddStackExchangeRedis(\"localhost\");"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Background Services"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "IHostedService и BackgroundService"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Базовый BackgroundService\npublic class OrderProcessingService : BackgroundService\n{\n    private readonly IServiceScopeFactory _scopeFactory;\n    private readonly ILogger<OrderProcessingService> _logger;\n    private readonly TimeSpan _interval = TimeSpan.FromMinutes(5);\n\n    protected override async Task ExecuteAsync(CancellationToken stoppingToken)\n    {\n        // Initial delay\n        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);\n\n        while (!stoppingToken.IsCancellationRequested)\n        {\n            try\n            {\n                using var scope = _scopeFactory.CreateScope();\n                var processor = scope.ServiceProvider.GetRequiredService<IOrderProcessor>();\n                await processor.ProcessPendingAsync(stoppingToken);\n            }\n            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)\n            {\n                _logger.LogError(ex, \"Order processing failed\");\n            }\n\n            await Task.Delay(_interval, stoppingToken);\n        }\n    }\n}\n\n// Регистрация\nbuilder.Services.AddHostedService<OrderProcessingService>();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Periodic Tasks с Timer"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class PeriodicHostedService : IHostedService, IDisposable\n{\n    private Timer? _timer;\n    private readonly IServiceScopeFactory _scopeFactory;\n\n    public Task StartAsync(CancellationToken ct)\n    {\n        _timer = new Timer(DoWork, null, TimeSpan.Zero, TimeSpan.FromHours(1));\n        return Task.CompletedTask;\n    }\n\n    private async void DoWork(object? state)\n    {\n        using var scope = _scopeFactory.CreateScope();\n        var service = scope.ServiceProvider.GetRequiredService<ICleanupService>();\n        await service.CleanupAsync(CancellationToken.None);\n    }\n\n    public Task StopAsync(CancellationToken ct)\n    {\n        _timer?.Change(Timeout.Infinite, 0);\n        return Task.CompletedTask;\n    }\n\n    public void Dispose() => _timer?.Dispose();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Distributed Locks для масштабирования"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Используя Redis (StackExchange.Redis)\npublic class DistributedLockService\n{\n    private readonly IDatabase _redis;\n\n    public async Task<IDisposable?> TryAcquireLockAsync(string key, TimeSpan expiry)\n    {\n        var lockKey = $\"lock:{key}\";\n        var token = Guid.NewGuid().ToString();\n\n        var acquired = await _redis.StringSetAsync(lockKey, token, expiry, When.NotExists);\n        if (!acquired) return null;\n\n        return new RedisLock(_redis, lockKey, token);\n    }\n\n    private class RedisLock : IDisposable\n    {\n        private readonly IDatabase _redis;\n        private readonly string _key;\n        private readonly string _token;\n\n        public RedisLock(IDatabase redis, string key, string token)\n        {\n            _redis = redis; _key = key; _token = token;\n        }\n\n        public void Dispose()\n        {\n            // Lua script для атомарного удаление только своего токена\n            var script = @\"if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end\";\n            _redis.ScriptEvaluate(script, new RedisKey[] { _key }, new RedisValue[] { _token });\n        }\n    }\n}\n\n// Использование\npublic class SingletonBackgroundService : BackgroundService\n{\n    private readonly DistributedLockService _locks;\n\n    protected override async Task ExecuteAsync(CancellationToken ct)\n    {\n        while (!ct.IsCancellationRequested)\n        {\n            using var lockHandle = await _locks.TryAcquireLockAsync(\"daily-report\", TimeSpan.FromMinutes(10));\n            if (lockHandle != null)\n            {\n                // Only one instance runs this\n                await GenerateDailyReportAsync(ct);\n            }\n            await Task.Delay(TimeSpan.FromHours(24), ct);\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Observability — OpenTelemetry, Logging, Metrics"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Structured Logging"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Program.cs\nbuilder.Logging.ClearProviders();\nbuilder.Logging.AddConsole(options =>\n{\n    options.FormatterName = \"json\";\n    options.IncludeScopes = true;\n});\nbuilder.Logging.AddConsoleFormatter<JsonConsoleFormatter, ConsoleFormatterOptions>();\n\n// Использование\npublic class OrderService\n{\n    private readonly ILogger<OrderService> _logger;\n\n    public async Task<Order> CreateAsync(CreateOrderDto dto)\n    {\n        using var scope = _logger.BeginScope(new Dictionary<string, object>\n        {\n            [\"CustomerId\"] = dto.CustomerId,\n            [\"OrderId\"] = Guid.NewGuid()\n        });\n\n        _logger.LogInformation(\"Creating order for customer {CustomerId}\", dto.CustomerId);\n\n        try\n        {\n            var order = await _repository.CreateAsync(dto);\n            _logger.LogInformation(\"Order {OrderId} created successfully\", order.Id);\n            return order;\n        }\n        catch (Exception ex)\n        {\n            _logger.LogError(ex, \"Failed to create order for customer {CustomerId}\", dto.CustomerId);\n            throw;\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "OpenTelemetry — Traces, Metrics, Logs"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// NuGet: OpenTelemetry.Exporter.Console, OpenTelemetry.Exporter.OpenTelemetryProtocol, OpenTelemetry.Instrumentation.AspNetCore\n\nbuilder.Services.AddOpenTelemetry()\n    .ConfigureResource(r => r.AddService(\"MyService\", \"1.0.0\"))\n    .WithTracing(tracing => tracing\n        .AddAspNetCoreInstrumentation()\n        .AddHttpClientInstrumentation()\n        .AddEntityFrameworkCoreInstrumentation()\n        .AddSource(\"MyApp.*\")\n        .AddOtlpExporter(o => o.Endpoint = new Uri(\"http://jaeger:4317\")))\n    .WithMetrics(metrics => metrics\n        .AddAspNetCoreInstrumentation()\n        .AddHttpClientInstrumentation()\n        .AddRuntimeInstrumentation()\n        .AddProcessInstrumentation()\n        .AddOtlpExporter(o => o.Endpoint = new Uri(\"http://prometheus:4317\")));\n\n// Custom ActivitySource\npublic static class DiagnosticsConfig\n{\n    public static readonly ActivitySource ActivitySource = new(\"MyApp.Orders\");\n}\n\n// В коде\nusing var activity = DiagnosticsConfig.ActivitySource.StartActivity(\"CreateOrder\");\nactivity?.SetTag(\"customer.id\", customerId);\nactivity?.SetTag(\"order.amount\", amount);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Custom Metrics"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class OrderMetrics\n{\n    private readonly Counter<long> _ordersCreated;\n    private readonly Histogram<double> _orderValue;\n    private readonly UpDownCounter<long> _activeOrders;\n\n    public OrderMetrics(IMeterFactory meterFactory)\n    {\n        var meter = meterFactory.Create(\"MyApp.Orders\");\n        _ordersCreated = meter.CreateCounter<long>(\"orders.created\", description: \"Total orders created\");\n        _orderValue = meter.CreateHistogram<double>(\"orders.value\", unit: \"USD\", description: \"Order value distribution\");\n        _activeOrders = meter.CreateUpDownCounter<long>(\"orders.active\", description: \"Currently active orders\");\n    }\n\n    public void OrderCreated(decimal value)\n    {\n        _ordersCreated.Add(1);\n        _orderValue.Record((double)value);\n        _activeOrders.Add(1);\n    }\n\n    public void OrderCompleted() => _activeOrders.Add(-1);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Health Checks"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "builder.Services.AddHealthChecks()\n    .AddDbContextCheck<AppDbContext>()\n    .AddNpgSql(connectionString)\n    .AddRedis(redisConnectionString)\n    .AddUrlGroup(new Uri(\"https://api.external.com/health\"), \"external-api\")\n    .AddCheck<CustomHealthCheck>(\"custom-check\");\n\napp.MapHealthChecks(\"/health\", new HealthCheckOptions\n{\n    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse\n});\n\napp.MapHealthChecks(\"/health/ready\", new HealthCheckOptions\n{\n    Predicate = check => check.Tags.Contains(\"ready\")\n});\n\napp.MapHealthChecks(\"/health/live\", new HealthCheckOptions\n{\n    Predicate = _ => false // Всегда healthy для liveness\n});\n\n// Custom HealthCheck\npublic class CustomHealthCheck : IHealthCheck\n{\n    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)\n    {\n        var isHealthy = CheckDependencies();\n        return Task.FromResult(isHealthy\n            ? HealthCheckResult.Healthy(\"All systems operational\")\n            : HealthCheckResult.Degraded(\"Some dependencies unavailable\"));\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`AddDbContext` без пула",
+          "`AddDbContextPool` для высокой нагрузки"
+        ],
+        [
+          "`Include` для больших коллекций",
+          "`AsSplitQuery()` или explicit loading"
+        ],
+        [
+          "`HttpClient` создают вручную",
+          "`IHttpClientFactory` / `AddHttpClient`"
+        ],
+        [
+          "BackgroundService без `IServiceScopeFactory`",
+          "Всегда создавайте scope для scoped сервисов"
+        ],
+        [
+          "Отсутствие correlation ID",
+          "Middleware для генерации/проброса `X-Correlation-ID`"
+        ],
+        [
+          "Логи без структуры",
+          "`Serilog` / `Microsoft.Extensions.Logging` с JSON formatter"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`AddDbContext` без пула",
+      "correct": "`AddDbContextPool` для высокой нагрузки"
+    },
+    {
+      "mistake": "`Include` для больших коллекций",
+      "correct": "`AsSplitQuery()` или explicit loading"
+    },
+    {
+      "mistake": "`HttpClient` создают вручную",
+      "correct": "`IHttpClientFactory` / `AddHttpClient`"
+    },
+    {
+      "mistake": "BackgroundService без `IServiceScopeFactory`",
+      "correct": "Всегда создавайте scope для scoped сервисов"
+    },
+    {
+      "mistake": "Отсутствие correlation ID",
+      "correct": "Middleware для генерации/проброса `X-Correlation-ID`"
+    },
+    {
+      "mistake": "Логи без структуры",
+      "correct": "`Serilog` / `Microsoft.Extensions.Logging` с JSON formatter"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 30
+}

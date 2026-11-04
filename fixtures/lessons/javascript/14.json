@@ -1,0 +1,297 @@
+{
+  "title": "Урок 14: Прототипы, Classes, Наследование, Getters/Setters",
+  "slug": "prototipy-classes-nasledovanie-getterssetters",
+  "short_description": "",
+  "goals": [
+    "Понимать прототипную модель наследования",
+    "Работать с `class` синтаксисом (ES2015+) и его особенностями",
+    "Реализовывать наследование, миксины, композицию",
+    "Использовать геттеры/сеттеры, приватные поля (#), статические члены",
+    "Знать `Object.create`, `Reflect`, `Proxy` для метапрограммирования"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать прототипную модель наследования",
+        "Работать с `class` синтаксисом (ES2015+) и его особенностями",
+        "Реализовывать наследование, миксины, композицию",
+        "Использовать геттеры/сеттеры, приватные поля (#), статические члены",
+        "Знать `Object.create`, `Reflect`, `Proxy` для метапрограммирования"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Прототипная цепочка (Prototype Chain)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как это работает"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Каждый объект имеет скрытое свойство [[Prototype]] (доступно через __proto__ или Object.getPrototypeOf)\nconst animal = { eats: true };\nconst rabbit = { jumps: true, __proto__: animal };\n\nconsole.log(rabbit.eats);  // true — найдено в прототипе\nconsole.log(rabbit.jumps); // true — собственное свойство\n\n// Цепочка: rabbit -> animal -> Object.prototype -> null\nconsole.log(rabbit.toString); // из Object.prototype"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Object.create` — чистое прототипное наследование"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const proto = {\n  greet() { console.log(`Привет, я ${this.name}`); }\n};\n\nconst user = Object.create(proto);\nuser.name = \"Анна\";\nuser.greet(); // \"Привет, я Анна\"\n\n// Второе аргумент — дескрипторы свойств\nconst user2 = Object.create(proto, {\n  name: { value: \"Борис\", writable: true, enumerable: true, configurable: true }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проверка цепочки"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "obj instanceof Constructor  // проверяет Constructor.prototype в цепочке\nObject.prototype.isPrototypeOf(obj) // то же самое\nObject.getPrototypeOf(obj) === Constructor.prototype"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Class Syntax (ES2015+)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый класс"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class User {\n  // Поля класса (ES2022)\n  name = \"Аноним\";\n  #privateField = \"скрыто\"; // Приватное поле (только внутри класса)\n\n  // Конструктор\n  constructor(name) {\n    this.name = name;\n  }\n\n  // Методы (добавляются в User.prototype)\n  greet() {\n    console.log(`Привет, ${this.name}`);\n  }\n\n  // Геттер / Сеттер\n  get upperName() { return this.name.toUpperCase(); }\n  set upperName(val) { this.name = val.toUpperCase(); }\n\n  // Статический метод (на самом классе)\n  static createGuest() { return new User(\"Гость\"); }\n\n  // Статическое поле\n  static defaultName = \"Гость\";\n}\n\nconst user = new User(\"Анна\");\nuser.greet();           // \"Привет, Анна\"\nconsole.log(user.upperName); // \"АННА\"\nuser.upperName = \"БОРИС\";\nconsole.log(user.name);  // \"БОРИС\"\n\nconst guest = User.createGuest();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Приватные поля и методы (ES2022)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class BankAccount {\n  #balance = 0;           // приватное поле\n  #pin;                   // без инициализации\n\n  constructor(pin) { this.#pin = pin; }\n\n  #verifyPin(pin) {       // приватный метод\n    return this.#pin === pin;\n  }\n\n  deposit(amount, pin) {\n    if (!this.#verifyPin(pin)) throw new Error(\"Неверный PIN\");\n    this.#balance += amount;\n  }\n\n  getBalance(pin) {\n    if (!this.#verifyPin(pin)) throw new Error(\"Неверный PIN\");\n    return this.#balance;\n  }\n}\n\nconst acc = new BankAccount(1234);\nacc.deposit(100, 1234);\nconsole.log(acc.getBalance(1234)); // 100\n// acc.#balance — SyntaxError: Private field"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Наследование (extends)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое наследование"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class Animal {\n  constructor(name) { this.name = name; }\n  speak() { console.log(`${this.name} издаёт звук`); }\n}\n\nclass Dog extends Animal {\n  constructor(name, breed) {\n    super(name); // ОБЯЗАТЕЛЬНО до this!\n    this.breed = breed;\n  }\n\n  speak() {\n    super.speak(); // вызов родительского метода\n    console.log(`${this.name} лает: Гав!`);\n  }\n}\n\nconst dog = new Dog(\"Рекс\", \"Овчарка\");\ndog.speak();\n// \"Рекс издаёт звук\"\n// \"Рекс лает: Гав!\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Переопределение конструктора"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class Shape {\n  constructor(color) { this.color = color; }\n}\n\nclass Circle extends Shape {\n  constructor(color, radius) {\n    super(color);\n    this.radius = radius;\n  }\n  get area() { return Math.PI * this.radius ** 2; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Статические члены наследуются!"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class Base {\n  static species = \"Base\";\n  static identify() { return this.species; }\n}\n\nclass Derived extends Base {\n  static species = \"Derived\";\n}\n\nconsole.log(Base.identify());   // \"Base\"\nconsole.log(Derived.identify()); // \"Derived\" — this = Derived"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Миксины и композиция (вместо множественного наследования)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Миксины через фабрики"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const TimestampMixin = (Base) => class extends Base {\n  createdAt = new Date();\n  updatedAt = new Date();\n  updateTimestamp() { this.updatedAt = new Date(); }\n};\n\nconst SerializableMixin = (Base) => class extends Base {\n  toJSON() {\n    const { createdAt, updatedAt, ...rest } = this;\n    return { ...rest, createdAt: createdAt.toISOString(), updatedAt: updatedAt.toISOString() };\n  }\n};\n\nclass User {\n  constructor(name) { this.name = name; }\n}\n\nconst TimestampedUser = TimestampMixin(User);\nconst FullUser = SerializableMixin(TimestampedUser);\n\nconst u = new FullUser(\"Анна\");\nu.updateTimestamp();\nconsole.log(u.toJSON());"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Композиция через делегирование"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// instead of class inheritance — объектная композиция\nconst canWalk = {\n  walk() { console.log(`${this.name} идёт`); }\n};\nconst canSwim = {\n  swim() { console.log(`${this.name} плывёт`); }\n};\n\nfunction createDuck(name) {\n  return Object.assign(\n    Object.create({ name }),\n    canWalk,\n    canSwim,\n    { quack() { console.log(\"Кря!\"); } }\n  );\n}\n\nconst duck = createDuck(\"Дональд\");\nduck.walk();  // \"Дональд идёт\"\nduck.swim();  // \"Дональд плывёт\"\nduck.quack(); // \"Кря!\""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Property Descriptors и Object.defineProperty"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Дескрипторы свойств"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const obj = {};\n\n// data descriptor\nObject.defineProperty(obj, \"readonly\", {\n  value: 42,\n  writable: false,      // нельзя изменить\n  enumerable: true,     // видно в for...in, Object.keys\n  configurable: false   // нельзя удалить, нельзя изменить дескриптор\n});\n\n// accessor descriptor (getter/setter)\nObject.defineProperty(obj, \"double\", {\n  get() { return this._value * 2; },\n  set(v) { this._value = v; },\n  enumerable: true,\n  configurable: true\n});\n\nobj._value = 5;\nconsole.log(obj.double); // 10\nobj.double = 10;\nconsole.log(obj._value); // 10"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Object.getOwnPropertyDescriptors (ES2017)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class User {\n  constructor(name) { this.name = name; }\n  get upper() { return this.name.toUpperCase(); }\n}\n\nconst desc = Object.getOwnPropertyDescriptors(User.prototype);\n// { constructor: {...}, upper: { get: [Function], set: undefined, enumerable: false, configurable: true } }\n\n// Копирование с дескрипторами (включая геттеры/сеттеры!)\nconst clone = Object.defineProperties({}, Object.getOwnPropertyDescriptors(obj));"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Reflect и Proxy (Метапрограммирование)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Reflect API"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const obj = { a: 1, b: 2 };\n\n// Вместо delete obj.a\nReflect.deleteProperty(obj, \"a\");\n\n// Вместо \"key\" in obj\nReflect.has(obj, \"b\"); // true\n\n// Вместо obj.key\nReflect.get(obj, \"b\"); // 2\n\n// Вместо obj.key = val\nReflect.set(obj, \"c\", 3);\n\n// Вызов функции с this и аргументами\nfunction sum(a, b) { return a + b; }\nReflect.apply(sum, null, [1, 2]); // 3\n\n// new с массивом аргументов\nclass User { constructor(name) { this.name = name; } }\nconst user = Reflect.construct(User, [\"Анна\"]);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Proxy — перехват операций"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const target = { name: \"Анна\", age: 25 };\n\nconst handler = {\n  get(target, prop, receiver) {\n    console.log(`GET ${prop}`);\n    return Reflect.get(target, prop, receiver);\n  },\n  set(target, prop, value, receiver) {\n    console.log(`SET ${prop} = ${value}`);\n    return Reflect.set(target, prop, value, receiver);\n  },\n  has(target, prop) {\n    console.log(`HAS ${prop}`);\n    return Reflect.has(target, prop);\n  },\n  deleteProperty(target, prop) {\n    console.log(`DELETE ${prop}`);\n    return Reflect.deleteProperty(target, prop);\n  },\n  ownKeys(target) {\n    return Reflect.ownKeys(target).filter(k => !k.startsWith(\"_\"));\n  }\n};\n\nconst proxy = new Proxy(target, handler);\nproxy.name;        // GET name → \"Анна\"\nproxy.age = 26;    // SET age = 26\n\"name\" in proxy;   // HAS name → true\ndelete proxy.age;  // DELETE age\nObject.keys(proxy); // только не _ свойства"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Практический Proxy: валидация, логгирование, реактивность"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Реактивный объект (упрощённый Vue-style)\nfunction reactive(obj, onChange) {\n  return new Proxy(obj, {\n    set(target, key, value, receiver) {\n      const old = target[key];\n      const result = Reflect.set(target, key, value, receiver);\n      if (old !== value) onChange(key, value, old);\n      return result;\n    }\n  });\n}\n\nconst state = reactive({ count: 0 }, (k, v, o) => console.log(`${k}: ${o} → ${v}`));\nstate.count = 1; // \"count: 0 → 1\""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. instanceof и Symbol.hasInstance"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Настройка instanceof"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "class MyArray extends Array {\n  static [Symbol.hasInstance](instance) {\n    return Array.isArray(instance) && instance.every(Number.isInteger);\n  }\n}\n\nconsole.log([1, 2, 3] instanceof MyArray); // true\nconsole.log([1, \"a\"] instanceof MyArray);  // false"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`class Child extends Parent { constructor() {} }` — забыли `super()`",
+          "`super()` обязателен перед `this` в derived классах"
+        ],
+        [
+          "`super.method()` в стрелочной функции",
+          "Не работает — `super` только в обычных методах класса"
+        ],
+        [
+          "`#private` доступен снаружи через `obj[\"#private\"]`",
+          "Нет, это SyntaxError. Только внутри класса"
+        ],
+        [
+          "`Object.assign` копирует геттеры/сеттеры как значения",
+          "Используйте `Object.defineProperties` + `getOwnPropertyDescriptors`"
+        ],
+        [
+          "`Proxy` не перехватывает `for...in` по умолчанию",
+          "Нужен `ownKeys` trap для фильтрации"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`class Child extends Parent { constructor() {} }` — забыли `super()`",
+      "correct": "`super()` обязателен перед `this` в derived классах"
+    },
+    {
+      "mistake": "`super.method()` в стрелочной функции",
+      "correct": "Не работает — `super` только в обычных методах класса"
+    },
+    {
+      "mistake": "`#private` доступен снаружи через `obj[\"#private\"]`",
+      "correct": "Нет, это SyntaxError. Только внутри класса"
+    },
+    {
+      "mistake": "`Object.assign` копирует геттеры/сеттеры как значения",
+      "correct": "Используйте `Object.defineProperties` + `getOwnPropertyDescriptors`"
+    },
+    {
+      "mistake": "`Proxy` не перехватывает `for...in` по умолчанию",
+      "correct": "Нужен `ownKeys` trap для фильтрации"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "javascript",
+  "lesson_order": 14
+}

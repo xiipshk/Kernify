@@ -1,0 +1,447 @@
+{
+  "title": "Урок 19: Тестирование — отладчик, санитайзеры, unit tests, UB, статический анализ",
+  "slug": "testirovanie-otladchik-sanitayzery-unit-tests-ub-staticheskiy-analiz",
+  "short_description": "отладчик, санитайзеры, unit tests, UB, статический анализ",
+  "goals": [
+    "Эффективно использовать отладчик (GDB/LLDB/Visual Studio Debugger)",
+    "Применять санитайзеры (AddressSanitizer, UBSan, ThreadSanitizer, MSan)",
+    "Писать unit-тесты с Catch2 / GoogleTest / doctest",
+    "Понимать Undefined Behavior (UB) и находить его инструментами",
+    "Настраивать статический анализ (clang-tidy, cppcheck, PVS-Studio)"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Эффективно использовать отладчик (GDB/LLDB/Visual Studio Debugger)",
+        "Применять санитайзеры (AddressSanitizer, UBSan, ThreadSanitizer, MSan)",
+        "Писать unit-тесты с Catch2 / GoogleTest / doctest",
+        "Понимать Undefined Behavior (UB) и находить его инструментами",
+        "Настраивать статический анализ (clang-tidy, cppcheck, PVS-Studio)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Отладчик (Debugger)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Компиляция с отладочной информацией\n// g++ -g -O0 -std=c++20 main.cpp -o app\n// clang++ -g -O0 -std=c++20 main.cpp -o app\n// cl /Zi /Od /std:c++20 main.cpp\n\n#include <iostream>\n#include <vector>\n#include <string>\n\nstruct User {\n    std::string name;\n    int age;\n    std::vector<std::string> tags;\n};\n\nUser findUser(const std::vector<User>& users, const std::string& name) {\n    for (const auto& u : users) {\n        if (u.name == name) return u;  // Точка останова здесь\n    }\n    return {};\n}\n\nint main() {\n    std::vector<User> users = {\n        {\"Alice\", 30, {\"admin\", \"dev\"}},\n        {\"Bob\", 25, {\"user\"}},\n        {\"Charlie\", 35, {\"admin\"}}\n    };\n\n    User u = findUser(users, \"Bob\");\n    std::cout << u.name << \" \" << u.age << '\\n';\n}"
+    },
+    {
+      "type": "text",
+      "content": "<strong>Основные команды GDB/LLDB:</strong>"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Команда",
+        "Описание"
+      ],
+      "rows": [
+        [
+          "`break main` / `b main.cpp:10`",
+          "Точка останова"
+        ],
+        [
+          "`run` / `r [args]`",
+          "Запуск"
+        ],
+        [
+          "`next` / `n`",
+          "Шаг с заходом (over)"
+        ],
+        [
+          "`step` / `s`",
+          "Шаг с заходом (into)"
+        ],
+        [
+          "`continue` / `c`",
+          "Продолжить"
+        ],
+        [
+          "`print var` / `p var`",
+          "Значение переменной"
+        ],
+        [
+          "`backtrace` / `bt`",
+          "Стек вызовов"
+        ],
+        [
+          "`frame N` / `f N`",
+          "Переключение фрейма"
+        ],
+        [
+          "`watch expr`",
+          "Watchpoint (останов при изменении)"
+        ],
+        [
+          "`info locals`",
+          "Локальные переменные"
+        ]
+      ]
+    },
+    {
+      "type": "text",
+      "content": "<strong>Условные точки останова:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "(gdb) break findUser if strcmp(name, \"Bob\") == 0\n(gdb) break main.cpp:15 if users.size() > 100"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Санитайзеры (Sanitizers)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unit-тестирование"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "Catch2 (современный, header-only)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// test_example.cpp\n#define CATCH_CONFIG_MAIN\n#include <catch2/catch_test_macros.hpp>\n#include <vector>\n#include <string>\n#include <algorithm>\n\n// Тестируемая функция\nint factorial(int n) {\n    return n <= 1 ? 1 : n * factorial(n - 1);\n}\n\nTEST_CASE(\"Factorial basics\", \"[factorial]\") {\n    REQUIRE(factorial(0) == 1);\n    REQUIRE(factorial(1) == 1);\n    REQUIRE(factorial(5) == 120);\n    REQUIRE(factorial(10) == 3628800);\n}\n\nTEST_CASE(\"Vector operations\", \"[vector]\") {\n    std::vector<int> v = {3, 1, 4, 1, 5};\n\n    SECTION(\"sorting\") {\n        std::sort(v.begin(), v.end());\n        REQUIRE(v == std::vector<int>{1, 1, 3, 4, 5});\n    }\n\n    SECTION(\"push_back increases size\") {\n        size_t oldSize = v.size();\n        v.push_back(9);\n        REQUIRE(v.size() == oldSize + 1);\n    }\n}\n\n// Параметризованные тесты (Catch2 v3)\nTEMPLATE_TEST_CASE(\"Type traits\", \"[traits]\", int, double, std::string) {\n    REQUIRE(std::is_default_constructible_v<TestType>);\n}\n\n// BDD стиль\nSCENARIO(\"Vector resizing\", \"[vector]\") {\n    GIVEN(\"A vector with 5 elements\") {\n        std::vector<int> v(5);\n\n        WHEN(\"we resize to 10\") {\n            v.resize(10);\n            THEN(\"size becomes 10\") {\n                REQUIRE(v.size() == 10);\n            }\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "GoogleTest (классический, мощный)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// gtest_example.cpp\n#include <gtest/gtest.h>\n#include <memory>\n#include <string>\n\nclass StringUtilsTest : public ::testing::Test {\nprotected:\n    void SetUp() override { /* перед каждым тестом */ }\n    void TearDown() override { /* после каждого теста */ }\n};\n\nTEST_F(StringUtilsTest, EmptyString) {\n    EXPECT_EQ(\"\", \"\");\n    ASSERT_TRUE(\"\".empty());  // ASSERT — фатальное прерывание\n}\n\nTEST_F(StringUtilsTest, Concat) {\n    EXPECT_EQ(\"a\" + \"b\", \"ab\");\n}\n\n// Параметризованные тесты\nclass PrimeTest : public ::testing::TestWithParam<int> {};\n\nTEST_P(PrimeTest, IsPrime) {\n    int n = GetParam();\n    bool isPrime = true;\n    for (int i = 2; i * i <= n; ++i)\n        if (n % i == 0) { isPrime = false; break; }\n    EXPECT_TRUE(isPrime);\n}\n\nINSTANTIATE_TEST_SUITE_P(Primes, PrimeTest,\n    ::testing::Values(2, 3, 5, 7, 11, 13, 17, 19));\n\n// Death tests (проверка краша)\nTEST(DeathTest, NullDeref) {\n    EXPECT_DEATH({ int* p = nullptr; *p = 1; }, \".*\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "doctest (очень быстрый, header-only)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN\n#include <doctest/doctest.h>\n#include <vector>\n\nTEST_CASE(\"vector basics\") {\n    std::vector<int> v{1, 2, 3};\n    CHECK(v.size() == 3);\n    CHECK(v[1] == 2);\n    SUBCASE(\"push_back\") {\n        v.push_back(4);\n        CHECK(v.size() == 4);\n    }\n    SUBCASE(\"pop_back\") {\n        v.pop_back();\n        CHECK(v.size() == 2);\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "<strong>CMake интеграция:</strong>"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Undefined Behavior (UB) — основные виды"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Пример",
+        "Инструмент"
+      ],
+      "rows": [
+        [
+          "**Buffer overflow**",
+          "`arr[10] = 0` для `int arr[10]`",
+          "ASan, UBSan"
+        ],
+        [
+          "**Use-after-free**",
+          "`delete p; *p = 1;`",
+          "ASan"
+        ],
+        [
+          "**Double free**",
+          "`delete p; delete p;`",
+          "ASan"
+        ],
+        [
+          "**Signed overflow**",
+          "`INT_MAX + 1`",
+          "UBSan"
+        ],
+        [
+          "**Null dereference**",
+          "`int* p = nullptr; *p;`",
+          "UBSan, ASan"
+        ],
+        [
+          "**Uninitialized read**",
+          "`int x; foo(x);`",
+          "MSan, UBSan"
+        ],
+        [
+          "**Data race**",
+          "Два потока пишут в `int` без синхронизации",
+          "TSan"
+        ],
+        [
+          "**Invalid shift**",
+          "`1 << 32` для 32-bit int",
+          "UBSan"
+        ],
+        [
+          "**Div by zero**",
+          "`int x = 1 / 0;`",
+          "UBSan"
+        ],
+        [
+          "**Misaligned access**",
+          "`int* p = (int*)1; *p = 1;`",
+          "UBSan"
+        ],
+        [
+          "**Infinite loop без side effects**",
+          "`while(true) {}` (C++26: UB)",
+          "—"
+        ]
+      ]
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Пример: UB из-за signed overflow (оптимизатор может сломать логику)\nint safeAdd(int a, int b) {\n    if (b > 0 && a > INT_MAX - b) throw std::overflow_error(\"overflow\");\n    if (b < 0 && a < INT_MIN - b) throw std::underflow_error(\"underflow\");\n    return a + b;\n}\n\n// Проверка на UB в constexpr (C++20)\nconstexpr int checkedAdd(int a, int b) {\n    if (b > 0 && a > INT_MAX - b) return INT_MAX; // или throw\n    if (b < 0 && a < INT_MIN - b) return INT_MIN;\n    return a + b;\n}\nstatic_assert(checkedAdd(10, 20) == 30);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Статический анализ"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "clang-tidy"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "cppcheck"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "PVS-Studio (коммерческий, глубокий анализ)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pvs-studio-analyzer analyze -o PVS-Studio.log -j4\nplog-converter -a GA:1,2 -t tasklist -o PVS-Studio.tasks PVS-Studio.log"
+    },
+    {
+      "type": "heading",
+      "level": 4,
+      "content": "CMake интеграция"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CI/CD интеграция (GitHub Actions)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Настройка Catch2 + CMake + санитайзеры"
+    },
+    {
+      "type": "text",
+      "content": "Создайте проект:"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "project/\n├── CMakeLists.txt\n├── include/mylib/math.h\n├── src/math.cpp\n├── tests/test_math.cpp"
+    },
+    {
+      "type": "text",
+      "content": "Настройте: сборку с ASan+UBSan в Debug, запуск тестов через <code>ctest</code>, target <code>check</code> для clang-tidy."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Поиск багов с санитайзерами"
+    },
+    {
+      "type": "text",
+      "content": "Дан код с 5 ошибками (use-after-free, buffer overflow, signed overflow, data race, leak). Скомпилируйте с <code>-fsanitize=address,undefined,thread</code>, найдите и исправьте все."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Unit-тесты для контейнера"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте класс <code>RingBuffer<T></code> (кольцевой буфер фиксированного размера). Напишите тесты Catch2: конструкторы, push/pop, переполнение, итераторы, move semantics."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Интеграция clang-tidy"
+    },
+    {
+      "type": "text",
+      "content": "Добавьте <code>.clang-tidy</code> в проект. Настройте проверки: modernize, performance, bugprone, cppcoreguidelines. Исправьте все предупреждения в существующем коде."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Профилирование тестов"
+    },
+    {
+      "type": "text",
+      "content": "Напишите benchmark (Google Benchmark / Catch2 benchmark) для:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`std::vector` vs `std::deque` push_back",
+        "`std::sort` vs `std::stable_sort` на почти отсортированных данных",
+        "Распределение работы между потоками"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Тесты не запускаются в CI",
+          "Нет `enable_testing()` / `add_test`"
+        ],
+        [
+          "ASan не находит утечку",
+          "`detect_leaks=0` по умолчанию в некоторых версиях"
+        ],
+        [
+          "TSan ложные срабатывания",
+          "Атомарные операции не аннотированы"
+        ],
+        [
+          "UBSan не видит UB в release",
+          "Оптимизатор удаляет код с UB"
+        ],
+        [
+          "clang-tidy медленный",
+          "Проверяет все заголовки системные"
+        ],
+        [
+          "Флаки тесты (flaky)",
+          "Зависимость от порядка / случайности / времени"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[Catch2 docs](https://github.com/catchorg/Catch2/blob/devel/docs/README.md)",
+        "[GoogleTest Primer](https://google.github.io/googletest/primer.html)",
+        "[GCC Sanitizers](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html)",
+        "[Clang Sanitizers](https://clang.llvm.org/docs/index.html#sanitizers)",
+        "[clang-tidy checks](https://clang.llvm.org/extra/clang-tidy/checks/list.html)",
+        "**Книга:** \"Debugging\" (David Agans), \"Effective Testing\" (Maurer)",
+        "**CppCon:** \"Sanitizers: What Every C++ Developer Should Know\" (Kostya Serebryany)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Тесты не запускаются в CI",
+      "correct": "Нет `enable_testing()` / `add_test`"
+    },
+    {
+      "mistake": "ASan не находит утечку",
+      "correct": "`detect_leaks=0` по умолчанию в некоторых версиях"
+    },
+    {
+      "mistake": "TSan ложные срабатывания",
+      "correct": "Атомарные операции не аннотированы"
+    },
+    {
+      "mistake": "UBSan не видит UB в release",
+      "correct": "Оптимизатор удаляет код с UB"
+    },
+    {
+      "mistake": "clang-tidy медленный",
+      "correct": "Проверяет все заголовки системные"
+    },
+    {
+      "mistake": "Флаки тесты (flaky)",
+      "correct": "Зависимость от порядка / случайности / времени"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "cpp",
+  "lesson_order": 19
+}

@@ -1,0 +1,502 @@
+{
+  "title": "Урок 29: Макросы (Macros)",
+  "slug": "makrosy-macros",
+  "short_description": "",
+  "goals": [],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Declarative Macros (`macro_rules!`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! say_hello {\n    () => {\n        println!(\"Hello!\");\n    };\n}\n\nfn main() {\n    say_hello!(); // Hello!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pattern matching"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! vec_example {\n    // Пустой вектор\n    () => { Vec::new() };\n\n    // Один элемент\n    ($elem:expr) => { {\n        let mut v = Vec::new();\n        v.push($elem);\n        v\n    }};\n\n    // Несколько элементов\n    ($($elem:expr),+) => { {\n        let mut v = Vec::new();\n        $(v.push($elem);)+\n        v\n    }};\n}\n\nfn main() {\n    let v1 = vec_example![];\n    let v2 = vec_example![1];\n    let v3 = vec_example![1, 2, 3, 4];\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Репетиции `$(...)+` `$(...)*` `$(...),+`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! print_all {\n    ($($arg:expr),*) => {\n        $(println!(\"{}\", $arg);)*\n    };\n}\n\nmacro_rules! sum {\n    ($($x:expr),+) => {\n        0 $(+ $x)*\n    };\n}\n\nfn main() {\n    print_all!(\"a\", \"b\", \"c\");\n    println!(\"Sum: {}\", sum!(1, 2, 3, 4)); // 10\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Fragment Specifiers (типы фрагментов)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! demo {\n    // item — элемент (fn, struct, mod...)\n    ($item:item) => { $item };\n\n    // block — блок { ... }\n    ($block:block) => { $block };\n\n    // stmt — statement (let x = 1;)\n    ($stmt:stmt) => { $stmt };\n\n    // expr — выражение\n    ($expr:expr) => { $expr };\n\n    // ty — тип\n    ($ty:ty) => { std::any::type_name::<$ty>() };\n\n    // ident — идентификатор\n    ($ident:ident) => { stringify!($ident) };\n\n    // path — путь (std::vec::Vec)\n    ($path:path) => { $path };\n\n    // meta — атрибут #[...]\n    ($meta:meta) => { $meta };\n\n    // tt — token tree (один токен или группа)\n    ($tt:tt) => { $tt };\n\n    // vis — visibility (pub, pub(crate))\n    ($vis:vis) => { $vis };\n\n    // lifetime — 'a\n    ($lt:lifetime) => { $lt };\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: HTML builder"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! html {\n    ($($tag:ident { $($content:tt)* } )*) => {\n        {\n            let mut output = String::new();\n            $(\n                output.push_str(&format!(\"<{}>\", stringify!($tag)));\n                html_inner!(@content $($content)*; output);\n                output.push_str(&format!(\"</{}>\", stringify!($tag)));\n            )*\n            output\n        }\n    };\n}\n\nmacro_rules! html_inner {\n    (@content $text:expr; $out:expr) => {\n        $out.push_str(&$text);\n    };\n    (@content $tag:ident { $($content:tt)* }; $out:expr) => {\n        $out.push_str(&format!(\"<{}>\", stringify!($tag)));\n        html_inner!(@content $($content)*; $out);\n        $out.push_str(&format!(\"</{}>\", stringify!($tag)));\n    };\n}\n\nfn main() {\n    let page = html! {\n        html {\n            body {\n                h1 { \"Hello\" }\n                p { \"World\" }\n            }\n        }\n    };\n    println!(\"{}\", page);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Hygiene (Гигиена макросов)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Автоматическая гигиена"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! create_var {\n    () => {\n        let x = 42;\n    };\n}\n\nfn main() {\n    create_var!();\n    // println!(\"{}\", x); // ОШИБКА! x не виден (hygiene)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`$crate` для доступа к корню крейта"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// В библиотеке mylib\n#[macro_export]\nmacro_rules! my_macro {\n    () => {\n        $crate::internal_func()\n    };\n}\n\npub fn internal_func() { println!(\"Internal\"); }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[macro_export]` — экспорт макроса"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[macro_export]\nmacro_rules! public_macro {\n    () => { println!(\"Public!\"); }\n}\n\n// В другом крейте:\n// use mylib::public_macro;"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Procedural Macros"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Типы procedural macros"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Custom Derive** — `#[derive(MyTrait)]`",
+        "**Attribute** — `#[my_attribute]`",
+        "**Function-like** — `my_macro!(...)`"
+      ],
+      "ordered": true
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Настройка Cargo.toml"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[lib]\nproc-macro = true\n\n[dependencies]\nsyn = \"2.0\"\nquote = \"1.0\"\nproc-macro2 = \"1.0\""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Custom Derive Macros"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простой derive"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/lib.rs\nuse proc_macro::TokenStream;\nuse quote::quote;\nuse syn::{DeriveInput, parse_macro_input};\n\n#[proc_macro_derive(Hello)]\npub fn hello_derive(input: TokenStream) -> TokenStream {\n    let ast = parse_macro_input!(input as DeriveInput);\n    let name = &ast.ident;\n\n    let expanded = quote! {\n        impl Hello for #name {\n            fn hello(&self) {\n                println!(\"Hello from {}!\", stringify!(#name));\n            }\n        }\n    };\n\n    TokenStream::from(expanded)\n}\n\n// Пользовательский код:\n#[derive(Hello)]\nstruct MyStruct;\n\nfn main() {\n    MyStruct.hello(); // \"Hello from MyStruct!\"\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Derive с атрибутами"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro_derive(Builder, attributes(builder))]\npub fn builder_derive(input: TokenStream) -> TokenStream {\n    let ast = parse_macro_input!(input as DeriveInput);\n\n    // Парсим атрибуты #[builder(default = \"...\")]\n    // Генерируем builder pattern\n    // ...\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: `FromRow` для БД"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro_derive(FromRow, attributes(sql))]\npub fn from_row_derive(input: TokenStream) -> TokenStream {\n    let ast = parse_macro_input!(input as DeriveInput);\n    let name = &ast.ident;\n\n    // Генерируем impl FromRow for Name\n    // Считываем #[sql(column = \"col_name\")] атрибуты\n    // ...\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Attribute Macros"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro_attribute]\npub fn my_attribute(attr: TokenStream, item: TokenStream) -> TokenStream {\n    // attr — содержимое #[...]\n    // item — аннотируемый элемент\n\n    let input = parse_macro_input!(item as ItemFn);\n    // Модифицируем функцию\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: `#[async_trait]` аналог"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro_attribute]\npub fn async_trait(_attr: TokenStream, item: TokenStream) -> TokenStream {\n    let input = parse_macro_input!(item as ItemTrait);\n\n    // Для каждого async fn в трейте генерируем:\n    // type MyFuture<'a> = Pin<Box<dyn Future<Output = ...> + Send + 'a>>;\n    // fn my_method(&self) -> MyFuture<'_> { ... }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: `#[test_case]`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro_attribute]\npub fn test_case(attr: TokenStream, item: TokenStream) -> TokenStream {\n    // Генерирует несколько #[test] функций с разными параметрами\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Function-like Procedural Macros"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro]\npub fn my_macro(input: TokenStream) -> TokenStream {\n    // Парсим произвольный синтаксис\n    // Генерируем код\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: SQL query macro"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro]\npub fn sql(input: TokenStream) -> TokenStream {\n    let query = parse_macro_input!(input as LitStr);\n    let query_str = query.value();\n\n    // Парсим SQL на этапе компиляции!\n    // Генерируем type-safe функцию\n    // ...\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: `include_str!` аналог с проверкой"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro]\npub fn embed_file(input: TokenStream) -> TokenStream {\n    let path = parse_macro_input!(input as LitStr);\n    let path_str = path.value();\n\n    let content = std::fs::read_to_string(&path_str)\n        .expect(&format!(\"Failed to read {}\", path_str));\n\n    let content_lit = LitStr::new(&content, path.span());\n    quote!(#content_lit).into()\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. `syn` и `quote` — работа с AST"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`syn` — парсинг"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use syn::{parse_macro_input, DeriveInput, Data, Fields, Ident, Type};\n\n#[proc_macro_derive(DebugPrint)]\npub fn debug_print_derive(input: TokenStream) -> TokenStream {\n    let ast = parse_macro_input!(input as DeriveInput);\n\n    match &ast.data {\n        Data::Struct(data_struct) => {\n            match &data_struct.fields {\n                Fields::Named(fields_named) => {\n                    for field in &fields_named.named {\n                        let name = &field.ident;\n                        let ty = &field.ty;\n                        println!(\"Field: {} : {}\", name, quote!(#ty));\n                    }\n                }\n                _ => {}\n            }\n        }\n        _ => {}\n    }\n\n    // ...\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`quote` — генерация кода"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use quote::quote;\n\nlet name = Ident::new(\"MyStruct\", Span::call_site());\nlet fields = vec![quote!(field1), quote!(field2)];\n\nlet expanded = quote! {\n    struct #name {\n        #(#fields: i32),*\n    }\n\n    impl #name {\n        fn new() -> Self {\n            Self {\n                #(#fields: 0),*\n            }\n        }\n    }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`proc_macro2::Span` для ошибок"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use proc_macro2::Span;\nuse syn::Error;\n\nif fields.is_empty() {\n    return Error::new(Span::call_site(), \"Struct must have fields\")\n        .to_compile_error()\n        .into();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Продвинутые техники"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генерация уникальных имен"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use quote::format_ident;\n\nlet var_name = format_ident!(\"_internal_{}\", field_name);\nquote! {\n    let #var_name = 42;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Рекурсивные макросы"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! count {\n    () => (0);\n    ($head:tt $($tail:tt)*) => (1 + count!($($tail)*));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`concat_idents!` (nightly)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#![feature(concat_idents)]\nmacro_rules! make_fn {\n    ($name:ident) => {\n        fn concat_idents!(my_, $name)() {}\n    };\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Отладка макросов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cargo expand`"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo install cargo-expand\ncargo expand"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`log_syntax!` для печати токенов"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! debug_macro {\n    ($($tt:tt)*) => {\n        log_syntax!($($tt)*);\n    };\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`compile_error!`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! require_feature {\n    ($feature:literal) => {\n        #[cfg(not(feature = $feature))]\n        compile_error!(concat!(\"Feature '\", $feature, \"' is required\"));\n    };\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: `bitflags!` аналог"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "macro_rules! bitflags {\n    (\n        $vis:vis struct $name:ident: $ty:ty {\n            $($flag:ident = $value:expr,)*\n        }\n    ) => {\n        $vis struct $name($ty);\n\n        impl $name {\n            $($vis const $flag: $name = $name($value);)*\n        }\n\n        impl std::ops::BitOr for $name {\n            type Output = $name;\n            fn bitor(self, rhs: $name) -> $name {\n                $name(self.0 | rhs.0)\n            }\n        }\n\n        impl std::ops::BitAnd for $name {\n            type Output = $name;\n            fn bitand(self, rhs: $name) -> $name {\n                $name(self.0 & rhs.0)\n            }\n        }\n    };\n}\n\nbitflags! {\n    pub struct Permissions: u32 {\n        READ = 1,\n        WRITE = 2,\n        EXECUTE = 4,\n    }\n}\n\nfn main() {\n    let perms = Permissions::READ | Permissions::WRITE;\n    println!(\"{:?}\", perms.0); // 3\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Procedural derive для `Default`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro_derive(SmartDefault, attributes(default))]\npub fn smart_default_derive(input: TokenStream) -> TokenStream {\n    let ast = parse_macro_input!(input as DeriveInput);\n    let name = &ast.ident;\n\n    let fields = match &ast.data {\n        Data::Struct(DataStruct { fields: Fields::Named(f), .. }) => &f.named,\n        _ => return Error::new_spanned(&ast, \"Only structs supported\").to_compile_error().into(),\n    };\n\n    let field_inits = fields.iter().map(|f| {\n        let name = &f.ident;\n        if let Some(attr) = f.attrs.iter().find(|a| a.path().is_ident(\"default\")) {\n            let expr: Expr = attr.parse_args().expect(\"default = expr\");\n            quote!(#name: #expr)\n        } else {\n            quote!(#name: Default::default())\n        }\n    });\n\n    let expanded = quote! {\n        impl Default for #name {\n            fn default() -> Self {\n                Self { #(#field_inits),* }\n            }\n        }\n    };\n\n    TokenStream::from(expanded)\n}\n\n// Использование:\n#[derive(SmartDefault)]\nstruct Config {\n    #[default = 8080]\n    port: u16,\n    #[default = \"localhost\".to_string()]\n    host: String,\n    timeout: Duration, // Default::default()\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Function-like макрос для асинхронного retry"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[proc_macro]\npub fn retry(input: TokenStream) -> TokenStream {\n    // retry! { 3 times, 100ms delay => async { ... } }\n    // Генерирует код с экспоненциальным backoff\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "`macro expanded to...`",
+          "Ошибка в сгенерированном коде"
+        ],
+        [
+          "`unexpected token`",
+          "Неправильный pattern в `macro_rules`"
+        ],
+        [
+          "`can't find crate`",
+          "`$crate` не работает"
+        ],
+        [
+          "`recursion limit reached`",
+          "Слишком глубокая рекурсия"
+        ],
+        [
+          "`proc macro panic`",
+          "Panic в procedural macro"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Шпаргалка: Macros"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тип",
+        "Ключевые слова",
+        "Use case"
+      ],
+      "rows": [
+        [
+          "Declarative",
+          "`macro_rules!`, `$name:designator`",
+          "Простые шаблоны, DSL"
+        ],
+        [
+          "Custom Derive",
+          "`#[proc_macro_derive]`, `syn`, `quote`",
+          "Авто-имплементация трейтов"
+        ],
+        [
+          "Attribute",
+          "`#[proc_macro_attribute]`",
+          "Модификация items"
+        ],
+        [
+          "Function-like",
+          "`#[proc_macro]`",
+          "Парсинг произвольного синтаксиса"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Полезные ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "text",
+      "content": "✅ <strong>Что мы изучили:</strong>"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Declarative macros**: `macro_rules!`, pattern matching, fragment specifiers, repetition",
+        "**Hygiene**: автоматическая изоляция переменных, `$crate`",
+        "**Procedural macros**: 3 типа (derive, attribute, function-like)",
+        "**Custom Derive**: `#[proc_macro_derive]`, генерация `impl Trait`",
+        "**Attribute macros**: `#[proc_macro_attribute]`, модификация кода",
+        "**Function-like**: `#[proc_macro]`, произвольный синтаксис",
+        "**syn/quote**: парсинг AST, генерация кода, `Span` для ошибок",
+        "**Отладка**: `cargo expand`, `compile_error!`, `log_syntax!`"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "`macro expanded to...`",
+      "correct": "Ошибка в сгенерированном коде"
+    },
+    {
+      "mistake": "`unexpected token`",
+      "correct": "Неправильный pattern в `macro_rules`"
+    },
+    {
+      "mistake": "`can't find crate`",
+      "correct": "`$crate` не работает"
+    },
+    {
+      "mistake": "`recursion limit reached`",
+      "correct": "Слишком глубокая рекурсия"
+    },
+    {
+      "mistake": "`proc macro panic`",
+      "correct": "Panic в procedural macro"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "rust",
+  "lesson_order": 29
+}

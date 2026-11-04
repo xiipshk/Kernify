@@ -1,0 +1,463 @@
+{
+  "title": "Урок 19: Тестирование и качество — unit/mocking/integration tests, analyzers, debugging",
+  "slug": "testirovanie-i-kachestvo-unitmockingintegration-tests-analyzers-debugging",
+  "short_description": "unit/mocking/integration tests, analyzers, debugging",
+  "goals": [
+    "Писать эффективные unit-тесты с xUnit/NUnit/MSTest",
+    "Использовать моки (Moq, NSubstitute) для изоляции зависимостей",
+    "Проводить интеграционные тесты с Testcontainers",
+    "Настроить статический анализ (Roslyn analyzers, StyleCop, SonarAnalyzer)",
+    "Отлаживать эффективно: breakpoints, watch, dump analysis"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Писать эффективные unit-тесты с xUnit/NUnit/MSTest",
+        "Использовать моки (Moq, NSubstitute) для изоляции зависимостей",
+        "Проводить интеграционные тесты с Testcontainers",
+        "Настроить статический анализ (Roslyn analyzers, StyleCop, SonarAnalyzer)",
+        "Отлаживать эффективно: breakpoints, watch, dump analysis"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Unit Testing Frameworks"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "xUnit (рекомендуемый для .NET Core)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// xUnit.net — современный, extensible, параллельный по умолчанию\npublic class CalculatorTests\n{\n    [Fact]\n    public void Add_TwoNumbers_ReturnsSum()\n    {\n        // Arrange\n        var calc = new Calculator();\n\n        // Act\n        var result = calc.Add(2, 3);\n\n        // Assert\n        Assert.Equal(5, result);\n    }\n\n    [Theory]\n    [InlineData(1, 2, 3)]\n    [InlineData(-1, 1, 0)]\n    [InlineData(0, 0, 0)]\n    public void Add_MultipleCases_ReturnsSum(int a, int b, int expected)\n    {\n        Assert.Equal(expected, new Calculator().Add(a, b));\n    }\n\n    [Fact]\n    public void Divide_ByZero_Throws()\n    {\n        var calc = new Calculator();\n        Assert.Throws<DivideByZeroException>(() => calc.Divide(5, 0));\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "NUnit (классический, богатый API)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "[TestFixture]\npublic class CalculatorTests\n{\n    [Test]\n    public void Add_ReturnsSum() => Assert.That(new Calculator().Add(2, 3), Is.EqualTo(5));\n\n    [TestCase(1, 2, 3)]\n    [TestCase(-1, 1, 0)]\n    public void Add_Cases(int a, int b, int expected) =>\n        Assert.That(new Calculator().Add(a, b), Is.EqualTo(expected));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MSTest (встроенный в Visual Studio)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "[TestClass]\npublic class CalculatorTests\n{\n    [TestMethod]\n    public void Add_ReturnsSum() => Assert.AreEqual(5, new Calculator().Add(2, 3));\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Feature",
+        "xUnit",
+        "NUnit",
+        "MSTest"
+      ],
+      "rows": [
+        [
+          "Параллелизм",
+          "По умолчанию",
+          "[Parallelizable]",
+          "[DoNotParallelize]"
+        ],
+        [
+          "Theory/Params",
+          "[Theory]+[InlineData]",
+          "[TestCase]",
+          "[DataRow]"
+        ],
+        [
+          "Fixture/Setup",
+          "Конструктор / IClassFixture",
+          "[SetUp]/[TearDown]",
+          "[TestInitialize]/[TestCleanup]"
+        ],
+        [
+          "Extensibility",
+          "Высокая",
+          "Высокая",
+          "Низкая"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. AAA Pattern и Best Practices"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Arrange-Act-Assert"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "[Fact]\npublic void Transfer_ValidAmount_UpdatesBalances()\n{\n    // ARRANGE: подготовка данных и моков\n    var from = new Account(\"A\", 100);\n    var to = new Account(\"B\", 50);\n    var service = new TransferService();\n\n    // ACT: одно действие под тестом\n    service.Transfer(from, to, 30);\n\n    // ASSERT: проверки результата\n    Assert.Equal(70, from.Balance);\n    Assert.Equal(80, to.Balance);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Именование тестов"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Метод_Сценарий_ОжидаемыйРезультат\nTransfer_ValidAmount_UpdatesBalances\nTransfer_InsufficientFunds_ThrowsException\nTransfer_NegativeAmount_ThrowsArgumentException"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Тестовые данные: Builders / Object Mother"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Test Data Builder pattern\npublic class AccountBuilder\n{\n    private string _id = \"ACC-1\";\n    private decimal _balance = 100;\n    private AccountStatus _status = AccountStatus.Active;\n\n    public AccountBuilder WithId(string id) { _id = id; return this; }\n    public AccountBuilder WithBalance(decimal b) { _balance = b; return this; }\n    public AccountBuilder Closed() { _status = AccountStatus.Closed; return this; }\n\n    public Account Build() => new(_id, _balance, _status);\n}\n\n// Использование\nvar account = new AccountBuilder().WithBalance(0).Closed().Build();"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Mocking Frameworks"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Moq (популярный, expressive)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "[Fact]\npublic void OrderService_PlaceOrder_CallsPaymentAndInventory()\n{\n    // Arrange\n    var paymentMock = new Mock<IPaymentService>();\n    var inventoryMock = new Mock<IInventoryService>();\n    var loggerMock = new Mock<ILogger<OrderService>>();\n\n    paymentMock.Setup(p => p.ChargeAsync(It.IsAny<PaymentRequest>()))\n               .ReturnsAsync(new PaymentResult { Success = true });\n\n    inventoryMock.Setup(i => i.ReserveAsync(It.IsAny<int>(), It.IsAny<int>()))\n                 .ReturnsAsync(true);\n\n    var service = new OrderService(paymentMock.Object, inventoryMock.Object, loggerMock.Object);\n\n    // Act\n    var result = await service.PlaceOrderAsync(new Order { ProductId = 1, Quantity = 2 });\n\n    // Assert\n    Assert.True(result.Success);\n\n    // Verify вызовы\n    paymentMock.Verify(p => p.ChargeAsync(It.Is<PaymentRequest>(r => r.Amount == 200)), Times.Once);\n    inventoryMock.Verify(i => i.ReserveAsync(1, 2), Times.Once);\n    loggerMock.Verify(l => l.LogInformation(It.IsAny<string>()), Times.AtLeastOnce);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "NSubstitute (чистый синтаксис)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "[Fact]\npublic void OrderService_PlaceOrder_NSubstituteStyle()\n{\n    var payment = Substitute.For<IPaymentService>();\n    var inventory = Substitute.For<IInventoryService>();\n\n    payment.ChargeAsync(Arg.Any<PaymentRequest>()).Returns(new PaymentResult { Success = true });\n    inventory.ReserveAsync(Arg.Any<int>(), Arg.Any<int>()).Returns(true);\n\n    var service = new OrderService(payment, inventory, Substitute.For<ILogger<OrderService>>());\n\n    var result = await service.PlaceOrderAsync(new Order { ProductId = 1, Quantity = 2 });\n\n    Assert.True(result.Success);\n\n    await payment.Received(1).ChargeAsync(Arg.Is<PaymentRequest>(r => r.Amount == 200));\n    await inventory.Received(1).ReserveAsync(1, 2);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "FakeItEasy (ещё один вариант)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "var payment = A.Fake<IPaymentService>();\nA.CallTo(() => payment.ChargeAsync(A<PaymentRequest>._)).Returns(new PaymentResult { Success = true });"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда НЕ мокать"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Value types, DTOs, простые классы без поведения",
+        "`List<T>`, `Dictionary` — используйте реальные коллекции",
+        "Внутренние детали (private методы) — тестируйте через публичный API"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Integration Testing"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Testcontainers (реальные БД, Redis, Kafka в Docker)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// NuGet: Testcontainers, Testcontainers.PostgreSql\npublic class DatabaseTests : IAsyncLifetime\n{\n    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder()\n        .WithImage(\"postgres:16\")\n        .WithDatabase(\"testdb\")\n        .WithUsername(\"test\")\n        .WithPassword(\"test\")\n        .Build();\n\n    public async Task InitializeAsync() => await _db.StartAsync();\n    public async Task DisposeAsync() => await _db.DisposeAsync();\n\n    [Fact]\n    public async Task UserRepository_SaveAndLoad_Works()\n    {\n        var options = new DbContextOptionsBuilder<AppDbContext>()\n            .UseNpgsql(_db.GetConnectionString())\n            .Options;\n\n        await using var context = new AppDbContext(options);\n        await context.Database.EnsureCreatedAsync();\n\n        var repo = new UserRepository(context);\n        var user = new User { Email = \"test@example.com\", Name = \"Test\" };\n        await repo.AddAsync(user);\n\n        var loaded = await repo.GetByEmailAsync(\"test@example.com\");\n        Assert.NotNull(loaded);\n        Assert.Equal(\"Test\", loaded.Name);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "WebApplicationFactory (ASP.NET Core integration tests)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class ApiTests : IClassFixture<WebApplicationFactory<Program>>\n{\n    private readonly HttpClient _client;\n\n    public ApiTests(WebApplicationFactory<Program> factory)\n    {\n        _client = factory.CreateClient();\n    }\n\n    [Fact]\n    public async Task GetUsers_ReturnsOk()\n    {\n        var response = await _client.GetAsync(\"/api/users\");\n        response.EnsureSuccessStatusCode();\n\n        var users = await response.Content.ReadFromJsonAsync<List<UserDto>>();\n        Assert.NotEmpty(users);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Testcontainers + WebApplicationFactory"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Полный стек: реальная БД + реальный HTTP pipeline\npublic class FullStackTests : IAsyncLifetime\n{\n    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder().Build();\n    private WebApplicationFactory<Program> _factory;\n    private HttpClient _client;\n\n    public async Task InitializeAsync()\n    {\n        await _db.StartAsync();\n        _factory = new WebApplicationFactory<Program>()\n            .WithWebHostBuilder(builder =>\n            {\n                builder.ConfigureServices(services =>\n                {\n                    // Заменяем connection string на Testcontainers\n                    services.ReplaceDbContext<AppDbContext>(_db.GetConnectionString());\n                });\n            });\n        _client = _factory.CreateClient();\n    }\n    // ...\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Static Analysis (Roslyn Analyzers)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Включение в проекте"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj -->\n<PropertyGroup>\n  <EnableNETAnalyzers>true</EnableNETAnalyzers>\n  <AnalysisLevel>latest</AnalysisLevel>\n  <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>\n  <TreatWarningsAsErrors>true</TreatWarningsAsErrors>\n</PropertyGroup>\n\n<ItemGroup>\n  <PackageReference Include=\"StyleCop.Analyzers\" Version=\"1.2.0-beta.*\" PrivateAssets=\"all\" />\n  <PackageReference Include=\"SonarAnalyzer.CSharp\" Version=\"9.0.*\" PrivateAssets=\"all\" />\n  <PackageReference Include=\"Meziantou.Analyzer\" Version=\"2.0.*\" PrivateAssets=\"all\" />\n  <PackageReference Include=\"Roslynator.Analyzers\" Version=\"4.0.*\" PrivateAssets=\"all\" />\n</ItemGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "EditorConfig (единый стиль для команды)"
+    },
+    {
+      "type": "code",
+      "language": "ini",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Полезные анализаторы"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Пакет",
+        "Назначение"
+      ],
+      "rows": [
+        [
+          "`Microsoft.CodeAnalysis.NetAnalyzers`",
+          "Базовые правила .NET (CAxxx)"
+        ],
+        [
+          "`StyleCop.Analyzers`",
+          "Стиль кода (SAxxxx)"
+        ],
+        [
+          "`SonarAnalyzer.CSharp`",
+          "Качество, security, bugs"
+        ],
+        [
+          "`Meziantou.Analyzer`",
+          "Много правил: async, nullability, performance"
+        ],
+        [
+          "`Roslynator.Analyzers`",
+          "500+ рефакторингов и правил"
+        ],
+        [
+          "`Nullable`",
+          "Nullable Reference Types (встроен)"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Code Coverage"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "coverlet + ReportGenerator"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Thresholds (пороги покрытия)"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj -->\n<PropertyGroup>\n  <CoverletOutputFormat>cobertura,opencover</CoverletOutputFormat>\n  <Threshold>80</Threshold>  <!-- минимальное покрытие -->\n  <ThresholdType>line</ThresholdType>\n  <ThresholdStat>total</ThresholdStat>\n</PropertyGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Debugging Techniques"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Visual Studio / VS Code Debugger"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Conditional breakpoint: правый клик на breakpoint → Conditions\n// Hit count: прерывание каждый N-й раз\n// Logpoint: вывод в Output без остановки (прямо в коде: $\"{var}\")\n\n// Watch windows: добавляйте выражения\n// Immediate Window: выполнение кода во время остановки"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "OzCode / DevExpress CodeRush (расширения)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Упрощают инспекцию коллекций, LINQ, async",
+        "\"Reveal\" — показать значения в LINQ pipeline"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "dotnet-dump / SOS / ClrMD (post-mortem)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "BenchmarkDotNet (производительность)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "[MemoryDiagnoser]\n[SimpleJob(RuntimeMoniker.Net80)]\npublic class StringConcatBenchmarks\n{\n    [Benchmark(Baseline = true)]\n    public string Concat() => \"a\" + \"b\" + \"c\";\n\n    [Benchmark]\n    public string Interpolated() => $\"a{\"b\"}{\"c\"}\";\n\n    [Benchmark]\n    public string StringBuilder()\n    {\n        var sb = new StringBuilder();\n        sb.Append(\"a\").Append(\"b\").Append(\"c\");\n        return sb.ToString();\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. CI/CD Integration"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GitHub Actions пример"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Тесты зависят друг от друга (shared state)",
+          "Изолированные тесты, `IClassFixture` для общего setup"
+        ],
+        [
+          "Мокать всё подряд",
+          "Мокать только внешние зависимости (IO, БД, HTTP)"
+        ],
+        [
+          "Один тест проверяет много вещей",
+          "Один тест — один Assert (или логическая группа)"
+        ],
+        [
+          "Игнорирование предупреждений анализаторов",
+          "`TreatWarningsAsErrors`, фиксить все warnings"
+        ],
+        [
+          "Нет CI проверки покрытия",
+          "Блокируйте PR если покрытие < порога"
+        ],
+        [
+          "`Thread.Sleep` в тестах",
+          "`await Task.Delay` с токеном отмены / виртуальное время"
+        ],
+        [
+          "Тесты только happy path",
+          "Тестируйте edge cases, ошибки, boundary values"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Тесты зависят друг от друга (shared state)",
+      "correct": "Изолированные тесты, `IClassFixture` для общего setup"
+    },
+    {
+      "mistake": "Мокать всё подряд",
+      "correct": "Мокать только внешние зависимости (IO, БД, HTTP)"
+    },
+    {
+      "mistake": "Один тест проверяет много вещей",
+      "correct": "Один тест — один Assert (или логическая группа)"
+    },
+    {
+      "mistake": "Игнорирование предупреждений анализаторов",
+      "correct": "`TreatWarningsAsErrors`, фиксить все warnings"
+    },
+    {
+      "mistake": "Нет CI проверки покрытия",
+      "correct": "Блокируйте PR если покрытие < порога"
+    },
+    {
+      "mistake": "`Thread.Sleep` в тестах",
+      "correct": "`await Task.Delay` с токеном отмены / виртуальное время"
+    },
+    {
+      "mistake": "Тесты только happy path",
+      "correct": "Тестируйте edge cases, ошибки, boundary values"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 19
+}

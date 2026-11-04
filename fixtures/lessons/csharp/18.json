@@ -1,0 +1,451 @@
+{
+  "title": "Урок 18: Внутреннее устройство .NET — CLR, IL, JIT, managed memory, GC, assemblies",
+  "slug": "vnutrennee-ustroystvo-net-clr-il-jit-managed-memory-gc-assemblies",
+  "short_description": "CLR, IL, JIT, managed memory, GC, assemblies",
+  "goals": [
+    "Понимать архитектуру CLR и процесс выполнения кода",
+    "Читать и понимать IL (Intermediate Language)",
+    "Знать, как работает JIT компиляция и tiered compilation",
+    "Понимать управляемую память: стек, куча, GC, поколения",
+    "Работать со сборками (assemblies), версионированием и загрузкой"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать архитектуру CLR и процесс выполнения кода",
+        "Читать и понимать IL (Intermediate Language)",
+        "Знать, как работает JIT компиляция и tiered compilation",
+        "Понимать управляемую память: стек, куча, GC, поколения",
+        "Работать со сборками (assemblies), версионированием и загрузкой"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Архитектура CLR (Common Language Runtime)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Компоненты CLR"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "┌─────────────────────────────────────────────────────────────┐\n│                        CLR                                   │\n├─────────────┬─────────────┬─────────────┬───────────────────┤\n│  Class      │   JIT       │   GC        │  Security         │\n│  Loader     │  Compiler   │  (Memory)   │  (CAS, obsolete)  │\n├─────────────┼─────────────┼─────────────┼───────────────────┤\n│  Thread     │  Exception  │  Interop    │  Debug/Profiling  │\n│  Pool       │  Handling   │  (P/Invoke) │  APIs             │\n└─────────────┴─────────────┴─────────────┴───────────────────┘"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Процесс выполнения"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "C# Source (.cs)\n    │\n    ▼\nRoslyn Compiler (csc.exe / dotnet build)\n    │\n    ▼\nIL Assembly (.dll/.exe)  ──►  Metadata + IL код\n    │\n    ▼\nCLR Loads Assembly\n    │\n    ▼\nJIT Compiler (Method по методу при первом вызове)\n    │\n    ▼\nNative Machine Code (x64, ARM64, etc.)\n    │\n    ▼\nExecution на CPU"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. IL (Intermediate Language / CIL / MSIL)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основы IL"
+    },
+    {
+      "type": "code",
+      "language": "cil",
+      "content": "// Пример: int Add(int a, int b) => a + b;\n.method public hidebysig static int32 Add(int32 a, int32 b) cil managed\n{\n    .maxstack 2           // максимальный размер стека вычислений\n    ldarg.0               // загрузить аргумент 0 (a) на стек\n    ldarg.1               // загрузить аргумент 1 (b) на стек\n    add                   // извлечь два значения, сложить, положить результат\n    ret                   // вернуть значение с вершины стека\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Stack-based VM"
+    },
+    {
+      "type": "list",
+      "items": [
+        "IL — стековый язык (нет регистров, всё через стек вычислений)",
+        "Инструкции: `ldarg`, `ldloc`, `stloc`, `ldc`, `add`, `call`, `br`, `ret`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Чтение IL"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Частые IL инструкции"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Категория",
+        "Инструкции"
+      ],
+      "rows": [
+        [
+          "Загрузка констант",
+          "`ldc.i4.0`..`ldc.i4.8`, `ldc.i4.s`, `ldc.r4`, `ldc.r8`"
+        ],
+        [
+          "Аргументы/локальные",
+          "`ldarg.0`..`3`, `ldarg.s`, `ldloc.0`..`3`, `stloc`"
+        ],
+        [
+          "Арифметика",
+          "`add`, `sub`, `mul`, `div`, `rem`, `neg`"
+        ],
+        [
+          "Логика/сравнение",
+          "`ceq`, `cgt`, `clt`, `and`, `or`, `xor`, `not`"
+        ],
+        [
+          "Ветвление",
+          "`br`, `brtrue`, `brfalse`, `beq`, `bgt`, `ble`, `switch`"
+        ],
+        [
+          "Вызовы",
+          "`call` (static/non-virtual), `callvirt` (virtual/interface), `newobj`"
+        ],
+        [
+          "Возврат",
+          "`ret`"
+        ],
+        [
+          "Исключения",
+          "`throw`, `rethrow`, `leave`, `endfinally`"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. JIT Компиляция (Just-In-Time)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Уровни компиляции (Tiered Compilation, .NET Core 3.0+)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Tier 0 (Quick JIT)\n├── Быстрая компиляция, без оптимизаций\n├── Собирает профилирующие данные (PGO)\n└── Используется для \"холодных\" методов\n\nTier 1 (Optimized JIT)\n├── Полная оптимизация на основе профиля\n├── Инлайнинг, loop unrolling, devirtualization\n└── Компилируется асинхронно в фоне\n\nReadyToRun (R2R / AOT)\n├── Предварительно скомпилированный в native код\n├── В .dll: секция .text с нативным кодом\n└── Используется сразу, JIT только для патчей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контроль JIT"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Атрибуты для управления компиляцией\n[MethodImpl(MethodImplOptions.AggressiveInlining)]\npublic int Add(int a, int b) => a + b;\n\n[MethodImpl(MethodImplOptions.NoInlining)]\npublic void NoInline() { }\n\n[MethodImpl(MethodImplOptions.AggressiveOptimization)]\npublic void HotPath() { }\n\n// Отключение tiered compilation для метода\n[MethodImpl(MethodImplOptions.NoOptimization)]\npublic void Debuggable() { }\n\n// Runtime helpers\nRuntimeHelpers.PrepareMethod(method.Handle); // принудительный JIT\nRuntimeHelpers.RunClassConstructor(type.TypeHandle); // .cctor"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Tiered Compilation настройка"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj или runtimeconfig.json -->\n<PropertyGroup>\n  <TieredCompilation>true</TieredCompilation>\n  <TieredCompilationQuickJit>true</TieredCompilationQuickJit>\n  <TieredCompilationQuickJitForLoops>true</TieredCompilationQuickJitForLoops>\n</PropertyGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Управляемая память: Стек и Куча"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стек (Stack) — Value Types, ссылки, кадры вызовов"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "void Method()\n{\n    int a = 42;           // на стеке (4 байта)\n    long b = 100L;        // на стеке (8 байт)\n    MyStruct s = new();   // на стеке (размер структуры)\n    MyClass c = new();    // ССЫЛКА на стеке (8 байт x64), ОБЪЕКТ в куче\n    // c указывает на объект в куче\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Куча (Managed Heap) — Reference Types"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "┌────────────────────────────────────────────────────────────┐\n│                    Managed Heap                             │\n├──────────────────┬──────────────────┬──────────────────────┤\n│   Gen 0          │   Gen 1          │   Gen 2              │\n│   (молодые)      │   (пережившие)   │   (долгоживущие)     │\n│   ~256 KB        │   ~2 MB          │   остальное          │\n├──────────────────┼──────────────────┼──────────────────────┤\n│   Large Object   │   Pinned Objects │   Free Space         │\n│   Heap (LOH)     │   (fixed/stack)  │                      │\n│   (>85 KB)       │                  │                      │\n└──────────────────┴──────────────────┴──────────────────────┘"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Выделение памяти — очень быстро (bump pointer)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// new MyClass() — просто сдвиг указателя на куче!\n// Никакого поиска свободного блока (в отличие от malloc)\n// Thread-local allocation contexts (TLAB) — каждый поток свой указатель"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Garbage Collector (GC)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Режимы GC"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj -->\n<PropertyGroup>\n  <!-- Workstation GC (default) — для клиентских приложений -->\n  <ServerGarbageCollection>false</ServerGarbageCollection>\n  <!-- Concurrent GC — фоновая сборка, меньше пауз -->\n  <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>\n</PropertyGroup>\n\n<!-- Server GC — для серверных приложений (ASP.NET Core) -->\n<!-- Несколько куч (по одной на логический процессор), параллельная сборка -->"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Поколения (Generations)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Gen 0: новые объекты (короткоживущие) — собирается часто, быстро\n// Gen 1: пережившие Gen 0 — буфер\n// Gen 2: долгоживущие — собирается редко, Full GC\n\n// LOH (Large Object Heap): объекты > 85 KB\n// Не компактируется (по умолчанию), собирается только при Gen 2\n// .NET 5+: GCSettings.LargeObjectHeapCompactionMode = CompactOnce"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Алгоритм Mark-and-Compact"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "1. MARK: обход графа ссылок от Roots (стек, статики, handles, CPU регистры)\n         помечаем достижимые объекты\n\n2. COMPACT: сдвиг достижимых объектов в начало кучи (устраняет фрагментацию)\n            обновление ссылок\n\n3. SWEEP: память после последнего достижимого = свободная"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GC Roots (корни)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Локальные переменные на стеке (включая async state machines)",
+        "Статические поля",
+        "GC Handles (`GCHandle.Alloc`, `WeakReference`)",
+        "CPU регистры (JIT enregistered переменные)",
+        "Финализаторы в очереди (finalization queue)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Finalization (Финализаторы) — УСТАРЕВШЕЕ, избегайте"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ПЛОХО: непредсказуемое время, dodatkowy GC цикл, нет гарантии вызова\n~MyClass() { Cleanup(); } // Finalizer\n\n// ХОРОШО: IDisposable + SafeHandle для нативных ресурсов\npublic class Resource : IDisposable\n{\n    private SafeFileHandle _handle;\n    public void Dispose() => _handle?.Dispose();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "IDisposable Pattern"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public sealed class DisposableResource : IDisposable\n{\n    private bool _disposed;\n\n    public void Dispose() => Dispose(true);\n\n    private void Dispose(bool disposing)\n    {\n        if (_disposed) return;\n        if (disposing)\n        {\n            // Освобождение managed ресурсов\n            _managedResource?.Dispose();\n        }\n        // Освобождение unmanaged ресурсов\n        _nativeHandle?.Dispose();\n        _disposed = true;\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Assemblies (Сборки)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура Assembly"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "MyAssembly.dll\n├── Manifest (метаданные сборки)\n│   ├── Имя, версия, культура, публичный ключ (strong name)\n│   ├── Список файлов в сборке\n│   └── Зависимости (assembly references)\n├── Type Metadata (таблицы типов, методов, полей, свойств)\n├── IL Code (тела методов)\n├── Resources (встроенные ресурсы)\n└── (опционально) Native Code (R2R / NativeAOT)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Версионирование"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// AssemblyVersion — для биндинга (strong name), менять редко\n// AssemblyFileVersion — для файла, может меняться каждый билд\n// AssemblyInformationalVersion — для NuGet, display (SemVer)\n\n[assembly: AssemblyVersion(\"2.0.0.0\")]        // runtime binding\n[assembly: AssemblyFileVersion(\"2.0.123.456\")] // file info\n[assembly: AssemblyInformationalVersion(\"2.0.0-beta.1+abc123\")] // NuGet"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Strong Name (подпись)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Загрузка сборок (Assembly Load Context)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Default ALC — основной контекст (Application Base)\n// AssemblyLoadContext — изоляция плагинов (нет AppDomain unload в .NET Core)\n\nvar alc = new AssemblyLoadContext(\"PluginContext\", isCollectible: true);\nvar asm = alc.LoadFromAssemblyPath(@\"plugins\\MyPlugin.dll\");\nvar type = asm.GetType(\"MyPlugin.Processor\");\nvar instance = Activator.CreateInstance(type);\n\n// Выгрузка — ТОЛЬКО если isCollectible=true и нет ссылок\nalc.Unload(); // асинхронно, GC должен собрать сборку"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Диагностика и инструменты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "dotnet-counters / dotnet-trace / dotnet-dump"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": ""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GC Performance Counters"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// В коде\nGC.CollectionCount(0);        // Gen 0 collections\nGC.GetTotalMemory(false);     // текущая выделенная память\nGC.GetGCMemoryInfo();         // детальная инфа (.NET 5+)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "PerfView / WPA (Windows Performance Analyzer)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Анализ GC пауз, JIT времени, аллокаций",
+        "`dotnet-trace` → `.nettrace` → открыть в PerfView"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Ошибка",
+        "Правильно"
+      ],
+      "rows": [
+        [
+          "Финализаторы вместо `IDisposable`",
+          "`IDisposable` + `SafeHandle`"
+        ],
+        [
+          "Большие объекты в LOH без пулинга",
+          "`ArrayPool<T>`, `MemoryPool<T>`"
+        ],
+        [
+          "`GC.Collect()` в продакшене",
+          "Доверяйте GC, вызывайте только в тестах"
+        ],
+        [
+          "Забывают `Dispose()`",
+          "`using` / `await using` везде"
+        ],
+        [
+          "Strong name без нужды",
+          "Используйте только для GAC/legacy"
+        ],
+        [
+          "Большие структуры (>16 байт) по значению",
+          "`class` / `record` или `ref struct`"
+        ],
+        [
+          "Пиннинг (`fixed`, `GCHandle`) без нужды",
+          "Блокирует компактку GC"
+        ]
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Полезные ресурсы"
+    }
+  ],
+  "practice_tasks": [],
+  "common_errors": [
+    {
+      "mistake": "Финализаторы вместо `IDisposable`",
+      "correct": "`IDisposable` + `SafeHandle`"
+    },
+    {
+      "mistake": "Большие объекты в LOH без пулинга",
+      "correct": "`ArrayPool<T>`, `MemoryPool<T>`"
+    },
+    {
+      "mistake": "`GC.Collect()` в продакшене",
+      "correct": "Доверяйте GC, вызывайте только в тестах"
+    },
+    {
+      "mistake": "Забывают `Dispose()`",
+      "correct": "`using` / `await using` везде"
+    },
+    {
+      "mistake": "Strong name без нужды",
+      "correct": "Используйте только для GAC/legacy"
+    },
+    {
+      "mistake": "Большие структуры (>16 байт) по значению",
+      "correct": "`class` / `record` или `ref struct`"
+    },
+    {
+      "mistake": "Пиннинг (`fixed`, `GCHandle`) без нужды",
+      "correct": "Блокирует компактку GC"
+    }
+  ],
+  "resources": [],
+  "key_takeaways": [],
+  "estimated_minutes": 15,
+  "language_slug": "csharp",
+  "lesson_order": 18
+}
