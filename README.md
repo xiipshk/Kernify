@@ -282,8 +282,7 @@ MIT License - see LICENSE file for details.
 
 - Issues: GitHub Issues
 - Discussions: GitHub Discussions
-- Email: support@rtk.example.com
+- Email: kano47848@gmail.com
 
 ---
 
-Built with ❤️ using Django and modern web technologies.
