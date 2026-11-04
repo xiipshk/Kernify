@@ -1,0 +1,254 @@
+# Урок 1.2: Типы и переменные — числа, char, bool, std::string, инициализация, const, conversions
+
+## Цели урока
+- Знать фундаментальные типы C++
+- Правильно объявлять и инициализировать переменные
+- Понимать разницу между копированием и инициализацией
+- Использовать `const` и `constexpr`
+- Безопасно выполнять преобразования типов
+
+---
+
+## 1. Фундаментальные типы
+
+### Целые числа
+| Тип | Размер (минимум) | Диапазон | Суффикс литерала |
+|-----|------------------|----------|------------------|
+| `signed char` | 1 байт | -128..127 | - |
+| `short` / `short int` | 2 байта | -32768..32767 | - |
+| `int` | 2 байта | -32768..32767 | - |
+| `long` / `long int` | 4 байта | -2^31..2^31-1 | `L` |
+| `long long` | 8 байт | -2^63..2^63-1 | `LL` |
+| Беззнаковые: `unsigned` + выше | | 0..2^n-1 | `U` / `UL` / `ULL` |
+
+```cpp
+int a = 42;
+long long big = 9'000'000'000'000'000'000LL;  // разделитель цифр (C++14)
+unsigned u = 42U;
+auto x = 42;  // int (C++11)
+```
+
+### Символы
+```cpp
+char c = 'A';           // 1 байт, ASCII
+char16_t c16 = u'Я';    // UTF-16 (2 байта)
+char32_t c32 = U'Я';    // UTF-32 (4 байта)
+wchar_t wc = L'Я';      // платформозависимо (2 или 4 байта)
+char8_t c8 = u8'Я';     // UTF-8 (C++20)
+```
+
+### Boolean
+```cpp
+bool flag = true;
+bool empty = false;
+// Неявное преобразование: 0 -> false, не-0 -> true
+```
+
+### Вещественные
+| Тип | Размер | Пример |
+|-----|--------|--------|
+| `float` | 4 байта (IEEE 754 single) | `3.14f` |
+| `double` | 8 байт (IEEE 754 double) | `3.14` |
+| `long double` | ≥8 байт (extended) | `3.14L` |
+
+```cpp
+double pi = 3.141592653589793;
+float f = 1.5f;
+auto d = 2.0;  // double
+```
+
+### `std::string` (не фундаментальный, но базовый)
+```cpp
+#include <string>
+std::string s = "Hello";
+std::string s2 = "World"s;  // user-defined literal (C++14, <string>)
+```
+
+---
+
+## 2. Инициализация
+
+### Формы инициализации (C++11 uniform initialization)
+```cpp
+int a = 0;           // copy initialization
+int b(0);            // direct initialization
+int c{0};            // list initialization (brace init) — РЕКОМЕНДУЕТСЯ
+int d = {0};         // copy list initialization
+int e{};             // value initialization (0 для int)
+int f();             // ВНИМАНИЕ: это объявление ФУНКЦИИ!
+```
+
+### Преимущества `{}` (list initialization)
+```cpp
+// Запрещает narrowing conversions
+int x1{3.14};        // ОШИБКА: narrowing double->int
+int x2 = 3.14;       // OK (но предупреждение с -Wnarrowing)
+
+// Работает со всеми типами
+std::vector<int> v{1, 2, 3};
+std::string s{"text"};
+auto p = std::make_unique<int>(42);
+```
+
+### Инициализация членов класса
+```cpp
+struct Point {
+    int x = 0;       // default member initializer (C++11)
+    int y = 0;
+    Point(int x_, int y_) : x(x_), y(y_) {}  // member initializer list
+};
+
+Point p1;        // (0, 0)
+Point p2{3, 4};  // (3, 4)
+```
+
+---
+
+## 3. `const` и `constexpr`
+
+### `const` — неизменяемая после инициализации
+```cpp
+const int MAX_SIZE = 100;
+// MAX_SIZE = 200;  // ОШИБКА
+
+const int* p1 = &MAX_SIZE;  // указатель на const int
+int* const p2 = new int(5); // const указатель на int
+const int* const p3 = &MAX_SIZE;  // const указатель на const int
+```
+
+### `constexpr` — значение известно на этапе компиляции
+```cpp
+constexpr int square(int x) { return x * x; }
+constexpr int SZ = square(5);  // 25, вычисляется при компиляции
+int arr[SZ];  // OK: SZ — compile-time constant
+
+// constexpr переменные неявно const
+constexpr double PI = 3.14159;
+```
+
+### `constinit` (C++20) — гарантия статической инициализации
+```cpp
+constinit int global = 42;  // ошибка, если не статическая инициализация
+```
+
+---
+
+## 4. `auto` — выведение типа
+
+```cpp
+auto x = 42;           // int
+auto y = 3.14;         // double
+auto z = "hello";      // const char*
+auto s = std::string{"hi"};  // std::string
+auto p = new int(5);   // int*
+
+// Ссылки и cv-квалификаторы
+auto& ref = x;         // int&
+const auto& cref = x;  // const int&
+auto&& uref = x;       // int& (forwarding reference)
+```
+
+### Когда НЕ использовать `auto`
+```cpp
+// Когда тип важен для читаемости
+std::vector<int> v = get_vector();  // лучше явно
+// vs
+auto v = get_vector();  // тип неочевиден
+
+// Когда нужен конкретный тип
+double d = 1 / 2;      // 0 (int division!)
+auto d2 = 1.0 / 2.0;   // 0.5
+```
+
+---
+
+## 5. Преобразования типов
+
+### Неявные (implicit)
+```cpp
+int i = 42;
+double d = i;        // int -> double (повышение)
+bool b = i;          // int -> bool (0=false, other=true)
+char c = i;          // int -> char (сужение, может потерять данные!)
+```
+
+### Явные приведения (casts) — C++ style
+```cpp
+double d = 3.14;
+int i1 = static_cast<int>(d);      // 3 (truncation)
+int i2 = static_cast<int>(d + 0.5); // 3 (rounding)
+
+// Указатели
+void* pv = &d;
+double* pd = static_cast<double*>(pv);
+
+// enum class
+enum class Color { Red, Green };
+int c = static_cast<int>(Color::Red);  // 0
+```
+
+### Опасные C-style casts (НЕ ИСПОЛЬЗОВАТЬ)
+```cpp
+// (Type)value или Type(value) — комбинируют static_cast + const_cast + reinterpret_cast
+int i = (int)d;        // ПЛОХО: скрывает const_cast/reinterpret_cast
+int j = int(d);        // ТОЖЕ ПЛОХО
+```
+
+### `reinterpret_cast` — битовое переинтерпретирование
+```cpp
+// Только для низкоуровневого кода
+int i = 0x41424344;
+char* c = reinterpret_cast<char*>(&i);  // "ABCD" в little-endian
+```
+
+### `const_cast` — снятие const (ОСТОРОЖНО!)
+```cpp
+void legacy_api(char* s);  // старый API без const
+
+const char* cs = "hello";
+// legacy_api(cs);  // ОШИБКА
+legacy_api(const_cast<char*>(cs));  // OK, но UB если legacy_api модифицирует!
+```
+
+---
+
+## 6. `std::byte` и `std::size_t` / `ptrdiff_t`
+
+```cpp
+#include <cstddef>
+
+std::byte b{0xFF};  // тип для raw memory (C++17)
+std::size_t size = 100;  // unsigned, результат sizeof
+std::ptrdiff_t diff = ptr2 - ptr1;  // signed, разница указателей
+```
+
+---
+
+## Практические задания
+
+1. **Инициализация**: Объявите переменные всех фундаментальных типов с `{}` инициализацией
+2. **Narrowing**: Попробуйте `int x{3.14};` — прочитайте ошибку компилятора
+3. **const/constexpr**: Напишите `constexpr` функцию факториала, используйте для размера массива
+4. **auto**: Поэкспериментируйте с `auto` в `for (auto& e : v)` и `for (auto e : v)` — чем отличаются?
+5. **Касты**: Найдите случаи, где `static_cast` спасает от ошибки, а C-style cast — нет
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `int x = 3.14;` (неявное сужение) | `int x{3.14};` — ошибка компиляции, либо `static_cast<int>(3.14)` |
+| `const int* p` vs `int* const p` | Читайте справа налево: `const int*` = указатель на const int |
+| `auto x = 0;` — `int`, а нужен `size_t` | `auto x = 0uz;` (C++23) или `std::size_t x = 0;` |
+| `(Type)value` (C-cast) | `static_cast<Type>(value)` |
+| `constexpr` для runtime значений | `const` для runtime, `constexpr` только для compile-time |
+
+---
+
+## Полезные ресурсы
+
+- **cppreference: Types** — https://en.cppreference.com/w/cpp/language/types
+- **cppreference: Initialization** — https://en.cppreference.com/w/cpp/language/initialization
+- **C++ Core Guidelines: ES.20** — always initialize an object
+- **C++ Core Guidelines: ES.25** — declare an object `const` or `constexpr` unless you want to modify it

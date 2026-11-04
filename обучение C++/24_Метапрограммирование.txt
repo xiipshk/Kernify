@@ -1,0 +1,584 @@
+# Урок 24: Метапрограммирование — SFINAE, concepts/constraints, variadic templates, type traits, compile-time computation
+
+## Цели урока
+- Освоить SFINAE и его современную замену — Concepts (C++20)
+- Научиться писать variadic templates и fold expressions
+- Понять type traits и их применение
+- Освоить compile-time computation (constexpr, consteval, template metaprogramming)
+- Изучить techniques: tag dispatching, CRTP, expression templates
+
+---
+
+## 1. SFINAE — Substitution Failure Is Not An Error
+
+### Принцип ([temp.deduct])
+> При подстановке аргументов шаблона в параметры шаблона, если подстановка приводит к некорректному типу/выражению, это **не ошибка компиляции** — такой кандидат просто удаляется из overload set.
+
+### Классический SFINAE (pre-C++20):
+```cpp
+#include <type_traits>
+
+// Проверка наличия метода .size()
+template <typename T>
+auto has_size(T&& t) -> decltype(t.size(), std::true_type{});
+
+std::false_type has_size(...);
+
+template <typename Container>
+void print_size(Container&& c) {
+    if constexpr (decltype(has_size(std::forward<Container>(c)))::value) {
+        std::cout << "Size: " << c.size() << '\n';
+    } else {
+        std::cout << "No size() method\n";
+    }
+}
+
+// std::enable_if_t (C++11)
+template <typename T>
+std::enable_if_t<std::is_integral_v<T>, T>
+abs_val(T x) { return x < 0 ? -x : x; }
+
+// std::void_t (C++17) — универсальный SFINAE-хелпер
+template <typename...> using void_t = void;
+
+template <typename T, typename = void>
+struct has_begin : std::false_type {};
+
+template <typename T>
+struct has_begin<T, void_t<decltype(std::declval<T>().begin())>> : std::true_type {};
+```
+
+### Проблемы SFINAE:
+- Сложный синтаксис, плохая читаемость
+- Сложные ошибки компиляции
+- Нет прямого способа выразить "контракт"
+
+---
+
+## 2. Concepts / Constraints (C++20) — Современная замена SFINAE
+
+### Базовый синтаксис:
+```cpp
+#include <concepts>
+#include <type_traits>
+
+// Простой concept
+template <typename T>
+concept Integral = std::is_integral_v<T>;
+
+// Concept с requires-expression
+template <typename T>
+concept HasSize = requires(T t) {
+    t.size();                    // метод size()
+    { t.size() } -> std::convertible_to<std::size_t>; // возвращает size_t
+};
+
+// Compound requirements
+template <typename T>
+concept Iterator = requires(T it) {
+    { *it } -> std::convertible_to<typename T::value_type>;
+    { ++it } -> std::same_as<T&>;
+    { it++ } -> std::same_as<T>;
+};
+
+// Использование
+void process(Integral auto x) {          // Abbreviated function template
+    std::cout << x << '\n';
+}
+
+template <HasSize C>
+void print_size(const C& c) {            // Constrained template
+    std::cout << c.size() << '\n';
+}
+
+// requires-clause (альтернативный синтаксис)
+template <typename T>
+requires Integral<T>
+T square(T x) { return x * x; }
+
+// Несколько constraints
+template <typename T>
+concept SignedIntegral = Integral<T> && std::is_signed_v<T>;
+```
+
+### Standard Library Concepts (<concepts>):
+```cpp
+// Core language concepts
+std::same_as<T, U>              // T и U — один тип
+std::derived_from<Derived, Base> // Derived публично наследует Base
+std::convertible_to<From, To>   // неявное преобразование
+std::common_reference_with<T, U>
+std::common_with<T, U>
+
+// Comparison concepts
+std::equality_comparable<T>
+std::totally_ordered<T>
+
+// Object concepts
+std::movable<T>
+std::copyable<T>
+std::semiregular<T>    // movable + copyable + default_constructible
+std::regular<T>        // semiregular + equality_comparable
+
+// Callable concepts
+std::invocable<F, Args...>
+std::regular_invocable<F, Args...>
+std::predicate<F, Args...>       // возвращает bool
+std::relation<F, T, U>           // бинарное отношение
+
+// Range concepts (C++20 Ranges)
+std::ranges::range<R>
+std::ranges::sized_range<R>
+std::ranges::input_range<R>
+std::ranges::forward_range<R>
+std::ranges::bidirectional_range<R>
+std::ranges::random_access_range<R>
+std::ranges::contiguous_range<R>
+```
+
+### Requires-expression (детальнее):
+```cpp
+template <typename T>
+concept Addable = requires(T a, T b) {
+    a + b;                                    // простое выражение
+    { a + b } -> std::convertible_to<T>;      // compound requirement
+    requires noexcept(a + b);                 // noexcept requirement
+    requires std::is_same_v<decltype(a + b), T>; // type requirement (nested)
+};
+
+// Type requirement (nested requirement)
+template <typename T>
+concept HasValueType = requires {
+    typename T::value_type;        // вложенный тип
+    typename T::iterator;          // другой вложенный тип
+    requires std::is_same_v<typename T::value_type, int>; // constraint на тип
+};
+```
+
+### Subsumption (порядок constraints):
+```cpp
+template <typename T> concept A = true;
+template <typename T> concept B = A<T> && true;  // B субсумирует A (B более строгий)
+
+void f(A auto x);  // #1
+void f(B auto x);  // #2 — более специализированная, выбирается при вызове с B
+```
+
+---
+
+## 3. Variadic Templates (Параметрические пачки)
+
+### Базовый синтаксис:
+```cpp
+template <typename... Args>
+void print_all(Args&&... args) {
+    (std::cout << ... << args) << '\n';  // Fold expression (C++17)
+}
+
+// Распаковка через рекурсию (pre-C++17)
+template <typename T>
+void print_rec(T&& t) { std::cout << t << '\n'; }
+
+template <typename T, typename... Rest>
+void print_rec(T&& t, Rest&&... rest) {
+    std::cout << t << ' ';
+    print_rec(std::forward<Rest>(rest)...);
+}
+```
+
+### Fold Expressions (C++17):
+```cpp
+template <typename... Args>
+auto sum(Args... args) {
+    return (args + ...);           // unary right fold: (a1 + (a2 + a3))
+    // return (... + args);        // unary left fold: ((a1 + a2) + a3)
+    // return (args + ... + 0);    // binary right fold с init
+    // return (0 + ... + args);    // binary left fold с init
+}
+
+// Логические фолды
+template <typename... Args>
+bool all_true(Args... args) { return (args && ...); }
+
+template <typename... Args>
+bool any_true(Args... args) { return (args || ...); }
+
+// Комбинированные
+template <typename... Args>
+void print_comma_separated(Args... args) {
+    ((std::cout << args << ", "), ...); // fold over comma operator
+    std::cout << '\n';
+}
+```
+
+### Parameter Pack Utilities:
+```cpp
+// Index sequence для распаковки с индексами
+template <typename Tuple, std::size_t... I>
+void print_tuple_impl(const Tuple& t, std::index_sequence<I...>) {
+    (std::cout << ... << (std::cout << (I == 0 ? "" : ", "), std::get<I>(t)));
+}
+
+template <typename... Args>
+void print_tuple(const std::tuple<Args...>& t) {
+    print_tuple_impl(t, std::index_sequence_for<Args...>{});
+}
+
+// Pack expansion в разных контекстах
+template <typename... Ts>
+struct Tuple {
+    // Pack expansion в member declarations
+    Ts... values;  // error: не разрешено напрямую
+
+    // Правильно — через базовые классы или std::tuple
+};
+
+// Parameter pack в lambda (C++20)
+auto lambda = [...args = std::move(args)]() mutable {  // pack capture
+    (std::cout << ... << args) << '\n';
+};
+
+// sizeof... — количество аргументов в пачке
+template <typename... Args>
+constexpr std::size_t count_args(Args...) { return sizeof...(Args); }
+```
+
+---
+
+## 4. Type Traits (<type_traits>)
+
+### Категории type traits:
+
+#### Primary Type Categories:
+```cpp
+std::is_void_v<T>
+std::is_null_pointer_v<T>        // std::nullptr_t
+std::is_integral_v<T>            // bool, char, short, int, long, long long
+std::is_floating_point_v<T>      // float, double, long double
+std::is_array_v<T>
+std::is_pointer_v<T>
+std::is_lvalue_reference_v<T>
+std::is_rvalue_reference_v<T>
+std::is_member_object_pointer_v<T>
+std::is_member_function_pointer_v<T>
+std::is_enum_v<T>
+std::is_union_v<T>
+std::is_class_v<T>
+std::is_function_v<T>
+
+// Комбинированные
+std::is_fundamental_v<T>         // arithmetic + void + nullptr_t
+std::is_arithmetic_v<T>          // integral + floating_point
+std::is_scalar_v<T>              // arithmetic + enum + pointer + member_ptr + nullptr_t
+std::is_object_v<T>              // scalar + array + union + class
+std::is_compound_v<T>            // !is_fundamental
+std::is_reference_v<T>
+std::is_member_pointer_v<T>
+```
+
+#### Type Properties:
+```cpp
+std::is_const_v<T>
+std::is_volatile_v<T>
+std::is_trivial_v<T>
+std::is_trivially_copyable_v<T>
+std::is_standard_layout_v<T>
+std::is_pod_v<T>                 // deprecated C++20, используй is_trivial && is_standard_layout
+std::is_empty_v<T>
+std::is_polymorphic_v<T>
+std::is_abstract_v<T>
+std::is_final_v<T>               // C++14
+std::is_aggregate_v<T>           // C++17
+std::is_signed_v<T>
+std::is_unsigned_v<T>
+```
+
+#### Supported Operations:
+```cpp
+std::is_default_constructible_v<T>
+std::is_copy_constructible_v<T>
+std::is_move_constructible_v<T>
+std::is_copy_assignable_v<T>
+std::is_move_assignable_v<T>
+std::is_destructible_v<T>
+std::has_virtual_destructor_v<T>
+
+// Nothrow variants
+std::is_nothrow_default_constructible_v<T>
+std::is_nothrow_copy_constructible_v<T>
+std::is_nothrow_move_constructible_v<T>
+std::is_nothrow_copy_assignable_v<T>
+std::is_nothrow_move_assignable_v<T>
+std::is_nothrow_destructible_v<T>
+```
+
+#### Type Relationships:
+```cpp
+std::is_same_v<T, U>
+std::is_base_of_v<Base, Derived>
+std::is_convertible_v<From, To>
+std::is_layout_compatible_v<T, U>    // C++20
+std::is_pointer_interconvertible_base_of_v<Base, Derived> // C++20
+```
+
+#### Type Modifications:
+```cpp
+std::remove_cv_t<T>           // remove const/volatile
+std::remove_const_t<T>
+std::remove_volatile_t<T>
+std::add_cv_t<T>
+std::add_const_t<T>
+std::add_volatile_t<T>
+
+std::remove_reference_t<T>
+std::add_lvalue_reference_t<T>
+std::add_rvalue_reference_t<T>
+
+std::remove_pointer_t<T>
+std::add_pointer_t<T>
+
+std::remove_extent_t<T>       // remove one array dimension
+std::remove_all_extents_t<T>  // remove all array dimensions
+
+std::make_signed_t<T>
+std::make_unsigned_t<T>
+
+std::remove_cvref_t<T>        // C++20: remove_cv<remove_reference_t<T>>
+
+std::decay_t<T>               // как при передаче по значению: array->ptr, func->func ptr, remove cvref
+```
+
+### Свои Type Traits:
+```cpp
+// Детектирование вложенного типа
+template <typename T, typename = void>
+struct has_value_type : std::false_type {};
+
+template <typename T>
+struct has_value_type<T, std::void_t<typename T::value_type>> : std::true_type {};
+
+// Variable template (C++14)
+template <typename T>
+inline constexpr bool has_value_type_v = has_value_type<T>::value;
+
+// Type trait с fallback
+template <typename T, typename = void>
+struct value_type_or_int { using type = int; };
+
+template <typename T>
+struct value_type_or_int<T, std::void_t<typename T::value_type>> { using type = typename T::value_type; };
+
+template <typename T>
+using value_type_or_int_t = typename value_type_or_int<T>::type;
+```
+
+---
+
+## 5. Compile-Time Computation
+
+### constexpr (C++11/14/17/20/23):
+```cpp
+// C++11: ограниченные constexpr функции
+constexpr int factorial(int n) {
+    return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+// C++14: relaxed constexpr (переменные, циклы, if, switch)
+constexpr int fibonacci(int n) {
+    if (n <= 1) return n;
+    int a = 0, b = 1;
+    for (int i = 2; i <= n; ++i) {
+        int tmp = a + b;
+        a = b;
+        b = tmp;
+    }
+    return b;
+}
+
+// C++17: constexpr lambda
+auto sq = [](int x) constexpr { return x * x; };
+
+// C++20: constexpr виртуальные функции, try/catch, dynamic_cast, typeid
+struct Base { virtual constexpr int f() { return 1; } };
+struct Derived : Base { constexpr int f() override { return 2; } };
+
+constexpr int test() {
+    Derived d;
+    Base& b = d;
+    return b.f(); // 2
+}
+
+// C++20: consteval — гарантированно compile-time
+consteval int sqr(int x) { return x * x; }
+// consteval int runtime_sqr(int x) { return x * x; } // ошибка: должен быть constexpr
+int y = sqr(5); // OK: вычисляется на этапе компиляции
+
+// C++23: constexpr std::vector, std::string, итераторы
+constexpr std::vector<int> make_vec() {
+    std::vector<int> v;
+    v.push_back(1);
+    v.push_back(2);
+    return v; // NRVO
+}
+```
+
+### Template Metaprogramming (TMP):
+```cpp
+// Compile-time list (type list)
+template <typename... Ts> struct TypeList {};
+
+// Length
+template <typename List> struct Length;
+template <typename... Ts> struct Length<TypeList<Ts...>> : std::integral_constant<std::size_t, sizeof...(Ts)> {};
+
+// At (индексация)
+template <typename List, std::size_t N> struct At;
+template <typename T, typename... Ts> struct At<TypeList<T, Ts...>, 0> { using type = T; };
+template <typename T, typename... Ts, std::size_t N> struct At<TypeList<T, Ts...>, N> : At<TypeList<Ts...>, N-1> {};
+
+// Concat
+template <typename L1, typename L2> struct Concat;
+template <typename... Ts1, typename... Ts2>
+struct Concat<TypeList<Ts1...>, TypeList<Ts2...>> { using type = TypeList<Ts1..., Ts2...>; };
+
+// Map (преобразование каждого типа)
+template <template <typename> class F, typename List> struct Map;
+template <template <typename> class F, typename... Ts>
+struct Map<F, TypeList<Ts...>> { using type = TypeList<F<Ts>...>; };
+
+// Filter
+template <template <typename> class Pred, typename List> struct Filter;
+template <template <typename> class Pred>
+struct Filter<Pred, TypeList<>> { using type = TypeList<>; };
+template <template <typename> class Pred, typename T, typename... Ts>
+struct Filter<Pred, TypeList<T, Ts...>> {
+    using tail = typename Filter<Pred, TypeList<Ts...>>::type;
+    using type = std::conditional_t<Pred<T>::value, TypeList<T>, tail>;
+};
+```
+
+### consteval / constinit (C++20):
+```cpp
+// constinit — гарантирует static initialization (не dynamic)
+constinit int global = 42; // ошибка, если dynamic init
+
+// consteval — immediate function (только compile-time)
+consteval int hash_str(std::string_view s) {
+    int h = 0;
+    for (char c : s) h = h * 31 + c;
+    return h;
+}
+
+// Использование: compile-time string hashing
+constexpr int h = hash_str("hello"); // OK
+// int h2 = hash_str(runtime_string); // ошибка компиляции
+```
+
+---
+
+## 6. Advanced Techniques
+
+### Tag Dispatching:
+```cpp
+struct FastTag {};
+struct SlowTag {};
+
+template <typename T>
+void process_impl(T& container, FastTag) { /* оптимизированная версия */ }
+
+template <typename T>
+void process_impl(T& container, SlowTag) { /* общая версия */ }
+
+template <typename T>
+void process(T& container) {
+    if constexpr (std::is_same_v<typename T::iterator_category, std::random_access_iterator_tag>) {
+        process_impl(container, FastTag{});
+    } else {
+        process_impl(container, SlowTag{});
+    }
+}
+```
+
+### CRTP (Curiously Recurring Template Pattern):
+```cpp
+template <typename Derived>
+class Base {
+public:
+    void interface() { static_cast<Derived*>(this)->implementation(); }
+    void common() { std::cout << "Common\n"; }
+};
+
+class Derived : public Base<Derived> {
+    friend class Base<Derived>;
+    void implementation() { std::cout << "Derived impl\n"; }
+};
+```
+
+### Expression Templates (Lazy Evaluation):
+```cpp
+template <typename E>
+class VecExpr {
+public:
+    double operator[](std::size_t i) const { return static_cast<const E&>(*this)[i]; }
+    std::size_t size() const { return static_cast<const E&>(*this).size(); }
+};
+
+class Vector : public VecExpr<Vector> {
+    std::vector<double> data_;
+public:
+    Vector(std::size_t n) : data_(n) {}
+    double operator[](std::size_t i) const { return data_[i]; }
+    double& operator[](std::size_t i) { return data_[i]; }
+    std::size_t size() const { return data_.size(); }
+};
+
+template <typename E1, typename E2>
+class VecAdd : public VecExpr<VecAdd<E1, E2>> {
+    const E1& a_; const E2& b_;
+public:
+    VecAdd(const E1& a, const E2& b) : a_(a), b_(b) {}
+    double operator[](std::size_t i) const { return a_[i] + b_[i]; }
+    std::size_t size() const { return a_.size(); }
+};
+
+template <typename E1, typename E2>
+VecAdd<E1, E2> operator+(const VecExpr<E1>& a, const VecExpr<E2>& b) {
+    return VecAdd<E1, E2>(static_cast<const E1&>(a), static_cast<const E2&>(b));
+}
+
+// Использование: Vector c = a + b + d; // без временных векторов
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Concepts
+Напишите concept `Container` проверяющий: `value_type`, `iterator`, `begin()`, `end()`, `size()`. Используйте для constrained algorithm `find_if`.
+
+### Задание 2: Variadic + Fold
+Реализуйте `make_unique_tuple<T...>(args...)` — создаёт `std::tuple<std::unique_ptr<T>...>` с perfect forwarding.
+
+### Задание 3: Type Traits
+Напишите trait `is_complete<T>` — проверяет, является ли тип полным (не incomplete) на этапе компиляции.
+
+### Задание 4: Compile-time Parser
+Напишите `constexpr` парсер простого формата (например, JSON-подобный) возвращающий `std::variant` / AST на этапе компиляции.
+
+### Задание 5: Expression Templates
+Реализуйте матричный класс с expression templates для отложенных операций: `C = A * B + D` без временных матриц.
+
+### Задание 6: SFINAE vs Concepts
+Перепишите SFINAE-код из начала урока на Concepts. Сравните читаемость и качество ошибок компиляции.
+
+---
+
+## Полезные ресурсы
+- **C++ Templates: The Complete Guide** (Vandevoorde, Josuttis, Gregor) — "Bible" of templates
+- **Template Metaprogramming with C++** (Marius Bancila)
+- **C++ Reference: Concepts** — https://en.cppreference.com/w/cpp/language/constraints
+- **C++ Reference: Type Traits** — https://en.cppreference.com/w/cpp/header/type_traits
+- **Boost.Hana** — метапрограммирование на стيروидах (heterogeneous computing)
+- **Boost.MP11** — метапрограммирование для type lists
+- **CppCon: "Concepts in C++20" (Andrew Sutton)**
+- **Compiler Explorer** — для изучения инстанцирования шаблонов

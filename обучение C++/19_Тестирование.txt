@@ -1,0 +1,502 @@
+# Урок 19: Тестирование — отладчик, санитайзеры, unit tests, UB, статический анализ
+
+## Цели урока
+- Эффективно использовать отладчик (GDB/LLDB/Visual Studio Debugger)
+- Применять санитайзеры (AddressSanitizer, UBSan, ThreadSanitizer, MSan)
+- Писать unit-тесты с Catch2 / GoogleTest / doctest
+- Понимать Undefined Behavior (UB) и находить его инструментами
+- Настраивать статический анализ (clang-tidy, cppcheck, PVS-Studio)
+
+---
+
+## Теория
+
+### Отладчик (Debugger)
+
+```cpp
+// Компиляция с отладочной информацией
+// g++ -g -O0 -std=c++20 main.cpp -o app
+// clang++ -g -O0 -std=c++20 main.cpp -o app
+// cl /Zi /Od /std:c++20 main.cpp
+
+#include <iostream>
+#include <vector>
+#include <string>
+
+struct User {
+    std::string name;
+    int age;
+    std::vector<std::string> tags;
+};
+
+User findUser(const std::vector<User>& users, const std::string& name) {
+    for (const auto& u : users) {
+        if (u.name == name) return u;  // Точка останова здесь
+    }
+    return {};
+}
+
+int main() {
+    std::vector<User> users = {
+        {"Alice", 30, {"admin", "dev"}},
+        {"Bob", 25, {"user"}},
+        {"Charlie", 35, {"admin"}}
+    };
+
+    User u = findUser(users, "Bob");
+    std::cout << u.name << " " << u.age << '\n';
+}
+```
+
+**Основные команды GDB/LLDB:**
+| Команда | Описание |
+|---------|----------|
+| `break main` / `b main.cpp:10` | Точка останова |
+| `run` / `r [args]` | Запуск |
+| `next` / `n` | Шаг с заходом (over) |
+| `step` / `s` | Шаг с заходом (into) |
+| `continue` / `c` | Продолжить |
+| `print var` / `p var` | Значение переменной |
+| `backtrace` / `bt` | Стек вызовов |
+| `frame N` / `f N` | Переключение фрейма |
+| `watch expr` | Watchpoint (останов при изменении) |
+| `info locals` | Локальные переменные |
+
+**Условные точки останова:**
+```bash
+(gdb) break findUser if strcmp(name, "Bob") == 0
+(gdb) break main.cpp:15 if users.size() > 100
+```
+
+---
+
+### Санитайзеры (Sanitizers)
+
+```bash
+# AddressSanitizer (ASan) — use-after-free, buffer overflow, memory leaks
+g++ -fsanitize=address -g -O1 -std=c++20 main.cpp -o app
+# Запуск: ASAN_OPTIONS=detect_leaks=1 ./app
+
+# UndefinedBehaviorSanitizer (UBSan) — UB: signed overflow, null deref, shift, alignment
+g++ -fsanitize=undefined -g -O1 -std=c++20 main.cpp -o app
+# Или комбинированно:
+g++ -fsanitize=address,undefined -g -O1 -std=c++20 main.cpp -o app
+
+# ThreadSanitizer (TSan) — data races, deadlocks
+g++ -fsanitize=thread -g -O1 -std=c++20 main.cpp -o app
+# Запуск: TSAN_OPTIONS="halt_on_error=1" ./app
+
+# MemorySanitizer (MSan) — использование неинициализированной памяти (требует instrumented libc++)
+clang++ -fsanitize=memory -g -O1 -std=c++20 main.cpp -o app
+
+# LeakSanitizer (LSan) — встроен в ASan, можно отдельно
+g++ -fsanitize=leak -g -O1 -std=c++20 main.cpp -o app
+```
+
+**Примеры ошибок, которые находят санитайзеры:**
+
+```cpp
+// ASan: heap-buffer-overflow
+void asanDemo() {
+    std::vector<int> v = {1, 2, 3};
+    int x = v[5];  // BOOM: heap-buffer-overflow
+}
+
+// ASan: use-after-free
+void uafDemo() {
+    auto p = std::make_unique<int>(42);
+    p.reset();
+    std::cout << *p;  // BOOM: heap-use-after-free
+}
+
+// ASan: memory leak
+void leakDemo() {
+    int* p = new int(42);  // BOOM: direct leak of 4 bytes
+}
+
+// UBSan: signed integer overflow
+void ubsanDemo() {
+    int x = INT_MAX;
+    x += 1;  // BOOM: signed integer overflow
+}
+
+// UBSan: null pointer dereference
+void nullDemo() {
+    int* p = nullptr;
+    *p = 42;  // BOOM: null pointer dereference
+}
+
+// UBSan: shift out of bounds
+void shiftDemo() {
+    int x = 1 << 32;  // BOOM: shift exponent too large for 32-bit int
+}
+
+// TSan: data race
+#include <thread>
+void tsanDemo() {
+    int counter = 0;
+    std::thread t1([&] { for (int i = 0; i < 10000; ++i) ++counter; });
+    std::thread t2([&] { for (int i = 0; i < 10000; ++i) ++counter; });
+    t1.join(); t2.join();  // BOOM: data race on counter
+}
+```
+
+**Полезные опции среды:**
+```bash
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:print_stacktrace=1
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
+```
+
+---
+
+### Unit-тестирование
+
+#### Catch2 (современный, header-only)
+
+```cpp
+// test_example.cpp
+#define CATCH_CONFIG_MAIN
+#include <catch2/catch_test_macros.hpp>
+#include <vector>
+#include <string>
+#include <algorithm>
+
+// Тестируемая функция
+int factorial(int n) {
+    return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+TEST_CASE("Factorial basics", "[factorial]") {
+    REQUIRE(factorial(0) == 1);
+    REQUIRE(factorial(1) == 1);
+    REQUIRE(factorial(5) == 120);
+    REQUIRE(factorial(10) == 3628800);
+}
+
+TEST_CASE("Vector operations", "[vector]") {
+    std::vector<int> v = {3, 1, 4, 1, 5};
+
+    SECTION("sorting") {
+        std::sort(v.begin(), v.end());
+        REQUIRE(v == std::vector<int>{1, 1, 3, 4, 5});
+    }
+
+    SECTION("push_back increases size") {
+        size_t oldSize = v.size();
+        v.push_back(9);
+        REQUIRE(v.size() == oldSize + 1);
+    }
+}
+
+// Параметризованные тесты (Catch2 v3)
+TEMPLATE_TEST_CASE("Type traits", "[traits]", int, double, std::string) {
+    REQUIRE(std::is_default_constructible_v<TestType>);
+}
+
+// BDD стиль
+SCENARIO("Vector resizing", "[vector]") {
+    GIVEN("A vector with 5 elements") {
+        std::vector<int> v(5);
+
+        WHEN("we resize to 10") {
+            v.resize(10);
+            THEN("size becomes 10") {
+                REQUIRE(v.size() == 10);
+            }
+        }
+    }
+}
+```
+
+#### GoogleTest (классический, мощный)
+
+```cpp
+// gtest_example.cpp
+#include <gtest/gtest.h>
+#include <memory>
+#include <string>
+
+class StringUtilsTest : public ::testing::Test {
+protected:
+    void SetUp() override { /* перед каждым тестом */ }
+    void TearDown() override { /* после каждого теста */ }
+};
+
+TEST_F(StringUtilsTest, EmptyString) {
+    EXPECT_EQ("", "");
+    ASSERT_TRUE("".empty());  // ASSERT — фатальное прерывание
+}
+
+TEST_F(StringUtilsTest, Concat) {
+    EXPECT_EQ("a" + "b", "ab");
+}
+
+// Параметризованные тесты
+class PrimeTest : public ::testing::TestWithParam<int> {};
+
+TEST_P(PrimeTest, IsPrime) {
+    int n = GetParam();
+    bool isPrime = true;
+    for (int i = 2; i * i <= n; ++i)
+        if (n % i == 0) { isPrime = false; break; }
+    EXPECT_TRUE(isPrime);
+}
+
+INSTANTIATE_TEST_SUITE_P(Primes, PrimeTest,
+    ::testing::Values(2, 3, 5, 7, 11, 13, 17, 19));
+
+// Death tests (проверка краша)
+TEST(DeathTest, NullDeref) {
+    EXPECT_DEATH({ int* p = nullptr; *p = 1; }, ".*");
+}
+```
+
+#### doctest (очень быстрый, header-only)
+
+```cpp
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+#include <vector>
+
+TEST_CASE("vector basics") {
+    std::vector<int> v{1, 2, 3};
+    CHECK(v.size() == 3);
+    CHECK(v[1] == 2);
+    SUBCASE("push_back") {
+        v.push_back(4);
+        CHECK(v.size() == 4);
+    }
+    SUBCASE("pop_back") {
+        v.pop_back();
+        CHECK(v.size() == 2);
+    }
+}
+```
+
+**CMake интеграция:**
+```cmake
+# FetchContent для Catch2
+include(FetchContent)
+FetchContent_Declare(Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG        v3.5.0
+)
+FetchContent_MakeAvailable(Catch2)
+
+add_executable(tests test_example.cpp)
+target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)
+include(CTest)
+add_test(NAME unit_tests COMMAND tests)
+```
+
+---
+
+### Undefined Behavior (UB) — основные виды
+
+| Категория | Пример | Инструмент |
+|-----------|--------|------------|
+| **Buffer overflow** | `arr[10] = 0` для `int arr[10]` | ASan, UBSan |
+| **Use-after-free** | `delete p; *p = 1;` | ASan |
+| **Double free** | `delete p; delete p;` | ASan |
+| **Signed overflow** | `INT_MAX + 1` | UBSan |
+| **Null dereference** | `int* p = nullptr; *p;` | UBSan, ASan |
+| **Uninitialized read** | `int x; foo(x);` | MSan, UBSan |
+| **Data race** | Два потока пишут в `int` без синхронизации | TSan |
+| **Invalid shift** | `1 << 32` для 32-bit int | UBSan |
+| **Div by zero** | `int x = 1 / 0;` | UBSan |
+| **Misaligned access** | `int* p = (int*)1; *p = 1;` | UBSan |
+| **Infinite loop без side effects** | `while(true) {}` (C++26: UB) | — |
+
+```cpp
+// Пример: UB из-за signed overflow (оптимизатор может сломать логику)
+int safeAdd(int a, int b) {
+    if (b > 0 && a > INT_MAX - b) throw std::overflow_error("overflow");
+    if (b < 0 && a < INT_MIN - b) throw std::underflow_error("underflow");
+    return a + b;
+}
+
+// Проверка на UB в constexpr (C++20)
+constexpr int checkedAdd(int a, int b) {
+    if (b > 0 && a > INT_MAX - b) return INT_MAX; // или throw
+    if (b < 0 && a < INT_MIN - b) return INT_MIN;
+    return a + b;
+}
+static_assert(checkedAdd(10, 20) == 30);
+```
+
+---
+
+### Статический анализ
+
+#### clang-tidy
+
+```bash
+# Установка: apt install clang-tidy / brew install llvm / choco install llvm
+
+# Проверка одного файла
+clang-tidy main.cpp -- -std=c++20 -Iinclude
+
+# Проверка всего проекта (compile_commands.json нужен)
+clang-tidy -p build *.cpp
+
+# Конфигурация .clang-tidy
+---
+Checks: >
+  -*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  bugprone-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -modernize-use-trailing-return-type
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'
+---
+```
+
+**Популярные проверки:**
+- `modernize-use-nullptr`, `modernize-use-override`, `modernize-use-auto`
+- `performance-unnecessary-copy-initialization`, `performance-move-constructor-init`
+- `bugprone-use-after-move`, `bugprone-dangling-handle`
+- `cppcoreguidelines-pro-bounds-array-to-pointer-decay`
+
+#### cppcheck
+
+```bash
+# Быстрый, без ложных срабатываний
+cppcheck --enable=all --std=c++20 --suppress=missingIncludeSystem src/
+
+# HTML отчёт
+cppcheck --enable=all --xml --xml-version=2 src/ 2> cppcheck.xml
+# cppcheck-htmlreport --file=cppcheck.xml --report-dir=report
+```
+
+#### PVS-Studio (коммерческий, глубокий анализ)
+
+```bash
+pvs-studio-analyzer analyze -o PVS-Studio.log -j4
+plog-converter -a GA:1,2 -t tasklist -o PVS-Studio.tasks PVS-Studio.log
+```
+
+#### CMake интеграция
+
+```cmake
+# clang-tidy как часть сборки
+find_program(CLANG_TIDY clang-tidy)
+if(CLANG_TIDY)
+    set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY}
+        -checks=modernize-*,performance-*,readability-*,bugprone-*,cppcoreguidelines-*
+        -warnings-as-errors=*
+        -header-filter=.*
+    )
+endif()
+
+# cppcheck target
+add_custom_target(cppcheck
+    COMMAND cppcheck --enable=all --std=c++20 --suppress=missingIncludeSystem
+        --inline-suppr --quiet --error-exitcode=1
+        ${CMAKE_SOURCE_DIR}/src
+    COMMENT "Running cppcheck"
+    VERBATIM
+)
+```
+
+---
+
+### CI/CD интеграция (GitHub Actions)
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+on: [push, pull_request]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy cppcheck
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build -j4
+
+      - name: Run tests with ASan/UBSan
+        run: |
+          cd build
+          ctest --output-on-failure
+          # или ./tests если один исполняемый
+
+      - name: Static analysis (clang-tidy)
+        run: |
+          cd build
+          run-clang-tidy.py -p . -j4
+
+      - name: Static analysis (cppcheck)
+        run: cppcheck --enable=all --std=c++20 --error-exitcode=1 src/
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Настройка Catch2 + CMake + санитайзеры
+Создайте проект:
+```
+project/
+├── CMakeLists.txt
+├── include/mylib/math.h
+├── src/math.cpp
+├── tests/test_math.cpp
+```
+Настройте: сборку с ASan+UBSan в Debug, запуск тестов через `ctest`, target `check` для clang-tidy.
+
+### Задание 2: Поиск багов с санитайзерами
+Дан код с 5 ошибками (use-after-free, buffer overflow, signed overflow, data race, leak).
+Скомпилируйте с `-fsanitize=address,undefined,thread`, найдите и исправьте все.
+
+### Задание 3: Unit-тесты для контейнера
+Реализуйте класс `RingBuffer<T>` (кольцевой буфер фиксированного размера).
+Напишите тесты Catch2: конструкторы, push/pop, переполнение, итераторы, move semantics.
+
+### Задание 4: Интеграция clang-tidy
+Добавьте `.clang-tidy` в проект. Настройте проверки: modernize, performance, bugprone, cppcoreguidelines.
+Исправьте все предупреждения в существующем коде.
+
+### Задание 5: Профилирование тестов
+Напишите benchmark (Google Benchmark / Catch2 benchmark) для:
+- `std::vector` vs `std::deque` push_back
+- `std::sort` vs `std::stable_sort` на почти отсортированных данных
+- Распределение работы между потоками
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| Тесты не запускаются в CI | Нет `enable_testing()` / `add_test` | Добавить в CMake |
+| ASan не находит утечку | `detect_leaks=0` по умолчанию в некоторых версиях | `ASAN_OPTIONS=detect_leaks=1` |
+| TSan ложные срабатывания | Атомарные операции не аннотированы | Использовать `std::atomic` / аннотации |
+| UBSan не видит UB в release | Оптимизатор удаляет код с UB | Тестировать с `-O1 -g`, не `-O3` |
+| clang-tidy медленный | Проверяет все заголовки системные | `HeaderFilterRegex: '.*myproject.*'` |
+| Флаки тесты (flaky) | Зависимость от порядка / случайности / времени | Изолировать тесты, мокать время/рандом |
+
+---
+
+## Ресурсы
+- [Catch2 docs](https://github.com/catchorg/Catch2/blob/devel/docs/README.md)
+- [GoogleTest Primer](https://google.github.io/googletest/primer.html)
+- [GCC Sanitizers](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html)
+- [Clang Sanitizers](https://clang.llvm.org/docs/index.html#sanitizers)
+- [clang-tidy checks](https://clang.llvm.org/extra/clang-tidy/checks/list.html)
+- **Книга:** "Debugging" (David Agans), "Effective Testing" (Maurer)
+- **CppCon:** "Sanitizers: What Every C++ Developer Should Know" (Kostya Serebryany)

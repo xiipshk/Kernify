@@ -1,0 +1,496 @@
+# Урок 4: Box Model — Блочная модель, box-sizing, margin collapse, логические свойства
+
+## Цели урока
+- Глубоко понять CSS Box Model: content, padding, border, margin
+- Освоить box-sizing: border-box глобально и его влияние на layout
+- Понять margin collapsing (схлопывание отступов) и как его контролировать
+- Изучить логические свойства размеров (inline-size, block-size) и отступов
+- Научиться отлаживать Box Model в DevTools
+
+---
+
+## 1. Анатомия Box Model
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        MARGIN                                │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                      BORDER                            │  │
+│  │  ┌─────────────────────────────────────────────────┐  │  │
+│  │  │                  PADDING                        │  │  │
+│  │  │  ┌───────────────────────────────────────────┐  │  │  │
+│  │  │  │                 CONTENT                   │  │  │  │
+│  │  │  │  (width × height / inline-size × block-size)│  │  │
+│  │  │  └───────────────────────────────────────────┘  │  │  │
+│  │  └─────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Размеры по умолчанию (content-box)
+```css
+.box {
+  width: 200px;
+  height: 100px;
+  padding: 20px;
+  border: 5px solid #2563eb;
+  margin: 10px;
+}
+
+/* Итоговые размеры элемента: */
+/* width = 200px (content) + 40px (padding) + 10px (border) = 250px */
+/* height = 100px + 40px + 10px = 150px */
+/* Внешний размер с margin = 270px × 170px */
+```
+
+### box-sizing: border-box (РЕКОМЕНДУЕМОЕ ГЛОБАЛЬНО)
+```css
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+.box {
+  width: 200px;      /* Теперь это ВНЕШНИЙ размер включая padding и border */
+  height: 100px;
+  padding: 20px;     /* Входит в 200px */
+  border: 5px solid; /* Входит в 200px */
+  margin: 10px;      /* Снаружи, не входит */
+}
+
+/* Итог: content = 200 - 40 - 10 = 150px */
+/* Внешний размер = 200px (как задано) */
+```
+
+---
+
+## 2. Свойства размеров — физические и логические
+
+### Физические (классические)
+```css
+width: 100px;           /* inline размер в LTR */
+height: 200px;          /* block размер */
+min-width: 100px;
+max-width: 500px;
+min-height: 100px;
+max-height: 300px;
+```
+
+### Логические (современные, i18n-ready)
+```css
+/* Основные */
+inline-size: 100px;     /* width в LTR, height в vertical-rl */
+block-size: 200px;      /* height в LTR, width в vertical-rl */
+
+/* Min/Max */
+min-inline-size: 100px;
+max-inline-size: 500px;
+min-block-size: 100px;
+max-block-size: 300px;
+
+/* Свойство aspect-ratio (работает с обоими) */
+aspect-ratio: 16 / 9;
+aspect-ratio: 1;        /* квадрат */
+```
+
+### Когда использовать логические
+```css
+/* Компонент, работающий в LTR и RTL одинаково */
+.card {
+  inline-size: 100%;
+  max-inline-size: 400px;
+  padding-inline: 1.5rem;      /* padding-left/right в LTR */
+  padding-block: 1rem;         /* padding-top/bottom */
+  margin-inline-start: auto;   /* margin-left в LTR, margin-right в RTL */
+  margin-inline-end: 0;
+  border-inline-end: 2px solid var(--color-primary);
+}
+```
+
+---
+
+## 3. Margin Collapsing — схлопывание отступов
+
+### Правила схлопывания (только вертикальные margin!)
+```css
+/* 1. Соседние братья */
+.h1 { margin-bottom: 30px; }
+.p  { margin-top: 20px; }
+/* Результат: 30px (max), а не 50px */
+
+/* 2. Родитель и первый/последний ребёнок */
+.parent { margin-top: 20px; }
+.child:first-child { margin-top: 30px; }
+/* Результат: 30px — margin «вылезает» наружу */
+
+/* 3. Пустые блоки */
+.empty { margin: 20px 0; }
+/* Схлопывается в 20px (не 40px) */
+```
+
+### Что ОСТАНАВЛИВАЕТ схлопывание
+```css
+/* Любое из этих свойств у родителя: */
+.parent {
+  padding: 1px;              /* Любой padding */
+  border: 1px solid transparent;  /* Любой border */
+  overflow: hidden;          /* Любой overflow кроме visible */
+  overflow: auto;
+  display: flow-root;        /* Современный способ (рекомендуется) */
+  display: flex;
+  display: grid;
+  contain: layout;           /* CSS Containment */
+}
+
+/* У ребёнка: */
+.child {
+  float: left;               /* Float */
+  position: absolute;        /* Absolute positioning */
+  display: inline-block;     /* inline-block */
+}
+```
+
+### Практические паттерны
+```css
+/* 1. flow-root — чистый способ создать BFC (Block Formatting Context) */
+.article {
+  display: flow-root;  /* Останавливает margin collapse детей */
+}
+
+/* 2. Padding вместо margin для первым/последним */
+.content > * + * {
+  margin-block-start: 1.5rem;  /* Только между элементами */
+}
+
+/* 3. Лобби отступов (lobotomized owl) */
+.flow > * + * {
+  margin-block-start: var(--flow-space, 1.5rem);
+}
+
+/* 4. Глобальный reset с контролем */
+.flow {
+  --flow-space: 1.5rem;
+}
+.flow > * + * {
+  margin-block-start: var(--flow-space);
+}
+```
+
+---
+
+## 4. Margin: auto — центрирование и распределение
+
+### Горизонтальное центрирование (block-level)
+```css
+.centered {
+  max-inline-size: 800px;
+  margin-inline: auto;  /* margin-left: auto; margin-right: auto; */
+}
+```
+
+### Flex/Grid — margin: auto ведёт себя иначе
+```css
+.flex-container {
+  display: flex;
+  gap: 1rem;
+}
+
+.item:first-child {
+  margin-inline-end: auto;  /* Толкает остальные вправо */
+}
+
+.item:last-child {
+  margin-inline-start: auto;  /* Толкает остальные влево */
+}
+
+/* Вертикальное центрирование в flex */
+.flex-center {
+  display: flex;
+  align-items: center;  /* cross axis */
+  justify-content: center;  /* main axis */
+  /* margin: auto на ребёнке тоже работает! */
+}
+```
+
+---
+
+## 5. Outline vs Border — важное различие
+
+```css
+/* Border — часть Box Model, влияет на размер */
+.border {
+  border: 2px solid red;
+  /* width увеличивается на 4px */
+}
+
+/* Outline — НЕ часть Box Model, не влияет на layout */
+.outline {
+  outline: 2px solid red;
+  outline-offset: 4px;  /* Расстояние от border */
+  /* Размеры не меняются! */
+}
+
+/* Focus styles — ВСЕГДА outline, не border */
+:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+
+/* Удаление outline — ТОЛЬКО с заменой! */
+.no-outline:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px #2563eb;  /* Альтернатива */
+}
+```
+
+---
+
+## 6. Box-shadow — не влияет на layout
+
+```css
+/* Базовый */
+.shadow {
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1),
+              0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+
+/* inset — внутренняя тень */
+.inset {
+  box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.1);
+}
+
+/* Множественные тени — слои */
+.layered {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.05),
+    0 4px 6px rgb(0 0 0 / 0.1),
+    0 10px 15px rgb(0 0 0 / 0.1);
+}
+
+/* Тень НЕ увеличивает размер элемента */
+/* Но может вылезать за границы контейнера с overflow: hidden */
+```
+
+---
+
+## 7. Content-box vs Border-box — глубокое понимание
+
+### Когда content-box полезен
+```css
+/* Редкие случаи: когда нужно точно задать content размер */
+.textarea {
+  box-sizing: content-box;
+  width: 40ch;           /* Ровно 40 символов контента */
+  padding: 0.5rem;
+  border: 1px solid;
+  /* Общий размер = 40ch + 1rem + 2px */
+}
+
+/* Изображения с фиксированным контентом */
+.img-exact {
+  box-sizing: content-box;
+  width: 300px;
+  height: 200px;
+  padding: 10px;  /* Рамка вокруг изображения */
+  border: 5px solid;
+}
+```
+
+### Интерактивный пример расчёта
+```css
+/* С border-box (default после reset) */
+.card {
+  inline-size: 300px;
+  padding: 24px;
+  border: 2px solid;
+  /* content inline-size = 300 - 48 - 4 = 248px */
+}
+
+/* Вложенные элементы в % */
+.card__inner {
+  inline-size: 50%;  /* 50% от 248px = 124px */
+}
+
+/* min/max работают с content-box в border-box моделе! */
+.card {
+  inline-size: 100%;
+  max-inline-size: 400px;  /* Макс content + padding + border */
+  min-inline-size: 200px;
+}
+```
+
+---
+
+## 8. Replaced Elements — особые правила
+
+```css
+/* img, video, canvas, input, iframe — replaced elements */
+/* У них свои правила Box Model */
+
+/* По умолчанию у replaced elements: */
+img {
+  display: inline;        /* Но ведут себя как inline-block */
+  width: auto;
+  height: auto;
+  /* aspect-ratio берётся из самого файла! */
+}
+
+/* Контроль размеров */
+img {
+  inline-size: 100%;
+  block-size: auto;       /* Сохраняет aspect-ratio */
+  /* Или */
+  block-size: 300px;
+  object-fit: cover;      /* Заполняет бокс, обрезая */
+  object-position: center;  /* Точка обрезки */
+}
+
+/* object-fit значения */
+.object-fill { object-fit: fill; }      /* Растягивает (дефолт) */
+.object-contain { object-fit: contain; }  /* Вписывает целиком */
+.object-cover { object-fit: cover; }     /* Заполняет, обрезает */
+.object-none { object-fit: none; }       /* Исходный размер */
+.object-scale-down { object-fit: scale-down; }  /* min(fill, contain) */
+```
+
+---
+
+## 9. DevTools — инспекция Box Model
+
+### Вкладка Computed → Box Model
+```
+┌─────────────────────────────────────┐
+│           margin: 10px              │
+│  ┌───────────────────────────────┐  │
+│  │      border: 5px              │  │
+│  │  ┌─────────────────────────┐  │  │
+│  │  │    padding: 20px        │  │  │
+│  │  │  ┌───────────────────┐  │  │  │
+│  │  │  │   content: 150×80 │  │  │  │
+│  │  │  └───────────────────┘  │  │  │
+│  │  └─────────────────────────┘  │  │
+│  └───────────────────────────────┘  │
+└─────────────────────────────────────┘
+```
+
+### Полезные фичи
+- **Hover над свойством** — подсветка на странице
+- **Клик на margin/border/padding** — быстрый ввод
+- **Alt + клик на margin** — редактировать все 4 стороны
+- **Layout панель** — визуализация Grid/Flex контейнеров
+
+---
+
+## 10. Практическое задание
+
+### Задача 1: Box Model аудит
+Дан компонент:
+```css
+.card {
+  width: 300px;
+  padding: 20px;
+  border: 2px solid #e5e7eb;
+  margin: 16px;
+}
+.card__image {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.card__title {
+  margin: 0 0 8px;
+}
+.card__text {
+  margin: 0;
+}
+```
+1. Рассчитай точные размеры content, padding, border, margin
+2. Переведи на border-box
+3. Исправь margin collapse между title и text
+4. Сделай изображение responsive с aspect-ratio 16:9
+
+### Задача 2: Margin collapse контроль
+Создай статью с правильными отступами:
+```html
+<article class="article">
+  <h1>Заголовок</h1>
+  <p>Параграф 1</p>
+  <p>Параграф 2</p>
+  <blockquote>Цитата</blockquote>
+  <p>Параграф 3</p>
+  <h2>Подзаголовок</h2>
+  <p>Параграф 4</p>
+</article>
+```
+Требования:
+- 24px между всеми соседними элементами
+- Нет лишних отступов сверху/снизу article
+- Работает в LTR и RTL
+
+### Задача 3: Логические свойства
+Перепиши компонент на логические свойства:
+```css
+/* Было */
+.sidebar {
+  width: 280px;
+  padding: 24px 20px;
+  margin-right: 24px;
+  border-right: 1px solid #e5e7eb;
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+
+/* Стало — работает в RTL без изменений */
+```
+
+### Задача 4: Replaced elements
+Создай галерею с aspect-ratio:
+- Контейнер: grid 3 колонки, gap 16px
+- Картинки: заполняют ячейку, object-fit: cover
+- При hover: scale(1.05) без влияния на layout
+- Focus-visible: outline с offset
+
+---
+
+## 11. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| Нет `box-sizing: border-box` | Padding ломает ширину | Глобальный reset в начале CSS |
+| `margin: 20px 0` у соседей | Схлопывается в 20px, не 40px | `flow-root` на родителе или `* + * { margin-top }` |
+| `margin: auto` не работает | Элемент inline или нет width | `display: block` + `max-inline-size` |
+| `outline: none` без замены | Недоступно для клавиатуры | `box-shadow` или оставить outline |
+| `width: 100%` на replaced | Игнорируется без display:block | `display: block` или `inline-size` |
+| Физические свойства в RTL | Ломается в арабском/иврите | `margin-inline-start`, `padding-inline` |
+| `overflow: hidden` режет тени | box-shadow обрезается | `overflow: clip` (новый, не создаёт BFC) |
+
+---
+
+## 12. Полезные ресурсы
+
+### Спецификации
+- [CSS Box Model Level 3](https://www.w3.org/TR/css-box-3/)
+- [CSS Logical Properties](https://www.w3.org/TR/css-logical-1/)
+- [CSS Box Sizing](https://www.w3.org/TR/css-sizing-3/)
+
+### Статьи
+- [MDN: Box Model](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Box_Model/Introduction_to_the_CSS_box_model)
+- [Josh Comeau: Margin Collapse](https://www.joshwcomeau.com/css/rules-of-margin-collapse/)
+- [Andy Bell: Flow layout](https://andy-bell.co.uk/the-flow-layout/)
+
+### Инструменты
+- [Box Model Visualizer](https://codepen.io/tigt/pen/mdXeYZ)
+- [CSS Layout Debugger](https://chrome.google.com/webstore/detail/css-layout-debugger/)
+
+---
+
+## 13. Ключевые выводы
+
+1. **`box-sizing: border-box` глобально** — стандарт де-факто, делает layout предсказуемым.
+2. **Margin collapse — фича, не баг**. Контролируй через `flow-root`, padding, border, overflow.
+3. **Логические свойства (inline/block, start/end)** — пиши сразу, работает везде.
+4. **Outline для фокуса, border для декора** — outline не ломает layout.
+5. **Replaced elements (img, video)** имеют свои правила — используй `object-fit` и `aspect-ratio`.
+6. **DevTools Computed → Box Model** — источник истины при отладке.
+
+---
+
+*Следующий урок: 05_Layout_Basics.txt — Display, Flow Layout, Positioning basics, Stacking Context*

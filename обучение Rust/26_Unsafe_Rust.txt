@@ -1,0 +1,667 @@
+# Урок 26: Unsafe Rust
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Понимать, что такое `unsafe` и когда его использовать
+- Работать с пятью видами unsafe операций
+- Писать безопасные абстракции поверх unsafe кода
+- Использовать `unsafe` блоки, функции и трейты
+- Понимать UB (Undefined Behavior) и как его избегать
+- Работать с FFI (Foreign Function Interface)
+- Использовать `std::ptr` для низкоуровневой работы с указателями
+- Писать `unsafe` trait implementations (`Send`, `Sync`)
+
+---
+
+## 1. Что такое `unsafe`?
+
+### Два режима Rust
+```rust
+// Safe Rust — проверяется компилятором
+// - Ограничения владения и заимствования
+// - Проверка границ массивов
+// - Нет null pointer dereference
+// - Нет data races
+
+// Unsafe Rust — программист отвечает за безопасность
+// - Разрешает 5 операций, которые компилятор не может проверить
+```
+
+### 5 вещей, которые можно делать в `unsafe`:
+1. **Разыменовать raw pointer** (`*const T`, `*mut T`)
+2. **Вызвать unsafe функцию** (включая FFI)
+3. **Доступ к mutable static переменной**
+4. **Реализовать unsafe trait** (`Send`, `Sync`)
+5. **Доступ к полям `union`**
+
+---
+
+## 2. `unsafe` блоки и функции
+
+### `unsafe` блок
+```rust
+let mut x = 42;
+let raw = &mut x as *mut i32;
+
+unsafe {
+    *raw = 10; // Разыменование raw pointer
+    println!("{}", *raw);
+}
+```
+
+### `unsafe fn`
+```rust
+unsafe fn dangerous() {
+    // Внутри unsafe fn можно вызывать другие unsafe операции без блока
+    let ptr = std::ptr::null_mut::<i32>();
+    *ptr = 42; // OK внутри unsafe fn
+}
+
+// Вызов unsafe fn требует unsafe блока
+unsafe { dangerous(); }
+
+// Safe wrapper над unsafe fn
+fn safe_wrapper() {
+    unsafe { dangerous(); } // Инкапсуляция unsafe
+}
+```
+
+### `unsafe trait` и `unsafe impl`
+```rust
+// Marker trait, требующий unsafe impl
+unsafe trait MyUnsafeTrait {}
+
+struct MyType;
+
+unsafe impl MyUnsafeTrait for MyType {} // Гарантируем контракт вручную
+```
+
+---
+
+## 3. Raw Pointers детально
+
+### Создание
+```rust
+let x = 42;
+
+// Из ссылок
+let raw_const: *const i32 = &x as *const i32;
+let raw_mut: *mut i32 = &mut x as *mut i32;
+
+// Из Box
+let boxed = Box::new(42);
+let raw: *mut i32 = Box::into_raw(boxed);
+
+// Null pointers
+let null: *const i32 = std::ptr::null();
+let null_mut: *mut i32 = std::ptr::null_mut();
+
+// NonNull
+use std::ptr::NonNull;
+let non_null = NonNull::new(raw); // Option<NonNull<T>>
+```
+
+### Разыменование
+```rust
+let x = 42;
+let raw = &x as *const i32;
+
+unsafe {
+    let val = *raw; // Чтение
+    println!("{}", val);
+}
+
+let mut y = 0;
+let raw_mut = &mut y as *mut i32;
+
+unsafe {
+    *raw_mut = 10; // Запись
+}
+```
+
+### Pointer arithmetic
+```rust
+let arr = [1, 2, 3, 4, 5];
+let ptr = arr.as_ptr();
+
+unsafe {
+    let second = ptr.add(1);      // ptr + 1 * size_of::<i32>()
+    let third = ptr.add(2);
+    println!("{} {}", *second, *third);
+
+    // offset — signed arithmetic
+    let back = third.offset(-1);
+    println!("{}", *back);
+}
+```
+
+### `std::ptr` функции
+```rust
+use std::ptr;
+
+// Чтение/запись без drop
+let mut x = 42;
+let ptr = &mut x as *mut i32;
+
+unsafe {
+    ptr::write(ptr, 100);        // Запись без drop старого
+    let val = ptr::read(ptr);    // Чтение без drop
+    println!("{}", val);
+}
+
+// Копирование памяти
+let src = [1, 2, 3];
+let mut dst = [0, 0, 0];
+unsafe {
+    ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 3);
+}
+
+// Копирование с перекрытием (memmove)
+let mut arr = [1, 2, 3, 4, 5];
+unsafe {
+    ptr::copy(arr.as_ptr(), arr.as_mut_ptr().add(1), 3);
+    // arr = [1, 1, 2, 3, 5]
+}
+
+// Замена значения
+let mut x = 42;
+let ptr = &mut x as *mut i32;
+unsafe {
+    let old = ptr::replace(ptr, 100); // x = 100, возвращает 42
+}
+
+// Swap
+let mut a = 1;
+let mut b = 2;
+unsafe {
+    ptr::swap(&mut a as *mut _, &mut b as *mut _);
+    // a = 2, b = 1
+}
+```
+
+---
+
+## 4. `union` — объединения
+
+### Базовое использование
+```rust
+union IntOrFloat {
+    i: i32,
+    f: f32,
+}
+
+fn main() {
+    let u = IntOrFloat { i: 42 };
+
+    unsafe {
+        println!("i: {}", u.i);
+        // println!("f: {}", u.f); // UB! Неактивное поле
+    }
+
+    // Активное поле можно менять
+    u.f = 3.14;
+    unsafe { println!("f: {}", u.f); }
+}
+```
+
+### Pattern matching на union (Rust 1.44+)
+```rust
+union IntOrFloat {
+    i: i32,
+    f: f32,
+}
+
+fn process(u: IntOrFloat) {
+    unsafe {
+        match u {
+            IntOrFloat { i: 42 } => println!("Answer!"),
+            IntOrFloat { f } => println!("Float: {}", f),
+        }
+    }
+}
+```
+
+### Union для type punning
+```rust
+union FloatBits {
+    f: f32,
+    bits: u32,
+}
+
+fn float_to_bits(f: f32) -> u32 {
+    unsafe { FloatBits { f }.bits }
+}
+
+fn bits_to_float(bits: u32) -> f32 {
+    unsafe { FloatBits { bits }.f }
+}
+```
+
+---
+
+## 5. FFI (Foreign Function Interface)
+
+### Вызов C функций
+```rust
+// extern "C" — C calling convention
+extern "C" {
+    fn abs(input: i32) -> i32;
+    fn strlen(s: *const i8) -> usize;
+}
+
+fn main() {
+    unsafe {
+        println!("abs(-3) = {}", abs(-3));
+
+        let s = std::ffi::CString::new("hello").unwrap();
+        println!("strlen = {}", strlen(s.as_ptr()));
+    }
+}
+```
+
+### Экспорт Rust функций для C
+```rust
+#[no_mangle] // Не манглить имя
+pub extern "C" fn rust_add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+// В C:
+// int rust_add(int a, int b);
+// int result = rust_add(2, 3);
+```
+
+### Структуры для FFI
+```rust
+#[repr(C)] // C layout
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+extern "C" {
+    fn distance(p1: *const Point, p2: *const Point) -> f64;
+}
+```
+
+### Коллбеки из C
+```rust
+extern "C" fn callback(x: i32) {
+    println!("Callback called with {}", x);
+}
+
+extern "C" {
+    fn register_callback(cb: extern "C" fn(i32));
+}
+
+fn main() {
+    unsafe { register_callback(callback); }
+}
+```
+
+### Строки в FFI
+```rust
+use std::ffi::{CStr, CString};
+
+// Rust -> C
+let c_string = CString::new("hello").unwrap();
+let raw_ptr = c_string.as_ptr(); // *const i8
+// Передаём в C функцию
+
+// C -> Rust
+unsafe {
+    let c_str = CStr::from_ptr(raw_ptr);
+    let rust_str = c_str.to_str().unwrap(); // &str
+}
+```
+
+---
+
+## 6. Безопасные абстракции над unsafe
+
+### Паттерн: Safe wrapper
+```rust
+use std::ptr::NonNull;
+use std::marker::PhantomData;
+
+pub struct MyBox<T> {
+    ptr: NonNull<T>,
+    _marker: PhantomData<T>,
+}
+
+impl<T> MyBox<T> {
+    pub fn new(x: T) -> Self {
+        let ptr = NonNull::new(Box::into_raw(Box::new(x)))
+            .expect("Box::into_raw never returns null");
+        MyBox { ptr, _marker: PhantomData }
+    }
+
+    pub fn as_ref(&self) -> &T {
+        unsafe { self.ptr.as_ref() }
+    }
+
+    pub fn as_mut(&mut self) -> &mut T {
+        unsafe { self.ptr.as_mut() }
+    }
+}
+
+impl<T> Drop for MyBox<T> {
+    fn drop(&mut self) {
+        unsafe { drop(Box::from_raw(self.ptr.as_ptr())); }
+    }
+}
+
+// Теперь пользователь работает с безопасным API
+fn main() {
+    let mut boxed = MyBox::new(42);
+    *boxed.as_mut() += 1;
+    println!("{}", boxed.as_ref());
+}
+```
+
+### `Pin` projection в unsafe
+```rust
+use std::pin::Pin;
+
+struct MyStruct {
+    field: i32,
+}
+
+impl MyStruct {
+    // Безопасно: field не содержит указателей на self
+    fn get_field(self: Pin<&Self>) -> &i32 {
+        // unsafe: мы гарантируем, что field не двигается
+        unsafe { &self.get_unchecked_mut().field }
+    }
+}
+```
+
+---
+
+## 7. Undefined Behavior (UB) — чего НЕЛЬЗЯ делать
+
+### Список UB в Rust
+```rust
+// 1. Разыменование null/dangling pointer
+let ptr: *const i32 = std::ptr::null();
+unsafe { *ptr; } // UB!
+
+// 2. Use after free
+let x = Box::new(42);
+let raw = Box::into_raw(x);
+drop(Box::from_raw(raw)); // Память освобождена
+unsafe { *raw; } // UB!
+
+// 3. Data race (два потока пишут в одно место без синхронизации)
+
+// 4. Нарушение aliasing rules
+let mut x = 42;
+let raw_mut = &mut x as *mut i32;
+let raw_const = &x as *const i32; // UB! *mut и *const одновременно
+
+// 5. Неинициализированная память
+let x: i32;
+println!("{}", x); // UB! (но Rust не даст скомпилировать)
+
+// 6. Out of bounds access
+let arr = [1, 2, 3];
+unsafe { *arr.as_ptr().add(10); } // UB!
+
+// 7. Invalid enum discriminant
+enum Foo { A, B }
+let invalid = std::mem::transmute::<u8, Foo>(10); // UB!
+
+// 8. Violation of reference validity
+let r: &i32 = unsafe { &*(std::ptr::null::<i32>()) }; // UB!
+
+// 9. Double free
+let x = Box::new(42);
+let raw = Box::into_raw(x);
+unsafe { drop(Box::from_raw(raw)); }
+unsafe { drop(Box::from_raw(raw)); } // UB!
+```
+
+### Miri — интерпретатор для поиска UB
+```bash
+cargo install miri
+cargo miri test
+cargo miri run
+```
+
+---
+
+## 8. `Send` и `Sync` unsafe impl
+
+### Когда нужен `unsafe impl`
+```rust
+use std::ptr::NonNull;
+
+struct MyPtr<T> {
+    ptr: NonNull<T>,
+}
+
+// MyPtr<T>: Send если T: Send
+unsafe impl<T: Send> Send for MyPtr<T> {}
+
+// MyPtr<T>: Sync если T: Sync
+unsafe impl<T: Sync> Sync for MyPtr<T> {}
+
+// НО: если T не Send/Sync, мы ВРУЧНУЮ гарантируем
+struct SpecialPtr {
+    ptr: *mut (),
+}
+
+// Мы знаем, что этот указатель используется thread-safe
+unsafe impl Send for SpecialPtr {}
+unsafe impl Sync for SpecialPtr {}
+```
+
+### Правила для `Send`/`Sync`
+| Тип | Send | Sync |
+|-----|------|------|
+| `&T` | да, если T: Sync | да, если T: Sync |
+| `&mut T` | да, если T: Send | да, если T: Send |
+| `*const T` | нет | нет |
+| `*mut T` | нет | нет |
+| `Box<T>` | да, если T: Send | да, если T: Sync |
+| `Rc<T>` | нет | нет |
+| `Arc<T>` | да, если T: Send+Sync | да, если T: Send+Sync |
+| `Mutex<T>` | да, если T: Send | да, если T: Send |
+| `RefCell<T>` | нет | нет |
+
+---
+
+## 9. Практические упражнения
+
+### Упражнение 1: Безопасный wrapper над C malloc/free
+```rust
+use std::alloc::{Layout, alloc, dealloc};
+use std::ptr::NonNull;
+
+pub struct CAllocation {
+    ptr: NonNull<u8>,
+    layout: Layout,
+}
+
+impl CAllocation {
+    pub fn new(size: usize) -> Option<Self> {
+        let layout = Layout::from_size_align(size, 8).ok()?;
+        let ptr = unsafe { alloc(layout) };
+        NonNull::new(ptr).map(|ptr| CAllocation { ptr, layout })
+    }
+
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.ptr.as_ptr()
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.layout.size()) }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.layout.size()) }
+    }
+}
+
+impl Drop for CAllocation {
+    fn drop(&mut self) {
+        unsafe { dealloc(self.ptr.as_ptr(), self.layout); }
+    }
+}
+```
+
+### Упражнение 2: Intrusive linked list с raw pointers
+```rust
+use std::ptr::NonNull;
+
+struct Node<T> {
+    value: T,
+    next: Option<NonNull<Node<T>>>,
+    prev: Option<NonNull<Node<T>>>,
+}
+
+struct LinkedList<T> {
+    head: Option<NonNull<Node<T>>>,
+    tail: Option<NonNull<Node<T>>>,
+    len: usize,
+}
+
+impl<T> LinkedList<T> {
+    pub fn new() -> Self {
+        LinkedList { head: None, tail: None, len: 0 }
+    }
+
+    pub fn push_back(&mut self, value: T) {
+        let node = Box::new(Node { value, next: None, prev: self.tail });
+        let node_ptr = NonNull::new(Box::into_raw(node)).unwrap();
+
+        unsafe {
+            if let Some(mut tail) = self.tail {
+                tail.as_mut().next = Some(node_ptr);
+                node_ptr.as_mut().prev = Some(tail);
+            } else {
+                self.head = Some(node_ptr);
+            }
+            self.tail = Some(node_ptr);
+            self.len += 1;
+        }
+    }
+
+    pub fn pop_back(&mut self) -> Option<T> {
+        self.tail.map(|mut tail_ptr| {
+            unsafe {
+                let tail = Box::from_raw(tail_ptr.as_ptr());
+                self.tail = tail.prev;
+                if let Some(mut new_tail) = self.tail {
+                    new_tail.as_mut().next = None;
+                } else {
+                    self.head = None;
+                }
+                self.len -= 1;
+                tail.value
+            }
+        })
+    }
+}
+
+impl<T> Drop for LinkedList<T> {
+    fn drop(&mut self) {
+        while self.pop_back().is_some() {}
+    }
+}
+```
+
+### Упражнение 3: FFI wrapper для простой C библиотеки
+```rust
+// C header:
+// typedef struct { double x, y; } Point;
+// double distance(Point* a, Point* b);
+// Point* point_new(double x, double y);
+// void point_free(Point* p);
+
+#[repr(C)]
+pub struct Point {
+    x: f64,
+    y: f64,
+}
+
+extern "C" {
+    fn distance(a: *const Point, b: *const Point) -> f64;
+    fn point_new(x: f64, y: f64) -> *mut Point;
+    fn point_free(p: *mut Point);
+}
+
+pub struct PointHandle {
+    ptr: *mut Point,
+}
+
+impl PointHandle {
+    pub fn new(x: f64, y: f64) -> Option<Self> {
+        let ptr = unsafe { point_new(x, y) };
+        if ptr.is_null() { None } else { Some(PointHandle { ptr }) }
+    }
+
+    pub fn distance(&self, other: &PointHandle) -> f64 {
+        unsafe { distance(self.ptr, other.ptr) }
+    }
+}
+
+impl Drop for PointHandle {
+    fn drop(&mut self) {
+        unsafe { point_free(self.ptr); }
+    }
+}
+```
+
+---
+
+## 10. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `dereference of null pointer` | `std::ptr::null()` разыменован | Проверяйте `is_null()` или используйте `NonNull` |
+| `use after free` | Память освобождена, указатель жив | `Box::from_raw` ровно один раз, `Drop` правильно |
+| `data race` | Несинхронизированный доступ из потоков | `Mutex`, `RwLock`, атомарные, или `unsafe impl Send/Sync` с гарантией |
+| `misaligned pointer` | `ptr::read` наunaligned адресе | `ptr::read_unaligned` или `repr(align)` |
+| `invalid enum discriminant` | `transmute` невалидного значения | Проверяйте входные данные |
+| `double free` | Два `Box::from_raw` на одном указателе | Отслеживайте владение, используйте `Option` |
+
+---
+
+## 11. Шпаргалка: Unsafe API
+
+| Категория | Функции/Типы |
+|-----------|--------------|
+| Raw pointers | `*const T`, `*mut T`, `NonNull<T>` |
+| Pointer ops | `ptr::read`, `ptr::write`, `ptr::copy`, `ptr::copy_nonoverlapping`, `ptr::swap`, `ptr::replace`, `ptr::addr_of!`, `ptr::addr_of_mut!` |
+| Allocation | `alloc`, `dealloc`, `Layout`, `GlobalAlloc` |
+| FFI | `extern "C"`, `#[no_mangle]`, `CString`, `CStr`, `c_int`, `c_void` |
+| Unions | `union`, pattern matching |
+| Traits | `unsafe trait`, `unsafe impl`, `Send`, `Sync` |
+
+---
+
+## 12. Полезные ресурсы
+
+- **Rustonomicon**: https://doc.rust-lang.org/nomicon/ — библия unsafe Rust
+- **Unsafe Guidelines**: https://rust-lang.github.io/unsafe-code-guidelines/
+- **Miri**: https://github.com/rust-lang/miri — интерпретатор для поиска UB
+- **FFI Guide**: https://doc.rust-lang.org/nomicon/ffi.html
+- **std::ptr**: https://doc.rust-lang.org/std/ptr/
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- **`unsafe`**: 5 разрешенных операций (raw pointers, unsafe fn, static mut, unsafe trait, union)
+- **Raw pointers**: создание, разыменование, арифметика, `std::ptr` функции
+- **Unions**: `union`, pattern matching, type punning
+- **FFI**: `extern "C"`, `#[no_mangle]`, `CString`/`CStr`, callbacks
+- **Safe abstractions**: инкапсуляция unsafe в safe API
+- **UB**: список видов UB, Miri для обнаружения
+- **`Send`/`Sync`**: `unsafe impl` для кастомных типов
+
+---
+
+**Следующий урок:** Async Internals (`27_Async_Internals.txt`)

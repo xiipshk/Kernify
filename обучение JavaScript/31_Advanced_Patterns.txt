@@ -1,0 +1,878 @@
+# Урок 31: Advanced Patterns — Архитектурные паттерны, Метапрограммирование, Компиляторы
+
+## 🎯 Цели урока
+- Освоить продвинутые архитектурные паттерны: CQRS, Event Sourcing, DDD
+- Понять метапрограммирование: Proxy, Reflect, Decorators, Symbols
+- Изучить компиляцию и трансформацию кода: Babel, SWC, TypeScript Compiler API
+- Разобраться с кодогенерацией: OpenAPI, GraphQL Codegen, tRPC
+- Научиться проектировать расширяемые системы: Plugin Architecture, Microkernels
+
+---
+
+## 1. Domain-Driven Design (DDD) в JavaScript
+
+### 1.1 Strategic Design: Bounded Contexts
+
+```typescript
+// Контексты не должны знать друг о друге напрямую
+// Коммуникация через Domain Events / Anti-Corruption Layer
+
+// Order Context
+namespace OrderContext {
+  export interface Order {
+    id: OrderId;
+    customerId: CustomerId;
+    items: OrderItem[];
+    status: OrderStatus;
+    total: Money;
+  }
+
+  export class OrderService {
+    constructor(
+      private orders: OrderRepository,
+      private eventBus: EventBus
+    ) {}
+
+    async placeOrder(cmd: PlaceOrderCommand): Promise<OrderId> {
+      const order = Order.create(cmd);
+      await this.orders.save(order);
+      await this.eventBus.publish(new OrderPlaced(order));
+      return order.id;
+    }
+  }
+}
+
+// Payment Context — свой язык (Ubiquitous Language)
+namespace PaymentContext {
+  export interface Payment {
+    id: PaymentId;
+    orderId: OrderId; // Shared kernel или переведённый ID
+    amount: Money;
+    status: PaymentStatus;
+  }
+}
+```
+
+### 1.2 Tactical Design: Aggregates, Entities, Value Objects
+
+```typescript
+// Value Object — иммутабелен, сравнивается по значению
+class Money {
+  constructor(
+    public readonly amount: number,
+    public readonly currency: Currency = 'USD'
+  ) {
+    if (amount < 0) throw new Error('Negative amount');
+    if (!Number.isInteger(amount * 100)) throw new Error('Precision > 2 decimals');
+  }
+
+  add(other: Money): Money {
+    if (this.currency !== other.currency) throw new Error('Currency mismatch');
+    return new Money(this.amount + other.amount, this.currency);
+  }
+
+  equals(other: Money): boolean {
+    return this.amount === other.amount && this.currency === other.currency;
+  }
+}
+
+// Entity — имеет идентичность, изменяется
+class OrderItem {
+  constructor(
+    public readonly id: OrderItemId,
+    public readonly productId: ProductId,
+    public quantity: number,
+    public readonly unitPrice: Money
+  ) {}
+
+  changeQuantity(qty: number) {
+    if (qty <= 0) throw new Error('Quantity must be positive');
+    this.quantity = qty;
+  }
+
+  getTotal(): Money {
+    return new Money(this.unitPrice.amount * this.quantity, this.unitPrice.currency);
+  }
+}
+
+// Aggregate Root — точка входа, гарантирует инварианты
+class Order {
+  private constructor(
+    public readonly id: OrderId,
+    public readonly customerId: CustomerId,
+    private _items: OrderItem[] = [],
+    private _status: OrderStatus = 'draft',
+    private _domainEvents: DomainEvent[] = []
+  ) {}
+
+  static create(cmd: PlaceOrderCommand): Order {
+    const order = new Order(
+      OrderId.generate(),
+      cmd.customerId,
+      cmd.items.map(i => new OrderItem(...))
+    );
+    order.addDomainEvent(new OrderCreated(order.id));
+    return order;
+  }
+
+  addItem(item: OrderItem) {
+    if (this._status !== 'draft') throw new Error('Cannot modify confirmed order');
+    this._items.push(item);
+  }
+
+  confirm() {
+    if (this._items.length === 0) throw new Error('Empty order');
+    this._status = 'confirmed';
+    this.addDomainEvent(new OrderConfirmed(this.id));
+  }
+
+  get domainEvents(): DomainEvent[] {
+    return [...this._domainEvents];
+  }
+
+  clearEvents() { this._domainEvents = []; }
+}
+```
+
+### 1.3 CQRS (Command Query Responsibility Segregation)
+
+```typescript
+// Commands — изменяют состояние
+interface Command { type: string; payload: any; metadata?: Record<string, any>; }
+
+class CommandBus {
+  private handlers = new Map<string, (cmd: Command) => Promise<void>>();
+
+  register<T extends Command>(type: string, handler: (cmd: T) => Promise<void>) {
+    this.handlers.set(type, handler as any);
+  }
+
+  async dispatch(cmd: Command) {
+    const handler = this.handlers.get(cmd.type);
+    if (!handler) throw new Error(`No handler for ${cmd.type}`);
+    await handler(cmd);
+  }
+}
+
+// Queries — только чтение, оптимизированы под чтение
+interface Query<TResult> { type: string; payload: any; }
+
+class QueryBus {
+  private handlers = new Map<string, (query: Query<any>) => Promise<any>>();
+
+  register<TResult>(type: string, handler: (q: Query<TResult>) => Promise<TResult>) {
+    this.handlers.set(type, handler);
+  }
+
+  async ask<TResult>(query: Query<TResult>): Promise<TResult> {
+    const handler = this.handlers.get(query.type);
+    if (!handler) throw new Error(`No handler for ${query.type}`);
+    return handler(query);
+  }
+}
+
+// Read Models (Projections) — денормализованные представления
+class OrderSummaryProjection {
+  constructor(private readModel: OrderSummaryReadModel) {}
+
+  @EventHandler(OrderConfirmed)
+  async onOrderConfirmed(event: OrderConfirmed) {
+    await this.readModel.upsert({
+      orderId: event.orderId,
+      customerId: event.customerId,
+      total: event.total,
+      status: 'confirmed',
+      createdAt: event.timestamp
+    });
+  }
+}
+```
+
+### 1.4 Event Sourcing
+
+```typescript
+// Event Store — append-only логи событий
+interface EventStore {
+  append(streamId: string, events: DomainEvent[], expectedVersion: number): Promise<void>;
+  getStream(streamId: string): Promise<DomainEvent[]>;
+  subscribe(streamId: string, handler: (event: DomainEvent) => void): () => void;
+}
+
+// Aggregate восстанавливается из событий
+class Order {
+  private _version = 0;
+
+  static async reconstruct(eventStore: EventStore, orderId: OrderId): Promise<Order> {
+    const events = await eventStore.getStream(`order-${orderId}`);
+    const order = new Order(orderId, ...);
+    events.forEach(e => order.apply(e));
+    return order;
+  }
+
+  private apply(event: DomainEvent) {
+    switch (event.type) {
+      case 'OrderCreated': this.customerId = event.customerId; break;
+      case 'ItemAdded': this._items.push(reconstructItem(event.item)); break;
+      case 'OrderConfirmed': this._status = 'confirmed'; break;
+    }
+    this._version++;
+  }
+
+  // Новые события накапливаются для сохранения
+  private _pendingEvents: DomainEvent[] = [];
+
+  confirm() {
+    if (this._status !== 'draft') throw new Error('Already confirmed');
+    this._status = 'confirmed';
+    this._pendingEvents.push(new OrderConfirmed(this.id, this._version + 1));
+  }
+
+  get pendingEvents() { return this._pendingEvents; }
+  markEventsCommitted() { this._pendingEvents = []; }
+}
+```
+
+---
+
+## 2. Метапрограммирование
+
+### 2.1 Proxy — перехват операций
+
+```typescript
+// Реактивность (как в Vue 3)
+function reactive<T extends object>(target: T): T {
+  const handlers: ProxyHandler<T> = {
+    get(target, prop, receiver) {
+      track(target, prop); // Dependency tracking
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'object' && value !== null ? reactive(value) : value;
+    },
+    set(target, prop, value, receiver) {
+      const oldValue = target[prop];
+      const result = Reflect.set(target, prop, value, receiver);
+      if (oldValue !== value) trigger(target, prop); // Notify subscribers
+      return result;
+    },
+    deleteProperty(target, prop) {
+      const had = prop in target;
+      const result = Reflect.deleteProperty(target, prop);
+      if (had) trigger(target, prop);
+      return result;
+    },
+    ownKeys(target) {
+      track(target, Symbol.iterator);
+      return Reflect.ownKeys(target);
+    }
+  };
+  return new Proxy(target, handlers);
+}
+
+// Валидация через Proxy
+function validated<T extends object>(target: T, schema: Record<string, (v: any) => boolean>): T {
+  return new Proxy(target, {
+    set(obj, prop, value) {
+      const validator = schema[prop as string];
+      if (validator && !validator(value)) {
+        throw new Error(`Invalid value for ${String(prop)}: ${value}`);
+      }
+      return Reflect.set(obj, prop, value);
+    }
+  });
+}
+
+const user = validated({ age: 25, email: 'a@b.c' }, {
+  age: v => Number.isInteger(v) && v >= 0 && v <= 150,
+  email: v => /^[^@]+@[^@]+\.[^@]+$/.test(v)
+});
+user.age = 30; // OK
+user.age = -5; // Error!
+```
+
+### 2.2 Reflect — низкоуровневые операции
+
+```typescript
+// Reflect — безопасные аналоги операторов
+Reflect.get(obj, 'prop', receiver);        // obj[prop]
+Reflect.set(obj, 'prop', value, receiver); // obj[prop] = value
+Reflect.has(obj, 'prop');                  // 'prop' in obj
+Reflect.deleteProperty(obj, 'prop');       // delete obj.prop
+Reflect.construct(Class, args, newTarget); // new Class(...args)
+Reflect.apply(fn, thisArg, args);          // fn.apply(thisArg, args)
+Reflect.defineProperty(obj, prop, desc);   // Object.defineProperty
+Reflect.getOwnPropertyDescriptor(obj, prop);
+Reflect.ownKeys(obj);                      // Object.getOwnPropertyNames + Symbols
+Reflect.preventExtensions(obj);            // Object.preventExtensions
+Reflect.isExtensible(obj);                 // Object.isExtensible
+
+// Пример: Generic Wrapper
+function traceMethodCalls<T>(obj: T): T {
+  return new Proxy(obj, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === 'function') {
+        return function(...args: any[]) {
+          console.log(`→ ${String(prop)}(${args.join(', ')})`);
+          const result = Reflect.apply(value, target, args);
+          console.log(`← ${String(prop)} =>`, result);
+          return result;
+        };
+      }
+      return value;
+    }
+  });
+}
+```
+
+### 2.3 Decorators (Stage 3 / TypeScript)
+
+```typescript
+// Class decorator
+function sealed(constructor: Function) {
+  Object.seal(constructor.prototype);
+  Object.seal(constructor);
+}
+
+@sealed
+class UserService {}
+
+// Method decorator
+function logged(target: Object, key: string | Symbol, descriptor: PropertyDescriptor) {
+  const original = descriptor.value;
+  descriptor.value = function(...args: any[]) {
+    console.log(`Calling ${String(key)} with`, args);
+    return original.apply(this, args);
+  };
+}
+
+class Calculator {
+  @logged
+  add(a: number, b: number) { return a + b; }
+}
+
+// Property decorator (TC39 Stage 3 — другой синтаксис)
+function range(min: number, max: number) {
+  return function(target: Object, propertyKey: string) {
+    let value: number;
+    Object.defineProperty(target, propertyKey, {
+      get() { return value; },
+      set(v: number) {
+        if (v < min || v > max) throw new Error(`Value ${v} not in [${min}, ${max}]`);
+        value = v;
+      }
+    });
+  };
+}
+
+class Thermostat {
+  @range(0, 100)
+  celsius: number = 20;
+}
+
+// Parameter decorator
+function validate(schema: any) {
+  return function(target: Object, key: string, parameterIndex: number) {
+    // Сохраняем метаданные для runtime проверки
+  };
+}
+
+function createUser(@validate(userSchema) userData: UserData) {}
+```
+
+### 2.4 Symbols — уникальные ключи и well-known symbols
+
+```typescript
+// Приватные "символьные" свойства
+const PRIVATE = Symbol('private');
+const METADATA = Symbol('metadata');
+
+class SecureStore {
+  [PRIVATE] = new Map();
+
+  set(key: string, value: any) { this[PRIVATE].set(key, value); }
+  get(key: string) { return this[PRIVATE].get(key); }
+}
+
+// Well-known Symbols
+class MyArray extends Array {
+  // Переопределение Symbol.iterator
+  *[Symbol.iterator]() {
+    for (let i = this.length - 1; i >= 0; i--) yield this[i];
+  }
+
+  // Symbol.species — конструктор для производных методов (map, filter...)
+  static get [Symbol.species]() { return Array; }
+
+  // Symbol.toStringTag — Object.prototype.toString
+  get [Symbol.toStringTag]() { return 'MyArray'; }
+
+  // Symbol.hasInstance — instanceof
+  static [Symbol.hasInstance](instance: any) {
+    return Array.isArray(instance) && instance.every(Number.isInteger);
+  }
+}
+
+const arr = new MyArray(1, 2, 3);
+[...arr]; // [3, 2, 1]
+arr.map(x => x * 2) instanceof MyArray; // false — вернёт обычный Array!
+Object.prototype.toString.call(arr); // "[object MyArray]"
+[1,2,3] instanceof MyArray; // true!
+```
+
+---
+
+## 3. Компиляция и трансформация кода
+
+### 3.1 Babel Plugin Development
+
+```javascript
+// babel-plugin-auto-bind.js
+// Автоматически биндит методы класса в конструкторе
+
+export default function ({ types: t }) {
+  return {
+    visitor: {
+      ClassMethod(path) {
+        if (path.node.kind !== 'method') return;
+        if (path.node.static) return;
+        if (path.node.decorators?.some(d => t.isIdentifier(d.expression, { name: 'nobind' }))) return;
+
+        const className = path.findParent(p => p.isClassDeclaration())?.node.id?.name;
+        if (!className) return;
+
+        // Находим или создаём конструктор
+        let constructor = path.getSibling(path.key).get('body').get('body').find(
+          p => p.isClassMethod({ kind: 'constructor' })
+        );
+
+        if (!constructor) {
+          // Создаём конструктор
+          constructor = t.classMethod('constructor', t.identifier('constructor'), [], t.blockStatement([]));
+          path.getSibling(path.key).get('body').unshiftContainer('body', constructor);
+        }
+
+        // Добавляем this.method = this.method.bind(this)
+        const bindStmt = t.expressionStatement(
+          t.assignmentExpression(
+            '=',
+            t.memberExpression(t.thisExpression(), t.identifier(path.node.key.name)),
+            t.callExpression(
+              t.memberExpression(
+                t.memberExpression(t.thisExpression(), t.identifier(path.node.key.name)),
+                t.identifier('bind')
+              ),
+              [t.thisExpression()]
+            )
+          )
+        );
+        constructor.get('body').pushContainer('body', bindStmt);
+      }
+    }
+  };
+}
+```
+
+### 3.2 TypeScript Compiler API
+
+```typescript
+// ts-transformer.ts — кастомный трансформер для TypeScript
+import * as ts from 'typescript';
+
+function createTransformer(program: ts.Program): ts.TransformerFactory<ts.SourceFile> {
+  return (context) => (sourceFile) => {
+    const visitor: ts.Visitor = (node) => {
+      // Заменяем console.log в production на noop
+      if (ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.expression.getText() === 'console' &&
+          node.expression.name.getText() === 'log') {
+
+        if (process.env.NODE_ENV === 'production') {
+          return ts.createVoidZero();
+        }
+      }
+
+      // Автоматическое добавление __filename / __dirname
+      if (ts.isIdentifier(node) && (node.text === '__filename' || node.text === '__dirname')) {
+        return ts.createStringLiteral(sourceFile.fileName);
+      }
+
+      return ts.visitEachChild(node, visitor, context);
+    };
+    return ts.visitNode(sourceFile, visitor);
+  };
+}
+
+// Использование в программе компиляции
+const program = ts.createProgram(['src/index.ts'], {
+  target: ts.ScriptTarget.ES2022,
+  module: ts.ModuleKind.ESNext
+});
+
+const emitResult = program.emit(undefined, undefined, undefined, undefined, {
+  before: [createTransformer(program)]
+});
+```
+
+### 3.3 SWC / esbuild плагины
+
+```javascript
+// esbuild-plugin-inline-constants.js
+// Инлайнит константы из отдельного файла
+
+const plugin = {
+  name: 'inline-constants',
+  setup(build) {
+    build.onLoad({ filter: /constants\.js$/ }, async (args) => {
+      const fs = await import('fs/promises');
+      const content = await fs.readFile(args.path, 'utf-8');
+
+      // Парсим и извлекаем экспортируемые константы
+      const exports = {};
+      // Упрощённый парсинг...
+
+      return {
+        contents: `export const CONSTANTS = ${JSON.stringify(exports)};`,
+        loader: 'js'
+      };
+    });
+  }
+};
+
+require('esbuild').build({
+  entryPoints: ['app.js'],
+  bundle: true,
+  plugins: [plugin],
+  outfile: 'out.js'
+});
+```
+
+---
+
+## 4. Кодогенерация
+
+### 4.1 OpenAPI → TypeScript Client
+
+```bash
+# Генерация клиента из OpenAPI spec
+npx @openapitools/openapi-generator-cli generate \
+  -i https://api.example.com/openapi.json \
+  -g typescript-axios \
+  -o src/generated/api
+```
+
+```typescript
+// Использование сгенерированного клиента
+import { Configuration, UsersApi } from '@/generated/api';
+
+const config = new Configuration({
+  basePath: import.meta.env.VITE_API_URL,
+  accessToken: () => getAuthToken()
+});
+
+const usersApi = new UsersApi(config);
+const user = await usersApi.getUserById({ id: '123' });
+```
+
+### 4.2 GraphQL Codegen
+
+```yaml
+# codegen.yml
+schema: https://api.example.com/graphql
+documents: 'src/**/*.graphql'
+generates:
+  src/generated/graphql.ts:
+    plugins:
+      - typescript
+      - typescript-operations
+      - typescript-react-apollo
+    config:
+      withHooks: true
+      withHOC: false
+      withComponent: false
+```
+
+```graphql
+# src/queries/getUser.graphql
+query GetUser($id: ID!) {
+  user(id: $id) {
+    id
+    name
+    email
+    posts { id title }
+  }
+}
+```
+
+```typescript
+// Автоматически типизированные хуки
+import { useGetUserQuery } from '@/generated/graphql';
+
+function Profile({ userId }: { userId: string }) {
+  const { data, loading, error } = useGetUserQuery({ variables: { id: userId } });
+  // data типизирован как { user: { id: string; name: string; ... } | null }
+}
+```
+
+### 4.3 tRPC — End-to-End Typesafety
+
+```typescript
+// server/router.ts
+import { initTRPC, TRPCError } from '@trpc/server';
+import { z } from 'zod';
+
+const t = initTRPC.create();
+
+export const appRouter = t.router({
+  user: t.router({
+    getById: t.procedure
+      .input(z.object({ id: z.string().uuid() }))
+      .query(async ({ input }) => {
+        const user = await db.user.findUnique({ where: { id: input.id } });
+        if (!user) throw new TRPCError({ code: 'NOT_FOUND' });
+        return user;
+      }),
+    create: t.procedure
+      .input(z.object({ name: z.string().min(1), email: z.string().email() }))
+      .mutation(async ({ input }) => {
+        return db.user.create({ data: input });
+      })
+  })
+});
+
+export type AppRouter = typeof appRouter;
+```
+
+```typescript
+// client — полностью типизированный!
+import { createTRPCReact } from '@trpc/react-query';
+import type { AppRouter } from '@/server/router';
+
+const trpc = createTRPCReact<AppRouter>();
+
+function UserProfile({ userId }: { userId: string }) {
+  // Полная типизация входных и выходных данных
+  const { data: user } = trpc.user.getById.useQuery({ id: userId });
+
+  const mutation = trpc.user.create.useMutation();
+  const handleCreate = () => mutation.mutate({ name: 'Alex', email: 'a@b.c' });
+}
+```
+
+---
+
+## 5. Plugin Architecture / Microkernel
+
+### 5.1 Extensible Core
+
+```typescript
+// core/types.ts
+interface Plugin {
+  name: string;
+  version: string;
+  init(core: CoreAPI): Promise<void> | void;
+  dispose?(): Promise<void> | void;
+}
+
+interface CoreAPI {
+  registerCommand(name: string, handler: CommandHandler): void;
+  registerQuery(name: string, handler: QueryHandler): void;
+  registerExtensionPoint(name: string, extension: any): void;
+  getExtensionPoint(name: string): any;
+  eventBus: EventBus;
+  config: Config;
+  logger: Logger;
+}
+
+// core/kernel.ts
+class Kernel {
+  private plugins = new Map<string, Plugin>();
+  private api: CoreAPI;
+
+  constructor(private config: Config) {
+    this.api = this.createAPI();
+  }
+
+  async loadPlugin(plugin: Plugin) {
+    if (this.plugins.has(plugin.name)) {
+      throw new Error(`Plugin ${plugin.name} already loaded`);
+    }
+    await plugin.init(this.api);
+    this.plugins.set(plugin.name, plugin);
+  }
+
+  async unloadPlugin(name: string) {
+    const plugin = this.plugins.get(name);
+    if (!plugin) return;
+    await plugin.dispose?.();
+    this.plugins.delete(name);
+  }
+
+  async start() {
+    // Загрузка встроенных плагинов
+    await this.loadPlugin(new AuthPlugin());
+    await this.loadPlugin(new StoragePlugin());
+    // Пользовательские плагины из конфига
+    for (const pluginSpec of this.config.plugins) {
+      const plugin = await import(pluginSpec.path);
+      await this.loadPlugin(plugin.default);
+    }
+  }
+}
+```
+
+### 5.2 Пример плагина
+
+```typescript
+// plugins/analytics-plugin.ts
+export default {
+  name: 'analytics',
+  version: '1.0.0',
+
+  async init(core) {
+    // Регистрируем команду
+    core.registerCommand('trackEvent', async ({ event, properties }) => {
+      await fetch('https://analytics.example.com/track', {
+        method: 'POST',
+        body: JSON.stringify({ event, properties, timestamp: Date.now() })
+      });
+    });
+
+    // Подписываемся на события ядра
+    core.eventBus.on('user-action', (data) => {
+      core.executeCommand('trackEvent', {
+        event: 'user_action',
+        properties: data
+      });
+    });
+
+    // Расширяем функциональность
+    core.registerExtensionPoint('analytics', {
+      identify(userId: string, traits: object) {
+        // ...
+      }
+    });
+  }
+} satisfies Plugin;
+```
+
+---
+
+## 6. Advanced TypeScript Patterns
+
+### 6.1 Template Literal Types
+
+```typescript
+// Генерация типов из строк
+type EventName<T extends string> = `on${Capitalize<T>}`;
+// "click" → "onClick"
+
+type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+type Endpoint = `/api/${string}`;
+type Route = `${HTTPMethod} ${Endpoint}`;
+// "GET /api/users"
+
+// Рекурсивные типы для глубоких путей
+type Path<T> = T extends object
+  ? { [K in keyof T]: K extends string
+      ? T[K] extends object
+        ? `${K}.${Path<T[K]>}`
+        : K
+      : never }[keyof T]
+  : never;
+
+type UserPaths = Path<{ user: { profile: { name: string } } }>;
+// "user.profile.name"
+```
+
+### 6.2 Conditional Types & Infer
+
+```typescript
+// Извлечение типа из Promise
+type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
+
+// Тип возвращаемого значения функции
+type ReturnType<T> = T extends (...args: any[]) => infer R ? R : never;
+
+// Параметры функции
+type Parameters<T> = T extends (...args: infer P) => any ? P : never;
+
+// Constructor parameters
+type ConstructorParameters<T> = T extends new (...args: infer P) => any ? P : never;
+
+// Instance type
+type InstanceType<T> = T extends new (...args: any[]) => infer R ? R : never;
+
+// Distributive conditional types
+type ToArray<T> = T extends any ? T[] : never;
+type Result = ToArray<string | number>; // string[] | number[]
+
+// Exclude/Extract
+type NonFunctionKeys<T> = { [K in keyof T]: T[K] extends Function ? never : K }[keyof T];
+```
+
+### 6.3 Branded Types (Nominal Typing)
+
+```typescript
+type Brand<T, B> = T & { __brand: B };
+
+type UserId = Brand<string, 'UserId'>;
+type PostId = Brand<string, 'PostId'>;
+
+function createUserId(id: string): UserId { return id as UserId; }
+function createPostId(id: string): PostId { return id as PostId; }
+
+function getUser(id: UserId) { /* ... */ }
+
+// Ошибка: PostId не совместим с UserId
+getUser(createPostId('123')); // Type error!
+```
+
+---
+
+## 7. Практика
+
+1. **DDD**: Реализуйте Order Aggregate с Event Sourcing для мини-магазина
+2. **Proxy**: Напишите реактивную библиотеку (mini-Vue reactivity) на Proxy
+3. **Decorators**: Сделайте `@memoize`, `@debounce`, `@retry` декораторы
+4. **Babel Plugin**: Плагин, удаляющий `console.log` и `debugger` в production
+5. **Codegen**: Настройте OpenAPI → TS client + GraphQL Codegen в проекте
+6. **Plugin System**: Создайте ядро приложения с динамической загрузкой плагинов
+7. **Types**: Используйте Branded Types для ID сущностей в проекте урока 21
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Решение |
+|--------|---------|
+| Proxy ломает `===` проверки | Используйте `WeakMap` для хранения оригиналов |
+| Декораторы не работают без `experimentalDecorators` | Включите в tsconfig или используйте Stage 3 синтаксис |
+| Event Sourcing — сложность snapshot'ов | Делайте снапшоты каждые N событий |
+| CQRS — eventual consistency | Чётко документируйте задержки, используйте Optimistic UI |
+| Кодогенерация — устаревшие типы | Регенерируйте в CI при изменении схемы |
+
+---
+
+## Контрольные вопросы
+
+1. В чём разница между Entity и Value Object в DDD?
+2. Зачем нужен Aggregate Root и какие инварианты он защищает?
+3. Как CQRS разделяет чтение и запись?
+4. Что такое Event Sourcing и чем отличается от обычного CRUD?
+5. Чем `Proxy` лучше `Object.defineProperty` для реактивности?
+6. Зачем нужен `Reflect` если есть прямые операции?
+7. В чём разница между TS декораторами и TC39 Stage 3 декораторами?
+8. Как работает `infer` в Conditional Types?
+
+---
+
+## Дополнительное чтение
+
+- [Domain-Driven Design](https://martinfowler.com/bliki/DomainDrivenDesign.html) — Eric Evans, Martin Fowler
+- [CQRS](https://martinfowler.com/bliki/CQRS.html) — Greg Young, Martin Fowler
+- [Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html)
+- [TypeScript Handbook: Advanced Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html)
+- [Babel Plugin Handbook](https://github.com/jamiebuilds/babel-handbook)
+- [TypeScript Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API)
+- [tRPC Documentation](https://trpc.io/docs)
+- [GraphQL Code Generator](https://the-guild.dev/graphql/codegen)

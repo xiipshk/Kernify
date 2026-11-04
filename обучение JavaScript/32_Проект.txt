@@ -1,0 +1,722 @@
+# Урок 32: Продвинутый проект — «Real-time Collaborative Platform»
+
+## 🎯 Цели проекта
+- Построить production-ready платформу для совместной работы в реальном времени
+- Применить все паттерны из уроков 25-31: DDD, CQRS, Event Sourcing, Plugin Architecture, Codegen
+- Реализовать: Operational Transformation / CRDT, WebSocket масштабирование, микросервисы
+- Получить проект уровня Senior/Staff Engineer для портфолио
+
+---
+
+## Требования
+
+### Функционал (MVP)
+1. **Документы**: Rich-text редактор (TipTap/ProseMirror/Slate) с коллаборативным редактированием
+2. **Real-time**: Несколько пользователей одновременно редактируют, видят курсоры друг друга
+3. **История**: Time-travel (undo/redo на уровне документа), версионирование
+4. **Комментарии**: Потоки комментариев, упоминания (@user), разрешение
+5. **Права доступа**: Owner/Editor/Commenter/Viewer, приглашения по ссылке
+6. **Офлайн**: Полная работа офлайн, синхронизация при онлайне (CRDT)
+7. **Экспорт**: PDF, Markdown, HTML, DOCX
+
+### Архитектурные требования
+- **Monorepo** (Nx / Turborepo): apps/api, apps/web, packages/shared, packages/editor, packages/sync
+- **Backend**: Node.js (Fastify/NestJS) + TypeScript, PostgreSQL + Redis
+- **Real-time**: WebSocket (ws / Socket.io) + Horizontal scaling (Redis Pub/Sub)
+- **Sync Engine**: Yjs (CRDT) или Automerge / custom OT
+- **Database**: Event Store (EventStoreDB) или PostgreSQL + event sourcing
+- **Auth**: JWT + Refresh tokens, OAuth2 (Google/GitHub), 2FA (TOTP)
+- **API**: tRPC (end-to-end types) + REST для вебхуков
+- **Frontend**: React 18 + Vite, TanStack Query, Zustand/Jotai, TailwindCSS
+- **Testing**: Vitest (unit), Playwright (e2e), Contract tests (Pact)
+- **Observability**: OpenTelemetry, Prometheus, Grafana, Sentry
+- **CI/CD**: GitHub Actions → Docker → Kubernetes (kind локально, GKE/EKS в проде)
+
+---
+
+## Архитектура (High Level)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CLIENTS (Web, Mobile)                        │
+└─────────────────────────────────┬───────────────────────────────────┘
+                                  │ HTTPS / WSS
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      API GATEWAY (Kong / NGINX)                      │
+│                    Rate Limit, Auth, Routing, SSL                    │
+└─────────────────────────────────┬───────────────────────────────────┘
+                                  │
+          ┌───────────────────────┼───────────────────────┐
+          ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  AUTH SERVICE   │    │  DOCUMENT SVC   │    │  SYNC SERVICE   │
+│  (Identity)     │    │  (CRUD, Meta)   │    │  (WebSocket,    │
+│                 │    │                 │    │   CRDT/OT)      │
+└────────┬────────┘    └────────┬────────┘    └────────┬────────┘
+         │                      │                      │
+         ▼                      ▼                      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    EVENT BUS (Redis Streams / Kafka)                 │
+└─────────────────────────────────┬───────────────────────────────────┘
+                                  │
+          ┌───────────────────────┼───────────────────────┐
+          ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  PROJECTIONS    │    │  NOTIFICATIONS  │    │  ANALYTICS      │
+│  (Read Models)  │    │  (Email, Push)  │    │  (ClickHouse)   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+---
+
+## Ключевые компоненты
+
+### 1. Sync Engine (packages/sync) — Yjs + WebRTC/WebSocket
+
+```typescript
+// packages/sync/src/yjs-provider.ts
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+import { IndexeddbPersistence } from 'y-indexeddb';
+
+export class CollaborativeDoc {
+  private doc: Y.Doc;
+  private provider: WebsocketProvider;
+  private persistence: IndexeddbPersistence;
+  private awareness: any;
+
+  constructor(
+    private docId: string,
+    private user: { id: string; name: string; color: string },
+    private wsUrl: string
+  ) {
+    this.doc = new Y.Doc({ guid: docId });
+    this.setupPersistence();
+    this.setupProvider();
+    this.setupAwareness();
+  }
+
+  private setupPersistence() {
+    this.persistence = new IndexeddbPersistence(this.docId, this.doc);
+    this.persistence.on('synced', () => {
+      console.log('Local DB synced');
+    });
+  }
+
+  private setupProvider() {
+    this.provider = new WebsocketProvider(this.wsUrl, this.docId, this.doc, {
+      connect: true,
+      awareness: this.awareness
+    });
+
+    this.provider.on('status', (event: { status: string }) => {
+      console.log('Connection status:', event.status);
+    });
+
+    this.provider.on('sync', (isSynced: boolean) => {
+      if (isSynced) this.flushPendingOperations();
+    });
+  }
+
+  private setupAwareness() {
+    this.awareness = this.provider.awareness;
+    this.awareness.setLocalStateField('user', {
+      id: this.user.id,
+      name: this.user.name,
+      color: this.user.color,
+      cursor: null,
+      selection: null
+    });
+
+    this.awareness.on('change', () => {
+      // Обновление UI курсоров других пользователей
+      const states = Array.from(this.awareness.getStates().values());
+      this.onAwarenessChange?.(states.filter(s => s.user?.id !== this.user.id));
+    });
+  }
+
+  // Rich-text binding (TipTap/ProseMirror)
+  bindToEditor(editor: any) {
+    const yText = this.doc.getText('content');
+    // y-prosemirror или y-tiptap binding
+  }
+
+  // Офлайн очередь операций
+  private pendingOps: Uint8Array[] = [];
+
+  applyLocalUpdate(update: Uint8Array) {
+    if (this.provider.wsconnected) {
+      this.provider.send(update);
+    } else {
+      this.pendingOps.push(update);
+    }
+  }
+
+  private flushPendingOperations() {
+    this.pendingOps.forEach(op => this.provider.send(op));
+    this.pendingOps = [];
+  }
+
+  // Снимок для экспорта/истории
+  getSnapshot(): Uint8Array {
+    return Y.encodeStateAsUpdate(this.doc);
+  }
+
+  destroy() {
+    this.provider.destroy();
+    this.persistence.destroy();
+    this.doc.destroy();
+  }
+
+  onAwarenessChange?: (users: any[]) => void;
+}
+```
+
+### 2. Document Service (apps/api/src/modules/documents)
+
+```typescript
+// apps/api/src/modules/documents/document.aggregate.ts
+import { AggregateRoot, EventHandler } from '@nestjs/cqrs';
+
+export class Document extends AggregateRoot {
+  private constructor(
+    public readonly id: DocumentId,
+    private _title: string,
+    private _ownerId: UserId,
+    private _collaborators: Collaborator[],
+    private _yjsState: Uint8Array,
+    private _version: number,
+    private _status: DocumentStatus
+  ) {
+    super();
+  }
+
+  static create(cmd: CreateDocumentCommand): Document {
+    const doc = new Document(
+      DocumentId.generate(),
+      cmd.title,
+      cmd.ownerId,
+      [{ userId: cmd.ownerId, role: 'owner' }],
+      new Uint8Array(),
+      0,
+      'active'
+    );
+    doc.apply(new DocumentCreated(doc.id, cmd.title, cmd.ownerId));
+    return doc;
+  }
+
+  updateTitle(title: string, userId: UserId) {
+    this.assertCanEdit(userId);
+    if (this._title !== title) {
+      this._title = title;
+      this.apply(new DocumentTitleChanged(this.id, title, userId));
+    }
+  }
+
+  addCollaborator(userId: UserId, role: CollaboratorRole, actorId: UserId) {
+    this.assertOwner(actorId);
+    if (!this._collaborators.some(c => c.userId.equals(userId))) {
+      this._collaborators.push({ userId, role });
+      this.apply(new CollaboratorAdded(this.id, userId, role));
+    }
+  }
+
+  updateYjsState(state: Uint8Array, version: number) {
+    if (version !== this._version) {
+      throw new ConcurrencyError(`Expected version ${this._version}, got ${version}`);
+    }
+    this._yjsState = state;
+    this._version++;
+    this.apply(new DocumentSynced(this.id, state, this._version));
+  }
+
+  // Event Handlers для проекций
+  @EventHandler(DocumentCreated)
+  onCreated(event: DocumentCreated) { /* read model update */ }
+
+  @EventHandler(DocumentSynced)
+  onSynced(event: DocumentSynced) { /* read model update */ }
+}
+```
+
+### 3. Event Sourcing Infrastructure
+
+```typescript
+// packages/shared/src/event-store/event-store.ts
+import { EventStoreDBClient, jsonEvent, START } from '@eventstore/db-client';
+
+export class EventStore {
+  constructor(private client: EventStoreDBClient) {}
+
+  async appendToStream(
+    streamId: string,
+    events: DomainEvent[],
+    expectedRevision: number | typeof START = START
+  ) {
+    const eventData = events.map(e => jsonEvent({
+      type: e.constructor.name,
+      data: e.serialize(),
+      metadata: { causationId: e.causationId, correlationId: e.correlationId }
+    }));
+    await this.client.appendToStream(streamId, eventData, { expectedRevision });
+  }
+
+  async readStream(streamId: string) {
+    const events = [];
+    for await (const event of this.client.readStream(streamId, { fromRevision: START })) {
+      events.push(this.deserialize(event.event));
+    }
+    return events;
+  }
+
+  async subscribeToAll(handler: (event: DomainEvent) => Promise<void>) {
+    const subscription = this.client.subscribeToAll({
+      fromPosition: { commitPosition: 0n, preparePosition: 0n },
+      resolveLinkTos: true
+    });
+    for await (const event of subscription) {
+      await handler(this.deserialize(event.event));
+    }
+  }
+}
+```
+
+### 4. tRPC Router с типами
+
+```typescript
+// apps/api/src/trpc/router.ts
+import { initTRPC, TRPCError } from '@trpc/server';
+import { z } from 'zod';
+import { DocumentService } from '../modules/documents/document.service';
+import { SyncService } from '../modules/sync/sync.service';
+
+const t = initTRPC.context<{ userId: string }>().create();
+
+export const appRouter = t.router({
+  documents: t.router({
+    list: t.procedure
+      .input(z.object({ cursor: z.string().optional(), limit: z.number().default(20) }))
+      .query(async ({ ctx, input }) => {
+        return documentService.listForUser(ctx.userId, input);
+      }),
+
+    create: t.procedure
+      .input(z.object({ title: z.string().min(1).max(200) }))
+      .mutation(async ({ ctx, input }) => {
+        return documentService.create(ctx.userId, input.title);
+      }),
+
+    getById: t.procedure
+      .input(z.object({ id: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        const doc = await documentService.getById(input.id);
+        if (!doc.canAccess(ctx.userId)) throw new TRPCError({ code: 'FORBIDDEN' });
+        return doc;
+      }),
+
+    updateTitle: t.procedure
+      .input(z.object({ id: z.string().uuid(), title: z.string().min(1).max(200) }))
+      .mutation(async ({ ctx, input }) => {
+        await documentService.updateTitle(input.id, input.title, ctx.userId);
+      }),
+
+    invite: t.procedure
+      .input(z.object({
+        id: z.string().uuid(),
+        email: z.string().email(),
+        role: z.enum(['editor', 'commenter', 'viewer'])
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await documentService.invite(input.id, input.email, input.role, ctx.userId);
+      })
+  }),
+
+  sync: t.router({
+    getSnapshot: t.procedure
+      .input(z.object({ docId: z.string().uuid() }))
+      .query(async ({ input }) => {
+        return syncService.getSnapshot(input.docId);
+      }),
+
+    // WebSocket connection info
+    getConnectionInfo: t.procedure
+      .input(z.object({ docId: z.string().uuid() }))
+      .query(async ({ ctx, input }) => {
+        return syncService.getConnectionInfo(input.docId, ctx.userId);
+      })
+  })
+});
+
+export type AppRouter = typeof appRouter;
+```
+
+### 5. Frontend Architecture (apps/web)
+
+```typescript
+// apps/web/src/features/documents/DocumentEditor.tsx
+import { useEditor, EditorContent } from '@tiptap/react';
+import Collaboration from '@tiptap/extension-collaboration';
+import CollaborationCursors from '@tiptap/extension-collaboration-cursors';
+import { useDocument } from '@/hooks/useDocument';
+import { useSync } from '@/hooks/useSync';
+
+export function DocumentEditor({ docId }: { docId: string }) {
+  const { document, user } = useDocument(docId);
+  const { provider, awareness } = useSync(docId, user);
+
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      Collaboration.configure({ document: provider.doc }),
+      CollaborationCursors.configure({ provider: provider.awareness })
+    ],
+    content: document.content,
+    onUpdate: ({ editor }) => {
+      // Автосохранение с дебаунсом
+      debouncedSave(editor.getJSON());
+    },
+    editorProps: {
+      attributes: { class: 'prose prose-lg max-w-none focus:outline-none' }
+    }
+  });
+
+  // Рендер курсоров других пользователей
+  const cursors = useAwarenessCursors(awareness);
+
+  return (
+    <div className="flex h-screen">
+      <aside className="w-64 border-r p-4">
+        <CollaboratorsList users={cursors} currentUser={user} />
+        <CommentsPanel docId={docId} />
+      </aside>
+      <main className="flex-1 p-8 overflow-auto">
+        <EditorContent editor={editor} />
+        {cursors.map(cursor => (
+          <RemoteCursor key={cursor.user.id} cursor={cursor} />
+        ))}
+      </main>
+    </div>
+  );
+}
+```
+
+### 6. Kubernetes Deployment
+
+```yaml
+# k8s/base/api-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: collab-platform
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/org/collab-api:latest
+          ports:
+            - containerPort: 3000
+              name: http
+            - containerPort: 9090
+              name: grpc
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: database-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: redis-url
+            - name: EVENTSTORE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: eventstore-url
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+# k8s/base/sync-deployment.yaml (WebSocket service)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sync-service
+  namespace: collab-platform
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: sync-service
+  template:
+    metadata:
+      labels:
+        app: sync-service
+    spec:
+      containers:
+        - name: sync
+          image: ghcr.io/org/collab-sync:latest
+          ports:
+            - containerPort: 1234
+              name: ws
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: redis-url
+            - name: YJS_PORT
+              value: "1234"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+```
+
+---
+
+## Тестирование
+
+### Contract Testing (Pact)
+```typescript
+// tests/contract/document-api.consumer.test.ts
+import { pactWith } from 'pactum';
+import { DocumentApiClient } from '@/clients/document-api';
+
+pactWith({ consumer: 'WebApp', provider: 'DocumentApi' }, provider => {
+  let client: DocumentApiClient;
+
+  beforeAll(() => {
+    client = new DocumentApiClient(provider.mockService.baseUrl);
+  });
+
+  describe('GET /documents/:id', () => {
+    it('returns document', async () => {
+      provider.addInteraction({
+        state: 'document exists',
+        uponReceiving: 'a request for document',
+        withRequest: {
+          method: 'GET',
+          path: '/documents/123',
+          headers: { Authorization: 'Bearer token' }
+        },
+        willRespondWith: {
+          status: 200,
+          body: like({
+            id: '123',
+            title: 'Test Doc',
+            content: 'Hello world',
+            version: 5
+          })
+        }
+      });
+
+      const doc = await client.getDocument('123');
+      expect(doc.title).toBe('Test Doc');
+    });
+  });
+});
+```
+
+### E2E (Playwright)
+```typescript
+// tests/e2e/collaborative-editing.spec.ts
+import { test, expect } from '@playwright/test';
+
+test('two users edit simultaneously', async ({ browser }) => {
+  const ctx1 = await browser.newContext();
+  const ctx2 = await browser.newContext();
+
+  const page1 = await ctx1.newPage();
+  const page2 = await ctx2.newPage();
+
+  // User 1 creates doc
+  await page1.goto('/login');
+  await login(page1, 'user1@test.com');
+  await page1.goto('/doc/new');
+  await page1.fill('[data-testid="title"]', 'Shared Doc');
+  await page1.click('[data-testid="create"]');
+  const docUrl = page1.url();
+
+  // Share with user 2
+  await page1.click('[data-testid="share"]');
+  await page1.fill('[data-testid="invite-email"]', 'user2@test.com');
+  await page1.click('[data-testid="send-invite"]');
+
+  // User 2 joins
+  await page2.goto('/login');
+  await login(page2, 'user2@test.com');
+  await page2.goto(docUrl);
+
+  // Both edit
+  const editor1 = page1.locator('.ProseMirror');
+  const editor2 = page2.locator('.ProseMirror');
+
+  await editor1.type('User 1 typing ');
+  await editor2.type('User 2 typing ');
+
+  // Both should see each other's text
+  await expect(editor1).toContainText('User 2 typing');
+  await expect(editor2).toContainText('User 1 typing');
+
+  // Cursors visible
+  await expect(page1.locator('[data-remote-cursor="user2"]')).toBeVisible();
+  await expect(page2.locator('[data-remote-cursor="user1"]')).toBeVisible();
+});
+```
+
+---
+
+## Observability
+
+### OpenTelemetry Instrumentation
+```typescript
+// packages/shared/src/observability/tracing.ts
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { registerInstrumentations } from '@opentelemetry/instrumentation';
+import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
+import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
+import { JaegerExporter } from '@opentelemetry/exporter-jaeger';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+
+const provider = new NodeTracerProvider();
+provider.addSpanProcessor(new BatchSpanProcessor(new JaegerExporter({
+  endpoint: process.env.JAEGER_ENDPOINT
+})));
+provider.register();
+
+registerInstrumentations({
+  instrumentations: [
+    new HttpInstrumentation(),
+    new ExpressInstrumentation(),
+    new PinoInstrumentation()
+  ]
+});
+
+// Custom spans для бизнес-операций
+import { trace, SpanStatusCode } from '@opentelemetry/api';
+
+export async function traceOperation<T>(
+  name: string,
+  fn: (span: any) => Promise<T>,
+  attributes?: Record<string, any>
+): Promise<T> {
+  return trace.getTracer('collab-platform').startActiveSpan(name, async span => {
+    try {
+      span.setAttributes(attributes || {});
+      const result = await fn(span);
+      span.setStatus({ code: SpanStatusCode.OK });
+      return result;
+    } catch (error) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+      span.recordException(error);
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
+}
+```
+
+---
+
+## Практические задания для углубления
+
+1. **CRDT Comparison**: Реализуйте тот же редактор на Automerge, сравните производительность
+2. **Conflict Resolution**: Добавьте UI для разрешения конфликтов при одновременном редактировании
+3. **Operational Transformation**: Напишите свой OT алгоритм для обучения
+4. **Offline-First**: Полная поддержка IndexedDB + Service Worker + Background Sync API
+5. **Plugin System для редактора**: Кастомные ноды, расширения, маркетплейс плагинов
+6. **AI Integration**: Автодополнение, суммаризация, перевод (LangChain / Vercel AI SDK)
+7. **Multi-region**: Geo-distributed sync с conflict-free merging
+8. **Load Testing**: k6 сценарии для 10k+ одновременных соединений
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Решение |
+|--------|---------|
+| WebSocket не переподключается | Exponential backoff + jitter, heartbeat ping/pong |
+| CRDT память растёт бесконечно | Garbage collection (Yjs: `doc.gc()`), снапшоты |
+| Race condition при сохранении | Optimistic locking (version), retry с backoff |
+| Нет горизонтального масштабирования WS | Redis Pub/Sub + sticky sessions или connection routing |
+| События теряются при рестарте | EventStoreDB persistent subscriptions, outbox pattern |
+| Тесты флакают на WebSocket | Mock WS провайдер в unit, отдельный WS сервер в e2e |
+
+---
+
+## Контрольные вопросы
+
+1. В чём разница между OT (Operational Transformation) и CRDT?
+2. Как Yjs обеспечивает eventual consistency без центрального сервера?
+3. Зачем нужен Event Sourcing в Document Service?
+4. Как горизонтально масштабировать WebSocket серверы?
+5. Что такое Awareness в Yjs и зачем он нужен?
+6. Как реализовать Time-travel (историю версий) на CRDT?
+7. В чём преимущества tRPC над REST/OpenAPI для этого проекта?
+
+---
+
+## Что дальше?
+
+- **Масштабирование**: Sharding документов, CDN для статики, Edge computing
+- **AI**: Collaborative AI (совместное промптинг), Smart suggestions
+- **Mobile**: React Native / Flutter приложения с офлайн sync
+- **Enterprise**: SSO (SAML/OIDC), Audit logs, DLP, Compliance (GDPR, SOC2)
+- **Platform**: Multi-tenancy, White-label, Marketplace, API для интеграций
+
+---
+
+## Итоговый чек-лист Senior/Staff уровня
+
+- [ ] Monorepo с правильной структурой (Nx/Turborepo)
+- [ ] DDD/CQRS/Event Sourcing в бэкенде
+- [ ] CRDT/OT для real-time синхронизации
+- [ ] Горизонтальное масштабирование WebSocket
+- [ ] End-to-end типизация (tRPC + Zod)
+- [ ] Contract testing (Pact)
+- [ ] E2E тесты критических пользовательских путей
+- [ ] Observability (Traces, Metrics, Logs)
+- [ ] CI/CD с preview окружениями
+- [ ] Kubernetes manifests (Helm/Kustomize)
+- [ ] Документация (ADR, API docs, Runbooks)
+- [ ] Security audit (OWASP, dependencies, secrets)
+- [ ] Performance budget и мониторинг
+- [ ] Disaster recovery и backup стратегия
+
+Поздравляю! Вы прошли путь от основ JavaScript до проектирования распределённых систем реального времени. Это уровень Staff/Principal Engineer. 🎓🚀

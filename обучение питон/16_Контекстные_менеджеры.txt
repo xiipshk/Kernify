@@ -1,0 +1,401 @@
+# Урок 2.5: Контекстные менеджеры — with, __enter__/__exit__, contextlib, ресурсы
+
+## Цели урока
+- Понимать протокол контекстного менеджера
+- Писать свои классы с __enter__/__exit__
+- Использовать contextlib.contextmanager
+- Работать с ExitStack, AsyncExitStack
+- Правильно управлять ресурсами (файлы, соединения, блокировки)
+
+---
+
+## 1. Зачем нужны контекстные менеджеры
+
+### Проблема: управление ресурсами
+```python
+# БЕЗ with — легко забыть закрыть
+f = open("file.txt", "w")
+f.write("данные")
+# Если здесь ошибка — файл не закроется!
+f.close()
+
+# С with — гарантированная очистка
+with open("file.txt", "w") as f:
+    f.write("данные")
+# файл закрыт автоматически, даже при исключении
+```
+
+### Что происходит под капотом
+```python
+with EXPR as VAR:
+    BLOCK
+
+# Эквивалентно:
+mgr = EXPR
+exit = type(mgr).__exit__
+value = type(mgr).__enter__(mgr)
+exc = True
+try:
+    VAR = value
+    BLOCK
+except Exception:
+    exc = False
+    if not exit(mgr, *sys.exc_info()):
+        raise
+finally:
+    if exc:
+        exit(mgr, None, None, None)
+```
+
+---
+
+## 2. Классовый контекстный менеджер
+
+### Базовый шаблон
+```python
+class ManagedResource:
+    def __init__(self, name):
+        self.name = name
+        self.handle = None
+
+    def __enter__(self):
+        print(f"Открываем {self.name}")
+        self.handle = acquire_resource(self.name)
+        return self.handle  # значение для `as`
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print(f"Закрываем {self.name}")
+        release_resource(self.handle)
+        # Возврат True — подавляет исключение
+        # Возврат False/None — пробрасывает дальше
+        return False
+
+with ManagedResource("DB") as db:
+    db.query("SELECT * FROM users")
+```
+
+### Параметры __exit__
+```python
+def __exit__(self, exc_type, exc_val, exc_tb):
+    # exc_type — класс исключения (или None)
+    # exc_val — экземпляр исключения (или None)
+    # exc_tb — traceback (или None)
+
+    if exc_type is not None:
+        print(f"Произошла ошибка: {exc_type.__name__}: {exc_val}")
+        # Можно логировать, но не подавлять
+        return False  # пробросить дальше
+    return True  # без ошибки — можно вернуть True
+```
+
+---
+
+## 3. contextlib.contextmanager — генераторный декоратор
+
+### Простой случай
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def open_file(path, mode="r"):
+    f = open(path, mode)
+    try:
+        yield f  # значение для `as`
+    finally:
+        f.close()
+
+with open_file("data.txt") as f:
+    content = f.read()
+```
+
+### С обработкой ошибок
+```python
+@contextmanager
+def transaction(db):
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+with transaction(db) as tx:
+    tx.execute("INSERT ...")
+```
+
+### Контекстный менеджер с возвратом значения
+```python
+@contextmanager
+def timer():
+    import time
+    start = time.perf_counter()
+    try:
+        yield lambda: time.perf_counter() - start  # функция для получения времени
+    finally:
+        pass
+
+with timer() as get_elapsed:
+    do_work()
+    print(f"Прошло: {get_elapsed():.3f} сек")
+```
+
+---
+
+## 4. contextlib — полезные утилиты
+
+### closing — для объектов с close()
+```python
+from contextlib import closing
+import urllib.request
+
+with closing(urllib.request.urlopen("http://example.com")) as page:
+    html = page.read()
+# page.close() вызван автоматически
+```
+
+### suppress — игнорирование исключений
+```python
+from contextlib import suppress
+import os
+
+with suppress(FileNotFoundError):
+    os.remove("temp.txt")  # ошибка игнорируется, если файл не существует
+```
+
+### redirect_stdout/stderr
+```python
+from contextlib import redirect_stdout
+import io
+
+buf = io.StringIO()
+with redirect_stdout(buf):
+    print("Это пойдёт в буфер")
+print("А это в консоль")
+print(buf.getvalue())  # "Это пойдёт в буфер\n"
+```
+
+### nullcontext — заглушка (Python 3.7+)
+```python
+from contextlib import nullcontext
+
+def process(data, logger=nullcontext()):
+    with logger as log:
+        log.info("Обработка...")  # если logger=None — ничего не делает
+```
+
+### chdir — смена директории (Python 3.11+)
+```python
+from contextlib import chdir
+
+with chdir("/tmp"):
+    # код выполняется в /tmp
+    pass
+# вернулись в исходную директорию
+```
+
+---
+
+## 5. ExitStack — динамический стек контекстов
+
+### Когда нужно: неизвестное число ресурсов
+```python
+from contextlib import ExitStack
+
+def process_files(filenames):
+    with ExitStack() as stack:
+        files = [stack.enter_context(open(f)) for f in filenames]
+        # Все файлы откроются, и все закроются при выходе
+        return [f.read() for f in files]
+```
+
+### Callback — регистрация функции очистки
+```python
+with ExitStack() as stack:
+    stack.callback(print, "Очистка 1")
+    stack.callback(print, "Очистка 2")
+    # При выходе вызовутся в обратном порядке: "Очистка 2", "Очистка 1"
+```
+
+### Перехват исключений в коллбэках
+```python
+with ExitStack() as stack:
+    @stack.callback
+    def cleanup():
+        print("Всегда выполняется")
+```
+
+---
+
+## 6. AsyncExitStack — для асинхронных контекстов (Python 3.7+)
+
+```python
+from contextlib import AsyncExitStack
+import asyncio
+
+class AsyncResource:
+    async def __aenter__(self):
+        print("Асинхронное открытие")
+        return self
+
+    async def __aexit__(self, *args):
+        print("Асинхронное закрытие")
+
+async def main():
+    async with AsyncExitStack() as stack:
+        res1 = await stack.enter_async_context(AsyncResource())
+        res2 = await stack.enter_async_context(AsyncResource())
+        # Оба закроются при выходе
+
+asyncio.run(main())
+```
+
+---
+
+## 7. Паттерны использования
+
+### Блокировки (threading)
+```python
+import threading
+
+lock = threading.Lock()
+
+# Вместо:
+lock.acquire()
+try:
+    critical_section()
+finally:
+    lock.release()
+
+# Используйте:
+with lock:
+    critical_section()  # lock.__enter__ = acquire, __exit__ = release
+```
+
+### Временная замена (mocking, monkeypatching)
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def patch(obj, attr, new_value):
+    old = getattr(obj, attr)
+    setattr(obj, attr, new_value)
+    try:
+        yield
+    finally:
+        setattr(obj, attr, old)
+
+class Config:
+    debug = False
+
+with patch(Config, "debug", True):
+    print(Config.debug)  # True
+print(Config.debug)      # False
+```
+
+### Измерение времени
+```python
+from contextlib import contextmanager
+import time
+
+@contextmanager
+def timed(label):
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        print(f"{label}: {time.perf_counter() - start:.3f}с")
+
+with timed("загрузка"):
+    data = load_data()
+```
+
+### Временное изменение окружения
+```python
+import os
+from contextlib import contextmanager
+
+@contextmanager
+def env_var(key, value):
+    old = os.environ.get(key)
+    os.environ[key] = value
+    try:
+        yield
+    finally:
+        if old is None:
+            del os.environ[key]
+        else:
+            os.environ[key] = old
+
+with env_var("DEBUG", "1"):
+    print(os.getenv("DEBUG"))  # "1"
+```
+
+---
+
+## 8. Вложенные контексты
+
+```python
+# Последовательно (Python 3.10+)
+with open("a.txt") as a, open("b.txt") as b:
+    pass
+
+# Вложено (для совместимости)
+with open("a.txt") as a:
+    with open("b.txt") as b:
+        pass
+
+# ExitStack для динамического числа
+with ExitStack() as stack:
+    files = [stack.enter_context(open(f)) for f in filenames]
+```
+
+---
+
+## 9. Асинхронные контекстные менеджеры (async with)
+
+```python
+class AsyncDB:
+    async def __aenter__(self):
+        self.conn = await connect()
+        return self.conn
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.conn.close()
+        return False
+
+async def main():
+    async with AsyncDB() as db:
+        await db.execute("SELECT 1")
+```
+
+---
+
+## 10. Типичные ошибки и лучшие практики
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `__enter__` не возвращает `self`/ресурс | `return self` или `return resource` |
+| `__exit__` не принимает 3 аргумента | `def __exit__(self, exc_type, exc_val, exc_tb):` |
+| Подавление всех исключений (`return True`) | Подавляйте ТОЛЬКО ожидаемые, логируйте остальные |
+| Ресурс не закрывается при ошибке в `__enter__` | `__exit__` не вызовется — используйте `try/finally` в `__enter__` |
+| Забыли `@contextmanager` на генераторе | Без декоратора это просто генератор, не контекстный менеджер |
+
+---
+
+## Практические задания
+
+1. **Pool соединений**: контекстный менеджер, выдающий соединение из пула и возвращающий его обратно
+2. **Transaction manager**: `@contextmanager` для БД с commit/rollback
+3. **Temp directory**: создание временной папки с автоудалением
+4. **Profile block**: контекстный менеджер для cProfile с выводом топ-N функций
+5. **Rate limiter**: `async with rate_limit(10):` — не чаще N вызовов в секунду
+
+---
+
+## Полезные ресурсы
+- **Python Docs: contextlib** — https://docs.python.org/3/library/contextlib.html
+- **Real Python: Context Managers** — https://realpython.com/python-with-statement/
+- **PEP 343 — The "with" Statement** — https://peps.python.org/pep-0343/
+- **PEP 377 — Exception Handling in Generators** — https://peps.python.org/pep-0377/

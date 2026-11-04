@@ -1,0 +1,257 @@
+# Урок 8: Указатели и ссылки
+
+## Цели урока
+- Понять адреса памяти, операторы `&` (address-of) и `*` (dereference)
+- Изучить указатели: арифметика, nullptr, void*, указатели на функции
+- Освоить ссылки: lvalue, rvalue, const ссылки, привязка к временным
+- Научиться работать с динамической памятью: `new`, `delete`, `new[]`, `delete[]`
+- Понять базовую безопасность: владение, RAII, умные указатели (введение)
+
+---
+
+## Теория
+
+### Адреса и указатели
+```cpp
+#include <iostream>
+
+int main() {
+    int x = 42;
+    int* ptr = &x;        // ptr хранит адрес x
+    std::cout << ptr;     // адрес (например, 0x7ffc1234)
+    std::cout << *ptr;    // 42 — разыменование (доступ к значению)
+
+    *ptr = 100;           // меняет x через указатель
+    std::cout << x;       // 100
+
+    // Нулевой указатель (C++11)
+    int* p1 = nullptr;    // лучше чем NULL или 0
+    int* p2 = nullptr;
+    if (!p1) std::cout << "nullptr\n";
+
+    // void* — указатель на любой тип (нужен static_cast для разыменования)
+    void* vp = &x;
+    int* ip = static_cast<int*>(vp);
+}
+```
+
+### Указательная арифметика
+```cpp
+int arr[5] = {10, 20, 30, 40, 50};
+int* p = arr;           // p указывает на arr[0]
+
+p + 1;      // адрес arr[1] (смещение на sizeof(int) байт)
+p + 2;      // адрес arr[2]
+*(p + 2);   // 30 — то же что arr[2]
+
+p++;        // теперь p указывает на arr[1]
+++p;        // arr[2]
+p += 2;     // arr[4]
+
+// Разница указателей — количество элементов между ними
+int* p2 = arr + 4;
+std::cout << p2 - p;    // 4 (ptrdiff_t)
+
+// Сравнение
+p < p2;     // true
+```
+
+### Ссылки
+```cpp
+int x = 10;
+int& ref = x;       // ref — другое имя для x (алиас)
+ref = 20;           // x становится 20
+
+// Ссылка должна быть инициализирована при объявлении
+// int& bad; // ОШИБКА
+
+// const ссылка — может привязываться к временным и литералам
+const int& cref = 42;           // OK: продлевает время жизни временного
+const int& cref2 = x + y;       // OK
+// int& r = 42;                 // ОШИБКА: не-const ссылка не привязывается к rvalue
+
+// Ссылки не могут быть null, не могут быть перепривязаны
+```
+
+### rvalue-ссылки (C++11) — основа move semantics
+```cpp
+int x = 10;
+int&& rref = 42;        // привязывается к rvalue (временному)
+int&& rref2 = std::move(x); // приведение lvalue к rvalue
+
+// std::move — не перемещает, а кастует к rvalue-ссылке
+std::string s1 = "hello";
+std::string s2 = std::move(s1); // s1 теперь в "valid but unspecified state"
+// s1 может быть пустой, но деструктор безопасен
+```
+
+### Указатели на функции
+```cpp
+int add(int a, int b) { return a + b; }
+int sub(int a, int b) { return a - b; }
+
+int (*func_ptr)(int, int) = add;  // тип: указатель на функцию(int,int)->int
+func_ptr = sub;                   // можно переназначать
+
+std::cout << func_ptr(5, 3);      // 2
+
+// Использование с алгоритмами
+#include <algorithm>
+#include <vector>
+std::vector<int> v = {3,1,4,1,5};
+std::sort(v.begin(), v.end(), [](int a, int b){ return a > b; });
+// lambda неявно конвертируется в указатель на функцию (если не захватывает)
+```
+
+### Динамическая память
+```cpp
+#include <iostream>
+
+// Одиночный объект
+int* p = new int(42);     // выделяет память, вызывает конструктор
+std::cout << *p;          // 42
+delete p;                 // вызывает деструктор, освобождает память
+p = nullptr;              // хорошая практика после delete
+
+// Массив
+int* arr = new int[5]{1,2,3,4,5};
+delete[] arr;             // ВАЖНО: delete[] для массивов!
+arr = nullptr;
+
+// Опасности:
+// 1. Утечка памяти: забыли delete
+// 2. Double delete: delete дважды
+// 3. Use after delete: обращение через висячий указатель
+// 4. Mismatch: new[] с delete или new с delete[]
+```
+
+### Умные указатели (C++11) — RAII для памяти
+```cpp
+#include <memory>
+#include <iostream>
+
+class Resource {
+public:
+    Resource() { std::cout << "Acquired\n"; }
+    ~Resource() { std::cout << "Released\n"; }
+    void use() { std::cout << "Using\n"; }
+};
+
+void demo() {
+    // unique_ptr — единственное владение (не копируется, только move)
+    std::unique_ptr<Resource> u1 = std::make_unique<Resource>();
+    u1->use();
+    // std::unique_ptr<Resource> u2 = u1; // ОШИБКА: копирование запрещено
+    std::unique_ptr<Resource> u2 = std::move(u1); // OK: передача владения
+    // u1 теперь nullptr
+
+    // shared_ptr — совместное владение (reference counting)
+    std::shared_ptr<Resource> s1 = std::make_shared<Resource>();
+    std::shared_ptr<Resource> s2 = s1; // копируется, счётчик = 2
+    std::cout << s1.use_count(); // 2
+    // Память освободится когда последний shared_ptr умрёт
+
+    // weak_ptr — слабая ссылка (не увеличивает счётчик, для кэшей, родителей)
+    std::weak_ptr<Resource> w = s1;
+    if (auto locked = w.lock()) { locked->use(); } // проверка жив ли объект
+}
+
+// Правила:
+// - По умолчанию используйте unique_ptr
+// - shared_ptr когда нужно совместное владение
+// - Никогда не делайте new/shared_ptr вручную — используйте make_unique/make_shared
+// - Избегайте raw new/delete в современном C++
+```
+
+### RAII (Resource Acquisition Is Initialization)
+```cpp
+// Принцип: ресурс приобретается в конструкторе, освобождается в деструкторе
+// Гарантирует: никаких утечек при исключениях, раннем return и т.д.
+
+class FileHandle {
+    FILE* f;
+public:
+    FileHandle(const char* name) : f(std::fopen(name, "r")) {
+        if (!f) throw std::runtime_error("Cannot open");
+    }
+    ~FileHandle() { if (f) std::fclose(f); }
+    // Запрет копирования
+    FileHandle(const FileHandle&) = delete;
+    FileHandle& operator=(const FileHandle&) = delete;
+    // Move разрешен
+    FileHandle(FileHandle&& other) noexcept : f(other.f) { other.f = nullptr; }
+    FILE* get() const { return f; }
+};
+
+void func() {
+    FileHandle f("data.txt"); // при выходе из области — автоматическое закрытие
+    // даже если брошено исключение!
+}
+```
+
+### this указатель
+```cpp
+struct Counter {
+    int count = 0;
+    Counter& increment() {
+        ++count;
+        return *this; // возврат ссылки на себя для чейнинга
+    }
+    void print() const { std::cout << count; }
+};
+
+Counter c;
+c.increment().increment().print(); // 2
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Указательная арифметика
+Дан `int arr[10] = {1,2,3,4,5,6,7,8,9,10};`
+Используя только указатели (не индексы `[]`):
+- Выведите все элементы
+- Найдите максимум
+- Реверсните массив на месте
+
+### Задание 2: Swap через указатели и ссылки
+Реализуйте `void swap_ptr(int* a, int* b)` и `void swap_ref(int& a, int& b)`.
+Какая версия безопаснее? Почему?
+
+### Задание 3: Динамический массив вручную
+Реализуйте класс `DynamicArray` с `new[]`/`delete[]`, конструктором копирования, оператором присваивания, move-семантикой. Правило трёх/пяти.
+
+### Задание 4: unique_ptr vs shared_ptr
+Создайте `std::vector<std::unique_ptr<Resource>>` с 1000 элементов. Замерьте время создания и уничтожения. Сравните с `shared_ptr`.
+
+### Задание 5: Функция, возвращающая указатель
+```cpp
+int* create_array(int n, int init) {
+    // вернуть динамический массив, заполненный init
+}
+```
+Кто отвечает за `delete[]`? Как улучшить с `unique_ptr<int[]>`?
+
+### Задание 6: this и method chaining
+Создайте класс `Builder` с методами `set_name`, `set_age`, `set_email`, возвращающими `*this`. Постройте объект одной цепочкой.
+
+---
+
+## Типичные ошибки новичка
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| Разыменование nullptr | UB, краш | Проверяйте `if (ptr)` перед использованием |
+| `delete` вместо `delete[]` для массива | UB, утечка/краш | Всегда `new[]` ↔ `delete[]`, `new` ↔ `delete` |
+| Возврат указателя на локальную переменную | Висячий указатель | Возвращайте `unique_ptr` или по значению |
+| Копирование `unique_ptr` | Ошибка компиляции | Используйте `std::move` |
+| Циклические `shared_ptr` | Утечка памяти (счётчик никогда не 0) | Используйте `weak_ptr` для обратных ссылок |
+| `new` без `delete` в исключительной ситуации | Утечка | Используйте умные указатели / RAII |
+
+---
+
+## Ресурсы
+- cppreference: [Pointers](https://en.cppreference.com/w/cpp/language/pointer), [References](https://en.cppreference.com/w/cpp/language/reference), [Smart pointers](https://en.cppreference.com/w/cpp/memory)
+- C++ Core Guidelines: [R. Resource management](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r-resource-management)
+- [Rule of Zero/Five](https://en.cppreference.com/w/cpp/language/rule_of_three) — когда нужны специальные функции-члены

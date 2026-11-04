@@ -1,0 +1,561 @@
+# Урок 12: Advanced Flexbox & Grid — Subgrid, Masonry, Container Queries, Layout Animations
+
+## Цели урока
+- Освоить Subgrid — наследование треков родительского Grid
+- Изучить Masonry Layout — нативный Pinterest-style layout
+- Понять Container Queries в комплексе с Grid/Flex
+- Научиться анимировать Grid/Flex layout (FLIP, Grid tracks)
+- Решать сложные layout-задачи: Holy Grail, Dashboard, Nested layouts
+
+---
+
+## 1. Subgrid — наследование треков
+
+### Проблема: вложенные Grid не знают о родителе
+```css
+/* Родитель */
+.parent {
+  display: grid;
+  grid-template-columns: [start] 1fr [mid] 2fr [end];
+  grid-template-rows: [top] auto [mid] 1fr [bottom];
+}
+
+/* Ребёнок — свой grid, линии не совпадают */
+.child {
+  display: grid;
+  grid-template-columns: 1fr 1fr;  /* Не связано с родителем! */
+}
+```
+
+### Решение: Subgrid
+```css
+.parent {
+  display: grid;
+  grid-template-columns: [start] 1fr [mid] 2fr [end];
+  grid-template-rows: [top] auto [mid] 1fr [bottom];
+}
+
+.child {
+  display: grid;
+  grid-template-columns: subgrid;  /* Наследует колонки родителя! */
+  grid-template-rows: subgrid;     /* Наследует ряды родителя! */
+  /* Теперь можно использовать линии родителя: */
+}
+
+.grandchild {
+  grid-column: start / mid;    /* Работает! */
+  grid-row: top / mid;
+}
+```
+
+### Частичный Subgrid
+```css
+.child {
+  /* Только колонки от родителя, свои ряды */
+  grid-template-columns: subgrid;
+  grid-template-rows: auto 1fr auto;
+}
+
+/* Или только ряды */
+.child {
+  grid-template-columns: 1fr 2fr;
+  grid-template-rows: subgrid;
+}
+```
+
+### Subgrid + Gap
+```css
+.parent {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.child {
+  display: grid;
+  grid-template-columns: subgrid;
+  /* Gap НЕ наследуется автоматически! */
+  gap: 16px;  /* Свой gap внутри subgrid */
+}
+```
+
+### Поддержка и Fallback
+```css
+/* Subgrid поддержка: Firefox 71+, Chrome 117+, Safari 16+ */
+@supports (grid-template-columns: subgrid) {
+  .child { grid-template-columns: subgrid; }
+}
+
+/* Fallback для старых браузеров */
+.child {
+  grid-template-columns: repeat(3, 1fr);  /* Дублируем */
+}
+@supports (grid-template-columns: subgrid) {
+  .child { grid-template-columns: subgrid; }
+}
+```
+
+---
+
+## 2. Masonry Layout — нативный Pinterest
+
+### Включение (экспериментально)
+```css
+/* Включить в браузере: layout.css.grid-template-masonry-value.enabled */
+.masonry {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-rows: masonry;  /* Включает masonry! */
+  gap: 1rem;
+}
+
+/* Направление упаковки */
+.masonry {
+  masonry-auto-flow: next;           /* Следующая доступная ячейка (default) */
+  masonry-auto-flow: definite-first; /* Сначала элементы с заданной высотой */
+}
+```
+
+### Прогрессивное улучшение
+```css
+/* Базовый fallback — CSS Columns */
+.masonry {
+  column-count: 4;
+  column-gap: 1rem;
+}
+
+.masonry > * {
+  break-inside: avoid;  /* Не разрывать элемент между колонками */
+  margin-bottom: 1rem;
+}
+
+/* Современный Masonry поверх */
+@supports (grid-template-rows: masonry) {
+  .masonry {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    grid-template-rows: masonry;
+    column-count: initial;  /* Отменяем columns */
+  }
+  .masonry > * {
+    break-inside: auto;
+    margin-bottom: 0;
+  }
+}
+```
+
+### Masonry + Container Queries
+```css
+.masonry-container {
+  container-type: inline-size;
+}
+
+@container (max-width: 600px) {
+  .masonry {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+}
+
+@container (min-width: 600px) {
+  .masonry {
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  }
+}
+```
+
+---
+
+## 3. Container Queries + Grid/Flex — полная сила
+
+### Карточка, адаптирующаяся к контейнеру
+```css
+.card-wrapper {
+  container-type: inline-size;
+  container-name: card;
+}
+
+.card {
+  display: grid;
+  gap: 1rem;
+  grid-template-areas: "image" "title" "meta" "action";
+  grid-template-columns: 1fr;
+}
+
+@container card (min-width: 320px) {
+  .card {
+    grid-template-areas:
+      "image title"
+      "image meta"
+      "action action";
+    grid-template-columns: 120px 1fr;
+  }
+}
+
+@container card (min-width: 480px) {
+  .card {
+    grid-template-areas:
+      "image title action"
+      "image meta action";
+    grid-template-columns: 150px 1fr auto;
+  }
+}
+
+.card__image { grid-area: image; aspect-ratio: 1; object-fit: cover; }
+.card__title { grid-area: title; font-size: clamp(1rem, 3cqw, 1.25rem); }
+.card__meta { grid-area: meta; font-size: clamp(0.875rem, 2.5cqw, 1rem); }
+.card__action { grid-area: action; }
+```
+
+### Dashboard с Container Queries
+```css
+.dashboard {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 1.5rem;
+  height: 100vh;
+}
+
+.sidebar {
+  container-type: inline-size;
+  container-name: sidebar;
+  grid-row: 1 / 3;
+}
+
+.main {
+  container-type: inline-size;
+  container-name: main;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.widget {
+  container-type: inline-size;
+  display: grid;
+  gap: 1rem;
+}
+
+@container sidebar (max-width: 200px) {
+  .sidebar .nav__label { display: none; }
+  .sidebar .nav__icon { margin-inline: auto; }
+}
+
+@container main (max-width: 500px) {
+  .widget { grid-template-columns: 1fr; }
+}
+```
+
+---
+
+## 4. Анимация Grid/Flex Layout
+
+### Проблема: Grid tracks не анимируются плавно
+```css
+/* НЕ РАБОТАЕТ плавно */
+.grid {
+  grid-template-columns: 1fr 300px;
+  transition: grid-template-columns 0.3s;
+}
+.grid.expanded {
+  grid-template-columns: 1fr 500px;  /* Скачок! */
+}
+```
+
+### Решение 1: FLIP (First, Last, Invert, Play)
+```javascript
+// FLIP анимация для Grid элементов
+function flipGridAnimation(element, newGridArea) {
+  // 1. First — запомнить текущую позицию
+  const first = element.getBoundingClientRect();
+
+  // 2. Last — применить новое состояние
+  element.style.gridArea = newGridArea;
+
+  // 3. Invert — вычислить разницу и применить transform
+  const last = element.getBoundingClientRect();
+  const dx = first.left - last.left;
+  const dy = first.top - last.top;
+
+  element.style.transform = `translate(${dx}px, ${dy}px)`;
+  element.style.transition = 'none';
+
+  // 4. Play — убрать transform с transition
+  requestAnimationFrame(() => {
+    element.style.transition = 'transform 0.3s ease';
+    element.style.transform = 'translate(0, 0)';
+  });
+}
+```
+
+### Решение 2: CSS Grid — анимируемые свойства
+```css
+/* ЧТО МОЖНО АНИМИРОВАТЬ: */
+.grid {
+  /* gap — ДА */
+  transition: gap 0.3s ease;
+
+  /* grid-template-rows/columns — ТОЛЬКО ДИСКРЕТНЫЕ значения */
+  /* fr, auto, minmax, repeat(auto-fit) — НЕТ */
+
+  /* grid-template-areas — НЕТ */
+}
+
+/* Хак: анимировать через transform детей */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+}
+
+.sidebar {
+  /* Вместо изменения grid-template-columns */
+  transform: translateX(0);
+  transition: transform 0.3s ease;
+}
+
+.grid.collapsed .sidebar {
+  transform: translateX(-100%);  /* Скрываем за экраном */
+}
+```
+
+### Решение 3: CSS Grid + width на элементах
+```css
+/* Анимируем width элементов, не grid tracks */
+.resizable-panel {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;  /* Sidebar как auto колонка */
+}
+
+.sidebar {
+  width: 300px;
+  min-width: 200px;
+  max-width: 500px;
+  transition: width 0.3s ease;
+  overflow: hidden;
+}
+
+.resizer {
+  grid-column: 2;
+  width: 8px;
+  cursor: col-resize;
+  background: var(--color-border);
+}
+```
+
+### Анимация Flex — gap и flex-basis
+```css
+.flex-container {
+  display: flex;
+  gap: 1rem;
+  transition: gap 0.3s ease;
+}
+
+.flex-item {
+  flex: 1 1 200px;  /* grow shrink basis */
+  transition: flex-basis 0.3s ease, flex-grow 0.3s ease;
+}
+
+.flex-container.expanded {
+  gap: 2rem;
+}
+
+.flex-container.expanded .item-feature {
+  flex-basis: 400px;
+  flex-grow: 2;
+}
+```
+
+---
+
+## 5. Продвинутые паттерны Layout
+
+### Holy Grail с Subgrid
+```css
+.page {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: [full-start] 1fr [center-start] 800px [center-end] 1fr [full-end];
+  min-height: 100vh;
+}
+
+.header { grid-column: full; }
+.main {
+  grid-column: center;
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-template-rows: subgrid;
+}
+.sidebar-left { grid-column: full-start / center-start; }
+.content { grid-column: center; }
+.sidebar-right { grid-column: center-end / full-end; }
+.footer { grid-column: full; }
+```
+
+### Вложенные Grid с выравниванием
+```css
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.card {
+  display: grid;
+  grid-template-rows: subgrid;  /* Выравнивает ряды карточек в строке! */
+  grid-row: span 3;  /* Занимает 3 ряда родительской сетки */
+}
+
+.card__image { grid-row: 1; }
+.card__title { grid-row: 2; }
+.card__text { grid-row: 3; }
+.card__footer { grid-row: 4; }
+/* Все карточки в строке имеют одинаковую высоту заголовков, текстов и футеров */
+```
+
+### Intrinsic Web Design — никаких media queries
+```css
+.intrinsic-layout {
+  /* 1. Fluid typography */
+  --fs-fluid: clamp(1rem, 1vw + 0.5rem, 1.5rem);
+
+  /* 2. Fluid spacing */
+  --space-fluid: clamp(1rem, 2vw + 0.5rem, 3rem);
+
+  /* 3. Flexible grid */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: var(--space-fluid);
+
+  /* 4. Container queries для компонентов */
+  container-type: inline-size;
+}
+
+@container (min-width: 400px) {
+  .component { /* enhanced layout */ }
+}
+```
+
+---
+
+## 6. Практическое задание
+
+### Задача 1: Subgrid Dashboard
+Создай Dashboard:
+- Родитель: Grid с именованными линиями (header, sidebar, main, footer)
+- Sidebar: Subgrid наследует ряды, навигация выравнивается по рядам main
+- Main: Grid виджетов, каждый виджет — subgrid для выравнивания заголовков
+- Responsive: на мобильной sidebar → drawer, main → single column
+
+### Задача 2: Masonry Gallery
+Реализуй галерею:
+- CSS Columns fallback
+- @supports Masonry enhancement
+- Разные aspect-ratio изображений
+- Lazy loading + IntersectionObserver для анимации появления
+- Lightbox при клике (position: fixed + backdrop-filter)
+
+### Задача 3: Container Query Component Library
+Создай 3 компонента с Container Queries:
+1. **Media Object** — vertical → horizontal при > 400px
+2. **Data Table** — table → cards при < 600px
+3. **Navigation** — horizontal → vertical → hamburger
+- Все используют cqw/cqh единицы для fluid внутренних размеров
+- Демонстрация в одном контейнере с resize handle
+
+### Задача 4: FLIP Animation Library
+Напиши утилиту для FLIP анимаций:
+```javascript
+function flip(element, callback) {
+  // 1. First
+  const first = element.getBoundingClientRect();
+
+  // 2. Last — выполняем callback (меняем DOM/CSS)
+  callback();
+
+  // 3. Invert
+  const last = element.getBoundingClientRect();
+  const dx = first.left - last.left;
+  const dy = first.top - last.top;
+  const dw = first.width / last.width;
+  const dh = first.height / last.height;
+
+  element.style.transform = `translate(${dx}px, ${dy}px) scale(${dw}, ${dh})`;
+  element.style.transformOrigin = 'top left';
+  element.style.transition = 'none';
+
+  // 4. Play
+  requestAnimationFrame(() => {
+    element.style.transition = 'transform 0.3s ease';
+    element.style.transform = 'translate(0, 0) scale(1, 1)';
+  });
+
+  // Cleanup
+  element.addEventListener('transitionend', () => {
+    element.style.transform = '';
+    element.style.transition = '';
+    element.style.transformOrigin = '';
+  }, { once: true });
+}
+```
+Протестируй: перестановка Grid items, раскрытие аккордеона, drag-and-drop.
+
+---
+
+## 7. Таблица поддержки (2024)
+
+| Фича | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| Subgrid | 117+ | 71+ | 16+ | 117+ |
+| Masonry | Behind flag | Behind flag | Behind flag | Behind flag |
+| Container Queries | 105+ | 110+ | 16+ | 105+ |
+| Container Query Units | 105+ | 110+ | 16+ | 105+ |
+| :has() | 105+ | 121+ | 15.4+ | 105+ |
+| Grid gap animation | ✅ | ✅ | ✅ | ✅ |
+| Flex gap | 84+ | 63+ | 14.1+ | 84+ |
+
+---
+
+## 8. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| Subgrid без display:grid на ребёнке | Не работает | Ребёнок тоже должен быть `display: grid` |
+| Subgrid gap не наследуется | Ожидаемый gap не работает | Задай gap явно на ребёнке |
+| Masonry без @supports | Ломается в стабильных браузерах | Всегда прогрессивное улучшение |
+| Анимировать grid-template-columns | Не плавно (дискретные значения) | FLIP, transform, или width на элементах |
+| Container Query на body/html | Не работает | container-type на конкретном контейнере |
+| cqw единицы без container-type | Не работают | Обязателен container-type: inline-size |
+
+---
+
+## 9. Полезные ресурсы
+
+### Спецификации
+- [CSS Grid Level 2 (Subgrid)](https://www.w3.org/TR/css-grid-2/)
+- [CSS Grid Level 3 (Masonry)](https://www.w3.org/TR/css-grid-3/)
+- [CSS Container Queries](https://www.w3.org/TR/css-contain-3/)
+
+### Статьи
+- [MDN: Subgrid](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Grid_Layout/Subgrid)
+- [Una Kravets: Masonry](https://una.im/css-masonry/)
+- [Miriam Suzanne: Container Queries](https://www.miriamsuzanne.com/2021/09/13/container-queries/)
+
+### Инструменты
+- [Firefox DevTools] — лучший Grid/Subgrid инспектор
+- [Chrome DevTools] — Container Queries вкладка в Elements
+- [Masonry Demo](https://codepen.io/miraneb/pen/xxGvZvq)
+
+---
+
+## 10. Ключевые выводы
+
+1. **Subgrid** — решает главную боль вложенных Grid: выравнивание детей по линиям родителя.
+2. **Masonry** — нативный Pinterest layout (экспериментально, нужен columns fallback).
+3. **Container Queries** — компоненты адаптируются к *своему* контейнеру, не к viewport.
+4. **FLIP** — единственный способ плавно анимировать layout изменения.
+5. **Intrinsic Design** — fluid typography + auto-fit grid + container queries = минимум media queries.
+6. **Firefox DevTools** — незаменим для отладки Subgrid и Grid.
+
+---
+
+*Следующий урок: 13_Responsive_Design.txt — Продвинутая адаптивность: Container Queries детально, CSS Logical Properties, Internationalization, User Preference Media Queries*

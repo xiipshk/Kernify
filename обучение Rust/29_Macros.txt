@@ -1,0 +1,636 @@
+# Урок 29: Макросы (Macros)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Писать declarative macros (`macro_rules!`)
+- Понимать procedural macros: derive, attribute, function-like
+- Использовать `quote`, `syn`, `proc-macro2` для кодогенерации
+- Работать с hygiene и span
+- Писать custom derive макросы
+- Использовать attribute macros для изменения кода
+- Понимать function-like procedural macros
+- Отлаживать макросы с `cargo expand`
+
+---
+
+## 1. Declarative Macros (`macro_rules!`)
+
+### Базовый синтаксис
+```rust
+macro_rules! say_hello {
+    () => {
+        println!("Hello!");
+    };
+}
+
+fn main() {
+    say_hello!(); // Hello!
+}
+```
+
+### Pattern matching
+```rust
+macro_rules! vec_example {
+    // Пустой вектор
+    () => { Vec::new() };
+
+    // Один элемент
+    ($elem:expr) => { {
+        let mut v = Vec::new();
+        v.push($elem);
+        v
+    }};
+
+    // Несколько элементов
+    ($($elem:expr),+) => { {
+        let mut v = Vec::new();
+        $(v.push($elem);)+
+        v
+    }};
+}
+
+fn main() {
+    let v1 = vec_example![];
+    let v2 = vec_example![1];
+    let v3 = vec_example![1, 2, 3, 4];
+}
+```
+
+### Репетиции `$(...)+` `$(...)*` `$(...),+`
+```rust
+macro_rules! print_all {
+    ($($arg:expr),*) => {
+        $(println!("{}", $arg);)*
+    };
+}
+
+macro_rules! sum {
+    ($($x:expr),+) => {
+        0 $(+ $x)*
+    };
+}
+
+fn main() {
+    print_all!("a", "b", "c");
+    println!("Sum: {}", sum!(1, 2, 3, 4)); // 10
+}
+```
+
+### Fragment Specifiers (типы фрагментов)
+```rust
+macro_rules! demo {
+    // item — элемент (fn, struct, mod...)
+    ($item:item) => { $item };
+
+    // block — блок { ... }
+    ($block:block) => { $block };
+
+    // stmt — statement (let x = 1;)
+    ($stmt:stmt) => { $stmt };
+
+    // expr — выражение
+    ($expr:expr) => { $expr };
+
+    // ty — тип
+    ($ty:ty) => { std::any::type_name::<$ty>() };
+
+    // ident — идентификатор
+    ($ident:ident) => { stringify!($ident) };
+
+    // path — путь (std::vec::Vec)
+    ($path:path) => { $path };
+
+    // meta — атрибут #[...]
+    ($meta:meta) => { $meta };
+
+    // tt — token tree (один токен или группа)
+    ($tt:tt) => { $tt };
+
+    // vis — visibility (pub, pub(crate))
+    ($vis:vis) => { $vis };
+
+    // lifetime — 'a
+    ($lt:lifetime) => { $lt };
+}
+```
+
+### Пример: HTML builder
+```rust
+macro_rules! html {
+    ($($tag:ident { $($content:tt)* } )*) => {
+        {
+            let mut output = String::new();
+            $(
+                output.push_str(&format!("<{}>", stringify!($tag)));
+                html_inner!(@content $($content)*; output);
+                output.push_str(&format!("</{}>", stringify!($tag)));
+            )*
+            output
+        }
+    };
+}
+
+macro_rules! html_inner {
+    (@content $text:expr; $out:expr) => {
+        $out.push_str(&$text);
+    };
+    (@content $tag:ident { $($content:tt)* }; $out:expr) => {
+        $out.push_str(&format!("<{}>", stringify!($tag)));
+        html_inner!(@content $($content)*; $out);
+        $out.push_str(&format!("</{}>", stringify!($tag)));
+    };
+}
+
+fn main() {
+    let page = html! {
+        html {
+            body {
+                h1 { "Hello" }
+                p { "World" }
+            }
+        }
+    };
+    println!("{}", page);
+}
+```
+
+---
+
+## 2. Hygiene (Гигиена макросов)
+
+### Автоматическая гигиена
+```rust
+macro_rules! create_var {
+    () => {
+        let x = 42;
+    };
+}
+
+fn main() {
+    create_var!();
+    // println!("{}", x); // ОШИБКА! x не виден (hygiene)
+}
+```
+
+### `$crate` для доступа к корню крейта
+```rust
+// В библиотеке mylib
+#[macro_export]
+macro_rules! my_macro {
+    () => {
+        $crate::internal_func()
+    };
+}
+
+pub fn internal_func() { println!("Internal"); }
+```
+
+### `#[macro_export]` — экспорт макроса
+```rust
+#[macro_export]
+macro_rules! public_macro {
+    () => { println!("Public!"); }
+}
+
+// В другом крейте:
+// use mylib::public_macro;
+```
+
+---
+
+## 3. Procedural Macros
+
+### Типы procedural macros
+1. **Custom Derive** — `#[derive(MyTrait)]`
+2. **Attribute** — `#[my_attribute]`
+3. **Function-like** — `my_macro!(...)`
+
+### Настройка Cargo.toml
+```toml
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "2.0"
+quote = "1.0"
+proc-macro2 = "1.0"
+```
+
+---
+
+## 4. Custom Derive Macros
+
+### Простой derive
+```rust
+// src/lib.rs
+use proc_macro::TokenStream;
+use quote::quote;
+use syn::{DeriveInput, parse_macro_input};
+
+#[proc_macro_derive(Hello)]
+pub fn hello_derive(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    let name = &ast.ident;
+
+    let expanded = quote! {
+        impl Hello for #name {
+            fn hello(&self) {
+                println!("Hello from {}!", stringify!(#name));
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+// Пользовательский код:
+#[derive(Hello)]
+struct MyStruct;
+
+fn main() {
+    MyStruct.hello(); // "Hello from MyStruct!"
+}
+```
+
+### Derive с атрибутами
+```rust
+#[proc_macro_derive(Builder, attributes(builder))]
+pub fn builder_derive(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+
+    // Парсим атрибуты #[builder(default = "...")]
+    // Генерируем builder pattern
+    // ...
+}
+```
+
+### Пример: `FromRow` для БД
+```rust
+#[proc_macro_derive(FromRow, attributes(sql))]
+pub fn from_row_derive(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    let name = &ast.ident;
+
+    // Генерируем impl FromRow for Name
+    // Считываем #[sql(column = "col_name")] атрибуты
+    // ...
+}
+```
+
+---
+
+## 5. Attribute Macros
+
+### Синтаксис
+```rust
+#[proc_macro_attribute]
+pub fn my_attribute(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // attr — содержимое #[...]
+    // item — аннотируемый элемент
+
+    let input = parse_macro_input!(item as ItemFn);
+    // Модифицируем функцию
+}
+```
+
+### Пример: `#[async_trait]` аналог
+```rust
+#[proc_macro_attribute]
+pub fn async_trait(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemTrait);
+
+    // Для каждого async fn в трейте генерируем:
+    // type MyFuture<'a> = Pin<Box<dyn Future<Output = ...> + Send + 'a>>;
+    // fn my_method(&self) -> MyFuture<'_> { ... }
+}
+```
+
+### Пример: `#[test_case]`
+```rust
+#[proc_macro_attribute]
+pub fn test_case(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Генерирует несколько #[test] функций с разными параметрами
+}
+```
+
+---
+
+## 6. Function-like Procedural Macros
+
+### Синтаксис
+```rust
+#[proc_macro]
+pub fn my_macro(input: TokenStream) -> TokenStream {
+    // Парсим произвольный синтаксис
+    // Генерируем код
+}
+```
+
+### Пример: SQL query macro
+```rust
+#[proc_macro]
+pub fn sql(input: TokenStream) -> TokenStream {
+    let query = parse_macro_input!(input as LitStr);
+    let query_str = query.value();
+
+    // Парсим SQL на этапе компиляции!
+    // Генерируем type-safe функцию
+    // ...
+}
+```
+
+### Пример: `include_str!` аналог с проверкой
+```rust
+#[proc_macro]
+pub fn embed_file(input: TokenStream) -> TokenStream {
+    let path = parse_macro_input!(input as LitStr);
+    let path_str = path.value();
+
+    let content = std::fs::read_to_string(&path_str)
+        .expect(&format!("Failed to read {}", path_str));
+
+    let content_lit = LitStr::new(&content, path.span());
+    quote!(#content_lit).into()
+}
+```
+
+---
+
+## 7. `syn` и `quote` — работа с AST
+
+### `syn` — парсинг
+```rust
+use syn::{parse_macro_input, DeriveInput, Data, Fields, Ident, Type};
+
+#[proc_macro_derive(DebugPrint)]
+pub fn debug_print_derive(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+
+    match &ast.data {
+        Data::Struct(data_struct) => {
+            match &data_struct.fields {
+                Fields::Named(fields_named) => {
+                    for field in &fields_named.named {
+                        let name = &field.ident;
+                        let ty = &field.ty;
+                        println!("Field: {} : {}", name, quote!(#ty));
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+
+    // ...
+}
+```
+
+### `quote` — генерация кода
+```rust
+use quote::quote;
+
+let name = Ident::new("MyStruct", Span::call_site());
+let fields = vec![quote!(field1), quote!(field2)];
+
+let expanded = quote! {
+    struct #name {
+        #(#fields: i32),*
+    }
+
+    impl #name {
+        fn new() -> Self {
+            Self {
+                #(#fields: 0),*
+            }
+        }
+    }
+};
+```
+
+### `proc_macro2::Span` для ошибок
+```rust
+use proc_macro2::Span;
+use syn::Error;
+
+if fields.is_empty() {
+    return Error::new(Span::call_site(), "Struct must have fields")
+        .to_compile_error()
+        .into();
+}
+```
+
+---
+
+## 8. Продвинутые техники
+
+### Генерация уникальных имен
+```rust
+use quote::format_ident;
+
+let var_name = format_ident!("_internal_{}", field_name);
+quote! {
+    let #var_name = 42;
+}
+```
+
+### Рекурсивные макросы
+```rust
+macro_rules! count {
+    () => (0);
+    ($head:tt $($tail:tt)*) => (1 + count!($($tail)*));
+}
+```
+
+### `concat_idents!` (nightly)
+```rust
+#![feature(concat_idents)]
+macro_rules! make_fn {
+    ($name:ident) => {
+        fn concat_idents!(my_, $name)() {}
+    };
+}
+```
+
+---
+
+## 9. Отладка макросов
+
+### `cargo expand`
+```bash
+cargo install cargo-expand
+cargo expand
+# Показывает код после раскрытия всех макросов
+```
+
+### `log_syntax!` для печати токенов
+```rust
+macro_rules! debug_macro {
+    ($($tt:tt)*) => {
+        log_syntax!($($tt)*);
+    };
+}
+```
+
+### `compile_error!`
+```rust
+macro_rules! require_feature {
+    ($feature:literal) => {
+        #[cfg(not(feature = $feature))]
+        compile_error!(concat!("Feature '", $feature, "' is required"));
+    };
+}
+```
+
+---
+
+## 10. Практические упражнения
+
+### Упражнение 1: `bitflags!` аналог
+```rust
+macro_rules! bitflags {
+    (
+        $vis:vis struct $name:ident: $ty:ty {
+            $($flag:ident = $value:expr,)*
+        }
+    ) => {
+        $vis struct $name($ty);
+
+        impl $name {
+            $($vis const $flag: $name = $name($value);)*
+        }
+
+        impl std::ops::BitOr for $name {
+            type Output = $name;
+            fn bitor(self, rhs: $name) -> $name {
+                $name(self.0 | rhs.0)
+            }
+        }
+
+        impl std::ops::BitAnd for $name {
+            type Output = $name;
+            fn bitand(self, rhs: $name) -> $name {
+                $name(self.0 & rhs.0)
+            }
+        }
+    };
+}
+
+bitflags! {
+    pub struct Permissions: u32 {
+        READ = 1,
+        WRITE = 2,
+        EXECUTE = 4,
+    }
+}
+
+fn main() {
+    let perms = Permissions::READ | Permissions::WRITE;
+    println!("{:?}", perms.0); // 3
+}
+```
+
+### Упражнение 2: Procedural derive для `Default`
+```rust
+#[proc_macro_derive(SmartDefault, attributes(default))]
+pub fn smart_default_derive(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    let name = &ast.ident;
+
+    let fields = match &ast.data {
+        Data::Struct(DataStruct { fields: Fields::Named(f), .. }) => &f.named,
+        _ => return Error::new_spanned(&ast, "Only structs supported").to_compile_error().into(),
+    };
+
+    let field_inits = fields.iter().map(|f| {
+        let name = &f.ident;
+        if let Some(attr) = f.attrs.iter().find(|a| a.path().is_ident("default")) {
+            let expr: Expr = attr.parse_args().expect("default = expr");
+            quote!(#name: #expr)
+        } else {
+            quote!(#name: Default::default())
+        }
+    });
+
+    let expanded = quote! {
+        impl Default for #name {
+            fn default() -> Self {
+                Self { #(#field_inits),* }
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+// Использование:
+#[derive(SmartDefault)]
+struct Config {
+    #[default = 8080]
+    port: u16,
+    #[default = "localhost".to_string()]
+    host: String,
+    timeout: Duration, // Default::default()
+}
+```
+
+### Упражнение 3: Function-like макрос для асинхронного retry
+```rust
+#[proc_macro]
+pub fn retry(input: TokenStream) -> TokenStream {
+    // retry! { 3 times, 100ms delay => async { ... } }
+    // Генерирует код с экспоненциальным backoff
+}
+```
+
+---
+
+## 11. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `macro expanded to...` | Ошибка в сгенерированном коде | `cargo expand` для отладки |
+| `unexpected token` | Неправильный pattern в `macro_rules` | Проверьте fragment specifiers |
+| `can't find crate` | `$crate` не работает | Используйте `#[macro_export]` |
+| `recursion limit reached` | Слишком глубокая рекурсия | `#![recursion_limit = "256"]` |
+| `proc macro panic` | Panic в procedural macro | Используйте `Error::to_compile_error()` |
+
+---
+
+## 12. Шпаргалка: Macros
+
+| Тип | Ключевые слова | Use case |
+|-----|----------------|----------|
+| Declarative | `macro_rules!`, `$name:designator` | Простые шаблоны, DSL |
+| Custom Derive | `#[proc_macro_derive]`, `syn`, `quote` | Авто-имплементация трейтов |
+| Attribute | `#[proc_macro_attribute]` | Модификация items |
+| Function-like | `#[proc_macro]` | Парсинг произвольного синтаксиса |
+
+---
+
+## 13. Полезные ресурсы
+
+- **Macros Book**: https://doc.rust-lang.org/book/ch19-06-macros.html
+- **Reference**: https://doc.rust-lang.org/reference/macros.html
+- **syn docs**: https://docs.rs/syn/
+- **quote docs**: https://docs.rs/quote/
+- **cargo-expand**: https://github.com/dtolnay/cargo-expand
+- **proc-macro workshop**: https://github.com/dtolnay/proc-macro-workshop
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- **Declarative macros**: `macro_rules!`, pattern matching, fragment specifiers, repetition
+- **Hygiene**: автоматическая изоляция переменных, `$crate`
+- **Procedural macros**: 3 типа (derive, attribute, function-like)
+- **Custom Derive**: `#[proc_macro_derive]`, генерация `impl Trait`
+- **Attribute macros**: `#[proc_macro_attribute]`, модификация кода
+- **Function-like**: `#[proc_macro]`, произвольный синтаксис
+- **syn/quote**: парсинг AST, генерация кода, `Span` для ошибок
+- **Отладка**: `cargo expand`, `compile_error!`, `log_syntax!`
+
+---
+
+**Следующий урок:** Systems Programming (`30_Systems_Programming.txt`)

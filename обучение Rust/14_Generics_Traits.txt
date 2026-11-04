@@ -1,0 +1,457 @@
+# Урок 14: Дженерики и трейты — продвинутый уровень
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Использовать Higher-Ranked Trait Bounds (HRTB)
+- Работать с Generic Associated Types (GAT)
+- Понимать Specialization (специализацию)
+- Использовать `impl Trait` в type aliases (type ascription)
+- Работать с `const generics`
+- Понимать coherence и orphan rules
+- Использовать marker traits для compile-time проверок
+
+---
+
+## 1. Higher-Ranked Trait Bounds (HRTB)
+
+### Проблема: замыкания с жизненными циклами
+```rust
+fn call_with_ref<F>(f: F)
+where F: Fn(&i32)
+{
+    let x = 5;
+    f(&x);
+}
+
+// Это работает благодаря неявному HRTB:
+// for<'a> Fn(&'a i32)
+```
+
+### Явный синтаксис `for<'a>`
+```rust
+// Требует, чтобы замыкание работало для ЛЮБОГО 'a
+fn call_with_any_ref<F>(f: F)
+where F: for<'a> Fn(&'a i32)
+{
+    let x = 5;
+    f(&x);
+}
+
+// Без HRTB это не скомпилируется:
+fn bad_example<F>(f: F)
+where F: Fn(&'static i32) // Только 'static!
+{
+    let x = 5;
+    // f(&x); // ОШИБКА: x не 'static
+}
+```
+
+### Где используется неявно
+```rust
+// Все эти эквивалентны:
+fn takes_closure(f: impl Fn(&i32)) {}
+fn takes_closure_explicit<F: Fn(&i32)>(f: F) {}
+fn takes_closure_hrtb<F: for<'a> Fn(&'a i32)>(f: F) {}
+```
+
+---
+
+## 2. Generic Associated Types (GAT)
+
+### Associated Types vs GAT
+```rust
+// Обычный associated type — конкретный тип
+trait Iterator {
+    type Item;
+    fn next(&mut self) -> Option<Self::Item>;
+}
+
+// GAT — associated type С generic параметрами
+trait LendingIterator {
+    type Item<'a>; // Generic Associated Type!
+    fn next<'a>(&'a mut self) -> Option<Self::Item<'a>>;
+}
+```
+
+### Пример: Lending Iterator (возвращает ссылку на себя)
+```rust
+struct Windows<'a, T> {
+    slice: &'a [T],
+    index: usize,
+}
+
+impl<'a, T> LendingIterator for Windows<'a, T> {
+    type Item<'b> = &'b [T] where 'a: 'b;
+
+    fn next<'b>(&'b mut self) -> Option<Self::Item<'b>> {
+        if self.index + 2 <= self.slice.len() {
+            let window = &self.slice[self.index..self.index + 2];
+            self.index += 1;
+            Some(window)
+        } else { None }
+    }
+}
+```
+
+### GAT в стандартной библиотеке (Rust 1.65+)
+```rust
+// std::ops::Generator
+trait Generator {
+    type Yield;
+    type Return;
+    fn resume(self: Pin<&mut Self>) -> GeneratorState<Self::Yield, Self::Return>;
+}
+
+// async fn использует GAT под капотом
+```
+
+---
+
+## 3. Const Generics
+
+### Базовый синтаксис
+```rust
+fn print_array<const N: usize>(arr: [i32; N]) {
+    println!("Length: {}", N);
+    for x in arr { print!("{} ", x); }
+    println!();
+}
+
+fn main() {
+    print_array([1, 2, 3]);        // N = 3
+    print_array([1, 2, 3, 4, 5]);  // N = 5
+}
+```
+
+### В структурах
+```rust
+struct FixedArray<T, const N: usize> {
+    data: [T; N],
+}
+
+impl<T, const N: usize> FixedArray<T, N> {
+    fn new(default: T) -> Self where T: Copy {
+        FixedArray { data: [default; N] }
+    }
+    fn len(&self) -> usize { N }
+}
+```
+
+### Const expressions
+```rust
+fn double<const N: usize>() -> usize { N * 2 }
+
+fn main() {
+    let _: [i32; double::<3>()] = [0; 6]; // const expression
+}
+```
+
+### Ограничения (Rust 1.75+)
+```rust
+// const generic bounds
+fn foo<const N: usize>() where Assert<{ N > 0 }>: IsTrue {}
+
+// Утилиты для const bounds
+struct Assert<const B: bool>;
+trait IsTrue;
+impl IsTrue for Assert<true> {}
+```
+
+---
+
+## 4. `impl Trait` в type aliases (Type Ascription)
+
+### RFC 2515 / 3470 (частично стабилизировано)
+```rust
+// Type alias с impl Trait (Rust 1.74+ для opaque types)
+type MyIterator = impl Iterator<Item = i32>;
+
+fn make_iter() -> MyIterator {
+    (0..10).map(|x| x * 2)
+}
+```
+
+### `impl Trait` в аргументах type alias
+```rust
+type Callback = impl Fn(i32) -> i32;
+
+fn apply(cb: Callback, x: i32) -> i32 {
+    cb(x)
+}
+```
+
+---
+
+## 5. Specialization (специализация) — нестабильно
+
+### Концепция
+```rust
+// Требует #![feature(specialization)]
+trait ToStringExt {
+    fn to_string_ext(&self) -> String;
+}
+
+// Общая реализация
+impl<T: std::fmt::Display> ToStringExt for T {
+    default fn to_string_ext(&self) -> String {
+        format!("Display: {}", self)
+    }
+}
+
+// Специализация для String
+impl ToStringExt for String {
+    fn to_string_ext(&self) -> String {
+        format!("String: {}", self)
+    }
+}
+```
+
+### Правила specialization
+1. `default` в базовой реализации
+2. Более конкретная impl перекрывает
+3. Всегда должен быть один "наиболее конкретный" вариант
+
+---
+
+## 6. Coherence и Orphan Rules
+
+### Orphan Rule (правило сироты)
+```rust
+// МОЖНО: наш трейт для нашего типа
+impl MyTrait for MyType {}
+
+// МОЖНО: чужой трейт для нашего типа
+impl std::fmt::Display for MyType {}
+
+// НЕЛЬЗЯ: наш трейт для чужого типа
+// impl MyTrait for String {} // ОШИБКА!
+
+// НЕЛЬЗЯ: чужой трейт для чужого типа
+// impl std::fmt::Display for Vec<i32> {} // ОШИБКА!
+```
+
+### Обход через Newtype
+```rust
+struct MyVec(Vec<i32>);
+
+impl std::fmt::Display for MyVec {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "MyVec({:?})", self.0)
+    }
+}
+```
+
+### Coherence — одна реализация на (trait, type)
+```rust
+// Ошибка: overlapping implementations
+// impl From<u32> for i32 {} // Уже есть в std
+```
+
+---
+
+## 7. Marker Traits для compile-time проверок
+
+### `Send` / `Sync` — потокобезопасность
+```rust
+// Автоматически выводятся, но можно явно запретить
+struct NotSend {
+    _marker: std::marker::PhantomData<*const ()>, // !Send
+}
+
+struct NotSync {
+    _marker: std::marker::PhantomData<std::cell::Cell<()>>, // !Sync
+}
+```
+
+### `Unpin` — для Pin
+```rust
+// Большинство типов Unpin
+// !Unpin через PhantomPinned
+use std::marker::PhantomPinned;
+
+struct SelfRef {
+    data: String,
+    _pin: PhantomPinned, // !Unpin
+}
+```
+
+### `Copy` / `Clone` — семантика копирования
+```rust
+// Copy подразумевает Clone + битовое копирование
+// Нельзя реализовать вручную для типов с Drop
+```
+
+### `Sized` / `?Sized`
+```rust
+// По умолчанию T: Sized
+fn generic<T>(t: T) {} // T: Sized
+
+// Для DST
+fn generic_unsized<T: ?Sized>(t: &T) {}
+```
+
+### `UnwindSafe` / `RefUnwindSafe` — для catch_unwind
+```rust
+use std::panic::{self, AssertUnwindSafe};
+
+fn main() {
+    let data = vec![1, 2, 3];
+    // AssertUnwindSafe оборачивает, утверждая что безопасно
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        // data используется тут
+    }));
+}
+```
+
+---
+
+## 8. Sealed Traits (закрытые трейты)
+
+### Паттерн: запрет внешних реализаций
+```rust
+mod private {
+    pub trait Sealed {}
+}
+
+pub trait PublicTrait: private::Sealed {
+    fn method(&self);
+}
+
+// Внутренние реализации
+impl private::Sealed for TypeA {}
+impl PublicTrait for TypeA { fn method(&self) {} }
+
+impl private::Sealed for TypeB {}
+impl PublicTrait for TypeB { fn method(&self) {} }
+
+// Внешний код НЕ может реализовать PublicTrait
+// (не имеет доступа к private::Sealed)
+```
+
+---
+
+## 9. Практические упражнения
+
+### Упражнение 1: HRTB для callback с лендингом
+```rust
+struct Buffer {
+    data: Vec<u8>,
+}
+
+impl Buffer {
+    // Callback получает &mut self на время вызова
+    fn with_mut<F, R>(&mut self, f: F) -> R
+    where F: for<'a> FnOnce(&'a mut [u8]) -> R
+    {
+        f(&mut self.data)
+    }
+}
+
+fn main() {
+    let mut buf = Buffer { data: vec![1, 2, 3] };
+    let sum = buf.with_mut(|slice| {
+        slice[0] = 10;
+        slice.iter().sum::<u8>()
+    });
+    println!("Sum: {}", sum);
+}
+```
+
+### Упражнение 2: Const generics для матриц
+```rust
+use std::ops::{Add, Mul};
+
+#[derive(Debug, Clone, Copy)]
+struct Matrix<T, const R: usize, const C: usize> {
+    data: [[T; C]; R],
+}
+
+impl<T, const R: usize, const C: usize> Matrix<T, R, C>
+where T: Copy + Default + Add<Output = T> + Mul<Output = T>
+{
+    fn identity() -> Self
+    where T: From<u8>, [(); R]: , [(); C]:  // требует R == C
+    {
+        let mut m = Matrix { data: [[T::default(); C]; R] };
+        for i in 0..R.min(C) {
+            m.data[i][i] = T::from(1);
+        }
+        m
+    }
+}
+```
+
+### Упражнение 3: Sealed trait для внутреннего API
+```rust
+// library crate
+mod internal {
+    pub trait Sealed {}
+}
+
+pub trait Database: internal::Sealed {
+    fn query(&self, sql: &str) -> Vec<Row>;
+}
+
+pub struct Postgres;
+pub struct MySQL;
+
+impl internal::Sealed for Postgres {}
+impl Database for Postgres { fn query(&self, _: &str) -> Vec<Row> { vec![] } }
+
+impl internal::Sealed for MySQL {}
+impl Database for MySQL { fn query(&self, _: &str) -> Vec<Row> { vec![] } }
+
+// Пользователь не может сделать: impl Database for MyCustomDB {}
+```
+
+---
+
+## 10. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `const generics not supported` | Старый компилятор / фича | Обновите Rust, используйте `where` для bounds |
+| `type parameter not constrained` | GAT не используется в методах | Добавьте bound или используйте в сигнатуре |
+| `specialization is experimental` | Использование на stable | Используйте nightly + `#![feature(specialization)]` |
+| `only traits defined in current crate` | Orphan rule | Newtype wrapper |
+| `impl Trait not allowed here` | Неподдерживаемое место | Используйте generic parameter или Box<dyn> |
+
+---
+
+## 11. Шпаргалка: Advanced Generics
+
+| Фича | Синтаксис | Стабильность | Использование |
+|------|-----------|--------------|---------------|
+| HRTB | `for<'a> Fn(&'a T)` | Stable | Callbacks с любым lifetime |
+| GAT | `type Item<'a>` | Stable (1.65+) | Lending iterators, async |
+| Const generics | `const N: usize` | Stable (1.51+) | Array sizes, compile-time math |
+| `impl Trait` in type alias | `type Foo = impl Trait` | Partial | Opaque return types |
+| Specialization | `default fn` | Nightly only | Оптимизации для конкретных типов |
+
+---
+
+## 12. Полезные ресурсы
+
+- **RFC 1958 — HRTB**: https://rust-lang.github.io/rfcs/1958-hrtb.html
+- **RFC 1598 — GAT**: https://rust-lang.github.io/rfcs/1598-generic_associated_types.html
+- **Const Generics RFC**: https://rust-lang.github.io/rfcs/2000-const-generics.html
+- **Specialization RFC**: https://rust-lang.github.io/rfcs/1210-impl-specialization.html
+- **Orphan Rules**: https://doc.rust-lang.org/reference/items/implementations.html#orphan-rules
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- HRTB (`for<'a>`) — higher-ranked trait bounds для замыканий с любыми lifetime
+- GAT (Generic Associated Types) — ассоциированные типы с параметрами
+- Const generics — значения на уровне типов (`const N: usize`)
+- `impl Trait` в type aliases — opaque types
+- Specialization — nightly-only оптимизация реализаций
+- Orphan rules и coherence — правила реализации трейтов
+- Marker traits: `Send`, `Sync`, `Unpin`, `UnwindSafe`, `Sized`
+- Sealed traits — паттерн для закрытия иерархии
+
+---
+
+**Следующий урок:** Итераторы и функциональный стиль (`15_Iterators_Functional.txt`)

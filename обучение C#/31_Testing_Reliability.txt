@@ -1,0 +1,744 @@
+# Урок 3.9: Testing/Reliability — Unit/Integration/Contract, Property-Based, Performance Tests, Resilience
+
+## Цели урока
+- Писать качественные unit тесты: AAA, тестовые двойники, FluentAssertions
+- Integration тесты: TestContainers, WebApplicationFactory, базы данных
+- Contract testing: Pact для consumer-driven contracts
+- Property-based testing: FsCheck, генерация тестовых данных
+- Performance тесты: BenchmarkDotNet в CI, регрессионное тестирование
+- Resilience: Polly, retry, circuit breaker, timeout, bulkhead, chaos engineering
+
+---
+
+## 1. Unit Testing — Advanced Patterns
+
+### AAA Pattern и FluentAssertions
+```csharp
+using FluentAssertions;
+using Xunit;
+
+public class OrderServiceTests
+{
+    private readonly Mock<IOrderRepository> _repoMock = new();
+    private readonly Mock<IEmailService> _emailMock = new();
+    private readonly OrderService _service;
+
+    public OrderServiceTests()
+    {
+        _service = new OrderService(_repoMock.Object, _emailMock.Object);
+    }
+
+    [Fact]
+    public async Task CreateOrder_ValidData_ReturnsOrderId()
+    {
+        // Arrange
+        var customerId = Guid.NewGuid();
+        var items = new[] { new OrderItemDto(ProductId: Guid.NewGuid(), Quantity: 2, Price: 10.5m) };
+        var command = new CreateOrderCommand(customerId, items);
+
+        _repoMock.Setup(r => r.AddAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _service.CreateAsync(command, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeEmpty();
+        _repoMock.Verify(r => r.AddAsync(
+            It.Is<Order>(o => o.CustomerId == customerId && o.Items.Count == 1),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+}
+```
+
+### AutoFixture для тестовых данных
+```csharp
+using AutoFixture;
+using AutoFixture.AutoMoq;
+
+public class OrderServiceAutoFixtureTests
+{
+    private readonly IFixture _fixture;
+
+    public OrderServiceAutoFixtureTests()
+    {
+        _fixture = new Fixture().Customize(new AutoMoqCustomization());
+        _fixture.Behaviors.OfType<ThrowingRecursionBehavior>().ToList()
+            .ForEach(b => _fixture.Behaviors.Remove(b));
+        _fixture.Behaviors.Add(new OmitOnRecursionBehavior());
+    }
+
+    [Fact]
+    public async Task CreateOrder_WithAutoFixture_Works()
+    {
+        // Arrange - автогенерация данных
+        var command = _fixture.Create<CreateOrderCommand>();
+
+        var repoMock = _fixture.Freeze<Mock<IOrderRepository>>();
+        repoMock.Setup(r => r.AddAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = _fixture.Create<OrderService>();
+
+        // Act
+        var result = await service.CreateAsync(command, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeEmpty();
+    }
+}
+```
+
+### Testcontainers для Integration Tests
+```csharp
+using Testcontainers.PostgreSql;
+using Microsoft.AspNetCore.Mvc.Testing;
+
+public class IntegrationTestBase : IAsyncLifetime
+{
+    private readonly PostgreSqlContainer _dbContainer = new PostgreSqlBuilder()
+        .WithImage("postgres:16-alpine")
+        .WithDatabase("testdb")
+        .WithUsername("test")
+        .WithPassword("test")
+        .Build();
+
+    protected WebApplicationFactory<Program> Factory { get; private set; } = null!;
+
+    public async Task InitializeAsync()
+    {
+        await _dbContainer.StartAsync();
+
+        Factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureServices(services =>
+                {
+                    // Заменяем connection string на тестовый
+                    var descriptor = services.SingleOrDefault(d => d.ServiceType == typeof(DbContextOptions<AppDbContext>));
+                    if (descriptor != null) services.Remove(descriptor);
+
+                    services.AddDbContext<AppDbContext>(options =>
+                        options.UseNpgsql(_dbContainer.GetConnectionString()));
+                });
+            });
+
+        // Применяем миграции
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Database.MigrateAsync();
+    }
+
+    public async Task DisposeAsync() => await _dbContainer.DisposeAsync();
+}
+
+public class UsersApiTests : IntegrationTestBase
+{
+    [Fact]
+    public async Task GetUsers_ReturnsOk()
+    {
+        var client = Factory.CreateClient();
+        var response = await client.GetAsync("/api/users");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+```
+
+### WebApplicationFactory для API тестов
+```csharp
+public class CustomWebAppFactory : WebApplicationFactory<Program>
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.ConfigureServices(services =>
+        {
+            // Mock внешние сервисы
+            services.AddSingleton<IEmailService, FakeEmailService>();
+            services.AddSingleton<IPaymentGateway, FakePaymentGateway>();
+
+            // In-memory DB для быстрых тестов
+            services.AddDbContext<AppDbContext>(options =>
+                options.UseInMemoryDatabase("TestDb"));
+        });
+
+        builder.UseEnvironment("Testing");
+    }
+}
+
+// Использование
+public class OrdersApiTests : IClassFixture<CustomWebAppFactory>
+{
+    private readonly HttpClient _client;
+
+    public OrdersApiTests(CustomWebAppFactory factory)
+    {
+        _client = factory.CreateClient();
+    }
+
+    [Fact]
+    public async Task CreateOrder_ReturnsCreated()
+    {
+        var command = new { Email = "test@test.com", Items = new[] { new { ProductId = Guid.NewGuid(), Quantity = 1 } } };
+        var response = await _client.PostAsJsonAsync("/api/orders", command);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var location = response.Headers.Location;
+        location.Should().NotBeNull();
+    }
+}
+```
+
+---
+
+## 2. Contract Testing — Pact
+
+### Consumer-Driven Contracts
+```csharp
+// Consumer тест (генерирует pact файл)
+public class UserApiConsumerTests
+{
+    private readonly IPactBuilderV3 _pactBuilder;
+
+    public UserApiConsumerTests()
+    {
+        _pactBuilder = Pact.V3("UserConsumer", "UserProvider", new PactConfig
+        {
+            PactDir = @"..\..\..\..\pacts",
+            LogLevel = PactLogLevel.Debug
+        });
+    }
+
+    [Fact]
+    public async Task GetUser_UserExists_ReturnsUser()
+    {
+        // Arrange
+        var expectedUser = new UserDto(Guid.NewGuid(), "John", "john@example.com");
+
+        _pactBuilder
+            .UponReceiving("A request for an existing user")
+            .Given("User with id {id} exists", new { id = expectedUser.Id })
+            .WithRequest(HttpMethod.Get, $"/api/users/{expectedUser.Id}")
+            .WillRespond()
+            .WithStatus(HttpStatusCode.OK)
+            .WithJsonBody(expectedUser);
+
+        // Act
+        await _pactBuilder.VerifyAsync(async ctx =>
+        {
+            var client = new HttpClient { BaseAddress = ctx.MockServerUri };
+            var response = await client.GetAsync($"/api/users/{expectedUser.Id}");
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var user = await response.Content.ReadFromJsonAsync<UserDto>();
+            user.Should().BeEquivalentTo(expectedUser);
+        });
+    }
+}
+```
+
+### Provider Verification
+```csharp
+// Provider тест (проверяет pact файл)
+public class UserApiProviderTests
+{
+    private readonly string _pactPath = Path.GetFullPath(@"..\..\..\..\pacts");
+
+    [Fact]
+    public void VerifyPacts()
+    {
+        var config = new PactVerifierConfig
+        {
+            ProviderVersion = "1.0.0",
+            PublishVerificationResults = true,
+            ProviderVersionTags = new[] { "main" }
+        };
+
+        IPactVerifier verifier = new PactVerifier(config);
+        verifier.ServiceProvider("UserProvider", "https://localhost:5001")
+            .WithHttpEndpoint("https://localhost:5001")
+            .WithPactBroker("http://localhost:9292")
+            .WithProviderStateUrl("https://localhost:5001/provider-states")
+            .Verify();
+    }
+}
+
+// Provider States endpoint
+[ApiController]
+[Route("provider-states")]
+public class ProviderStatesController : ControllerBase
+{
+    [HttpPost]
+    public IActionResult SetupState([FromBody] ProviderState state)
+    {
+        if (state.State == "User with id {id} exists")
+        {
+            var id = Guid.Parse(state.Params!["id"].ToString()!);
+            // Seed test data
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Users.Add(new User { Id = id, Name = "John", Email = "john@example.com" });
+            db.SaveChanges();
+        }
+        return Ok();
+    }
+}
+
+public class ProviderState
+{
+    public string State { get; set; } = "";
+    public Dictionary<string, object>? Params { get; set; }
+}
+```
+
+---
+
+## 3. Property-Based Testing — FsCheck
+
+### Основы FsCheck
+```csharp
+using FsCheck;
+using FsCheck.Xunit;
+using static FsCheck.Gen;
+
+public class StringPropertyTests
+{
+    // Property: reverse(reverse(x)) == x
+    [Property]
+    public bool ReverseTwiceIsOriginal(string s)
+    {
+        return s.Reverse().Reverse().SequenceEqual(s);
+    }
+
+    // Property: конкатенация сохраняет длину
+    [Property]
+    public bool ConcatLength(string a, string b)
+    {
+        return (a + b).Length == a.Length + b.Length;
+    }
+
+    // Custom generator
+    public static Arbitrary<Email> EmailGenerator()
+    {
+        return Arb.From(
+            from local in ArbMap.Default.GeneratorFor<string>()
+            from domain in ArbMap.Default.GeneratorFor<string>()
+            select new Email($"{local}@{domain}.com")
+        );
+    }
+
+    [Property(Arbitrary = new[] { typeof(EmailGenerator) })]
+    public bool EmailContainsAt(Email email)
+    {
+        return email.Value.Contains("@");
+    }
+}
+
+// Record для тестов
+public record Email(string Value);
+```
+
+### Property-Based Testing для бизнес-логики
+```csharp
+public class OrderPropertyTests
+{
+    // Property: добавление товара увеличивает сумму
+    [Property]
+    public Property AddingItemIncreasesTotal(Order order, OrderItem item)
+    {
+        var originalTotal = order.Total;
+        order.AddItem(item);
+        return (order.Total >= originalTotal).ToProperty();
+    }
+
+    // Property: удаление несуществующего товара не меняет заказ
+    [Property]
+    public Property RemovingNonExistentItemNoChange(Order order)
+    {
+        var nonExistentId = Guid.NewGuid();
+        var originalItems = order.Items.ToList();
+        order.RemoveItem(nonExistentId);
+        return order.Items.SequenceEqual(originalItems).ToProperty();
+    }
+
+    // Property: скидка не может быть больше суммы
+    [Property]
+    public Property DiscountCannotExceedTotal(decimal total, decimal discount)
+    {
+        return (discount <= total || discount > total)
+            .When(discount > total, () =>
+                Should.Throw<ArgumentException>(() => new Order(total, discount)))
+            .ToProperty();
+    }
+}
+```
+
+### Model-Based Testing
+```csharp
+// Состояние системы для тестирования
+public class BankAccountModel
+{
+    public decimal Balance { get; set; }
+    public bool IsClosed { get; set; }
+}
+
+public class BankAccountCommands : ICommand<BankAccountModel>
+{
+    public decimal Amount { get; set; }
+}
+
+public class DepositCommand : BankAccountCommands { }
+public class WithdrawCommand : BankAccountCommands { }
+public class CloseCommand : ICommand<BankAccountModel> { }
+
+// Генераторы команд
+public static Gen<ICommand<BankAccountModel>> Commands(BankAccountModel model)
+{
+    return Frequency(
+        (10, Gen.Constant(new DepositCommand { Amount = Arb.Generate<decimal>() })),
+        (10, Gen.Constant(new WithdrawCommand { Amount = Arb.Generate<decimal>() })),
+        (1, Gen.Constant(new CloseCommand()))
+    );
+}
+
+// Проверка инвариантов
+public class BankAccountProperties
+{
+    [Property]
+    public Property BalanceNeverNegative(BankAccountModel model)
+    {
+        return (model.Balance >= 0).ToProperty();
+    }
+}
+```
+
+---
+
+## 4. Performance Testing
+
+### BenchmarkDotNet в CI
+```csharp
+// PerformanceTests.cs
+[MemoryDiagnoser]
+[SimpleJob(RuntimeMoniker.Net80)]
+[MinColumn, MaxColumn, MeanColumn, MedianColumn]
+public class ApiPerformanceTests
+{
+    private readonly HttpClient _client;
+    private readonly List<Guid> _userIds;
+
+    public ApiPerformanceTests()
+    {
+        var factory = new CustomWebAppFactory();
+        _client = factory.CreateClient();
+
+        // Seed data
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        _userIds = db.Users.Select(u => u.Id).Take(100).ToList();
+    }
+
+    [Params(1, 10, 100)]
+    public int BatchSize { get; set; }
+
+    [Benchmark]
+    public async Task GetUsersBatch()
+    {
+        var tasks = _userIds.Take(BatchSize)
+            .Select(id => _client.GetAsync($"/api/users/{id}"));
+        await Task.WhenAll(tasks);
+    }
+}
+
+// CI Pipeline (GitHub Actions)
+/*
+name: Performance Tests
+on: [push, pull_request]
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - name: Run Benchmarks
+        run: dotnet run -c Release --project PerformanceTests.csproj -- --filter **
+      - name: Compare with baseline
+        run: |
+          # Сравнение с baseline из artifacts
+          dotnet tool install -g BenchmarkDotNet.Tool
+          benchmarkdotnet compare baseline.json current.json
+*/
+```
+
+### Regression Detection
+```csharp
+public class PerformanceRegressionTests
+{
+    [Fact]
+    public void Performance_ShouldNotRegress()
+    {
+        // Baseline metrics (сохранены от предыдущих запусков)
+        var baseline = new Dictionary<string, double>
+        {
+            ["GetUsersBatch_BatchSize_1"] = 5.2,    // ms
+            ["GetUsersBatch_BatchSize_10"] = 12.8,
+            ["GetUsersBatch_BatchSize_100"] = 85.3
+        };
+
+        // Запуск бенчмарков программно
+        var summary = BenchmarkRunner.Run<ApiPerformanceTests>();
+
+        foreach (var report in summary.Reports)
+        {
+            var key = $"{report.BenchmarkCase.DisplayName}";
+            if (baseline.TryGetValue(key, out var baselineMs))
+            {
+                var currentMs = report.ResultStatistics.Mean;
+                var regression = (currentMs - baselineMs) / baselineMs * 100;
+
+                regression.Should().BeLessThan(20,
+                    $"Performance regression detected: {key} increased by {regression:F1}%");
+            }
+        }
+    }
+}
+```
+
+---
+
+## 5. Resilience — Polly
+
+### Retry, Circuit Breaker, Timeout
+```csharp
+using Polly;
+using Polly.Extensions.Http;
+
+public static class ResiliencePolicies
+{
+    // Retry с экспоненциальной задержкой
+    public static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .OrResult(r => r.StatusCode == HttpStatusCode.TooManyRequests)
+            .WaitAndRetryAsync(
+                retryCount: 3,
+                sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt))
+                    + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 100)),
+                onRetry: (outcome, timespan, attempt, ctx) =>
+                {
+                    var logger = ctx.GetLogger();
+                    logger.LogWarning("Retry {Attempt} after {Delay}ms", attempt, timespan.TotalMilliseconds);
+                });
+    }
+
+    // Circuit Breaker
+    public static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .CircuitBreakerAsync(
+                handledEventsAllowedBeforeBreaking: 5,
+                durationOfBreak: TimeSpan.FromSeconds(30),
+                onBreak: (outcome, timespan) =>
+                {
+                    Log.CircuitBroken(timespan);
+                },
+                onReset: () => Log.CircuitReset(),
+                onHalfOpen: () => Log.CircuitHalfOpen());
+    }
+
+    // Timeout
+    public static IAsyncPolicy<HttpResponseMessage> GetTimeoutPolicy()
+    {
+        return Policy.TimeoutAsync<HttpResponseMessage>(TimeSpan.FromSeconds(10));
+    }
+
+    // Комбинированная политика
+    public static IAsyncPolicy<HttpResponseMessage> GetCombinedPolicy()
+    {
+        return Policy.WrapAsync(GetTimeoutPolicy(), GetRetryPolicy(), GetCircuitBreakerPolicy());
+    }
+}
+
+// Регистрация в HttpClient
+builder.Services.AddHttpClient<ExternalApiClient>()
+    .AddPolicyHandler(ResiliencePolicies.GetCombinedPolicy())
+    .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(3, _ => TimeSpan.FromSeconds(1)));
+```
+
+### Bulkhead и Rate Limiting
+```csharp
+// Bulkhead — ограничение параллелизма
+public static IAsyncPolicy GetBulkheadPolicy()
+{
+    return Policy.BulkheadAsync(
+        maxParallelization: 10,
+        maxQueuingActions: 20,
+        onBulkheadRejectedAsync: ctx =>
+        {
+            Log.BulkheadRejected();
+            return Task.CompletedTask;
+        });
+}
+
+// Rate Limiting с Polly
+public static IAsyncPolicy<HttpResponseMessage> GetRateLimitPolicy()
+{
+    return Policy.RateLimitAsync<HttpResponseMessage>(
+        numberOfExecutions: 100,
+        perTimeSpan: TimeSpan.FromMinutes(1),
+        onRateLimitExceeded: (retryAfter, ctx) =>
+        {
+            Log.RateLimited(retryAfter);
+            return Task.CompletedTask;
+        });
+}
+```
+
+### Fallback и Degradation
+```csharp
+// Fallback к кэшу при ошибке
+public class ResilientUserService
+{
+    private readonly IHttpClientFactory _httpFactory;
+    private readonly IMemoryCache _cache;
+    private readonly ILogger<ResilientUserService> _logger;
+
+    public async Task<UserDto?> GetUserAsync(Guid id, CancellationToken ct)
+    {
+        var cacheKey = $"user:{id}";
+
+        // Try cache first
+        if (_cache.TryGetValue(cacheKey, out UserDto? cached))
+            return cached;
+
+        var policy = Policy
+            .Handle<HttpRequestException>()
+            .Or<TimeoutRejectedException>()
+            .Or<BrokenCircuitException>()
+            .FallbackAsync(
+                fallbackAction: async (ctx, ct) =>
+                {
+                    _logger.LogWarning("External API failed, returning stale cache");
+                    // Попытка получить устаревший кэш
+                    return _cache.TryGetValue(cacheKey, out UserDto? stale) ? stale : null;
+                },
+                onFallbackAsync: (ex, ctx) =>
+                {
+                    _logger.LogError(ex, "Fallback triggered for user {Id}", id);
+                    return Task.CompletedTask;
+                });
+
+        var client = _httpFactory.CreateClient("UserApi");
+        var user = await policy.ExecuteAsync(async () =>
+        {
+            var response = await client.GetAsync($"/users/{id}", ct);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<UserDto>(cancellationToken: ct);
+        });
+
+        if (user != null)
+            _cache.Set(cacheKey, user, TimeSpan.FromMinutes(5));
+
+        return user;
+    }
+}
+```
+
+---
+
+## 6. Chaos Engineering
+
+### Simmy для Chaos Testing
+```csharp
+using Simmy;
+using Simmy.ChaosEngine;
+using Simmy.Fault;
+
+public class ChaosTests
+{
+    [Fact]
+    public async Task Service_HandlesLatencyInjection()
+    {
+        var chaosPolicy = ChaosPolicy
+            .InjectLatencyAsync(
+                latency: TimeSpan.FromSeconds(5),
+                injectionRate: 0.3) // 30% запросов
+            .ExecuteAsync(async () =>
+            {
+                var client = _factory.CreateClient();
+                return await client.GetAsync("/api/users");
+            });
+
+        // Тест должен пройти несмотря на задержки
+        var response = await chaosPolicy;
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Service_HandlesExceptionsInjection()
+    {
+        var chaosPolicy = ChaosPolicy
+            .InjectFaultAsync<HttpRequestException>(
+                new HttpRequestException("Chaos!"),
+                injectionRate: 0.2)
+            .WrapAsync(ResiliencePolicies.GetRetryPolicy());
+
+        var responses = await Task.WhenAll(
+            Enumerable.Range(0, 20).Select(_ => chaosPolicy.ExecuteAsync(async () =>
+            {
+                var client = _factory.CreateClient();
+                return await client.GetAsync("/api/health");
+            })));
+
+        // Большинство должны успешно повториться
+        responses.Count(r => r.IsSuccessStatusCode).Should().BeGreaterThan(15);
+    }
+}
+```
+
+---
+
+## 7. Практические задания
+
+1. **Complete Test Suite**: Постройте полный набор тестов для "Order Service": unit (xUnit+Moq+AutoFixture), integration (Testcontainers+WebApplicationFactory), contract (Pact), property-based (FsCheck)
+
+2. **Performance Regression CI**: Настройте CI pipeline: nightly benchmarks, сохранение baseline, PR comparison, автоматический fail при регрессии > 15%
+
+3. **Resilience Patterns Demo**: Создайте сервис, вызывающий 3 внешних API с разными политиками: retry для flaky, circuit breaker для ненадежного, timeout для медленного, fallback к кэшу
+
+4. **Chaos Engineering Experiment**: Внедрите Simmy в integration тесты: latency injection, exception injection, behavior injection. Проверьте, что resilience политики работают
+
+5. **Mutation Testing**: Настройте Stryker.NET для mutation testing. Достигните mutation score > 80% для критических доменных классов
+
+---
+
+## 8. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Тесты зависят друг от друга | Каждый тест изолирован, propre state через fixtures |
+| Мокают всё подряд | Мокают только внешние зависимости (DB, HTTP, время) |
+| Integration тесты без очистки БД | Transaction rollback или Testcontainers с fresh DB |
+| Отсутствие property-based для алгоритмов | FsCheck для инвариантов, сериализации, парсеров |
+| Бенчмарки в Debug режиме | Только Release, без отладчика |
+| Polly политики не переиспользуются | Singleton политики через `PolicyRegistry` |
+
+---
+
+## 9. Полезные ресурсы
+
+- **xUnit** — https://xunit.net
+- **FluentAssertions** — https://fluentassertions.com
+- **AutoFixture** — https://github.com/AutoFixture/AutoFixture
+- **Testcontainers** — https://dotnet.testcontainers.org
+- **Pact .NET** — https://github.com/pact-foundation/pact-net
+- **FsCheck** — https://fscheck.github.io/FsCheck
+- **BenchmarkDotNet** — https://benchmarkdotnet.org
+- **Polly** — https://github.com/App-vNext/Polly
+- **Simmy** — https://github.com/Polly-Contrib/Simmy
+- **Stryker.NET** — https://stryker-mutator.io/docs/stryker-net/
+- **Testing Strategies** — Vladimir Khorikov "Unit Testing Principles, Practices, and Patterns"

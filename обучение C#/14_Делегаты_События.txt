@@ -1,0 +1,445 @@
+# Урок 14: Делегаты и события — delegates, lambdas, events, Func, Action, Predicate, subscription
+
+## Цели урока
+- Понимать, что такое делегат и как он работает под капотом
+- Использовать встроенные делегаты: Func, Action, Predicate
+- Работать с лямбда-выражениями и замыканиями
+- Реализовывать события по паттерну publisher/subscriber
+- Знать best practices для событий и избегать утечек памяти
+
+---
+
+## 1. Делегаты (Delegates) — основы
+
+### Что такое делегат
+Делегат — это **типобезопасный указатель на метод**. Это reference type, который хранит ссылку на метод(ы) с определённой сигнатурой.
+
+```csharp
+// Объявление делегата
+public delegate int Calculator(int a, int b);
+
+// Использование
+Calculator add = (a, b) => a + b;
+Calculator multiply = (a, b) => a * b;
+
+int result = add(5, 3); // 8
+result = multiply(5, 3); // 15
+
+// Можно назначать именованные методы
+int Subtract(int a, int b) => a - b;
+Calculator sub = Subtract;
+```
+
+### Multicast delegates (многоадресные)
+Делегаты могут ссылаться на несколько методов — вызываются все по порядку.
+
+```csharp
+Action<string> loggers = Console.WriteLine;
+loggers += msg => File.AppendAllText("log.txt", msg + "\n");
+loggers += msg => Debug.WriteLine(msg);
+
+loggers("Hello"); // вызовет все три метода
+
+// Удаление
+loggers -= Console.WriteLine;
+
+// Важно: порядок вызова = порядок добавления
+// Возврат значения: возвращается результат ПОСЛЕДНЕГО метода
+```
+
+---
+
+## 2. Встроенные делегаты: Func, Action, Predicate
+
+### Func<T, TResult> — с возвращаемым значением
+```csharp
+// Func<вход1, вход2, ..., выход>
+// До 16 входных параметров
+Func<int, int, int> add = (a, b) => a + b;
+Func<string, int> parse = int.Parse;
+Func<int> getRandom = () => Random.Shared.Next();
+
+// LINQ использует Func повсеместно
+var numbers = new[] { 1, 2, 3, 4, 5 };
+var doubled = numbers.Select(x => x * 2); // Select<TSource, TResult> принимает Func<TSource, TResult>
+var evens = numbers.Where(x => x % 2 == 0); // Where принимает Func<TSource, bool>
+```
+
+### Action<T> — без возвращаемого значения (void)
+```csharp
+Action printHello = () => Console.WriteLine("Hello");
+Action<string, string> greet = (name, greeting) => Console.WriteLine($"{greeting}, {name}!");
+
+greet("Alice", "Hi"); // Hi, Alice!
+
+// Для 0-16 параметров
+Action a0 = () => { };
+Action<int> a1 = x => { };
+Action<int, string, bool> a3 = (i, s, b) => { };
+```
+
+### Predicate<T> — специальный Func<T, bool>
+```csharp
+Predicate<int> isEven = x => x % 2 == 0;
+Predicate<string> isNotNullOrEmpty = s => !string.IsNullOrEmpty(s);
+
+// Использование в List<T>
+var list = new List<int> { 1, 2, 3, 4, 5 };
+var even = list.Find(isEven); // 2
+var allEven = list.TrueForAll(isEven); // false
+```
+
+### Сравнение
+| Делегат | Возврат | Параметров | Назначение |
+|---------|---------|------------|------------|
+| `Action` | void | 0-16 | Процедуры, side effects |
+| `Func<TResult>` | TResult | 0-16 | Функции, вычисления |
+| `Predicate<T>` | bool | 1 | Условия, фильтры |
+| `Comparison<T>` | int | 2 | Сортировка (Compare) |
+| `Converter<TInput, TOutput>` | TOutput | 1 | Конвертация типов |
+
+---
+
+## 3. Лямбда-выражения и замыкания
+
+### Синтаксис лямбд
+```csharp
+// Expression body (выражение) — неявный возврат
+Func<int, int, int> add = (a, b) => a + b;
+
+// Statement body (блок) — явный return
+Func<int, int, int> addBlock = (a, b) => {
+    var sum = a + b;
+    return sum;
+};
+
+// Неявные типы параметров
+var square = (int x) => x * x; // или просто (x) => x * x
+
+// Discard для неиспользуемых параметров
+Action<int, int> ignoreFirst = (_, y) => Console.WriteLine(y);
+```
+
+### Замыкания (Closures) — захватывание переменных
+```csharp
+int factor = 10;
+Func<int, int> multiply = x => x * factor; // захватывает factor
+
+factor = 20;
+Console.WriteLine(multiply(5)); // 100! (использует ТЕКУЩЕЕ значение)
+
+// Классическая ловушка в циклах
+var actions = new List<Action>();
+for (int i = 0; i < 3; i++)
+{
+    actions.Add(() => Console.WriteLine(i)); // Захватывает ПЕРЕМЕННУЮ i, а не значение!
+}
+actions.ForEach(a => a()); // Выведет: 3, 3, 3
+
+// Исправление: локальная копия
+var actionsFixed = new List<Action>();
+for (int i = 0; i < 3; i++)
+{
+    int captured = i; // Новая переменная на каждой итерации
+    actionsFixed.Add(() => Console.WriteLine(captured));
+}
+actionsFixed.ForEach(a => a()); // 0, 1, 2
+```
+
+### Лямбды vs Анонимные методы (устарело)
+```csharp
+// Старый синтаксис (C# 2.0) — не используйте в новом коде
+Func<int, int, int> oldStyle = delegate (int a, int b) { return a + b; };
+
+// Лямбды — короче, читабельнее, поддерживают expression trees
+Func<int, int, int> modern = (a, b) => a + b;
+```
+
+---
+
+## 4. События (Events) — паттерн Publisher/Subscriber
+
+### Базовый синтаксис
+```csharp
+public class Button
+{
+    // Событие на основе делегата
+    public event EventHandler Clicked; // стандартный паттерн (sender, EventArgs)
+
+    // Или с кастомными аргументами
+    public event EventHandler<ClickEventArgs> ClickedEx;
+
+    protected virtual void OnClicked(ClickEventArgs e)
+    {
+        ClickedEx?.Invoke(this, e); // ?. — thread-safe проверка на null
+    }
+
+    public void Click()
+    {
+        OnClicked(new ClickEventArgs { X = 10, Y = 20, Timestamp = DateTime.Now });
+    }
+}
+
+public class ClickEventArgs : EventArgs
+{
+    public int X { get; set; }
+    public int Y { get; set; }
+    public DateTime Timestamp { get; set; }
+}
+```
+
+### Подписка и отписка
+```csharp
+var button = new Button();
+
+// Подписка (метод)
+button.ClickedEx += Button_ClickedEx;
+
+// Подписка (лямбда)
+button.ClickedEx += (sender, e) => Console.WriteLine($"Clicked at {e.X}, {e.Y}");
+
+// Отписка — ТОЛЬКО именованный метод/делегат!
+button.ClickedEx -= Button_ClickedEx; // OK
+// button.ClickedEx -= (s, e) => ...; // ОШИБКА: другая лямбда = другой делегат
+
+void Button_ClickedEx(object? sender, ClickEventArgs e)
+{
+    Console.WriteLine($"Button clicked at {e.Timestamp}");
+}
+```
+
+### EventHandler<TEventArgs> — стандартный паттерн
+```csharp
+// Microsoft рекомендует этот паттерн
+public event EventHandler<CustomEventArgs> CustomEvent;
+
+protected virtual void OnCustomEvent(CustomEventArgs e)
+{
+    CustomEvent?.Invoke(this, e);
+}
+
+// Аргументы события
+public class CustomEventArgs : EventArgs
+{
+    public string Message { get; }
+    public CustomEventArgs(string message) => Message = message;
+}
+```
+
+---
+
+## 5. Продвинутые темы событий
+
+### События с add/remove (custom accessors)
+```csharp
+public class AdvancedPublisher
+{
+    private EventHandler<EventArgs>? _customEvent;
+
+    // Полный контроль над подпиской
+    public event EventHandler<EventArgs> CustomEvent
+    {
+        add
+        {
+            lock (_lock) // thread-safe
+            {
+                _customEvent += value;
+                Console.WriteLine("Subscriber added");
+            }
+        }
+        remove
+        {
+            lock (_lock)
+            {
+                _customEvent -= value;
+                Console.WriteLine("Subscriber removed");
+            }
+        }
+    }
+    private readonly object _lock = new();
+}
+```
+
+### Weak Events — избегание утечек памяти
+```csharp
+// Проблема: подписчик не собирается GC, пока издатель жив
+// Решение: WeakEventManager (WPF) или WeakReference
+
+// Ручная реализация weak event
+public class WeakEventSource
+{
+    private readonly List<WeakReference<EventHandler<EventArgs>>> _subscribers = new();
+
+    public event EventHandler<EventArgs> Event
+    {
+        add => _subscribers.Add(new WeakReference<EventHandler<EventArgs>>(value));
+        remove
+        {
+            // Сложно удалить конкретный — обычно чистят при вызове
+        }
+    }
+
+    protected void Raise(EventArgs e)
+    {
+        var alive = new List<EventHandler<EventArgs>>();
+        foreach (var wr in _subscribers)
+        {
+            if (wr.TryGetTarget(out var handler))
+                alive.Add(handler);
+        }
+        foreach (var h in alive) h(this, e);
+
+        // Очистка мертвых ссылок
+        _subscribers.RemoveAll(wr => !wr.TryGetTarget(out _));
+    }
+}
+```
+
+### Асинхронные события
+```csharp
+public class AsyncPublisher
+{
+    // Событие с Task — подписчики могут быть async
+    public event Func<object, EventArgs, Task>? AsyncEvent;
+
+    public async Task RaiseAsync(EventArgs e)
+    {
+        if (AsyncEvent == null) return;
+
+        // Параллельный вызов всех подписчиков
+        var tasks = AsyncEvent.GetInvocationList()
+            .Cast<Func<object, EventArgs, Task>>()
+            .Select(h => h(this, e));
+
+        await Task.WhenAll(tasks);
+    }
+}
+
+// Подписчик
+publisher.AsyncEvent += async (s, e) =>
+{
+    await Task.Delay(100);
+    Console.WriteLine("Done");
+};
+```
+
+---
+
+## 6. Паттерны использования
+
+### Observer Pattern через события
+```csharp
+public interface IObserver<in T>
+{
+    void OnNext(T value);
+    void OnError(Exception error);
+    void OnCompleted();
+}
+
+public class Observable<T>
+{
+    private readonly List<IObserver<T>> _observers = new();
+
+    public IDisposable Subscribe(IObserver<T> observer)
+    {
+        _observers.Add(observer);
+        return new Unsubscriber(_observers, observer);
+    }
+
+    public void Publish(T value)
+    {
+        foreach (var obs in _observers.ToArray()) // копия для thread-safety
+            obs.OnNext(value);
+    }
+
+    private class Unsubscriber : IDisposable
+    {
+        private readonly List<IObserver<T>> _list;
+        private readonly IObserver<T> _observer;
+        public Unsubscriber(List<IObserver<T>> list, IObserver<T> observer)
+            => (_list, _observer) = (list, observer);
+        public void Dispose() => _list.Remove(_observer);
+    }
+}
+```
+
+### Event Sourcing (хранение событий)
+```csharp
+public abstract class AggregateRoot
+{
+    private readonly List<IDomainEvent> _uncommittedEvents = new();
+
+    protected void RaiseEvent(IDomainEvent @event)
+    {
+        Apply(@event);
+        _uncommittedEvents.Add(@event);
+    }
+
+    protected abstract void Apply(IDomainEvent @event);
+
+    public IEnumerable<IDomainEvent> GetUncommittedEvents() => _uncommittedEvents;
+    public void ClearUncommittedEvents() => _uncommittedEvents.Clear();
+}
+
+public record UserCreated(string UserId, string Name) : IDomainEvent;
+public record UserRenamed(string UserId, string NewName) : IDomainEvent;
+
+public class User : AggregateRoot
+{
+    public string Id { get; private set; }
+    public string Name { get; private set; }
+
+    public User(string id, string name)
+    {
+        RaiseEvent(new UserCreated(id, name));
+    }
+
+    public void Rename(string newName)
+    {
+        RaiseEvent(new UserRenamed(Id, newName));
+    }
+
+    protected override void Apply(IDomainEvent @event)
+    {
+        switch (@event)
+        {
+            case UserCreated e: (Id, Name) = (e.UserId, e.Name); break;
+            case UserRenamed e: Name = e.NewName; break;
+        }
+    }
+}
+```
+
+---
+
+## 7. Практические задания
+
+1. **Event Bus**: реализуйте простой `IEventBus` с `Publish<TEvent>` и `Subscribe<TEvent>` используя `ConcurrentDictionary<Type, List<Delegate>>`
+2. **Weak Event**: создайте `WeakEventManager<TEventArgs>` для предотвращения утечек памяти в долгоживущих издателях
+3. **Async Pipeline**: постройте pipeline из `Func<T, Task<T>>` (middleware), где каждый шаг может изменить или прервать выполнение
+4. **Reactive Extensions (Rx)**: изучите `System.Reactive` — `IObservable<T>`, `Subscribe`, операторы `Where`, `Select`, `Throttle`
+5. **Custom EventArgs**: создайте иерархию событий для e-commerce: `OrderPlaced`, `OrderShipped`, `OrderCancelled` с наследованием от `OrderEventBase`
+
+---
+
+## 8. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `event` без `?.Invoke` (NullReferenceException) | `Event?.Invoke(this, e)` |
+| Лямбда в цикле захватывает переменную цикла | Создайте локальную копию: `var captured = i;` |
+| Подписка на событие и забытие отписаться (утечка) | `IDisposable` паттерн или `WeakReference` |
+| `public delegate` вместо `EventHandler<T>` | Стандартный паттерн `EventHandler<TEventArgs>` |
+| Блокирующие вызовы в обработчиках событий | `async` обработчики или `Task.Run` |
+| Мутация `sender` или `EventArgs` в обработчике | Считайте `EventArgs` неизменяемыми |
+
+---
+
+## 9. Полезные ресурсы
+
+- **Delegates in C#** — https://learn.microsoft.com/dotnet/csharp/delegates-overview
+- **Events in C#** — https://learn.microsoft.com/dotnet/csharp/events-overview
+- **Lambda Expressions** — https://learn.microsoft.com/dotnet/csharp/language-reference/operators/lambda-expressions
+- **Observer Pattern** — https://learn.microsoft.com/dotnet/api/system.iobserver-1
+- **Weak Events** — https://learn.microsoft.com/dotnet/desktop/wpf/advanced/weak-event-patterns
+- **System.Reactive (Rx.NET)** — https://github.com/dotnet/reactive

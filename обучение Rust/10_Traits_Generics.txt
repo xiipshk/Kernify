@@ -1,0 +1,496 @@
+# Урок 10: Трейты и дженерики
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Определять и реализовывать трейты (traits)
+- Использовать дженерики (generics) в функциях, структурах, enum'ах
+- Понимать trait bounds и `where` clauses
+- Работать с ассоциированными типами
+- Использовать трейты-маркеры: `Copy`, `Clone`, `Send`, `Sync`, `Sized`
+- Применять оператор `impl Trait` в возвращаемых типах и аргументах
+- Понимать статическую vs динамическую диспетчеризацию
+
+---
+
+## 1. Трейты (Traits) — определение и реализация
+
+### Базовый синтаксис
+```rust
+trait Summary {
+    fn summarize(&self) -> String;
+}
+
+struct Article {
+    headline: String,
+    content: String,
+}
+
+impl Summary for Article {
+    fn summarize(&self) -> String {
+        format!("{} - {}", self.headline, self.content)
+    }
+}
+```
+
+### Дефолтная реализация
+```rust
+trait Summary {
+    fn summarize(&self) -> String {
+        String::from("(Read more...)") // Дефолт
+    }
+}
+
+impl Summary for Article {
+    // Можно не переопределять
+}
+```
+
+### Трейты как параметры (Static Dispatch — мономорфизация)
+```rust
+// Generic с trait bound
+fn notify<T: Summary>(item: &T) {
+    println!("Breaking news! {}", item.summarize());
+}
+
+// Несколько bounds
+fn notify_multi<T: Summary + std::fmt::Debug>(item: &T) {}
+
+// where clause (читаемее для сложных bounds)
+fn notify_where<T>(item: &T)
+where
+    T: Summary + std::fmt::Debug,
+{}
+```
+
+### `impl Trait` в аргументах (синтаксический сахар)
+```rust
+// Эквивалентно fn notify<T: Summary>(item: &T)
+fn notify(item: &impl Summary) {
+    println!("{}", item.summarize());
+}
+
+// Несколько трейтов
+fn notify(item: &(impl Summary + std::fmt::Debug)) {}
+```
+
+---
+
+## 2. Дженерики (Generics)
+
+### В функциях
+```rust
+fn largest<T: PartialOrd + Copy>(list: &[T]) -> T {
+    let mut largest = list[0];
+    for &item in list {
+        if item > largest {
+            largest = item;
+        }
+    }
+    largest
+}
+```
+
+### В структурах
+```rust
+struct Point<T> {
+    x: T,
+    y: T,
+}
+
+impl<T> Point<T> {
+    fn x(&self) -> &T { &self.x }
+}
+
+// Методы только для конкретных T
+impl Point<f64> {
+    fn distance_from_origin(&self) -> f64 {
+        (self.x.powi(2) + self.y.powi(2)).sqrt()
+    }
+}
+```
+
+### В enum'ах
+```rust
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+```
+
+### Множественные параметры
+```rust
+struct Pair<T, U> {
+    first: T,
+    second: U,
+}
+
+fn compare<T, U>(a: T, b: U) where T: PartialEq<U> {
+    println!("Equal: {}", a == b);
+}
+```
+
+---
+
+## 3. Возврат `impl Trait` (Static Dispatch)
+
+```rust
+fn returns_summarizable() -> impl Summary {
+    Article {
+        headline: "Rust 1.75 released".into(),
+        content: "...".into(),
+    }
+}
+
+// Можно вернуть только ОДИН конкретный тип!
+// fn returns_conditional(cond: bool) -> impl Summary {
+//     if cond { Article { ... } } else { Tweet { ... } } // ОШИБКА!
+// }
+```
+
+---
+
+## 4. Ассоциированные типы (Associated Types)
+
+### В трейтах
+```rust
+trait Iterator {
+    type Item; // Ассоциированный тип
+    fn next(&mut self) -> Option<Self::Item>;
+}
+
+struct Counter {
+    count: u32,
+}
+
+impl Iterator for Counter {
+    type Item = u32; // Конкретизация
+    fn next(&mut self) -> Option<u32> {
+        if self.count < 5 {
+            self.count += 1;
+            Some(self.count)
+        } else { None }
+    }
+}
+```
+
+### Разница с дженериками
+```rust
+// Generic — может быть несколько реализаций для разных T
+trait Container<T> { fn get(&self) -> T; }
+
+// Associated type — только одна реализация на тип
+trait Container2 { type Item; fn get(&self) -> Self::Item; }
+
+struct MyVec(Vec<i32>);
+
+// OK: одна реализация
+impl Container2 for MyVec { type Item = i32; fn get(&self) -> i32 { self.0[0] } }
+
+// Можно несколько для разных T
+impl Container<i32> for MyVec { fn get(&self) -> i32 { self.0[0] } }
+impl Container<String> for MyVec { fn get(&self) -> String { "hi".into() } }
+```
+
+---
+
+## 5. Supertraits (Supertrait bounds)
+
+```rust
+trait OutlinePrint: std::fmt::Display { // Требует Display
+    fn outline_print(&self) {
+        let output = self.to_string(); // Display доступен
+        println!("*** {} ***", output);
+    }
+}
+
+struct Point { x: i32, y: i32 }
+
+impl std::fmt::Display for Point {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "({}, {})", self.x, self.y)
+    }
+}
+
+impl OutlinePrint for Point {}
+```
+
+---
+
+## 6. Newtype Pattern (Обёртка для реализации чужого трейта)
+
+```rust
+// Ошибка: нельзя реализовать внешний трейт для внешнего типа
+// impl std::fmt::Display for Vec<i32> {}
+
+struct Wrapper(Vec<i32>);
+
+impl std::fmt::Display for Wrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "[{}]", self.0.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "))
+    }
+}
+```
+
+---
+
+## 7. Динамическая диспетчеризация (Dynamic Dispatch) — `dyn Trait`
+
+```rust
+// Trait object — указатель + vtable
+fn notify_dynamic(item: &dyn Summary) {
+    println!("{}", item.summarize());
+}
+
+fn main() {
+    let article = Article { headline: "Hi".into(), content: "...".into() };
+    notify_dynamic(&article); // &dyn Summary
+}
+```
+
+### `Box<dyn Trait>` — владение trait object
+```rust
+fn returns_random() -> Box<dyn Summary> {
+    if rand::random() {
+        Box::new(Article { ... })
+    } else {
+        Box::new(Tweet { ... })
+    }
+}
+```
+
+### Сравнение: Static vs Dynamic
+
+| Аспект | Static (`impl Trait`, generics) | Dynamic (`dyn Trait`) |
+|--------|----------------------------------|----------------------|
+| Производительность | Инлайнинг, мономорфизация | Косвенный вызов через vtable |
+| Размер кода | Увеличивается (код на каждый T) | Один код |
+| Гибкость | Тип известен на компиляции | Тип известен только в runtime |
+| Heterogeneous collections | Нет | Да (`Vec<Box<dyn Trait>>`) |
+
+---
+
+## 8. Важные трейты стандартной библиотеки
+
+### `Clone` / `Copy`
+```rust
+#[derive(Clone)] // Глубокое копирование
+struct Deep;
+
+#[derive(Copy, Clone)] // Битовое копирование (только если все поля Copy)
+struct Shallow;
+```
+
+### `Default`
+```rust
+#[derive(Default)]
+struct Config { timeout: u64, retries: u32 }
+
+fn main() {
+    let cfg = Config::default();
+}
+```
+
+### `From` / `Into` / `TryFrom` / `TryInto`
+```rust
+let s: String = "hello".into(); // From<&str> for String
+let n: i32 = 5.into(); // Into<i32> for i32
+
+// TryFrom — может неудаться
+let n: i32 = "42".parse().unwrap(); // FromStr
+// или
+use std::convert::TryFrom;
+let n = i32::try_from(1000i64).unwrap();
+```
+
+### `AsRef` / `AsMut` / `Borrow` / `BorrowMut`
+```rust
+fn print<T: AsRef<str>>(s: T) { println!("{}", s.as_ref()); }
+print("hello");      // &str
+print(String::from("world")); // String
+```
+
+### `Deref` / `DerefMut` — умные указатели
+```rust
+use std::ops::Deref;
+
+struct MyBox<T>(T);
+
+impl<T> Deref for MyBox<T> {
+    type Target = T;
+    fn deref(&self) -> &T { &self.0 }
+}
+
+fn main() {
+    let b = MyBox(5);
+    println!("{}", *b); // *(b.deref())
+}
+```
+
+### `Drop` — деструктор
+```rust
+struct Resource { name: String }
+
+impl Drop for Resource {
+    fn drop(&mut self) {
+        println!("Dropping {}", self.name);
+    }
+}
+```
+
+### `Send` / `Sync` — потокобезопасность (маркеры)
+- `Send` — безопасно передавать владение другому потоку
+- `Sync` — безопасно разделять `&T` между потоками
+- Авто-выводятся; `!Send` / `!Sync` для raw pointers, `MutexGuard`, etc.
+
+---
+
+## 9. Operator Overloading (Перегрузка операторов)
+
+```rust
+use std::ops::Add;
+
+#[derive(Debug, PartialEq)]
+struct Point { x: i32, y: i32 }
+
+impl Add for Point {
+    type Output = Point;
+    fn add(self, other: Point) -> Point {
+        Point { x: self.x + other.x, y: self.y + other.y }
+    }
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 } + Point { x: 3, y: 4 };
+    println!("{:?}", p); // Point { x: 4, y: 6 }
+}
+```
+
+### Основные трейты операторов
+| Оператор | Трейт | Метод |
+|----------|-------|-------|
+| `+` | `Add` | `add` |
+| `-` | `Sub` | `sub` |
+| `*` | `Mul` | `mul` |
+| `/` | `Div` | `div` |
+| `%` | `Rem` | `rem` |
+| `+=` | `AddAssign` | `add_assign` |
+| `==` | `PartialEq` | `eq` |
+| `<` | `PartialOrd` | `partial_cmp` |
+| `[]` | `Index` / `IndexMut` | `index` |
+| `()` | `Fn` / `FnMut` / `FnOnce` | `call` |
+
+---
+
+## 10. Практические упражнения
+
+### Упражнение 1: Generic trait с ассоциированным типом
+```rust
+trait Graph {
+    type Node;
+    type Edge;
+    fn nodes(&self) -> Vec<Self::Node>;
+    fn edges(&self) -> Vec<Self::Edge>;
+}
+
+struct SimpleGraph {
+    nodes: Vec<String>,
+    edges: Vec<(String, String)>,
+}
+
+impl Graph for SimpleGraph {
+    type Node = String;
+    type Edge = (String, String);
+    fn nodes(&self) -> Vec<String> { self.nodes.clone() }
+    fn edges(&self) -> Vec<(String, String)> { self.edges.clone() }
+}
+```
+
+### Упражнение 2: `impl Trait` в возвращаемом типе
+```rust
+trait Shape { fn area(&self) -> f64; }
+struct Circle { r: f64 }
+struct Square { s: f64 }
+impl Shape for Circle { fn area(&self) -> f64 { std::f64::consts::PI * self.r * self.r } }
+impl Shape for Square { fn area(&self) -> f64 { self.s * self.s } }
+
+fn random_shape() -> Box<dyn Shape> { // dynamic dispatch
+    if rand::random() { Box::new(Circle { r: 5.0 }) }
+    else { Box::new(Square { s: 4.0 }) }
+}
+```
+
+### Упражнение 3: Newtype для `Display`
+```rust
+use std::fmt;
+
+struct Meters(f64);
+
+impl fmt::Display for Meters {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} m", self.0)
+    }
+}
+
+fn main() {
+    println!("Distance: {}", Meters(100.5));
+}
+```
+
+---
+
+## 11. Типичные ошибки новичков
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `the trait bound T: Trait is not satisfied` | Тип не реализует трейт | Добавьте `impl Trait for Type` или bound |
+| `cannot infer type` | Компилятор не знает T | Добавьте аннотацию типа: `let x: Vec<i32> = vec![]` |
+| `impl Trait not allowed here` | `impl Trait` только в аргументах/возврате fn | Используйте `Box<dyn Trait>` или generic |
+| `expected concrete type, found trait` | Попытка использовать trait как тип | Используйте `dyn Trait` или generic |
+| `only one implementation allowed` | Ассоциированный тип — одна реализация | Используйте generic параметр вместо ассоциированного |
+| `the size for values of type dyn Trait cannot be known` | `dyn Trait` не `Sized` | Используйте указатель: `&dyn`, `Box<dyn>`, `Rc<dyn>` |
+
+---
+
+## 12. Шпаргалка: Generic vs Associated Types
+
+| Ситуация | Используйте |
+|----------|-------------|
+| Один тип на реализацию | Associated Type (`type Item`) |
+| Много реализаций для разных T | Generic (`trait Container<T>`) |
+| Трейт в сигнатуре функции | `impl Trait` (аргументы/возврат) |
+| Коллекция разных типов | `Box<dyn Trait>` / `Vec<Box<dyn Trait>>` |
+
+---
+
+## 13. Полезные ресурсы
+
+- **The Book — Traits**: https://doc.rust-lang.org/book/ch10-00-generics.html
+- **The Book — Trait Objects**: https://doc.rust-lang.org/book/ch17-02-trait-objects.html
+- **Rust by Example — Generics**: https://doc.rust-lang.org/rust-by-example/generics.html
+- **std::ops**: https://doc.rust-lang.org/std/ops/index.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- `trait` — определение общего поведения
+- `impl Trait for Type` — реализация
+- Дженерики: `fn foo<T: Bound>(x: T)`, `struct S<T>`, `enum E<T>`
+- Trait bounds: `T: Trait1 + Trait2`, `where` clauses
+- `impl Trait` в аргументах и возвращаемых типах (static dispatch)
+- Ассоциированные типы: `type Item` — одна реализация на тип
+- Supertraits: `trait Child: Parent`
+- Newtype pattern для orphan rule
+- `dyn Trait` — dynamic dispatch, trait objects
+- Ключевые трейты: `Clone`, `Copy`, `Default`, `From`/`Into`, `Deref`, `Drop`, `Send`, `Sync`
+- Operator overloading через `std::ops`
+
+---
+
+**Следующий урок:** Проект уровня Beginner (`11_Проект.txt`)

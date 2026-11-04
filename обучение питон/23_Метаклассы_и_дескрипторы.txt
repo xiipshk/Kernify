@@ -1,0 +1,403 @@
+# Урок 3.1: Метаклассы и дескрипторы — продвинутая объектная модель
+
+## Цели урока
+- Понимать, что такое type и как создаются классы
+- Писать собственные метаклассы
+- Использовать __prepare__, __new__, __init__ в метаклассах
+- Создавать дескрипторы (data/non-data)
+- Применять __get__, __set__, __delete__, __set_name__
+
+---
+
+## 1. Всё — объект, классы тоже
+
+```python
+class MyClass:
+    pass
+
+# MyClass — экземпляр type
+type(MyClass)          # <class 'type'>
+isinstance(MyClass, type)  # True
+
+# type — это метакласс (класс класса)
+type(type)             # <class 'type'>
+```
+
+### Как создаётся класс
+```python
+# class Foo: ...
+# Эквивалентно:
+Foo = type('Foo', (), {'attr': 42})
+
+# type(name, bases, namespace) -> class
+```
+
+---
+
+## 2. Метаклассы — кастомизация создания классов
+
+### Базовый метакласс
+```python
+class Meta(type):
+    def __new__(mcs, name, bases, namespace):
+        print(f"Создаём класс {name}")
+        # Можно модифицировать namespace ДО создания класса
+        namespace['created_at'] = 'just now'
+        return super().__new__(mcs, name, bases, namespace)
+
+    def __init__(cls, name, bases, namespace):
+        super().__init__(name, bases, namespace)
+        print(f"Класс {name} инициализирован")
+
+class MyClass(metaclass=Meta):
+    x = 1
+
+# Вывод:
+# Создаём класс MyClass
+# Класс MyClass инициализирован
+
+print(MyClass.created_at)  # 'just now'
+```
+
+### __prepare__ — кастомный namespace (Python 3+)
+```python
+class OrderedMeta(type):
+    @classmethod
+    def __prepare__(mcs, name, bases):
+        from collections import OrderedDict
+        return OrderedDict()  # сохраняет порядок атрибутов!
+
+    def __new__(mcs, name, bases, namespace):
+        cls = super().__new__(mcs, name, bases, dict(namespace))
+        cls._field_order = list(namespace.keys())
+        return cls
+
+class Form(metaclass=OrderedMeta):
+    name = "field1"
+    email = "field2"
+    age = "field3"
+
+print(Form._field_order)  # ['__module__', '__qualname__', 'name', 'email', 'age']
+```
+
+---
+
+## 3. Практические примеры метаклассов
+
+### Singleton метакласс
+```python
+class SingletonMeta(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super().__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+class Database(metaclass=SingletonMeta):
+    def __init__(self):
+        self.connected = False
+
+db1 = Database()
+db2 = Database()
+print(db1 is db2)  # True
+```
+
+### Автоматическая регистрация классов
+```python
+class PluginMeta(type):
+    plugins = {}
+
+    def __new__(mcs, name, bases, namespace):
+        cls = super().__new__(mcs, name, bases, namespace)
+        if name != 'BasePlugin':
+            PluginMeta.plugins[name] = cls
+        return cls
+
+class BasePlugin(metaclass=PluginMeta):
+    pass
+
+class AuthPlugin(BasePlugin):
+    pass
+
+class CachePlugin(BasePlugin):
+    pass
+
+print(PluginMeta.plugins)  # {'AuthPlugin': <class...>, 'CachePlugin': <class...>}
+```
+
+### Валидация атрибутов класса
+```python
+class ValidatedMeta(type):
+    def __new__(mcs, name, bases, namespace):
+        for key, value in namespace.items():
+            if key.startswith('MAX_') and not isinstance(value, int):
+                raise TypeError(f"{key} должен быть int")
+        return super().__new__(mcs, name, bases, namespace)
+
+class Config(metaclass=ValidatedMeta):
+    MAX_USERS = 100
+    # MAX_SIZE = "big"  # TypeError!
+```
+
+---
+
+## 4. Дескрипторы — протокол доступа к атрибутам
+
+### Что такое дескриптор
+```python
+# Дескриптор — объект с __get__, __set__, __delete__
+# Data descriptor: есть __set__ или __delete__
+# Non-data descriptor: только __get__
+```
+
+### Базовый дескриптор
+```python
+class Descriptor:
+    def __get__(self, obj, objtype=None):
+        print("__get__ вызван")
+        return self.value
+
+    def __set__(self, obj, value):
+        print(f"__set__ вызван с {value}")
+        self.value = value
+
+    def __delete__(self, obj):
+        print("__delete__ вызван")
+        del self.value
+
+class MyClass:
+    attr = Descriptor()
+
+obj = MyClass()
+obj.attr = 42      # __set__ вызван с 42
+print(obj.attr)    # __get__ вызван, 42
+del obj.attr       # __delete__ вызван
+```
+
+### __set_name__ (Python 3.6+) — имя атрибута
+```python
+class ValidatedField:
+    def __init__(self, validator=None):
+        self.validator = validator
+        self.name = None
+
+    def __set_name__(self, owner, name):
+        self.name = name
+        self.storage_name = f'_{name}'
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return getattr(obj, self.storage_name, None)
+
+    def __set__(self, obj, value):
+        if self.validator and not self.validator(value):
+            raise ValueError(f"Невалидное значение для {self.name}: {value}")
+        setattr(obj, self.storage_name, value)
+
+class User:
+    name = ValidatedField(lambda x: len(x) > 0)
+    age = ValidatedField(lambda x: 0 <= x <= 150)
+
+u = User()
+u.name = "Анна"
+u.age = 25
+# u.age = -5  # ValueError!
+```
+
+---
+
+## 5. Типы дескрипторов
+
+### Data descriptor (приоритет над __dict__)
+```python
+class DataDescriptor:
+    def __get__(self, obj, objtype=None):
+        return f"data: {obj._value}"
+    def __set__(self, obj, value):
+        obj._value = value
+
+class NonDataDescriptor:
+    def __get__(self, obj, objtype=None):
+        return "non-data"
+
+class Test:
+    data = DataDescriptor()
+    non_data = NonDataDescriptor()
+
+t = Test()
+t.data = 10
+t.non_data = "ignored"  # запишется в __dict__!
+
+print(t.data)      # "data: 10" — дескриптор
+print(t.non_data)  # "non-data" — дескриптор (нет в __dict__)
+# Но если в __dict__ есть 'non_data', оно перекроет дескриптор!
+t.__dict__['non_data'] = "from dict"
+print(t.non_data)  # "from dict" — __dict__ побеждает non-data!
+```
+
+### property — это дескриптор!
+```python
+class Property:
+    def __init__(self, fget=None, fset=None, fdel=None):
+        self.fget, self.fset, self.fdel = fget, fset, fdel
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        if self.fget is None:
+            raise AttributeError("unreadable attribute")
+        return self.fget(obj)
+
+    def __set__(self, obj, value):
+        if self.fset is None:
+            raise AttributeError("can't set attribute")
+        self.fset(obj, value)
+```
+
+---
+
+## 6. Продвинутые паттерны
+
+### Ленивая инициализация
+```python
+class LazyProperty:
+    def __init__(self, func):
+        self.func = func
+        self.name = func.__name__
+
+    def __set_name__(self, owner, name):
+        self.name = name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        value = self.func(obj)
+        setattr(obj, self.name, value)  # кэшируем
+        return value
+
+class Expensive:
+    @LazyProperty
+    def data(self):
+        print("Вычисляем...")
+        return [i**2 for i in range(1000000)]
+
+e = Expensive()
+print(e.data)  # Вычисляем... [0, 1, 4, ...]
+print(e.data)  # [0, 1, 4, ...] — мгновенно!
+```
+
+### Типизированные атрибуты (как в dataclass)
+```python
+class TypedField:
+    def __init__(self, type_):
+        self.type = type_
+
+    def __set_name__(self, owner, name):
+        self.name = name
+        self.storage = f'_typed_{name}'
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return getattr(obj, self.storage, None)
+
+    def __set__(self, obj, value):
+        if not isinstance(value, self.type):
+            raise TypeError(f"{self.name} должен быть {self.type.__name__}, не {type(value).__name__}")
+        setattr(obj, self.storage, value)
+
+class Person:
+    name = TypedField(str)
+    age = TypedField(int)
+
+p = Person()
+p.name = "Анна"
+p.age = 25
+# p.age = "25"  # TypeError!
+```
+
+### Дескриптор только для чтения
+```python
+class ReadOnly:
+    def __init__(self, value):
+        self.value = value
+
+    def __get__(self, obj, objtype=None):
+        return self.value
+
+    def __set__(self, obj, value):
+        raise AttributeError("Только для чтения")
+
+class Config:
+    VERSION = ReadOnly("1.0.0")
+
+c = Config()
+print(c.VERSION)  # "1.0.0"
+# c.VERSION = "2.0"  # AttributeError!
+```
+
+---
+
+## 7. Метаклассы vs Дескрипторы
+
+| | Метакласс | Дескриптор |
+|---|---|---|
+| Уровень | Класс | Атрибут |
+| Когда срабатывает | Создание класса | Доступ к атрибуту экземпляра |
+| Использование | Изменение структуры класса | Контроль доступа к данным |
+| Примеры | Singleton, Registry, Validation | property, classmethod, ORM fields |
+
+---
+
+## 8. __init_subclass__ — альтернатива метаклассам (Python 3.6+)
+
+```python
+class Base:
+    subclasses = []
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        Base.subclasses.append(cls)
+        print(f"Зарегистрирован подкласс: {cls.__name__}")
+
+class ChildA(Base):
+    pass
+
+class ChildB(Base):
+    pass
+
+print(Base.subclasses)  # [<class 'ChildA'>, <class 'ChildB'>]
+```
+
+---
+
+## Практические задания
+
+1. **ORM поля**: реализуйте `IntegerField`, `StringField`, `ForeignKey` как дескрипторы
+2. **Observed attributes**: дескриптор, вызывающий коллбеки при изменении
+3. **Auto-register**: метакласс для автоматической регистрации обработчиков команд
+4. **Immutable classes**: метакласс, делающий все атрибуты read-only после init
+5. **Deprecated fields**: дескриптор, выдающий предупреждение при доступе
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Забыли `super().__new__` в метаклассе | Всегда вызывайте родительский метод |
+| Дескриптор хранит состояние на себе | Храните в `obj.__dict__` под уникальным ключом |
+| `__set_name__` не определён | Нужен для знания имени атрибута (Python 3.6+) |
+| Конфликт data/non-data дескрипторов | Data descriptor побеждает __dict__, non-data — проигрывает |
+| Метакласс для простых задач | Используйте `__init_subclass__` или декораторы классов |
+
+---
+
+## Полезные ресурсы
+- **Python Docs: Metaclasses** — https://docs.python.org/3/reference/datamodel.html#metaclasses
+- **Python Docs: Descriptors** — https://docs.python.org/3/howto/descriptor.html
+- **Real Python: Metaclasses** — https://realpython.com/python-metaclasses/
+- **Real Python: Descriptors** — https://realpython.com/python-descriptors/
+- **PEP 487 — Simpler customization of class creation** — https://peps.python.org/pep-0487/

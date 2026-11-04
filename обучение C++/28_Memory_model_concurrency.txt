@@ -1,0 +1,546 @@
+# Урок 28: Memory model / concurrency — happens-before, memory order, lock-free concepts, async models
+
+## Цели урока
+- Понять C++ memory model: happens-before, sequenced-before, synchronizes-with
+- Освоить memory orders: relaxed, acquire, release, acq_rel, seq_cst
+- Изучить lock-free программирование: atomic, CAS, ABA problem
+- Разобрать async models: futures, coroutines, executors, structured concurrency
+
+---
+
+## 1. C++ Memory Model Fundamentals
+
+### Relations
+```cpp
+// Sequenced-before (within single thread)
+int a = 1;        // #1
+int b = a + 1;    // #2  (#1 sequenced-before #2)
+
+// Happens-before (inter-thread)
+// A happens-before B если:
+// - A sequenced-before B (same thread)
+// - A synchronizes-with B (different threads)
+// - транзитивность: A hb B, B hb C => A hb C
+
+// Synchronizes-with (release/acquire)
+std::atomic<int> x{0}, y{0};
+
+void thread1() {
+    x.store(1, std::memory_order_release);  // release
+    y.store(2, std::memory_order_release);
+}
+
+void thread2() {
+    int r1 = y.load(std::memory_order_acquire);  // acquire
+    int r2 = x.load(std::memory_order_acquire);
+    // если r1 == 2, то r2 гарантированно == 1 (happens-before)
+}
+```
+
+### Data Race Definition
+```cpp
+// Data race: два conflicting accesses (хотя бы один write), не ordered by happens-before
+// Conflicting: same memory location, at least one write
+// Результат: Undefined Behavior!
+
+// Пример data race:
+int x = 0;
+void t1() { x = 1; }
+void t2() { int r = x; }  // UB! read/write без синхронизации
+
+// Исправление:
+std::atomic<int> x{0};
+void t1() { x.store(1, std::memory_order_relaxed); }
+void t2() { int r = x.load(std::memory_order_relaxed); } // OK, no data race
+```
+
+---
+
+## 2. Memory Orders
+
+### std::memory_order enum
+```cpp
+enum class memory_order {
+    relaxed,        // никаких синхронизаций, только атомарность
+    consume,        // deprecated (C++17), use acquire
+    acquire,        // load: не переупорядочивать после
+    release,        // store: не переупорядочивать перед
+    acq_rel,        // RMW: acquire + release
+    seq_cst         // sequentially consistent (default)
+};
+```
+
+### Relaxed — только атомарность
+```cpp
+std::atomic<int> counter{0};
+
+void increment() {
+    for (int i = 0; i < 1000; ++i)
+        counter.fetch_add(1, std::memory_order_relaxed);
+}
+// Результат корректен (нет data race), но порядок операций не гарантирован
+```
+
+### Release-Acquire — синхронизация
+```cpp
+std::atomic<int> data{0};
+std::atomic<bool> ready{false};
+
+void producer() {
+    data = 42;                           // non-atomic write
+    ready.store(true, std::memory_order_release); // release fence
+}
+
+void consumer() {
+    while (!ready.load(std::memory_order_acquire)) {} // acquire fence
+    assert(data == 42); // гарантированно видит 42
+}
+```
+
+### Release-Acquire Chain
+```cpp
+std::atomic<int> a{0}, b{0}, c{0};
+
+void t1() {
+    a.store(1, std::memory_order_relaxed);
+    b.store(1, std::memory_order_release); // release
+}
+
+void t2() {
+    if (b.load(std::memory_order_acquire)) { // acquire
+        c.store(1, std::memory_order_release); // release
+    }
+}
+
+void t3() {
+    if (c.load(std::memory_order_acquire)) { // acquire
+        assert(a.load(std::memory_order_relaxed) == 1); // hb через цепочку
+    }
+}
+```
+
+### Seq_cst — Global Total Order
+```cpp
+std::atomic<int> x{0}, y{0};
+int r1, r2;
+
+void t1() { x.store(1, std::memory_order_seq_cst); }
+void t2() { y.store(1, std::memory_order_seq_cst); }
+void t3() { r1 = x.load(std::memory_order_seq_cst); r2 = y.load(std::memory_order_seq_cst); }
+
+// seq_cst гарантирует single total order согласованный с happens-before
+// r1=0, r2=0 невозможно при seq_cst (но возможно при relaxed)
+```
+
+### Memory Order для RMW (Read-Modify-Write)
+```cpp
+std::atomic<int> x{0};
+
+// fetch_add, exchange, compare_exchange_* — RMW operations
+// Могут быть acquire, release, acq_rel, seq_cst
+
+// Spinlock с acq_rel
+class SpinLock {
+    std::atomic_flag flag = ATOMIC_FLAG_INIT;
+public:
+    void lock() {
+        while (flag.test_and_set(std::memory_order_acquire)) {}
+    }
+    void unlock() {
+        flag.clear(std::memory_order_release);
+    }
+};
+```
+
+---
+
+## 3. Lock-Free Programming
+
+### Compare-Exchange (CAS)
+```cpp
+std::atomic<int> value{0};
+
+// Weak CAS (может spuriously fail)
+bool success = value.compare_exchange_weak(expected, desired,
+                                           std::memory_order_acq_rel,
+                                           std::memory_order_relaxed);
+
+// Strong CAS (гарантированно succeeds если expected == current)
+bool success = value.compare_exchange_strong(expected, desired,
+                                             std::memory_order_acq_rel,
+                                             std::memory_order_relaxed);
+
+// Pattern: retry loop
+void atomic_increment(std::atomic<int>& x) {
+    int old = x.load(std::memory_order_relaxed);
+    while (!x.compare_exchange_weak(old, old + 1,
+                                    std::memory_order_acq_rel,
+                                    std::memory_order_relaxed)) {
+        // old updated to current value
+    }
+}
+```
+
+### Lock-Free Stack (Treiber Stack)
+```cpp
+template <typename T>
+class LockFreeStack {
+    struct Node {
+        T data;
+        Node* next;
+        Node(T&& d) : data(std::move(d)), next(nullptr) {}
+    };
+    std::atomic<Node*> head_{nullptr};
+
+public:
+    void push(T&& value) {
+        Node* node = new Node(std::move(value));
+        node->next = head_.load(std::memory_order_relaxed);
+        while (!head_.compare_exchange_weak(node->next, node,
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_relaxed)) {}
+    }
+
+    std::optional<T> pop() {
+        Node* old_head = head_.load(std::memory_order_relaxed);
+        while (old_head &&
+               !head_.compare_exchange_weak(old_head, old_head->next,
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_relaxed)) {}
+        if (!old_head) return std::nullopt;
+        T result = std::move(old_head->data);
+        delete old_head;
+        return result;
+    }
+};
+```
+
+### ABA Problem
+```cpp
+// Проблема: A -> B -> A, CAS видит A и думает, что ничего не менялось
+// Решение 1: Tagged pointers (version counter)
+struct TaggedPtr {
+    Node* ptr;
+    uintptr_t tag;
+    // упаковка в atomic<uintptr_t> (требует platform-specific)
+};
+
+// Решение 2: Hazard Pointers / Epoch-based reclamation
+// Решение 3: std::shared_ptr (reference counting) — не lock-free
+```
+
+### Memory Reclamation
+```cpp
+// Hazard Pointers (simplified)
+thread_local std::vector<Node*> hazard_ptrs;
+
+Node* protect(std::atomic<Node*>& src) {
+    Node* p;
+    do {
+        p = src.load(std::memory_order_acquire);
+        hazard_ptrs.push_back(p);
+    } while (p != src.load(std::memory_order_acquire));
+    return p;
+}
+
+void retire(Node* p) {
+    // отложенное удаление когда никто не защищает
+    // требует global reclamation mechanism
+}
+```
+
+---
+
+## 4. Atomics Advanced
+
+### Atomic Ref (C++20) — atomic view на non-atomic
+```cpp
+#include <atomic>
+
+int data = 0;
+std::atomic_ref<int> atomic_data(data); // не владеет памятью!
+atomic_data.fetch_add(1, std::memory_order_relaxed);
+// Полезно для mmapped memory, shared memory, hardware registers
+```
+
+### Atomic Wait/Notify (C++20)
+```cpp
+std::atomic<int> flag{0};
+
+void waiter() {
+    flag.wait(0, std::memory_order_acquire); // блокируется до изменения
+    //(flag != 0)
+}
+
+void notifier() {
+    flag.store(1, std::memory_order_release);
+    flag.notify_one(); // или notify_all()
+}
+// Эффективнее spinlock для длительного ожидания
+```
+
+### Atomic Flag — simplest lock-free primitive
+```cpp
+std::atomic_flag lock = ATOMIC_FLAG_INIT; // guaranteed lock-free
+
+void lock_func() {
+    while (lock.test_and_set(std::memory_order_acquire)) {}
+}
+void unlock_func() {
+    lock.clear(std::memory_order_release);
+}
+```
+
+---
+
+## 5. Futures & Async
+
+### std::future / std::promise
+```cpp
+#include <future>
+
+int compute(int x) { return x * x; }
+
+std::future<int> fut = std::async(std::launch::async, compute, 42);
+// или
+std::promise<int> prom;
+std::future<int> fut = prom.get_future();
+std::thread t([&prom]{ prom.set_value(compute(42)); });
+
+int result = fut.get(); // блокирует до готовности
+```
+
+### std::shared_future
+```cpp
+std::future<int> fut = std::async(std::launch::async, compute, 42);
+std::shared_future<int> shared = fut.share(); // copyable
+// множественные потребители
+auto t1 = std::thread([shared]{ std::cout << shared.get(); });
+auto t2 = std::thread([shared]{ std::cout << shared.get(); });
+```
+
+### Continuations (C++23 proposal / experimental)
+```cpp
+// then / upon_done / upon_error — не в стандарте C++20
+// Boost.Thread / folly::Future имеют
+auto f = std::async([]{ return 42; })
+    .then([](int x){ return x * 2; })
+    .then([](int x){ std::cout << x; });
+```
+
+---
+
+## 6. Coroutines for Async (C++20)
+
+### Task / Awaitable
+```cpp
+#include <coroutine>
+
+template <typename T>
+struct Task {
+    struct promise_type {
+        T value_;
+        std::exception_ptr exc_;
+        Task get_return_object() { return Task{std::coroutine_handle<promise_type>::from_promise(*this)}; }
+        std::suspend_always initial_suspend() { return {}; }
+        std::suspend_always final_suspend() noexcept { return {}; }
+        void unhandled_exception() { exc_ = std::current_exception(); }
+        void return_value(T v) { value_ = std::move(v); }
+    };
+    std::coroutine_handle<promise_type> h_;
+    T get() { h_.resume(); if (h_.promise().exc_) std::rethrow_exception(h_.promise().exc_); return std::move(h_.promise().value_); }
+};
+
+Task<int> async_read(int fd) {
+    // suspension point — awaiter
+    co_await io_uring_read(fd, buffer); // custom awaiter
+    co_return bytes_read;
+}
+```
+
+### Structured Concurrency (C++26 / P2300)
+```cpp
+// Sender/Receiver model (P2300 - std::execution)
+// std::execution::schedule, then, when_all, etc.
+
+// Пример концепции:
+auto work = std::execution::schedule(scheduler)
+    | std::execution::then([]{ return compute(); })
+    | std::execution::then([](int x){ return x * 2; });
+
+std::execution::start_detached(work);
+// или
+auto result = std::execution::sync_wait(work); // blocking
+```
+
+---
+
+## 6. Thread Synchronization Primitives
+
+### Mutex Variants
+```cpp
+#include <mutex>
+#include <shared_mutex>
+
+std::mutex m;                    // exclusive
+std::recursive_mutex rm;         // recursive lock
+std::timed_mutex tm;             // try_lock_for/until
+std::shared_mutex shm;           // C++17: shared/exclusive (readers-writer)
+
+// RAII locks
+std::lock_guard<std::mutex> lg(m);
+std::unique_lock<std::mutex> ul(m, std::defer_lock);
+ul.lock();
+
+std::shared_lock<std::shared_mutex> sl(shm); // shared (read)
+std::unique_lock<std::shared_mutex> ul(shm); // exclusive (write)
+```
+
+### Condition Variable
+```cpp
+std::mutex m;
+std::condition_variable cv;
+bool ready = false;
+
+void waiter() {
+    std::unique_lock<std::mutex> lk(m);
+    cv.wait(lk, []{ return ready; }); // predicate avoids spurious wakeup
+}
+
+void notifier() {
+    {
+        std::lock_guard<std::mutex> lk(m);
+        ready = true;
+    }
+    cv.notify_one(); // или notify_all()
+}
+```
+
+### Semaphore (C++20)
+```cpp
+#include <semaphore>
+
+std::counting_semaphore<10> sem(10); // max 10 permits
+
+void worker() {
+    sem.acquire(); // блокирует если 0
+    // work
+    sem.release();
+}
+
+bool try_work() {
+    return sem.try_acquire_for(100ms); // timeout
+}
+```
+
+### Latch / Barrier (C++20)
+```cpp
+#include <latch>
+#include <barrier>
+
+std::latch latch(3); // single-use countdown
+// workers
+latch.count_down();
+latch.wait(); // блокирует до 0
+
+std::barrier barrier(3, []{ std::cout << "phase done\n"; }); // reusable
+// workers
+barrier.arrive_and_wait(); // ждёт всех, затем completion function
+```
+
+---
+
+## 7. Async Models Comparison
+
+| Model | Pros | Cons |
+|-------|------|------|
+| **Thread-per-task** | Simple, blocking OK | Stack memory, context switch overhead |
+| **Thread pool + futures** | Bounded resources | Future overhead, no structured concurrency |
+| **Coroutines (stackless)** | Low memory, composable | No blocking in coroutine, compiler support |
+| **Actor model** | No shared state, isolation | Message passing overhead |
+| **Structured concurrency (P2300)** | Cancellation, error handling, composable | New, complex |
+
+### Thread Pool Example
+```cpp
+class ThreadPool {
+    std::vector<std::thread> workers_;
+    std::queue<std::function<void()>> tasks_;
+    std::mutex m_;
+    std::condition_variable cv_;
+    bool stop_ = false;
+public:
+    ThreadPool(size_t n = std::thread::hardware_concurrency()) {
+        for (size_t i = 0; i < n; ++i)
+            workers_.emplace_back([this]{ worker_loop(); });
+    }
+    ~ThreadPool() {
+        { std::lock_guard<std::mutex> lk(m_); stop_ = true; }
+        cv_.notify_all();
+        for (auto& t : workers_) t.join();
+    }
+    template <typename F>
+    auto enqueue(F&& f) -> std::future<decltype(f())> {
+        using R = decltype(f());
+        auto task = std::make_shared<std::packaged_task<R()>>(std::forward<F>(f));
+        std::future<R> fut = task->get_future();
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            tasks_.emplace([task]{ (*task)(); });
+        }
+        cv_.notify_one();
+        return fut;
+    }
+private:
+    void worker_loop() {
+        while (true) {
+            std::function<void()> task;
+            {
+                std::unique_lock<std::mutex> lk(m_);
+                cv_.wait(lk, [this]{ return stop_ || !tasks_.empty(); });
+                if (stop_ && tasks_.empty()) return;
+                task = std::move(tasks_.front());
+                tasks_.pop();
+            }
+            task();
+        }
+    }
+};
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Memory Order Experiment
+Напишите программу с двумя потоками, демонстрирующую разницу между `relaxed`, `release/acquire`, `seq_cst`. Используйте `std::atomic_thread_fence` для fence-only синхронизации.
+
+### Задание 2: Lock-Free Queue
+Реализуйте lock-free MPMC queue (Michael-Scott queue) на `std::atomic`. Обработайте ABA problem через tagged pointers или hazard pointers.
+
+### Задание 3: Spinlock vs Mutex Benchmark
+Сравните производительность `std::mutex`, spinlock на `atomic_flag`, `std::atomic<int>` с `wait/notify` под высокой contention и низкой contention.
+
+### Задание 4: Async Pipeline
+Напишите pipeline: `read_file -> parse_json -> transform -> write_db` используя:
+1. `std::async` + futures
+2. Coroutines (Task + co_await)
+3. Thread pool + continuations
+Сравните latency и throughput.
+
+### Задание 5: Barrier Synchronization
+Реализуйте параллельный алгоритм (например, matrix multiplication или prefix sum) используя `std::barrier` для фаз. Измерьте scaling.
+
+### Задание 6: RCU (Read-Copy-Update)
+Изучите и реализуйте упрощённый RCU pattern: readers без locks, writers копируют данные, обновляют atomic pointer, откладывают удаление старой версии через grace period.
+
+---
+
+## Полезные ресурсы
+- **C++ Memory Model** — https://en.cppreference.com/w/cpp/atomic/memory_order
+- **C++ Concurrency in Action** (Anthony Williams) — "Bible" of C++ concurrency
+- **P2300** — std::execution (Senders/Receivers)
+- **CppCon: "C++ Atomics and Memory Model" (Hans Boehm)**
+- **CppCon: "Lock-Free Programming" (Fedor Pikus)**
+- **Dmitry Vyukov: "Relaxed Atomics" / "Hazard Pointers"**
+- **Linux Kernel RCU** — Documentation/RCU/
+- **folly::Future / HPX / Seastar** — advanced async frameworks

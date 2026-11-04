@@ -1,0 +1,411 @@
+# Урок 3.2: C-расширения и Cython — ускорение Python, FFI, PyO3
+
+## Цели урока
+- Понимать, когда нужен C-код
+- Писать расширения на C (Python C API)
+- Использовать Cython для типизированного Python
+- Работать с ctypes/cffi для вызова C-библиотек
+- Знать про Rust/PyO3 как современную альтернативу
+
+---
+
+## 1. Зачем C-расширения
+
+### Узкие места Python
+- GIL — только один поток выполняет байт-код
+- Динамическая типизация — накладные расходы
+- Интерпретатор — медленнее нативного кода
+
+### Когда стоит использовать
+✅ Тяжёлые вычисления (матрицы, криптография, парсинг)
+✅ Интеграция с C/C++ библиотеками
+✅ Real-time системы
+❌ Обычный веб-бэкенд (I/O bound)
+❌ Прототипирование
+
+---
+
+## 2. Python C API — ручное написание
+
+### Минимальное расширение
+```c
+// mymodule.c
+#include <Python.h>
+
+static PyObject* hello(PyObject* self, PyObject* args) {
+    const char* name;
+    if (!PyArg_ParseTuple(args, "s", &name))
+        return NULL;
+    return PyUnicode_FromFormat("Hello, %s!", name);
+}
+
+static PyMethodDef methods[] = {
+    {"hello", hello, METH_VARARGS, "Greet someone"},
+    {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef module = {
+    PyModuleDef_HEAD_INIT,
+    "mymodule",
+    "Example module",
+    -1,
+    methods
+};
+
+PyMODINIT_FUNC PyInit_mymodule(void) {
+    return PyModule_Create(&module);
+}
+```
+
+### Компиляция (setup.py)
+```python
+# setup.py
+from setuptools import setup, Extension
+
+module = Extension('mymodule', sources=['mymodule.c'])
+
+setup(
+    name='mymodule',
+    version='1.0',
+    ext_modules=[module],
+)
+```
+
+```bash
+pip install -e .
+# или
+python setup.py build_ext --inplace
+```
+
+### Использование
+```python
+import mymodule
+print(mymodule.hello("World"))  # Hello, World!
+```
+
+---
+
+## 3. Cython — Python с типизацией
+
+### Установка
+```bash
+pip install cython
+```
+
+### Базовый пример
+```cython
+# fast.pyx
+def fib(int n):
+    cdef int a = 0, b = 1, i
+    for i in range(n):
+        a, b = b, a + b
+    return a
+```
+
+### setup.py для Cython
+```python
+from setuptools import setup
+from Cython.Build import cythonize
+
+setup(
+    ext_modules=cythonize("fast.pyx", compiler_directives={'language_level': 3})
+)
+```
+
+### Типизация для скорости
+```cython
+# typed.pyx
+import numpy as np
+cimport numpy as np
+
+def process(np.ndarray[np.int32_t, ndim=1] arr):
+    cdef int n = arr.shape[0]
+    cdef int i, total = 0
+    for i in range(n):
+        total += arr[i]
+    return total
+```
+
+### memoryview — быстрый доступ к буферам
+```cython
+def sum_buffer(int[:] buf):
+    cdef int total = 0
+    cdef int i
+    for i in range(buf.shape[0]):
+        total += buf[i]
+    return total
+
+# Работает с bytes, bytearray, array.array, numpy
+```
+
+### nogil — освобождение GIL
+```cython
+from cython.parallel import prange
+
+def parallel_sum(int[:] data):
+    cdef int total = 0
+    cdef int i
+    for i in prange(data.shape[0], nogil=True):
+        total += data[i]
+    return total
+```
+
+---
+
+## 4. ctypes — встроенный FFI
+
+### Загрузка библиотеки
+```python
+import ctypes
+import platform
+
+if platform.system() == "Windows":
+    lib = ctypes.CDLL("./mylib.dll")
+else:
+    lib = ctypes.CDLL("./mylib.so")
+
+# Функция: int add(int a, int b)
+lib.add.argtypes = [ctypes.c_int, ctypes.c_int]
+lib.add.restype = ctypes.c_int
+
+result = lib.add(2, 3)  # 5
+```
+
+### Структуры
+```python
+class Point(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+lib.distance.argtypes = [ctypes.POINTER(Point), ctypes.POINTER(Point)]
+lib.distance.restype = ctypes.c_double
+
+p1 = Point(0, 0)
+p2 = Point(3, 4)
+print(lib.distance(ctypes.byref(p1), ctypes.byref(p2)))  # 5.0
+```
+
+### Callback функции
+```python
+CMPFUNC = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_int)
+
+def py_compare(a, b):
+    return a - b
+
+cmp_func = CMPFUNC(py_compare)
+lib.qsort(array, len(array), ctypes.sizeof(ctypes.c_int), cmp_func)
+```
+
+---
+
+## 5. cffi — удобный FFI
+
+```bash
+pip install cffi
+```
+
+### ABI mode (динамическая загрузка)
+```python
+from cffi import FFI
+
+ffi = FFI()
+ffi.cdef("""
+    int add(int a, int b);
+    double distance(double x1, double y1, double x2, double y2);
+""")
+
+lib = ffi.dlopen("./mylib.so")  # или .dll/.dylib
+print(lib.add(2, 3))
+```
+
+### API mode (генерация C-кода)
+```python
+# build.py
+from cffi import FFI
+
+ffi = FFI()
+ffi.set_source("_mylib",
+    '#include "mylib.h"',
+    libraries=['mylib'],
+    library_dirs=['.'],
+)
+ffi.cdef("""
+    int add(int a, int b);
+""")
+
+if __name__ == "__main__":
+    ffi.compile()
+```
+
+```bash
+python build.py
+# Создаёт _mylib.cpython-*.so
+```
+
+```python
+from _mylib import ffi, lib
+print(lib.add(2, 3))
+```
+
+---
+
+## 6. PyO3 — Rust + Python
+
+### Установка
+```bash
+pip install maturin
+# Или cargo install maturin
+```
+
+### Структура проекта
+```bash
+maturin new --bindings pyo3 my_rust_lib
+cd my_rust_lib
+```
+
+### Cargo.toml
+```toml
+[package]
+name = "my_rust_lib"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "my_rust_lib"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+```
+
+### Rust код
+```rust
+// src/lib.rs
+use pyo3::prelude::*;
+
+#[pyfunction]
+fn fib(n: usize) -> usize {
+    let mut a = 0;
+    let mut b = 1;
+    for _ in 0..n {
+        let tmp = a + b;
+        a = b;
+        b = tmp;
+    }
+    a
+}
+
+#[pymodule]
+fn my_rust_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(fib, m)?)?;
+    Ok(())
+}
+```
+
+### Сборка и использование
+```bash
+maturin develop --release
+```
+
+```python
+import my_rust_lib
+print(my_rust_lib.fib(10))  # 55
+```
+
+### Параллелизм без GIL
+```rust
+use pyo3::prelude::*;
+use rayon::prelude::*;
+
+#[pyfunction]
+fn parallel_sum(data: Vec<usize>) -> usize {
+    data.par_iter().sum()  // Rayon использует все ядра!
+}
+```
+
+---
+
+## 7. Numba — JIT компиляция
+
+```bash
+pip install numba
+```
+
+```python
+from numba import jit, prange
+import numpy as np
+
+@jit(nopython=True)
+def fast_fib(n):
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+
+@jit(nopython=True, parallel=True)
+def parallel_sum(arr):
+    total = 0
+    for i in prange(arr.shape[0]):
+        total += arr[i]
+    return total
+
+arr = np.arange(10_000_000)
+print(parallel_sum(arr))
+```
+
+---
+
+## 8. Сравнение подходов
+
+| Подход | Сложность | Скорость | GIL | Зависимости |
+|--------|-----------|----------|-----|-------------|
+| C API | Очень высокая | Максимальная | Ручное | Нет |
+| Cython | Средняя | Высокая | nogil | Cython |
+| ctypes | Низкая | Средняя | Да | Встроен |
+| cffi | Низкая | Высокая | Да | cffi |
+| PyO3/Rust | Средняя | Максимальная | Нет (по умолчанию) | Rust toolchain |
+| Numba | Очень низкая | Высокая (числ.) | Нет (nogil) | LLVM |
+
+---
+
+## 9. Профилирование C-кода
+
+```bash
+# perf для Linux
+perf record python script.py
+perf report
+
+# gprof для Cython
+cython -a fast.pyx  # генерирует HTML с аннотацией
+```
+
+---
+
+## Практические задания
+
+1. **Cython**: ускорьте пузырьковую сортировку с типизацией и nogil
+2. **ctypes**: вызовите функцию из системной библиотеки (libc)
+3. **cffi**: оберните простую C-библиотеку (например, для хэширования)
+4. **PyO3**: напишите параллельный парсер JSON на Rust
+5. **Numba**: JIT-скомпилируйте численное моделирование
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Cython без типов — как обычный Python | Используйте `cdef`, типы аргументов, memoryview |
+| Забыли `nogil=True` в prange | GIL не отпустится! |
+| ctypes без argtypes/restype | UB, краши, неверные результаты |
+| Передача Python объектов в C без incref | Утечки памяти / use-after-free |
+| Смешивание аллокаторов (malloc/free vs PyMem) | Используйте PyMem_Malloc/PyMem_Free |
+
+---
+
+## Полезные ресурсы
+- **Cython Docs** — https://cython.readthedocs.io/
+- **Python C API** — https://docs.python.org/3/c-api/
+- **cffi Docs** — https://cffi.readthedocs.io/
+- **PyO3 Guide** — https://pyo3.rs/
+- **Numba Docs** — https://numba.readthedocs.io/
+- **Extending Python with C/C++** — https://docs.python.org/3/extending/

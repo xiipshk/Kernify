@@ -1,0 +1,405 @@
+# Урок 2.10: Веб-разработка — FastAPI, Flask, маршрутизация, зависимость, деплой
+
+## Цели урока
+- Создавать REST API с FastAPI
+- Понимать Flask для простых приложений
+- Работать с зависимостями (Dependency Injection)
+- Валидация запросов (Pydantic)
+- Аутентификация (JWT, OAuth2)
+- Тестирование API
+- Деплой (Docker, uvicorn, gunicorn)
+
+---
+
+## 1. FastAPI — современный фреймворк
+
+### Установка
+```bash
+pip install fastapi uvicorn[standard]
+```
+
+### Минимальное приложение
+```python
+# main.py
+from fastapi import FastAPI
+
+app = FastAPI(title="My API", version="1.0.0")
+
+@app.get("/")
+def root():
+    return {"message": "Hello World"}
+
+@app.get("/hello/{name}")
+def hello(name: str):
+    return {"message": f"Привет, {name}!"}
+```
+
+### Запуск
+```bash
+uvicorn main:app --reload
+# Открыть http://127.0.0.1:8000/docs — Swagger UI!
+# http://127.0.0.1:8000/redoc — ReDoc
+```
+
+---
+
+## 2. Path и Query параметры
+
+### Path параметры с валидацией
+```python
+from fastapi import Path
+
+@app.get("/users/{user_id}")
+def get_user(
+    user_id: int = Path(..., ge=1, le=1000, description="ID пользователя")
+):
+    return {"user_id": user_id}
+```
+
+### Query параметры
+```python
+from typing import Optional
+
+@app.get("/items")
+def read_items(
+    skip: int = 0,
+    limit: int = 10,
+    search: Optional[str] = None
+):
+    return {"skip": skip, "limit": limit, "search": search}
+```
+
+---
+
+## 3. Request Body — Pydantic модели
+
+```python
+from pydantic import BaseModel, EmailStr, Field
+from typing import Optional
+from datetime import datetime
+
+class UserCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50)
+    email: EmailStr
+    age: Optional[int] = Field(None, ge=0, le=150)
+
+class UserResponse(UserCreate):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True  # для SQLAlchemy моделей
+
+@app.post("/users", response_model=UserResponse, status_code=201)
+def create_user(user: UserCreate):
+    new_user = User(id=1, **user.model_dump(), created_at=datetime.now())
+    return new_user
+```
+
+---
+
+## 4. Dependency Injection — Depends
+
+### Простая зависимость
+```python
+from fastapi import Depends
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.get("/users")
+def list_users(db: Session = Depends(get_db)):
+    return db.query(User).all()
+```
+
+### Зависимость с параметрами
+```python
+from fastapi import Query
+
+def pagination(skip: int = Query(0, ge=0), limit: int = Query(10, le=100)):
+    return {"skip": skip, "limit": limit}
+
+@app.get("/items")
+def read_items(paging: dict = Depends(pagination)):
+    return paging
+```
+
+### Классы-зависимости
+```python
+class CommonParams:
+    def __init__(self, skip: int = 0, limit: int = 10):
+        self.skip = skip
+        self.limit = limit
+
+@app.get("/items")
+def read_items(params: CommonParams = Depends()):
+    return {"skip": params.skip, "limit": params.limit}
+```
+
+---
+
+## 5. Аутентификация и авторизация
+
+### OAuth2 с JWT
+```bash
+pip install python-jose[cryptography] passlib[bcrypt] python-multipart
+```
+
+```python
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import jwt, JWTError
+from passlib.context import CryptContext
+from datetime import datetime, timedelta
+
+SECRET_KEY = "your-secret-key"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+def verify_password(plain, hashed):
+    return pwd_context.verify(plain, hashed)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+@app.post("/token")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Неверные учётные данные")
+    token = create_access_token(data={"sub": user.email})
+    return {"access_token": token, "token_type": "bearer"}
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401, detail="Не удалось проверить учётные данные"
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user = get_user_by_email(email)
+    if user is None:
+        raise credentials_exception
+    return user
+
+@app.get("/users/me")
+def read_users_me(current_user: User = Depends(get_current_user)):
+    return current_user
+```
+
+---
+
+## 6. Обработка ошибок
+
+```python
+from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+
+class UserNotFound(Exception):
+    def __init__(self, user_id: int):
+        self.user_id = user_id
+
+@app.exception_handler(UserNotFound)
+async def user_not_found_handler(request: Request, exc: UserNotFound):
+    return JSONResponse(
+        status_code=404,
+        content={"detail": f"User {exc.user_id} not found"},
+    )
+
+@app.get("/users/{user_id}")
+def get_user(user_id: int):
+    user = find_user(user_id)
+    if not user:
+        raise UserNotFound(user_id)
+    return user
+
+# Глобальный обработчик валидации
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
+```
+
+---
+
+## 7. Фоновые задачи
+
+```python
+from fastapi import BackgroundTasks
+
+def send_email(email: str, message: str):
+    print(f"Отправка email на {email}: {message}")
+
+@app.post("/send-notification")
+def send_notification(email: str, background_tasks: BackgroundTasks):
+    background_tasks.add_task(send_email, email, "Уведомление")
+    return {"message": "Уведомление будет отправлено"}
+```
+
+---
+
+## 8. Тестирование FastAPI
+
+```bash
+pip install httpx pytest
+```
+
+```python
+# test_main.py
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+
+def test_root():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json() == {"message": "Hello World"}
+
+def test_create_user():
+    response = client.post("/users", json={
+        "name": "Анна",
+        "email": "anna@example.com",
+        "age": 25
+    })
+    assert response.status_code == 201
+    data = response.json()
+    assert data["name"] == "Анна"
+    assert "id" in data
+```
+
+---
+
+## 9. Flask — альтернатива для простых приложений
+
+```bash
+pip install flask
+```
+
+```python
+from flask import Flask, jsonify, request
+
+app = Flask(__name__)
+
+@app.route("/")
+def hello():
+    return jsonify(message="Hello from Flask")
+
+@app.route("/users/<int:user_id>")
+def get_user(user_id):
+    return jsonify(id=user_id, name=f"User {user_id}")
+
+if __name__ == "__main__":
+    app.run(debug=True)
+```
+
+---
+
+## 10. Деплой
+
+### Dockerfile
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY pyproject.toml poetry.lock* ./
+RUN pip install poetry && poetry config virtualenvs.create false && poetry install --no-dev
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### docker-compose.yml
+```yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/app
+    depends_on:
+      - db
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+```
+
+### Gunicorn + Uvicorn workers (production)
+```bash
+gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+```
+
+---
+
+## 11. ASGI vs WSGI
+
+| | WSGI (Flask, Django) | ASGI (FastAPI, Starlette) |
+|---|---|---|
+| Протокол | Синхронный | Асинхронный |
+| WebSockets | Нет/сложно | Да, нативно |
+| Concurrency | Threads/Processes | async/await |
+| Серверы | gunicorn, uwsgi | uvicorn, hypercorn, daphne |
+
+---
+
+## Практические задания
+
+1. **CRUD API**: пользователи, посты, комментарии с FastAPI + SQLAlchemy
+2. **JWT Auth**: регистрация, логин, защищённые эндпоинты, refresh token
+3. **File upload**: загрузка аватаров с валидацией типа/размера
+4. **Rate limiting**: middleware для ограничения запросов
+5. **Docker + CI**: GitHub Actions → тесты → сборка образа → деплой
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Блокирующие вызовы в async эндпоинтах | Используйте `to_thread` или асинхронные драйверы |
+| Забыли `response_model` | Всегда указывайте для валидации и документации |
+| Хранение секретов в коде | Переменные окружения + `.env` (python-dotenv) |
+| N+1 запросы в ORM | `selectinload`, `joinedload` |
+| Нет обработки ошибок БД | try/except + rollback в зависимостях |
+
+---
+
+## Полезные ресурсы
+- **FastAPI docs** — https://fastapi.tiangolo.com/
+- **FastAPI Tutorial** — https://fastapi.tiangolo.com/tutorial/
+- **SQLAlchemy + FastAPI** — https://fastapi.tiangolo.com/tutorial/sql-databases/
+- **Deploy FastAPI** — https://fastapi.tiangolo.com/deployment/
+- **Flask docs** — https://flask.palletsprojects.com/
+- **TestClient** — https://fastapi.tiangolo.com/tutorial/testing/

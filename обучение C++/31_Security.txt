@@ -1,0 +1,543 @@
+# Урок 31: Security — memory errors, overflow, fuzzing, sanitizers, analyzers
+
+## Цели урока
+- Понять основные классы уязвимостей памяти в C++
+- Освоить Sanitizers (ASan, UBSan, TSan, MSan, LSan)
+- Изучить Fuzzing: libFuzzer, AFL++, honggfuzz
+- Научиться статическому анализу: Clang Static Analyzer, cppcheck, PVS-Studio
+- Разобрать secure coding practices и hardening
+
+---
+
+## 1. Memory Safety Vulnerabilities
+
+### Buffer Overflow
+```cpp
+// Stack buffer overflow
+void unsafe_copy(const char* input) {
+    char buf[64];
+    strcpy(buf, input);  // UB если input > 63 chars
+}
+
+// Heap buffer overflow
+void unsafe_heap(const char* input) {
+    char* buf = new char[64];
+    strcpy(buf, input);  // UB
+    delete[] buf;
+}
+
+// Off-by-one
+void off_by_one(const char* input) {
+    char buf[64];
+    for (int i = 0; i <= 64; ++i)  // <= вместо <
+        buf[i] = input[i];
+}
+```
+
+### Use-After-Free / Double-Free
+```cpp
+void use_after_free() {
+    int* p = new int(42);
+    delete p;
+    *p = 100;  // UAF — UB
+}
+
+void double_free() {
+    int* p = new int(42);
+    delete p;
+    delete p;  // Double free — UB
+}
+
+void use_after_scope() {
+    int* p;
+    {
+        int x = 42;
+        p = &x;
+    }
+    *p = 100;  // UAF — UB
+}
+```
+
+### Uninitialized Memory
+```cpp
+void uninit_read() {
+    int x;           // uninitialized
+    int y = x + 1;   // UB — читаем uninitialized value
+}
+
+void uninit_member() {
+    struct S { int x; };
+    S s;             // s.x uninitialized
+    use(s.x);        // UB
+}
+```
+
+### Type Confusion / Strict Aliasing
+```cpp
+void type_confusion() {
+    float f = 1.0f;
+    int i = *reinterpret_cast<int*>(&f);  // UB — strict aliasing
+}
+
+// Правильно:
+int i = std::bit_cast<int>(f);  // C++20
+// или memcpy
+int i2; memcpy(&i2, &f, sizeof(f));
+```
+
+### Integer Overflow / Wraparound
+```cpp
+void signed_overflow() {
+    int x = INT_MAX;
+    x += 1;  // UB — signed overflow
+}
+
+void size_t_wraparound() {
+    size_t n = SIZE_MAX;
+    n += 1;  // OK — unsigned wraparound defined
+    // Но: allocation может упасть
+    char* buf = new char[n];  // bad_alloc или UB если n слишком велик
+}
+```
+
+---
+
+## 2. Sanitizers (Dynamic Analysis)
+
+### AddressSanitizer (ASan)
+```bash
+# GCC/Clang
+g++ -fsanitize=address -fno-omit-frame-pointer -g -O1 main.cpp -o app
+clang++ -fsanitize=address -fno-omit-frame-pointer -g -O1 main.cpp -o app
+
+# MSVC
+cl /fsanitize=address /Zi main.cpp
+
+# Options
+ASAN_OPTIONS=detect_stack_use_after_return=1:detect_leaks=1:halt_on_error=1 ./app
+```
+
+**Что находит:**
+- Heap/stack/global buffer overflow
+- Use-after-free / use-after-return
+- Double-free / invalid free
+- Memory leaks (LSan встроен)
+- Stack-use-after-scope
+
+### UndefinedBehaviorSanitizer (UBSan)
+```bash
+g++ -fsanitize=undefined -fno-sanitize-recover=all -g -O1 main.cpp -o app
+
+# Конкретные проверки
+-fsanitize=signed-integer-overflow
+-fsanitize=alignment
+-fsanitize=bool
+-fsanitize=enum
+-fsanitize=float-cast-overflow
+-fsanitize=shift
+-fsanitize=divide-by-zero
+-fsanitize=null
+-fsanitize=return
+-fsanitize=vptr
+```
+
+### ThreadSanitizer (TSan)
+```bash
+g++ -fsanitize=thread -fPIE -pie -g -O1 main.cpp -o app
+
+# Data races, deadlocks, thread leaks
+TSAN_OPTIONS=halt_on_error=1:report_thread_leaks=1 ./app
+```
+
+### MemorySanitizer (MSan) — uninitialized reads
+```bash
+clang++ -fsanitize=memory -fPIE -pie -g -O1 main.cpp -o app
+# Требует пересборку всех зависимостей с MSan!
+```
+
+### LeakSanitizer (LSan)
+```bash
+# Встроен в ASan, или отдельно
+g++ -fsanitize=leak -g -O1 main.cpp -o app
+LSAN_OPTIONS=suppressions=lsan.supp ./app
+```
+
+### Hardware-assisted: HWASan (ARM64), KASAN (kernel)
+```bash
+# HWASan (AArch64)
+clang++ -fsanitize=hwaddress -g -O1 main.cpp -o app
+```
+
+---
+
+## 3. Fuzzing (Automated Testing)
+
+### libFuzzer (in-process, coverage-guided)
+```cpp
+// fuzz_target.cpp
+#include <cstdint>
+#include <cstring>
+
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+    if (size < 4) return 0;
+
+    // Ваш парсер/обработчик
+    if (data[0] == 'F' && data[1] == 'U' && data[2] == 'Z' && data[3] == 'Z') {
+        // Trigger bug
+        *(volatile int*)0 = 0;  // crash
+    }
+    return 0;
+}
+```
+
+```bash
+# Build
+clang++ -fsanitize=fuzzer,address -g -O1 fuzz_target.cpp -o fuzzer
+
+# Run
+./fuzzer -max_len=100 -jobs=4 -workers=4 corpus_dir/
+
+# Minimize corpus
+./fuzzer -merge=1 new_corpus/ old_corpus/
+```
+
+### AFL++ (Out-of-process, binary instrumentation)
+```bash
+# Instrumentation
+AFL_CC=clang AFL_CXX=clang++ ./configure
+make CC=afl-clang-fast CXX=afl-clang-fast++
+
+# Run
+afl-fuzz -i seeds/ -o findings/ -- ./app @@
+
+# QEMU mode (no source)
+afl-fuzz -Q -i seeds/ -o findings/ -- ./binary @@
+```
+
+### Honggfuzz (Feedback-driven)
+```bash
+honggfuzz -i seeds/ -o output/ -- ./app ___FILE___
+```
+
+### Structure-aware Fuzzing (Protobuf, custom)
+```cpp
+// libprotobuf-mutator
+#include "protobuf_mutator.h"
+
+DEFINE_PROTO_FUZZER(const MyProto::Message& msg) {
+    process_message(msg);
+}
+```
+
+### Fuzzing Best Practices
+```cpp
+// 1. Fuzz entry point — single function
+// 2. Deterministic — no random, no time, no external state
+// 3. Fast — in-process, no I/O
+// 4. Corpus — seed с валидными входными данными
+// 5. Dictionary — ключевые слова/токены формата
+```
+
+```bash
+# Dictionary для libFuzzer
+# dict.txt
+"GET "
+"POST "
+"HTTP/1.1"
+"Content-Length:"
+
+./fuzzer -dict=dict.txt corpus/
+```
+
+---
+
+## 4. Static Analysis
+
+### Clang Static Analyzer (scan-build)
+```bash
+# Whole project
+scan-build -o results make
+
+# Or with CMake
+cmake -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ..
+scan-build -o results cmake --build .
+
+# View results
+scan-view results/
+```
+
+**Чекеры:**
+- core (null deref, divide by zero, etc.)
+- unix (API misuse)
+- deadcode
+- security (taint, buffer overflow)
+- optin.performance
+
+### Clang-Tidy (Linting + Checks)
+```bash
+# Config .clang-tidy
+Checks: >
+  *,
+  -google-*,
+  -llvm-*,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers
+
+# Run
+clang-tidy -p build main.cpp -fix
+```
+
+**Важные проверки для безопасности:**
+```yaml
+Checks: >
+  bugprone-*,
+  cert-*,
+  cppcoreguidelines-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  security-*
+```
+
+### Cppcheck
+```bash
+cppcheck --enable=all --std=c++20 --inconclusive \
+  --suppress=missingIncludeSystem \
+  -I include src/
+```
+
+### PVS-Studio (Commercial)
+```bash
+pvs-studio-analyzer analyze -j8 -o report.log
+plog-converter -a GA:1,2 -t tasklist -o report.tasks report.log
+```
+
+### Coverity / CodeQL (GitHub Advanced Security)
+```yaml
+# .github/workflows/codeql.yml
+uses: github/codeql-action/init@v2
+with:
+  languages: cpp
+```
+
+---
+
+## 5. Compiler Hardening Flags
+
+### GCC/Clang
+```bash
+# Stack protection
+-fstack-protector-strong    # защита функций с массивами/адресами
+-fstack-clash-protection    # защита от stack clash
+
+# FORTIFY_SOURCE (glibc)
+-D_FORTIFY_SOURCE=2 -O2     # проверки strlen, memcpy, printf и т.д.
+
+# Control Flow Integrity (CFI)
+-fsanitize=cfi -fvisibility=hidden -flto
+-fsanitize=cfi-icall        # indirect calls
+-fsanitize=cfi-derived-cast # base-to-derived casts
+
+# SafeStack (отделяет unsafe stack)
+-fsanitize=safe-stack
+
+# Shadow Call Stack (AArch64)
+-fsanitize=shadow-call-stack
+
+# RELRO (Read-only relocations)
+-Wl,-z,relro,-z,now
+
+# PIE (Position Independent Executable)
+-fPIE -pie
+
+# Format string protection
+-Wformat=2 -Wformat-security
+```
+
+### MSVC
+```bash
+/GS              # Buffer security check (/GS- to disable)
+/sdl             # Security Development Lifecycle (рекомендует)
+/guard:cf        # Control Flow Guard
+/CETCOMPAT       # Intel CET (shadow stacks, IBT)
+/DYNAMICBASE     # ASLR
+/NXCOMPAT        # DEP (NX)
+/HIGHENTROPYVA   # 64-bit ASLR
+```
+
+---
+
+## 6. Secure Coding Practices
+
+### Safe String/Buffer Handling
+```cpp
+// ПЛОХО
+char buf[256];
+sprintf(buf, "%s", user_input);
+strcpy(buf, user_input);
+strcat(buf, more);
+
+// ХОРОШО
+char buf[256];
+snprintf(buf, sizeof(buf), "%s", user_input);
+strncpy(buf, user_input, sizeof(buf)-1);
+buf[sizeof(buf)-1] = '\0';
+
+// ЛУЧШЕ: C++ strings
+std::string buf = user_input;
+std::string buf2 = user_input + more;
+
+// C++23: std::format (type-safe)
+std::string s = std::format("{} {}", user_input, more);
+```
+
+### Bounds Checking
+```cpp
+// Вручную
+void safe_copy(int* dst, size_t dst_size, const int* src, size_t src_size) {
+    size_t n = std::min(dst_size, src_size);
+    std::copy_n(src, n, dst);
+}
+
+// gsl::span (Guidelines Support Library)
+#include <gsl/span>
+void process(gsl::span<int> dst, gsl::span<const int> src) {
+    Expects(dst.size() >= src.size());
+    std::copy(src.begin(), src.end(), dst.begin());
+}
+
+// std::span (C++20)
+void process(std::span<int> dst, std::span<const int> src) {
+    if (dst.size() < src.size()) throw std::length_error("dst too small");
+    std::copy(src.begin(), src.end(), dst.begin());
+}
+```
+
+### Integer Safety
+```cpp
+// Checked integer arithmetic
+#include <cstdint>
+
+bool safe_add(int a, int b, int& result) {
+    if (b > 0 && a > INT_MAX - b) return false;
+    if (b < 0 && a < INT_MIN - b) return false;
+    result = a + b;
+    return true;
+}
+
+// Или boost::safe_numerics
+#include <boost/safe_numerics/safe_integer.hpp>
+boost::safe_numerics::safe<int> x = INT_MAX;
+x += 1; // throws на overflow
+```
+
+### Resource Management (RAII)
+```cpp
+// Всегда RAII для ресурсов
+class FileHandle {
+    int fd_;
+public:
+    FileHandle(const char* path) : fd_(open(path, O_RDONLY)) {
+        if (fd_ < 0) throw std::system_error(errno, std::generic_category());
+    }
+    ~FileHandle() { if (fd_ >= 0) close(fd_); }
+    FileHandle(const FileHandle&) = delete;
+    FileHandle& operator=(const FileHandle&) = delete;
+    FileHandle(FileHandle&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }
+    int get() const { return fd_; }
+};
+```
+
+### Input Validation
+```cpp
+// Валидируйте ВСЕ входные данные
+bool validate_and_process(std::string_view input) {
+    // Size limits
+    if (input.size() > MAX_INPUT) return false;
+
+    // Character set validation
+    if (!std::all_of(input.begin(), input.end(), [](char c){
+        return std::isprint(static_cast<unsigned char>(c));
+    })) return false;
+
+    // Structural validation (JSON, XML, etc.)
+    // Используйте правильные парсеры, не regex для сложных форматов
+
+    return process(input);
+}
+```
+
+---
+
+## 7. Supply Chain Security
+
+### SBOM (Software Bill of Materials)
+```bash
+# CycloneDX
+cyclonedx-cli create -o sbom.json .
+
+# SPDX
+spdx-sbom-generator -o sbom.spdx.json .
+```
+
+### Dependency Scanning
+```bash
+# OWASP Dependency Check
+dependency-check.sh --project "MyProject" --scan .
+
+# GitHub Dependabot / GitLab Dependency Scanning
+# Автоматические PR для уязвимых зависимостей
+```
+
+### Reproducible Builds
+```bash
+# Детерминированная сборка
+export SOURCE_DATE_EPOCH=1609459200  # фиксированная дата
+export BUILD_ID=""                   # убрать build ID
+g++ -fdebug-prefix-map=/src=/usr/src -o app main.cpp
+```
+
+---
+
+## Практические задания
+
+### Задание 1: ASan/UBSan Integration
+Добавьте в CMake опцию `ENABLE_SANITIZERS`. Соберите проект с ASan+UBSan. Запустите тесты. Найдите и исправьте хотя бы 3 ошибки.
+
+### Задание 2: Fuzzing JSON Parser
+Возьмите любой JSON парсер (или напишите простой). Напишите libFuzzer target. Найдите баг (crash/hang/OOM). Исправьте.
+
+### Задание 3: Static Analysis
+Запустите `clang-tidy` с профилем `cert` и `cppcoreguidelines` на своем коде. Исправьте top 10 предупреждений. Настройте CI для автоматического запуска.
+
+### Задание 4: Hardening Flags
+Соберите проект с полным набором hardening флагов (stack protector, FORTIFY, CFI, RELRO, PIE). Проверьте `checksec --file=app`. Убедитесь, что производительность не деградировала >5%.
+
+### Задание 5: Secure Code Review
+Проведите code review кода на предмет:
+- Buffer overflows
+- Integer overflows
+- Use-after-free
+- Race conditions (TSan)
+- Injection vulnerabilities (format string, command injection)
+Документируйте найденные проблемы.
+
+### Задание 6: Fuzzing Campaign
+Настройте непрерывный фаззинг (OSS-Fuzz style) для своего проекта:
+- Corpus сбор и минимизация
+- Dictionary
+- CI integration (nightly runs)
+- Crash triage automation
+
+---
+
+## Полезные ресурсы
+- **CERT C++ Coding Standard** — https://wiki.sei.cmu.edu/confluence/display/cplusplus
+- **CWE Top 25** — https://cwe.mitre.org/top25/
+- **OWASP C++ Security Cheat Sheet**
+- **Google Sanitizers Wiki** — https://github.com/google/sanitizers
+- **libFuzzer Tutorial** — https://llvm.org/docs/LibFuzzer.html
+- **AFL++ Documentation** — https://aflplus.plus/docs/
+- **CppCon: "Fuzzing C++" (Kostya Serebryany)**
+- **CppCon: "Securing C++" (Matthew Butler)**
+- **SEI CERT C++ Rules** — CON36-CPP, MEM30-CPP, etc.

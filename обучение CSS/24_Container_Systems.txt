@@ -1,0 +1,676 @@
+# Урок 24: Контейнерные системы — container queries/units, fluid layouts, компонентные брейкпоинты
+
+## Цели урока
+- Понять разницу между медиа-запросами (viewport) и контейнерными запросами (родительский элемент)
+- Освоить `@container` и единицы контейнера (cqw, cqh, cqi, cqb, cqmin, cqmax)
+- Создать компонентные брейкпоинты — компонент адаптируется под контейнер, а не под экран
+- Построить fluid layouts с `clamp()`, `minmax()`, `auto-fit/auto-fill`
+- Создать по-настоящему переиспользуемые компоненты, которые работают в любом контейнере
+
+---
+
+## 1. Медиа-запросы vs контейнерные запросы
+
+### Медиа-запросы (@media) — зависят от viewport
+```css
+/* Компонент меняется в зависимости от размера экрана */
+@media (max-width: 768px) {
+  .card { padding: 1rem; }
+}
+
+@media (min-width: 769px) {
+  .card { padding: 2rem; }
+}
+```
+
+**Проблема:** Карточка в боковой панели (300px) и в основном контенте (800px) на одном экране получат одинаковые стили, хотя контейнеры разного размера.
+
+### Контейнерные запросы (@container) — зависят от родителя
+```css
+/* Сначала помечаем элемент как контейнер */
+.card-container {
+  container-type: inline-size;  /* следим за шириной контейнера */
+  /* или container-type: size;  /* следим за шириной и высотой */
+  /* или container-name: card;  /* имя для ссылки в запросе */
+}
+
+/* Затем адаптируем содержимое под размер контейнера */
+@container (max-width: 400px) {
+  .card {
+    padding: 1rem;
+    font-size: 0.875rem;
+    flex-direction: column;
+  }
+}
+
+@container (min-width: 401px) {
+  .card {
+    padding: 1.5rem;
+    font-size: 1rem;
+    flex-direction: row;
+  }
+}
+```
+
+### Ключевое преимущество
+Один и тот же компонент `.card` будет выглядеть по-разному в зависимости от того, в какой контейнер его положили — боковая панель, главное содержимое, модалка, футер.
+
+---
+
+## 2. container-type и container-name
+
+### container-type — что отслеживаем
+```css
+.sidebar {
+  container-type: inline-size;   /* Только ширина (инлайн-размер) */
+}
+
+.main-content {
+  container-type: size;          /* Ширина и высота (block + inline) */
+}
+
+.normal-flow {
+  container-type: normal;        /* Не является контейнером (по умолчанию) */
+}
+```
+
+### container-name — именованные контейнеры
+```css
+.card-section {
+  container-type: inline-size;
+  container-name: card-section;
+}
+
+@container card-section (max-width: 500px) {
+  .card { padding: 1rem; }
+}
+```
+
+### Зачем container-name
+Когда на странице много контейнеров, именованные запросы позволяют обращаться к конкретному контейнеру, а не к ближайшему предку.
+
+```html
+<div class="sidebar" container-type="inline-size" container-name="sidebar">
+  <article class="card">...</article>
+</div>
+
+<div class="main" container-type="inline-size" container-name="main">
+  <article class="card">...</article>
+</div>
+```
+
+```css
+/* Только для карточек в сайдбаре */
+@container sidebar (max-width: 300px) {
+  .card { font-size: 0.75rem; }
+}
+
+/* Только для карточек в основном контенте */
+@container main (max-width: 600px) {
+  .card { font-size: 0.875rem; }
+}
+```
+
+---
+
+## 3. Единицы контейнера (cq-units)
+
+cq-единицы основаны на размере контейнера, а не на viewport (как vw/vh).
+
+| Единица | Описание |
+|---------|----------|
+| `cqw` | 1% ширины контейнера (container query width) |
+| `cqh` | 1% высоты контейнера |
+| `cqi` | 1% инлайнового размера контейнера |
+| `cqb` | 1% block-размера контейнера |
+| `cqmin` | Меньшее из cqi и cqb |
+| `cqmax | Большее из cqi и cqb |
+
+### Пример использования
+```css
+.card {
+  container-type: inline-size;
+}
+
+.card__title {
+  /* Размер шрифта зависит от ширины контейнера, а не экрана */
+  font-size: clamp(1rem, 5cqw, 2rem);
+
+  /* Отступы тоже от контейнера */
+  padding: 2cqw;
+}
+
+.card__badge {
+  font-size: 3cqw;
+  min-width: 10cqw;
+}
+```
+
+### Сравнение vw и cqw
+```css
+/* vw — от ширины экрана (одинаково везде на странице) */
+.viewport-title {
+  font-size: 5vw;
+}
+
+/* cqw — от ширины контейнера (разно в разных местах) */
+.container-title {
+  font-size: 5cqw;
+}
+```
+
+---
+
+## 4. Fluid layouts — плавная адаптация без медиа-запросов
+
+### clamp() — связующее звено
+```css
+:root {
+  --fs-xs: clamp(0.75rem, 0.7rem + 0.5vw, 0.875rem);
+  --fs-sm: clamp(0.875rem, 0.8rem + 0.75vw, 1rem);
+  --fs-base: clamp(1rem, 0.9rem + 1vw, 1.125rem);
+  --fs-lg: clamp(1.125rem, 1rem + 1.25vw, 1.5rem);
+  --fs-xl: clamp(1.25rem, 1.1rem + 1.5vw, 2rem);
+  --fs-2xl: clamp(1.5rem, 1.25rem + 2vw, 3rem);
+
+  --space-xs: clamp(0.25rem, 0.5vw, 0.5rem);
+  --space-sm: clamp(0.5rem, 1vw, 1rem);
+  --space-md: clamp(1rem, 2vw, 1.5rem);
+  --space-lg: clamp(1.5rem, 3vw, 3rem);
+}
+
+h1 { font-size: var(--fs-2xl); }
+h2 { font-size: var(--fs-xl); }
+p { font-size: var(--fs-base); line-height: 1.6; }
+
+.section {
+  padding-block: var(--space-lg);
+}
+```
+
+### minmax() в Grid — диапазон размеров треков
+```css
+.grid {
+  display: grid;
+  /* Каждая колонка минимум 200px, максимум 1fr (свободное место) */
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+```
+
+### fluid grids — контейнерные единицы + clamp
+```css
+.card-container {
+  container-type: inline-size;
+}
+
+.card {
+  padding: clamp(1rem, 4cqw, 2rem);
+  gap: clamp(0.5rem, 2cqw, 1rem);
+}
+
+.card__title {
+  font-size: clamp(1rem, 6cqw, 1.5rem);
+}
+```
+
+---
+
+## 5. Компонентные брейкпоинты
+
+### Концепция
+Вместо глобальных брейкпоинтов (768px, 1024px) у каждого компонента свои точки перелома, зависящие от размера его контейнера.
+
+### Пример: карточка продукта с тремя вариантами
+```html
+<div class="product-container" container-type="inline-size">
+  <article class="product-card">
+    <div class="product__media">
+      <img src="photo.jpg" alt="" class="product__img">
+    </div>
+    <div class="product__body">
+      <h3 class="product__title">Название товара</h3>
+      <p class="product__text">Описание товара...</p>
+      <div class="product__price">299 ₽</div>
+    </div>
+    <footer class="product__footer">
+      <button class="product__btn">В корзину</button>
+    </footer>
+  </article>
+</div>
+```
+
+```css
+.product-container {
+  container-type: inline-size;
+  container-name: product;
+}
+
+/* Базовый стиль — узкий контейнер (мобильный вид) */
+.product-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid oklch(0.88 0.006 285);
+  border-radius: 0.75rem;
+  background: white;
+}
+
+.product__media {
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  background: oklch(0.97 0.001 285);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.product__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.product__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.product__title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.product__text {
+  font-size: 0.875rem;
+  color: oklch(0.55 0.01 285);
+  line-height: 1.5;
+}
+
+.product__price {
+  font-size: 1.125rem;
+  font-weight: 700;
+  margin-top: auto;
+}
+
+.product__footer {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+
+.product__btn {
+  flex: 1;
+  padding: 0.625rem 1rem;
+  background: oklch(0.62 0.22 264);
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* Контейнерный брейкпоинт 1: средний контейнер — изображение слева, текст справа */
+@container product (min-width: 450px) {
+  .product-card {
+    flex-direction: row;
+    padding: 1.5rem;
+  }
+
+  .product__media {
+    width: 180px;
+    flex-shrink: 0;
+    aspect-ratio: 1 / 1;
+  }
+
+  .product__title {
+    font-size: 1.125rem;
+  }
+
+  .product__text {
+    font-size: 0.9375rem;
+  }
+}
+
+/* Контейнерный брейкпоинт 2: большой контейнер — полный вариант с’action справа */
+@container product (min-width: 700px) {
+  .product-card {
+    padding: 2rem;
+    gap: 2rem;
+  }
+
+  .product__media {
+    width: 220px;
+  }
+
+  .product__title {
+    font-size: 1.25rem;
+  }
+
+  .product__footer {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .product__btn {
+    flex: none;
+    width: auto;
+    padding: 0.75rem 1.5rem;
+  }
+}
+```
+
+### Сравнение подходов
+
+| Подход | Зависит от | Когда использовать |
+|--------|-----------|-------------------|
+| `@media (max-width: 768px)` | Viewport (экран) | Страничная раскладка, общая структура |
+| `@container (min-width: 450px)` | Контейнер (родитель) | Компоненты, карточки, переиспользуемые блоки |
+| Комбинированный | Оба | И то, и другое — страничная структура + компоненты |
+
+---
+
+## 6. Комплексный пример: админ-панель с контейнерными запросами
+
+```html
+<div class="admin-layout">
+  <aside class="sidebar" container-type="inline-size" container-name="sidebar">
+    <nav class="sidebar__nav">...</nav>
+  </aside>
+
+  <main class="main-content" container-type="inline-size" container-name="main">
+    <section class="stats-section">
+      <div class="stats-grid">
+        <article class="stat-card">
+          <h3>Заказы</h3>
+          <div class="stat-value">1 234</div>
+        </article>
+        <article class="stat-card">
+          <h3>Доход</h3>
+          <div class="stat-value">56 780 ₽</div>
+        </article>
+        <article class="stat-card">
+          <h3>Пользователи</h3>
+          <div class="stat-value">890</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="table-section">
+      <table class="data-table">...</table>
+    </section>
+  </main>
+</div>
+```
+
+```css
+.admin-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  min-height: 100vh;
+}
+
+/* Sidebar контейнер */
+.sidebar {
+  container-type: inline-size;
+  container-name: sidebar;
+  position: sticky;
+  top: 1.5rem;
+}
+
+.sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sidebar__link {
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  color: oklch(0.55 0.01 285);
+  font-size: 0.875rem;
+}
+
+/* Адаптация сайдбара под свою ширину */
+@container sidebar (max-width: 250px) {
+  .sidebar__link {
+    padding: 0.5rem;
+    font-size: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .sidebar__link span {
+    display: none;  /* Скрываем текст, остаются только иконки */
+  }
+}
+
+/* Main контейнер */
+.main-content {
+  container-type: inline-size;
+  container-name: main;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Статистика — контейнерные брейкпоинты */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  width: 100%;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: oklch(0.98 0.001 285);
+  border-radius: 0.75rem;
+}
+
+.stat-card h3 {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: oklch(0.55 0.01 285);
+  margin: 0;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: oklch(0.21 0.006 285);
+}
+
+/* Узкий контейнер — компактная статистика */
+@container main (max-width: 600px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stat-card {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+  }
+
+  .stat-card h3 {
+    font-size: 0.8125rem;
+  }
+
+  .stat-value {
+    font-size: 1.125rem;
+  }
+}
+
+/* Средний контейнер — две колонки */
+@container main (min-width: 601px) and (max-width: 1000px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Широкий контейнер — три колонки */
+@container main (min-width: 1001px) {
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Таблица — горизонтальная прокрутка на узких контейнерах */
+.table-section {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 600px;  /* Таблица не сжимается ниже 600px */
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid oklch(0.88 0.006 285);
+}
+
+/* Адаптив таблицы под контейнер main */
+@container main (max-width: 700px) {
+  .data-table {
+    font-size: 0.8125rem;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 0.5rem 0.75rem;
+  }
+}
+
+/* Mobile layout для всей страницы */
+@media (max-width: 767px) {
+  .admin-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "main"
+      "sidebar";
+  }
+
+  .sidebar {
+    position: static;
+    order: 2;
+  }
+
+  .main-content {
+    order: 1;
+  }
+}
+```
+
+---
+
+## 7. Когда использовать контейнерные запросы — матрица решений
+
+| Сценарий | Решение |
+|----------|---------|
+| Общая структура страницы (header, main, footer) | `@media` (viewport) |
+| Карточка в сайдбаре vs в контенте | `@container` |
+| Компонент в модалке (размер модалки неизвестен) | `@container` |
+| Повторяющийся компонент в разных местах | `@container` |
+| типографика, зависящая от ширины экрана | `clamp()` + `vw` |
+| типографика, зависящая от ширины карточки | `clamp()` + `cqw` |
+| Grid с автоподбором колонок | `repeat(auto-fit, minmax())` |
+
+---
+
+## 8. Поддержка браузерами (2024)
+
+| Фича | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| @container | 105+ | 110+ | 16+ | 105+ |
+| container-type | 105+ | 110+ | 16+ | 105+ |
+| cq-units | 105+ | 110+ | 16+ | 105+ |
+| container-name | 105+ | 110+ | 16+ | 105+ |
+
+Для старых браузеров — медиа-запросы как фолбэк:
+```css
+.card {
+  padding: 1rem;
+}
+
+/* Современные браузеры — контейнерные запросы */
+@container (min-width: 400px) {
+  .card { padding: 2rem; }
+}
+
+/* Старые браузеры — медиа-запрос как fallback */
+@media (min-width: 768px) {
+  .card { padding: 2rem; }
+}
+```
+
+---
+
+## 9. Практическое задание
+
+### Задача 1: Контейнерный компонент
+Создай компонент «профиль пользователя» с аватаром, именем и описанием:
+- В узком контейнере (< 300px): аватар сверху, имя и описание по центру под ним
+- В широком контейнере (≥ 300px): аватар слева, имя и описание справа (row)
+- Используй `container-type: inline-size` и `@container`
+
+### Задача 2: cq-единицы для типографики
+Создай контейнер с заголовком, размер которого зависит от ширины контейнера:
+- `font-size: clamp(1rem, 6cqw, 2rem)`
+- Проверь в DevTools, что при изменении размера контейнера заголовок масштабируется
+
+### Задача 3: Компонентные брейкпоинты карточки
+Создай карточку с тремя вариантами:
+- < 350px: вертикальная компоновка, компактный шрифт
+- 350–600px: изображение слева, контент справа
+- > 600px: полная компоновка с большой картинкой и двумя действиями
+
+### Задача 4: Сравнение media vs container
+Положи одну и ту же карточку в два контейнера разной ширины на одной странице. Проверь, что контейнерные запросы заставляют её выглядеть по-разному, а медиа-запросы — одинаково.
+
+### Задача 5: Fluid layout без медиа-запросов
+Создай секцию с карточками, используя только:
+- `repeat(auto-fit, minmax(250px, 1fr))` для сетки
+- `clamp()` для отступов и шрифтов
+- Никаких `@media` для самой сетки
+
+---
+
+## 10. Полезные ресурсы
+
+- [MDN: Container queries](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_container_queries)
+- [MDN: CSS container query units](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_container_queries/Container_query_units)
+- [web.dev: Container queries](https://web.dev/learn/css/container-queries/)
+- [CSS-Tricks: Container Queries](https://css-tricks.com/almanac/properties/c/container/)
+- [MDN: clamp()](https://developer.mozilla.org/en-US/docs/Web/CSS/clamp)
+- [Can I Use: Container queries](https://caniuse.com/css-container-queries)
+
+---
+
+## 11. Ключевые выводы
+
+1. **Медиа-запросы** — для страничной раскладки (viewport), **контейнерные запросы** — для компонентов (родительский элемент)
+2. **`container-type: inline-size`** — отслеживает ширину контейнера; `size` — ширину и высоту
+3. **cq-единицы** (cqw, cqh, cqi, cqb) — размеры относительно контейнера, а не экрана
+4. **Компонентные брейкпоинты** — каждый компонент адаптируется под свой контейнер, что делает его по-настоящему переиспользуемым
+5. **Fluid layout** — `clamp()` + `minmax()` + `auto-fit/auto-fill` убирают большинство медиа-запросов
+6. **Комбинированный подход** — `@media` для структуры страницы, `@container` для компонентов
+7. **Поддержка** — Chrome 105+, Firefox 110+, Safari 16+, Edge 105+; старые браузеры — медиа-запросы как фолбэк
+
+*Следующий урок: 25_Selectors_Logical.txt — Селекторы/логические свойства: сложный :has(), writing modes, @supports, прогрессивное улучшение*

@@ -1,0 +1,631 @@
+# Урок 15: Визуальные эффекты — Filters, Blend Modes, Masking, Clipping, Shapes, Scroll-driven Animations
+
+## Цели урока
+- Освоить CSS Filters: blur, brightness, contrast, drop-shadow, grayscale, hue-rotate, invert, opacity, saturate, sepia
+- Понять Blend Modes: фоновые и смешанные режимы наложения
+- Работать с Masking и Clipping для сложных форм
+- Использовать CSS Shapes для обтекания текстом произвольных фигур
+- Создавать Scroll-driven Animations без JavaScript
+
+---
+
+## 1. CSS Filters — детальное руководство
+
+### Базовые фильтры
+```css
+.filtered {
+  /* Размытие */
+  filter: blur(4px);
+
+  /* Яркость (0 = черный, 1 = оригинал, >1 = ярче) */
+  filter: brightness(1.5);
+
+  /* Контраст (0 = серый, 1 = оригинал, >1 = контрастнее) */
+  filter: contrast(2);
+
+  /* Тень (не box-shadow — работает на прозрачности!) */
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3));
+
+  /* Оттенки серого */
+  filter: grayscale(1);
+
+  /* Поворот оттенка */
+  filter: hue-rotate(90deg);
+
+  /* Инверсия цветов */
+  filter: invert(1);
+
+  /* Прозрачность */
+  filter: opacity(0.5);
+
+  /* Насыщенность */
+  filter: saturate(2);
+
+  /* Сепия */
+  filter: sepia(1);
+}
+```
+
+### Комбинирование фильтров (порядок важен!)
+```css
+/* Применяются слева направо */
+.combined {
+  /* Сначала размытие, потом яркость */
+  filter: blur(2px) brightness(1.2);
+
+  /* Разный результат: */
+  filter: brightness(1.2) blur(2px);  /* Блёр применяется к уже яркому */
+}
+
+/* Практический пример: hover-эффект карточки */
+.card {
+  filter: grayscale(1) contrast(1.1);
+  transition: filter 0.3s ease;
+}
+.card:hover {
+  filter: grayscale(0) contrast(1);
+}
+```
+
+### Backdrop Filter — размытие позади элемента
+```css
+.glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px) saturate(180%);
+  /* -webkit-backdrop-filter для Safari */
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+}
+
+/* Поддержка: Chrome 76+, Firefox 103+, Safari 9+ (с префиксом) */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass { /* enhanced styles */ }
+}
+```
+
+### Filter Functions Reference
+```css
+:root {
+  --filter-none: none;
+  --filter-subtle: blur(1px) brightness(1.05);
+  --filter-card: grayscale(1) contrast(1.2);
+  --filter-card-hover: grayscale(0) contrast(1);
+  --filter-modal-bg: blur(8px) brightness(0.5);
+  --filter-loading: blur(4px) grayscale(1) opacity(0.6);
+  --filter-disabled: grayscale(1) opacity(0.5);
+}
+```
+
+---
+
+## 2. Blend Modes — режимы наложения
+
+### background-blend-mode (фоновые слои)
+```css
+.blended-bg {
+  background-image:
+    linear-gradient(45deg, #ff6b6b, #4ecdc4),
+    url('texture.png'),
+    url('photo.jpg');
+  background-blend-mode:
+    multiply,      /* gradient × texture */
+    overlay;       /* result × photo */
+  background-size: cover;
+}
+
+/* Все режимы */
+.blend-modes {
+  /* Нормальные */
+  background-blend-mode: normal;
+
+  /* Затемнение */
+  background-blend-mode: multiply, darken, color-burn;
+
+  /* Осветление */
+  background-blend-mode: screen, lighten, color-dodge;
+
+  /* Контраст */
+  background-blend-mode: overlay, soft-light, hard-light;
+
+  /* Инверсия/разность */
+  background-blend-mode: difference, exclusion;
+
+  /* Цветовые */
+  background-blend-mode: hue, saturation, color, luminosity;
+}
+```
+
+### mix-blend-mode (элемент с фоном родителя)
+```css
+/* Текст с blend mode */
+.blended-text {
+  mix-blend-mode: difference;
+  color: white;  /* Инвертирует фон за текстом */
+}
+
+/* Изображение поверх контента */
+.overlay-image {
+  mix-blend-mode: multiply;
+  /* Белые участки становятся прозрачными,
+     черные — полностью непрозрачными */
+}
+
+/* Изоляция blend mode */
+.container {
+  isolation: isolate;  /* Ограничивает blend mode внутри */
+}
+.child {
+  mix-blend-mode: multiply;  /* Не влияет на фон .container */
+}
+```
+
+### Практические паттерны Blend Modes
+
+#### Дуотоновые изображения (Duotone)
+```css
+.duotone {
+  /* 1. Черно-белое фото */
+  filter: grayscale(1) contrast(1.5);
+
+  /* 2. Цветной градиент поверх */
+  background: linear-gradient(45deg, #1a1a2e, #16213e, #0f3460);
+  background-blend-mode: multiply;
+
+  /* Или через псевдоэлемент для большего контроля */
+}
+.duotone::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(45deg, var(--color-1), var(--color-2));
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+```
+
+#### Текст с градиентом через blend mode
+```css
+.gradient-text {
+  background: linear-gradient(90deg, #ff6b6b, #4ecdc4, #45b7d1);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  /* ИЛИ через mix-blend-mode: */
+  color: white;
+  mix-blend-mode: screen;
+  background: linear-gradient(90deg, #ff6b6b, #4ecdc4);
+}
+```
+
+---
+
+## 3. Masking — маскирование
+
+### CSS Mask Properties
+```css
+.masked {
+  /* Маска-изображение */
+  mask-image: url('mask.svg');
+  mask-image: linear-gradient(black, transparent);
+  mask-image: radial-gradient(circle, black 50%, transparent 70%);
+
+  /* Режим маски */
+  mask-mode: alpha;      /* Альфа-канал (default) */
+  mask-mode: luminance;  /* Яркость пикселей */
+  mask-mode: match-source;
+
+  /* Повторение */
+  mask-repeat: no-repeat;
+  mask-repeat: repeat;
+  mask-repeat: space;
+  mask-repeat: round;
+
+  /* Позиция */
+  mask-position: center;
+  mask-position: 50% 50%;
+
+  /* Размер */
+  mask-size: cover;
+  mask-size: contain;
+  mask-size: 100px 100px;
+
+  /* Композиция */
+  mask-composite: add;       /* Объединение */
+  mask-composite: subtract;  /* Вычитание */
+  mask-composite: intersect; /* Пересечение */
+  mask-composite: exclude;   /* Исключение (XOR) */
+
+  /* Сокращение */
+  mask: url('mask.svg') no-repeat center / cover;
+}
+```
+
+### Градиентные маски (нет внешних файлов)
+```css
+/* Fade-out снизу */
+.fade-bottom {
+  mask-image: linear-gradient(to bottom, black 70%, transparent);
+}
+
+/* Fade по краям */
+.fade-edges {
+  mask-image:
+    linear-gradient(to right, transparent, black 20%),
+    linear-gradient(to left, transparent, black 20%);
+  mask-composite: intersect;
+}
+
+/* Круговая маска */
+.circle-mask {
+  mask-image: radial-gradient(circle at center, black 50%, transparent 50%);
+}
+
+/* Множественные маски */
+.multi-mask {
+  mask-image:
+    url('shape.svg'),
+    linear-gradient(black, transparent);
+  mask-composite: intersect;  /* Только пересечение */
+}
+```
+
+### SVG в масках
+```css
+/* Инлайн SVG маска */
+.svg-mask {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='black'/%3E%3C/svg%3E");
+}
+
+/* Ссылка на SVG элемент */
+<svg style="display: none;">
+  <mask id="svg-mask">
+    <circle cx="50" cy="50" r="50" fill="white"/>
+  </mask>
+</svg>
+
+.css-mask {
+  mask: url(#svg-mask);
+}
+```
+
+---
+
+## 4. Clipping — обрезка
+
+### clip-path — базовые формы
+```css
+.clipped {
+  /* Круг */
+  clip-path: circle(50% at center);
+  clip-path: circle(50px at 100px 100px);
+
+  /* Эллипс */
+  clip-path: ellipse(50% 25% at center);
+
+  /* Многоугольник */
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  clip-path: polygon(0 0, 100% 0, 100% 75%, 50% 100%, 0 75%);
+
+  /* Вставка (inset) — скруглённые углы */
+  clip-path: inset(10px 20px 30px 40px round 10px);
+
+  /* SVG path */
+  clip-path: path('M10 10 H90 V90 H10 Z');
+
+  /* SVG reference */
+  clip-path: url(#clip-shape);
+}
+```
+
+### Анимация clip-path
+```css
+/* Раскрывающаяся карточка */
+.card-reveal {
+  clip-path: inset(0 0 100% 0);
+  transition: clip-path 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.card-reveal:hover {
+  clip-path: inset(0 0 0 0);
+}
+
+/* Морфинг форм */
+@keyframes morph {
+  0% { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+  50% { clip-path: polygon(25% 0, 100% 25%, 75% 100%, 0 75%); }
+  100% { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+}
+.morphing {
+  animation: morph 4s ease-in-out infinite;
+}
+
+/* Важно: clip-path анимируется только если ОДИНАКОВОЕ КОЛИЧЕСТВО ТОЧЕК */
+```
+
+### Практический пример: анимированный ховер
+```css
+.shape-card {
+  clip-path: polygon(
+    0% 0%,
+    100% 0%,
+    100% 100%,
+    0% 100%
+  );
+  transition: clip-path 0.4s ease;
+}
+.shape-card:hover {
+  clip-path: polygon(
+    10% 0%,
+    100% 10%,
+    90% 100%,
+    0% 90%
+  );
+}
+```
+
+---
+
+## 5. CSS Shapes — обтекание текстом
+
+### shape-outside — обтекание float-элемента
+```css
+.shape-wrapper {
+  width: 300px;
+  height: 300px;
+  float: left;
+  shape-outside: circle(50%);
+  /* Текст обтекает круг */
+}
+
+.shape-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  clip-path: circle(50%);  /* Визуально тоже круг */
+  shape-outside: circle(50%);
+}
+
+/* Многоугольник */
+.shape-polygon {
+  shape-outside: polygon(0 0, 100% 0, 50% 100%);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* Градиент (прозрачность определяет форму) */
+.shape-gradient {
+  shape-outside: linear-gradient(45deg, transparent 50%, black 50%);
+}
+
+/* Из изображения (alpha channel) */
+.shape-from-image {
+  shape-outside: url('silhouette.png');
+  shape-image-threshold: 0.5;  /* Порог прозрачности */
+}
+
+/* Margin вокруг формы */
+.shape-with-margin {
+  shape-outside: circle(50%);
+  shape-margin: 1rem;
+}
+```
+
+### shape-inside (экспериментально) — форма внутри элемента
+```css
+/* Включить флаг: layout.css.shape-inside.enabled */
+.experimental {
+  shape-inside: circle(50%);
+  /* Текст ВНУТРИ элемента принимает форму круга */
+}
+```
+
+---
+
+## 6. Scroll-driven Animations — анимации по скроллу
+
+### Animation Timeline (Chrome 115+, Firefox 116+)
+```css
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Анимация привязана к скроллу контейнера */
+.scrolled-element {
+  animation: fade-in linear;
+  animation-timeline: view();  /* Viewport timeline */
+  animation-range: entry 0% cover 50%;
+}
+
+/* Именованный timeline */
+.scroll-container {
+  overflow-y: scroll;
+}
+.animated-item {
+  animation: fade-in linear;
+  animation-timeline: --container-scroll;
+}
+@scroll-timeline --container-scroll {
+  source: selector(.scroll-container);
+  orientation: vertical;
+}
+```
+
+### animation-range — контроль зоны
+```css
+.element {
+  animation: move linear;
+  animation-timeline: view();
+
+  /* Ключевые слова */
+  animation-range: entry;        /* Входит во viewport */
+  animation-range: exit;         /* Выходит из viewport */
+  animation-range: entry-crossing;  /* Пересекает верхнюю границу */
+  animation-range: exit-crossing;   /* Пересекает нижнюю границу */
+
+  /* Конкретные проценты */
+  animation-range: entry 0% entry 100%;
+  animation-range: cover 0% cover 100%;
+  animation-range: contain 0% contain 100%;
+
+  /* Комбинации */
+  animation-range: entry 0% cover 50%;
+}
+```
+
+### Scroll Progress Indicator
+```css
+.progress-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+  transform-origin: left;
+  animation: scale-x linear;
+  animation-timeline: scroll(root);
+  animation-range: 0% 100%;
+}
+@keyframes scale-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+```
+
+### Parallax через scroll-driven animations
+```css
+.parallax-layer {
+  animation: parallax linear;
+  animation-timeline: view();
+  animation-range: entry 0% exit 100%;
+}
+@keyframes parallax {
+  from { transform: translateY(-100px); }
+  to { transform: translateY(100px); }
+}
+
+/* Разная скорость для слоёв */
+.layer-far { animation-range: entry 0% exit 100%; transform: translateY(-50px); }
+.layer-mid { animation-range: entry 0% exit 100%; transform: translateY(-100px); }
+.layer-near { animation-range: entry 0% exit 100%; transform: translateY(-200px); }
+```
+
+### Практический пример: Reveal on Scroll
+```css
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  animation: reveal linear forwards;
+  animation-timeline: view();
+  animation-range: entry 25% cover 50%;
+}
+@keyframes reveal {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Staggered reveal для списка */
+.reveal-item:nth-child(1) { animation-range: entry 10% cover 40%; }
+.reveal-item:nth-child(2) { animation-range: entry 20% cover 50%; }
+.reveal-item:nth-child(3) { animation-range: entry 30% cover 60%; }
+```
+
+---
+
+## 7. Практическое задание
+
+### Задача 1: Glassmorphism UI Kit
+Создай набор компонентов с glassmorphism:
+- Карточки с `backdrop-filter: blur()`
+- Навигация с полупрозрачным фоном
+- Модалки с размытым backdrop
+- Адаптивность: `@media (prefers-reduced-transparency: reduce)` — отключить blur
+
+### Задача 2: Blend Mode Gallery
+Реализуй галерею с эффектами:
+- Duotone изображения (CSS only)
+- Текст с mix-blend-mode: difference на фото
+- Цветовые фильтры через background-blend-mode
+- Переключатель темной/светлой темы с сохранением blend-эффектов
+
+### Задача 3: Masking & Clipping Playground
+Интерактивный редактор:
+- Загрузка SVG масок
+- Генерация clip-path полигонов (drag points)
+- Анимация между формами
+- Экспорт CSS кода
+
+### Задача 4: Scroll-driven Landing Page
+Создай лендинг только на CSS scroll animations:
+- Прогресс-бар скролла
+- Параллакс секции
+- Появление элементов (staggered)
+- Sticky заголовки с индикатором прогресса секции
+- Секция с horizontal scroll + scroll-driven animation
+
+---
+
+## 8. Таблица поддержки (2024)
+
+| Фича | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| filter | 53+ | 35+ | 9.1+ | 79+ |
+| backdrop-filter | 76+ | 103+ | 9+ (-webkit-) | 79+ |
+| background-blend-mode | 57+ | 52+ | 13+ | 79+ |
+| mix-blend-mode | 58+ | 52+ | 13+ | 79+ |
+| mask-image | 4+ (-webkit-) | 53+ | 4+ (-webkit-) | 79+ |
+| clip-path (basic shapes) | 55+ | 54+ | 10+ (-webkit-) | 79+ |
+| clip-path (path()) | 88+ | 63+ | 15.4+ | 88+ |
+| shape-outside | 55+ | 62+ | 10+ (-webkit-) | 79+ |
+| Scroll-driven Animations | 115+ | 116+ | Behind flag | 115+ |
+| animation-timeline | 115+ | 116+ | Behind flag | 115+ |
+| @scroll-timeline | 115+ | 116+ | Behind flag | 115+ |
+
+---
+
+## 9. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| backdrop-filter без прозрачного фона | Не видно эффекта | `background: rgba(255,255,255,0.1)` |
+| filter на родителе влияет на детей | Всё размывается | Используй backdrop-filter на ребенке |
+| mix-blend-mode ломает layout | Создаёт stacking context | `isolation: isolate` на контейнере |
+| clip-path path() не анимируется | Разное количество точек | Одинаковое число точек в ключевых кадрах |
+| shape-outside не работает | Элемент не float | Обязателен `float: left/right` |
+| Scroll animations не работают | Нет overflow на контейнере | Контейнер должен скроллиться |
+| mask-image SVG не отображается | Неверный fill | SVG маска: черное = видимо, белое = скрыто |
+
+---
+
+## 10. Полезные ресурсы
+
+### Спецификации
+- [CSS Filter Effects](https://www.w3.org/TR/filter-effects-1/)
+- [CSS Compositing and Blending](https://www.w3.org/TR/compositing-1/)
+- [CSS Masking](https://www.w3.org/TR/css-masking-1/)
+- [CSS Shapes](https://www.w3.org/TR/css-shapes-1/)
+- [Scroll-driven Animations](https://www.w3.org/TR/scroll-animations-1/)
+
+### Статьи
+- [CSS Filters Guide](https://developer.mozilla.org/en-US/docs/Web/CSS/filter)
+- [Blend Modes Deep Dive](https://www.sarasoueidan.com/blog/blend-modes/)
+- [Clipping & Masking](https://css-tricks.com/clipping-masking-css/)
+- [Scroll-driven Animations](https://developer.chrome.com/docs/css/scroll-driven-animations/)
+
+### Инструменты
+- [Clippy — clip-path generator](https://bennettfeely.com/clippy/)
+- [CSS Gradient Mask Generator](https://css-generators.com/mask-image/)
+- [Scroll-driven Animations Demo](https://scroll-driven-animations.style/)
+
+---
+
+## 11. Ключевые выводы
+
+1. **Filters** — мощные, но `filter` влияет на детей, `backdrop-filter` — на фон позади.
+2. **Blend Modes** — `background-blend-mode` для фонов, `mix-blend-mode` для элементов. `isolation: isolate` ограничивает область действия.
+3. **Masking vs Clipping** — Mask использует альфа (прозрачность), Clip — геометрию. Mask позволяет мягкие края.
+4. **Shapes** — только для float-элементов. `shape-outside` + `clip-path` = визуальная и функциональная форма.
+5. **Scroll-driven Animations** — нативный parallax, reveal, progress без JS. `animation-timeline: view()` или именованный `@scroll-timeline`.
+6. **Performance** — `filter`, `backdrop-filter`, `mix-blend-mode` могут быть затратны. Тестируй на слабых устройствах.
+
+---
+
+*Следующий урок: 16_Transitions_Animations.txt — Продвинутые анимации: Keyframes, Timing Functions, Will-change, FLIP, View Transitions API, Motion Path*

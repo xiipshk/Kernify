@@ -1,0 +1,330 @@
+# Урок 18: Сборка — заголовки, единицы трансляции, ODR, CMake, библиотеки
+
+## Цели урока
+- Понять модели компиляции: препроцессор, единицы трансляции, линковка
+- Освоить ODR (One Definition Rule) и избегать нарушений
+- Написать современный CMake (target-based, C++20)
+- Организовать проект: библиотеки, исполняемые файлы, установка
+- Работать с зависимостями: find_package, FetchContent, пакетные менеджеры
+
+---
+
+## Теория
+
+### Модель компиляции C++
+
+```
+main.cpp          utils.cpp         math.cpp
+   |                 |                 |
+   v                 v                 v
+[Препроцессор]   [Препроцессор]    [Препроцессор]
+   |                 |                 |
+   v                 v                 v
+main.i            utils.i           math.i
+   |                 |                 |
+   v                 v                 v
+[Компилятор]      [Компилятор]      [Компилятор]
+   |                 |                 |
+   v                 v                 v
+main.o            utils.o           math.o    ← Объектные файлы (ELF/COFF)
+   |                 |                 |
+   +--------+--------+--------+--------+
+            |
+            v
+       [Линковщик]
+            |
+            v
+        app.exe       ← Исполняемый файл
+```
+
+### Заголовочные файлы и единицы трансляции
+
+```cpp
+// math.h — интерфейс (декларации)
+#pragma once  // или include guards
+#ifndef MATH_H
+#define MATH_H
+
+namespace math {
+    int add(int a, int b);           // декларация
+    double sqrt(double x);           // декларация
+
+    // inline функция — определение в заголовке (ODR-safe)
+    inline int square(int x) { return x * x; }
+
+    // template — определение в заголовке
+    template<typename T>
+    T max(T a, T b) { return a > b ? a : b; }
+}
+
+#endif
+
+// math.cpp — реализация
+#include "math.h"
+#include <cmath>
+
+namespace math {
+    int add(int a, int b) { return a + b; }
+    double sqrt(double x) { return std::sqrt(x); }
+}
+
+// main.cpp — использование
+#include "math.h"
+#include <iostream>
+
+int main() {
+    std::cout << math::add(2, 3) << '\n';      // 5
+    std::cout << math::square(4) << '\n';      // 16 (inline)
+    std::cout << math::max(3.14, 2.71) << '\n'; // 3.14 (template)
+}
+```
+
+### ODR (One Definition Rule)
+
+```cpp
+// ПРАВИЛА ODR:
+// 1. В каждой единице трансляции: не более одного определения
+// 2. Во всей программе: ровно одно определение для non-inline сущностей
+// 3. inline функции/переменные, templates, классы — могут быть в нескольких TU,
+//    но определения должны быть ИДЕНТИЧНЫ (token-for-token)
+
+// НАРУШЕНИЯ:
+// --- a.cpp ---
+int global = 42;  // определение
+
+// --- b.cpp ---
+int global = 100; // ОШИБКА ODR: второе определение global
+// Линкер может: выбрать одно, упасть, UB
+
+// ПРАВИЛЬНО:
+// --- globals.h ---
+extern int global;  // только декларация
+
+// --- globals.cpp ---
+int global = 42;    // ЕДИНОЕ определение
+
+// C++17: inline variables — определение в заголовке
+// --- config.h ---
+inline constexpr int MAX_CONNECTIONS = 100; // OK в нескольких TU
+inline std::string appName = "MyApp";       // OK (один объект)
+```
+
+### Современный CMake (3.15+)
+
+```cmake
+# CMakeLists.txt — корень проекта
+cmake_minimum_required(VERSION 3.20)
+project(MyProject
+    VERSION 1.0.0
+    LANGUAGES CXX
+    DESCRIPTION "Modern C++ project"
+)
+
+# Политики современного CMake
+cmake_policy(SET CMP0077 NEW)  # option() honors normal variables
+cmake_policy(SET CMP0091 NEW)  # find_package() respects CMAKE_FIND_PACKAGE_SORT_ORDER
+
+# Стандарт C++
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Предупреждения
+if(MSVC)
+    add_compile_options(/W4 /WX /permissive-)
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow)
+endif()
+
+# Конфигурации сборки
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fsanitize=address,undefined")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+
+# Поддиректории
+add_subdirectory(src)
+add_subdirectory(tests)
+enable_testing()
+```
+
+### Target-based CMake — библиотеки и исполняемые
+
+```cmake
+# src/CMakeLists.txt
+
+# Статическая библиотека
+add_library(math_lib STATIC
+    math.cpp
+    vector.cpp
+)
+
+target_include_directories(math_lib
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/detail
+)
+
+target_compile_features(math_lib PUBLIC cxx_std_20)
+target_compile_options(math_lib PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/analyze>)
+
+# Динамическая библиотека
+add_library(utils_lib SHARED utils.cpp)
+target_link_libraries(utils_lib PUBLIC math_lib)
+
+# Исполняемый файл
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE math_lib utils_lib)
+
+# Установка
+install(TARGETS math_lib utils_lib my_app
+    EXPORT MyProjectTargets
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+    INCLUDES DESTINATION include
+)
+install(DIRECTORY include/ DESTINATION include)
+install(EXPORT MyProjectTargets
+    FILE MyProjectConfig.cmake
+    NAMESPACE MyProject::
+    DESTINATION lib/cmake/MyProject
+)
+```
+
+### Использование зависимостей
+
+```cmake
+# find_package — системные/установленные пакеты
+find_package(fmt REQUIRED)
+find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
+
+target_link_libraries(my_app PRIVATE fmt::fmt Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
+
+# FetchContent — загрузка исходников при конфигурации (CMake 3.14+)
+include(FetchContent)
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        release-1.14.0
+)
+FetchContent_MakeAvailable(googletest)
+
+target_link_libraries(my_tests PRIVATE gtest_main)
+
+# CPM.cmake — удобная обёртка над FetchContent
+# include(cmake/CPM.cmake)
+# CPMAddPackage("gh:catchorg/Catch2@devel")
+```
+
+### Modules (C++20) — замена заголовков
+
+```cpp
+// math.ixx — module interface unit
+export module math;
+
+export namespace math {
+    int add(int a, int b) { return a + b; }
+
+    export template<typename T>
+    T max(T a, T b) { return a > b ? a : b; }
+
+    // не экспортируется — внутренняя деталь
+    namespace detail {
+        int internalHelper();
+    }
+}
+
+// main.cpp
+import math;
+import <iostream>;
+
+int main() {
+    std::cout << math::add(2, 3) << '\n';
+}
+```
+
+```cmake
+# CMake для modules (3.28+)
+cmake_minimum_required(VERSION 3.28)
+project(ModulesDemo LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES ON)
+
+add_executable(main main.cpp math.ixx)
+target_link_libraries(main PRIVATE std)  // std module
+```
+
+### Компиляция и линковка вручную
+
+```bash
+# Компиляция в объектные файлы
+g++ -std=c++20 -Wall -Wextra -c main.cpp -o main.o
+g++ -std=c++20 -Wall -Wextra -c math.cpp -o math.o
+
+# Линковка
+g++ main.o math.o -o app
+
+# Одной командой
+g++ -std=c++20 -Wall -Wextra main.cpp math.cpp -o app
+
+# Статическая библиотека
+ar rcs libmath.a math.o
+g++ main.cpp -L. -lmath -o app
+
+# Динамическая библиотека
+g++ -fPIC -shared math.cpp -o libmath.so
+g++ main.cpp -L. -lmath -Wl,-rpath,. -o app
+```
+
+---
+
+## Практические задания
+
+### Задание 1: CMake проект с библиотекой
+Создайте структуру:
+```
+project/
+├── CMakeLists.txt
+├── include/myproject/math.h
+├── src/math.cpp
+├── src/main.cpp
+└── tests/test_math.cpp
+```
+Настройте: статическую lib, executable, тесты (gtest через FetchContent), установку, пакетный конфиг.
+
+### Задание 2: Header-only библиотека
+Сделайте `string_utils` как header-only (только .h/.inl). Добавьте в CMake как INTERFACE библиотеку. Проверьте, что она не компилируется отдельно, но заголовки доступно.
+
+### Задание 3: ODR violation hunt
+Создайте два .cpp файла с одним и тем же `inline` функцией, но разным телом. Скомпилируйте и запустите — наблюдайте UB. Исправьте, вынеся в отдельный .cpp.
+
+### Задание 4: Зависимости через vcpkg/Conan
+Подключите `fmt`, `spdlog`, `nlohmann/json` через vcpkg или Conan. Напишите программу, использующую все три. Настройте CMake toolchain file.
+
+### Задание 5: Module vs Header benchmark
+Напишите простой модуль и заголовочный файл с одинаковым интерфейсом. Замерьте время компиляции (clean build) для 10, 50, 100 единиц трансляции, включающих их.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| ODR violation | Определение non-inline в заголовке без `inline` | `inline` для функций/переменных, templates в .h, остальное в .cpp |
+| Circular dependency | A включает B, B включает A | Forward declaration, вынос в .cpp, пересмотр архитектуры |
+| CMake: target_link_libraries до add_executable | Цель не существует | Порядок: add_* → target_* |
+| Забытый PUBLIC/PRIVATE | Заголовки не попадают в потребителей | PUBLIC для интерфейса, PRIVATE для имплементации |
+| Modules не находятся | CMAKE_CXX_SCAN_FOR_MODULES OFF | Включить, проверить расширения .ixx/.cppm |
+
+---
+
+## Ресурсы
+- [Modern CMake](https://cliutils.gitlab.io/modern-cmake/)
+- [CMake Documentation](https://cmake.org/cmake/help/latest/)
+- **Книга:** "Professional CMake" (Craig Scott)
+- **CppCon:** "Modern CMake for Modular Design" (Mathias Stearn)
+- [C++ Modules TS](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/n4842.pdf)

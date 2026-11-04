@@ -1,0 +1,475 @@
+# Урок 20: Работа с данными — JSON, файлы/потоки, SQL basics, database access, ORM introduction
+
+## Цели урока
+- Сериализация/десериализация JSON (System.Text.Json, Newtonsoft.Json)
+- Работа с файлами, потоками (Stream, FileStream, MemoryStream, Pipe)
+- Основы SQL: запросы, индексы, транзакции
+- ADO.NET: низкоуровневый доступ к БД
+- Entity Framework Core: ORM, LINQ, миграции, производительность
+
+---
+
+## 1. JSON Serialization
+
+### System.Text.Json (встроенный, высокопроизводительный)
+```csharp
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+public record User(int Id, string Name, string Email, DateTime CreatedAt);
+
+// Сериализация
+var user = new User(1, "Alice", "alice@example.com", DateTime.UtcNow);
+string json = JsonSerializer.Serialize(user);
+// {"Id":1,"Name":"Alice","Email":"alice@example.com","CreatedAt":"2024-01-15T10:30:00Z"}
+
+// Десериализация
+var user2 = JsonSerializer.Deserialize<User>(json)!;
+
+// Настройки
+var options = new JsonSerializerOptions
+{
+    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,  // camelCase
+    WriteIndented = true,                                // красивый вывод
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    Converters = { new JsonStringEnumConverter() },      // enum как строки
+    ReferenceHandler = ReferenceHandler.IgnoreCycles     //.circular refs
+};
+
+string json2 = JsonSerializer.Serialize(user, options);
+```
+
+### Newtonsoft.Json (Json.NET) — больше фич
+```csharp
+using Newtonsoft.Json;
+
+var settings = new JsonSerializerSettings
+{
+    NullValueHandling = NullValueHandling.Ignore,
+    ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
+    ContractResolver = new CamelCasePropertyNamesContractResolver(),
+    Converters = { new StringEnumConverter() }
+};
+
+string json = JsonConvert.SerializeObject(user, settings);
+var user2 = JsonConvert.DeserializeObject<User>(json);
+```
+
+### Source Generation (AOT-friendly, .NET 6+)
+```csharp
+// Компилятор генерирует сериализатор — без рефлексии, быстрее, меньше бинарь
+[JsonSerializable(typeof(User))]
+[JsonSerializable(typeof(List<User>))]
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    WriteIndented = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+public partial class AppJsonContext : JsonSerializerContext { }
+
+// Использование
+var json = JsonSerializer.Serialize(user, AppJsonContext.Default.User);
+var user2 = JsonSerializer.Deserialize(json, AppJsonContext.Default.User);
+```
+
+### Полиморфизм и Type Discriminators
+```csharp
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
+[JsonDerivedType(typeof(AdminUser), "admin")]
+[JsonDerivedType(typeof(RegularUser), "regular")]
+public abstract record UserBase(string Name);
+
+public record AdminUser(string Name, string[] Permissions) : UserBase(Name);
+public record RegularUser(string Name, string Email) : UserBase(Name);
+```
+
+---
+
+## 2. Файлы и Потоки (Streams)
+
+### File I/O — высокоуровневый
+```csharp
+// Текст
+await File.WriteAllTextAsync("file.txt", "Hello");
+string text = await File.ReadAllTextAsync("file.txt");
+string[] lines = await File.ReadAllLinesAsync("file.txt");
+
+// Бинарные
+await File.WriteAllBytesAsync("data.bin", new byte[] { 1, 2, 3 });
+byte[] data = await File.ReadAllBytesAsync("data.bin");
+
+// Проверка
+if (File.Exists("file.txt")) { /* ... */ }
+FileInfo info = new FileInfo("file.txt");
+var size = info.Length;
+var created = info.CreationTimeUtc;
+```
+
+### Streams — низкоуровневый, потоковый
+```csharp
+// FileStream — чтение/запись файлов
+using var fs = new FileStream("large.dat", FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096);
+var buffer = new byte[8192];
+int bytesRead;
+while ((bytesRead = await fs.ReadAsync(buffer)) > 0)
+{
+    Process(buffer.AsSpan(0, bytesRead));
+}
+
+// MemoryStream — в памяти
+using var ms = new MemoryStream();
+await ms.WriteAsync(data);
+byte[] array = ms.ToArray();
+
+// StreamReader/Writer — текст поверх Stream
+using var reader = new StreamReader(fs, Encoding.UTF8);
+string line;
+while ((line = await reader.ReadLineAsync()) != null) { }
+
+// Stream.CopyTo — эффективное копирование
+await sourceStream.CopyToAsync(destStream, bufferSize: 81920);
+```
+
+### Pipeline / Pipes (межпроцессное взаимодействие)
+```csharp
+// Anonymous pipe (родитель-ребёнок)
+using var pipeServer = new AnonymousPipeServerStream(PipeDirection.Out);
+using var pipeClient = new AnonymousPipeClientStream(PipeDirection.In, pipeServer.ClientSafePipeHandle);
+
+// Named pipe (любые процессы на машине)
+using var namedServer = new NamedPipeServerStream("mypipe", PipeDirection.InOut);
+await namedServer.WaitForConnectionAsync();
+```
+
+### FileSystemWatcher — мониторинг изменений
+```csharp
+using var watcher = new FileSystemWatcher(@"C:\Data")
+{
+    Filter = "*.json",
+    NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
+    EnableRaisingEvents = true
+};
+
+watcher.Created += (s, e) => Console.WriteLine($"Created: {e.FullPath}");
+watcher.Changed += (s, e) => Console.WriteLine($"Changed: {e.FullPath}");
+watcher.Deleted += (s, e) => Console.WriteLine($"Deleted: {e.FullPath}");
+watcher.Renamed += (s, e) => Console.WriteLine($"Renamed: {e.OldFullPath} -> {e.FullPath}");
+```
+
+---
+
+## 3. SQL Basics (вкратце, для контекста)
+
+### Основные запросы
+```sql
+-- SELECT с фильтрацией, сортировкой, пагинацией
+SELECT u.Id, u.Name, u.Email, COUNT(o.Id) AS OrderCount
+FROM Users u
+LEFT JOIN Orders o ON u.Id = o.UserId
+WHERE u.IsActive = 1 AND u.CreatedAt > '2024-01-01'
+GROUP BY u.Id, u.Name, u.Email
+HAVING COUNT(o.Id) > 0
+ORDER BY u.Name
+OFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY;
+
+-- INSERT / UPDATE / DELETE
+INSERT INTO Users (Name, Email, CreatedAt) VALUES ('Bob', 'bob@test.com', GETUTCDATE());
+UPDATE Users SET Email = 'new@test.com' WHERE Id = 1;
+DELETE FROM Users WHERE Id = 1 AND IsActive = 0;
+
+-- Транзакции
+BEGIN TRANSACTION;
+UPDATE Accounts SET Balance -= 100 WHERE Id = 1;
+UPDATE Accounts SET Balance += 100 WHERE Id = 2;
+COMMIT; -- или ROLLBACK при ошибке
+
+-- Индексы
+CREATE INDEX IX_Users_Email ON Users(Email);
+CREATE INDEX IX_Orders_UserId_CreatedAt ON Orders(UserId, CreatedAt DESC);
+```
+
+### Параметризованные запросы (защита от SQL Injection)
+```csharp
+// НИКОГДА не конкатенируйте строки!
+// ПЛОХО: $"SELECT * FROM Users WHERE Name = '{name}'"
+// ХОРОШО:
+const string sql = "SELECT * FROM Users WHERE Name = @Name";
+using var cmd = new SqlCommand(sql, conn);
+cmd.Parameters.AddWithValue("@Name", name);
+```
+
+---
+
+## 4. ADO.NET — низкоуровневый доступ
+
+### Базовое использование
+```csharp
+using System.Data;
+using System.Data.SqlClient; // или Microsoft.Data.SqlClient
+
+const string connStr = "Server=.;Database=MyDb;Trusted_Connection=true;TrustServerCertificate=true;";
+
+await using var conn = new SqlConnection(connStr);
+await conn.OpenAsync();
+
+const string sql = "SELECT Id, Name, Email FROM Users WHERE IsActive = 1";
+await using var cmd = new SqlCommand(sql, conn);
+
+await using var reader = await cmd.ExecuteReaderAsync();
+while (await reader.ReadAsync())
+{
+    int id = reader.GetInt32(0);
+    string name = reader.GetString(1);
+    string email = reader.IsDBNull(2) ? "" : reader.GetString(2);
+    Console.WriteLine($"{id}: {name} <{email}>");
+}
+
+// Параметры
+await using var insertCmd = new SqlCommand("INSERT INTO Users (Name, Email) VALUES (@Name, @Email)", conn);
+insertCmd.Parameters.Add("@Name", SqlDbType.NVarChar, 100).Value = "Alice";
+insertCmd.Parameters.Add("@Email", SqlDbType.NVarChar, 200).Value = "alice@test.com";
+await insertCmd.ExecuteNonQueryAsync();
+
+// Транзакция
+await using var tx = await conn.BeginTransactionAsync();
+try
+{
+    await new SqlCommand("UPDATE ...", conn, (SqlTransaction)tx).ExecuteNonQueryAsync();
+    await new SqlCommand("UPDATE ...", conn, (SqlTransaction)tx).ExecuteNonQueryAsync();
+    await tx.CommitAsync();
+}
+catch { await tx.RollbackAsync(); throw; }
+```
+
+### Dapper — микро-ORM (популярный, быстрый)
+```csharp
+using Dapper;
+
+await using var conn = new SqlConnection(connStr);
+
+// Query (чтение)
+var users = await conn.QueryAsync<User>("SELECT * FROM Users WHERE IsActive = 1");
+var user = await conn.QueryFirstOrDefaultAsync<User>("SELECT * FROM Users WHERE Id = @Id", new { Id = 1 });
+
+// Execute (запись)
+await conn.ExecuteAsync("INSERT INTO Users (Name, Email) VALUES (@Name, @Email)", new { Name = "Bob", Email = "bob@test.com" });
+
+// Multi-mapping (JOIN)
+var sql = @"
+    SELECT u.*, o.*
+    FROM Users u
+    LEFT JOIN Orders o ON u.Id = o.UserId
+    WHERE u.Id = @Id";
+var dict = new Dictionary<int, User>();
+await conn.QueryAsync<User, Order, User>(sql, (u, o) =>
+{
+    if (!dict.TryGetValue(u.Id, out var user)) dict[u.Id] = user = u;
+    if (o != null) user.Orders.Add(o);
+    return user;
+}, new { Id = 1 }, splitOn: "Id");
+```
+
+---
+
+## 5. Entity Framework Core — ORM
+
+### Установка
+```bash
+dotnet add package Microsoft.EntityFrameworkCore
+dotnet add package Microsoft.EntityFrameworkCore.SqlServer  # или PostgreSQL, SQLite, etc.
+dotnet add package Microsoft.EntityFrameworkCore.Tools       # для миграций
+```
+
+### DbContext и Entities
+```csharp
+public class AppDbContext : DbContext
+{
+    public DbSet<User> Users => Set<User>();
+    public DbSet<Order> Orders => Set<Order>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder options)
+        => options.UseSqlServer("Server=.;Database=MyDb;Trusted_Connection=true;TrustServerCertificate=true;")
+                  .EnableSensitiveDataLogging()        // только для dev
+                  .LogTo(Console.WriteLine, LogLevel.Information);
+
+    protected override void OnModelCreating(ModelBuilder model)
+    {
+        // Fluent API конфигурация
+        model.Entity<User>(e =>
+        {
+            e.HasKey(u => u.Id);
+            e.Property(u => u.Email).HasMaxLength(200).IsRequired();
+            e.HasIndex(u => u.Email).IsUnique();
+            e.HasMany(u => u.Orders).WithOne(o => o.User).HasForeignKey(o => o.UserId);
+        });
+    }
+}
+
+public class User
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Email { get; set; } = "";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public List<Order> Orders { get; set; } = new();
+}
+
+public class Order
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public User User { get; set; } = null!;
+    public decimal Total { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+```
+
+### Основные операции
+```csharp
+using var ctx = new AppDbContext();
+
+// CREATE
+var user = new User { Name = "Alice", Email = "alice@test.com" };
+ctx.Users.Add(user);
+await ctx.SaveChangesAsync(); // user.Id заполнен
+
+// READ
+var user = await ctx.Users.FindAsync(1); // по PK (кэш)
+var user = await ctx.Users.FirstOrDefaultAsync(u => u.Email == "alice@test.com");
+var users = await ctx.Users.Where(u => u.IsActive).ToListAsync();
+
+// С включением связанных (Eager Loading)
+var userWithOrders = await ctx.Users
+    .Include(u => u.Orders)
+    .FirstAsync(u => u.Id == 1);
+
+// UPDATE
+user.Name = "Alice Updated";
+await ctx.SaveChangesAsync();
+
+// DELETE
+ctx.Users.Remove(user);
+await ctx.SaveChangesAsync();
+
+// Raw SQL (для сложных запросов)
+var users = await ctx.Users.FromSqlRaw("SELECT * FROM Users WHERE Name LIKE {0}", "%Ali%").ToListAsync();
+await ctx.Database.ExecuteSqlRawAsync("UPDATE Users SET LastLogin = GETDATE() WHERE Id = {0}", 1);
+```
+
+### Change Tracking (отслеживание изменений)
+```csharp
+// По умолчанию: Tracking (прячет изменения для SaveChanges)
+var user = await ctx.Users.FindAsync(1);
+user.Name = "New Name"; // EF отследит это
+await ctx.SaveChangesAsync();
+
+// NoTracking — для read-only (быстрее, меньше памяти)
+var users = await ctx.Users.AsNoTracking().ToListAsync();
+
+// Identity Resolution: EF возвращает ОДИН экземпляр на контекст для одной сущности
+var u1 = await ctx.Users.FindAsync(1);
+var u2 = await ctx.Users.FirstAsync(x => x.Id == 1);
+Assert.Same(u1, u2); // true!
+```
+
+### Миграции
+```bash
+# Создание миграции
+dotnet ef migrations add InitialCreate
+
+# Применение к БД
+dotnet ef database update
+
+# Откат
+dotnet ef database update PreviousMigrationName
+
+# SQL скрипт для продакшена
+dotnet ef migrations script -o migration.sql
+```
+
+### Конфигурация производительности
+```csharp
+// Split Query (для Include — раздельные запросы вместо JOIN)
+var users = await ctx.Users
+    .Include(u => u.Orders)
+    .AsSplitQuery()
+    .ToListAsync();
+
+// Batching (SQL Server) — батчинг INSERT/UPDATE
+options.UseSqlServer(connStr, o => o.MaxBatchSize(100));
+
+// Compiled Queries — кэширование плана запроса
+private static readonly Func<AppDbContext, int, Task<User?>> GetUserById =
+    EF.CompileAsyncQuery((AppDbContext ctx, int id) => ctx.Users.FirstOrDefault(u => u.Id == id));
+
+// Использование
+var user = await GetUserById(ctx, 1);
+
+// Interceptors — логирование, аудит, мягкое удаление
+public class SoftDeleteInterceptor : SaveChangesInterceptor
+{
+    public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+        DbContextEventData eventData, InterceptionResult<int> result, CancellationToken ct = default)
+    {
+        foreach (var entry in eventData.Context!.ChangeTracker.Entries<ISoftDelete>())
+        {
+            if (entry.State == EntityState.Deleted)
+            {
+                entry.State = EntityState.Modified;
+                entry.Entity.IsDeleted = true;
+                entry.Entity.DeletedAt = DateTime.UtcNow;
+            }
+        }
+        return base.SavingChangesAsync(eventData, result, ct);
+    }
+}
+```
+
+---
+
+## 6. Connection Resilience & Retry
+
+```csharp
+options.UseSqlServer(connStr, sqlOptions =>
+{
+    sqlOptions.EnableRetryOnFailure(
+        maxRetryCount: 3,
+        maxRetryDelay: TimeSpan.FromSeconds(5),
+        errorNumbersToAdd: null); // стандартные transient ошибки SQL Server
+});
+```
+
+---
+
+## 7. Практические задания
+
+1. **JSON Config**: создайте конфигурационную систему с горячей перезагрузкой (FileSystemWatcher + System.Text.Json)
+2. **Stream Processing**: напишите парсер больших CSV/JSONL файлов через `StreamReader` + `yield return` (не загружая в память)
+3. **Dapper vs EF Core**: бенчмарк простых CRUD операций
+4. **EF Core Performance**: найдите N+1 проблему в коде, исправьте через `Include` / `AsSplitQuery` / проекцию
+5. **Migration Strategy**: реализуйте версионирование БД с обратной совместимостью (Expand/Contract pattern)
+
+---
+
+## 8. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `JsonSerializer` без кэширования options | Статический `JsonSerializerOptions` или `JsonSerializerContext` |
+| `File.ReadAllText` для больших файлов | `StreamReader` / `File.OpenRead` + streaming |
+| Конкатенация SQL строк | Параметризованные запросы / EF Core LINQ |
+| N+1 запросы в EF Core | `Include`, `AsSplitQuery`, проекция в DTO |
+| `SaveChanges` в цикле | Батчинг / `ExecuteSqlRaw` / Dapper для bulk |
+| Отсутствие индексов на FK / WHERE колонках | Анализ планов запросов, создание индексов |
+| `AddAsync` для каждого элемента | `AddRange` / `BulkInsert` (EFCore.BulkExtensions) |
+| Tracking для read-only отчётов | `AsNoTracking()` |
+
+---
+
+## 9. Полезные ресурсы
+
+- **System.Text.Json** — https://learn.microsoft.com/dotnet/standard/serialization/system-text-json
+- **EF Core Docs** — https://learn.microsoft.com/ef/core/
+- **Dapper** — https://github.com/DapperLib/Dapper
+- **EFCore.BulkExtensions** — https://github.com/borisdj/EFCore.BulkExtensions
+- **SQL Server Performance** — https://learn.microsoft.com/sql/relational-databases/performance/performance-monitoring-and-tuning
+- **Book: "Entity Framework Core in Action" by Jon P Smith**

@@ -1,0 +1,582 @@
+# Урок 14: Продвинутое позиционирование — Stacking Context, z-index архитектура, Anchor Positioning, Popover API
+
+## Цели урока
+- Глубоко понять Stacking Context и порядок наложения слоёв
+- Освоить архитектуру z-index без "z-index wars"
+- Изучить Anchor Positioning (новый CSS) для тултипов, попапов, меню
+- Работать с Popover API и модальными окнами нативно
+- Понимать position: sticky нюансы и containment
+
+---
+
+## 1. Stacking Context — в глубину
+
+### Что создаёт Stacking Context
+```css
+/* Элемент создаёт НОВЫЙ stacking context, если: */
+.stacking-context {
+  /* 1. position + z-index (не auto) */
+  position: relative;
+  z-index: 1;
+
+  /* 2. opacity < 1 */
+  opacity: 0.99;
+
+  /* 3. transform / filter / perspective / clip-path */
+  transform: translateZ(0);
+  filter: blur(0);
+  perspective: 1000px;
+  clip-path: circle(50%);
+
+  /* 4. isolation: isolate */
+  isolation: isolate;
+
+  /* 5. will-change: transform/opacity/filter */
+  will-change: transform;
+
+  /* 6. contain: layout/paint/strict/content */
+  contain: layout paint;
+
+  /* 7. mix-blend-mode (не normal) */
+  mix-blend-mode: multiply;
+
+  /* 8. mask / mask-image / mask-border */
+  mask-image: url(mask.png);
+}
+```
+
+### Порядок наложения (Stacking Order) внутри контекста
+```
+ВНИЗ (дальше от зрителя)
+1. Фон и границы корневого элемента
+2. Дети с отрицательным z-index (по порядку в DOM)
+3. Блочные потомки в обычном потоке
+4. Float'ы и их потомки
+5. Inline/inline-block потомки в обычном потоке
+6. Дети с z-index: 0 / auto (создают свой контекст)
+7. Дети с положительным z-index (по порядку в DOM)
+ВЕРХ (ближе к зрителю)
+```
+
+### Главная ловушка: z-index работает ТОЛЬКО внутри своего контекста
+```html
+<!-- ПРОБЛЕМА: .modal имеет z-index: 9999, но .header создаёт контекст с z-index: 10 -->
+<div class="header" style="z-index: 10;">
+  <nav>...</nav>
+</div>
+<div class="modal" style="z-index: 9999;">Модалка</div>
+```
+```css
+/* .modal НЕ перекроет .header, если .header создаёт stacking context! */
+/* Решение: вынести модалку в DOM на уровень выше или использовать портал */
+```
+
+### Isolation для принудительного контекста
+```css
+/* Создаёт stacking context БЕЗ визуальных изменений */
+.isolated {
+  isolation: isolate;
+  /* Эквивалентно: */
+  /* transform: translateZ(0); но без side-effects */
+}
+
+/* Практический кейс: изолированная карточка */
+.card {
+  isolation: isolate;  /* Тени/блендинг не "утекают" наружу */
+}
+.card::before {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  background: conic-gradient(...);
+  z-index: -1;  /* Работает ТОЛЬКО благодаря isolation на родителе! */
+}
+```
+
+---
+
+## 2. Архитектура z-index — система, а не хаки
+
+### Токены z-index (Design Tokens подход)
+```css
+:root {
+  /* Базовые слои */
+  --z-index-base: 0;
+  --z-index-dropdown: 100;
+  --z-index-sticky: 200;
+  --z-index-fixed: 300;
+  --z-index-modal-backdrop: 400;
+  --z-index-modal: 500;
+  --z-index-popover: 600;
+  --z-index-tooltip: 700;
+  --z-index-toast: 800;
+  --z-index-max: 9999;  /* Для критичных случаев */
+}
+
+/* Использование */
+.header { z-index: var(--z-index-sticky); }
+.dropdown { z-index: var(--z-index-dropdown); }
+.modal { z-index: var(--z-index-modal); }
+.tooltip { z-index: var(--z-index-tooltip); }
+```
+
+### Управление через CSS Layers
+```css
+@layer base, layout, components, overlays, popovers;
+
+@layer overlays {
+  .modal-backdrop { z-index: var(--z-index-modal-backdrop); }
+  .modal { z-index: var(--z-index-modal); }
+}
+
+@layer popovers {
+  .popover { z-index: var(--z-index-popover); }
+  .tooltip { z-index: var(--z-index-tooltip); }
+  .toast { z-index: var(--z-index-toast); }
+}
+
+/* Внутри слоя — обычный z-index, но слои гарантируют порядок */
+```
+
+### Контекстные z-index (scoped)
+```css
+/* Компонент сам управляет своими внутренними слоями */
+.dropdown {
+  --z-index-dropdown-trigger: 1;
+  --z-index-dropdown-menu: 2;
+  --z-index-dropdown-backdrop: 0;
+  isolation: isolate;  /* Свой контекст! */
+}
+
+.dropdown__trigger { z-index: var(--z-index-dropdown-trigger); }
+.dropdown__menu { z-index: var(--z-index-dropdown-menu); }
+.dropdown__backdrop { z-index: var(--z-index-dropdown-backdrop); }
+```
+
+---
+
+## 3. Anchor Positioning — нативное позиционирование (CSS Anchor Positioning API)
+
+### Базовый синтаксис (Chrome 125+, за флагом)
+```css
+/* Якорный элемент */
+.anchor {
+  anchor-name: --my-anchor;
+}
+
+/* Позиционируемый элемент */
+.positioned {
+  position: absolute;
+  position-anchor: --my-anchor;
+  position-try-options: flip-block, flip-inline;
+}
+
+/* Положение относительно якоря */
+.tooltip {
+  position: absolute;
+  position-anchor: --button;
+  top: anchor(bottom);        /* Под якорем */
+  left: anchor(center);       /* По центру якоя */
+  transform: translateX(-50%);
+  position-try-options: flip-block;  /* Перевернуть если не помещается */
+}
+```
+
+### Position Try Options — умное переключение
+```css
+.dropdown {
+  position: absolute;
+  position-anchor: --trigger;
+  top: anchor(bottom);
+  left: anchor(left);
+  position-try-options:
+    --bottom-start,  /* Вниз, слева */
+    --bottom-end,    /* Вниз, справа */
+    --top-start,     /* Вверх, слева */
+    --top-end;       /* Вверх, справа */
+}
+
+@position-try --bottom-start {
+  top: anchor(bottom);
+  left: anchor(left);
+}
+@position-try --bottom-end {
+  top: anchor(bottom);
+  right: anchor(right);
+}
+@position-try --top-start {
+  bottom: anchor(top);
+  left: anchor(left);
+}
+@position-try --top-end {
+  bottom: anchor(top);
+  right: anchor(right);
+}
+```
+
+### Anchor Functions — мощные вычисления
+```css
+.card {
+  position: absolute;
+  position-anchor: --trigger;
+
+  /* Размеры якоря */
+  width: calc(anchor-size(width) * 2);
+  max-height: anchor-size(height);
+
+  /* Положение */
+  top: anchor(bottom);
+  left: anchor(center);
+  transform: translateX(-50%);
+
+  /* Margin от якоря */
+  margin-top: 8px;
+}
+
+/* Несколько якорей */
+.tooltip {
+  position-anchor: --primary;
+  /* Фоллбэк якоря */
+  position-try-fallback: --secondary;
+}
+```
+
+### Polyfill для Anchor Positioning
+```javascript
+// anchor-positioning-polyfill или ручная реализация
+function positionAnchor(anchorEl, positionedEl, options = {}) {
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const positionedRect = positionedEl.getBoundingClientRect();
+  const viewport = {
+    width: window.innerWidth,
+    height: window.innerHeight
+  };
+
+  let { top, left } = options.defaultPosition(anchorRect, positionedRect);
+
+  // Flip logic
+  if (options.flipBlock && top + positionedRect.height > viewport.height) {
+    top = anchorRect.top - positionedRect.height - options.offset;
+  }
+  if (options.flipInline && left + positionedRect.width > viewport.width) {
+    left = anchorRect.right - positionedRect.width;
+  }
+
+  positionedEl.style.top = `${top}px`;
+  positionedEl.style.left = `${left}px`;
+}
+```
+
+---
+
+## 4. Popover API — нативные попапы без библиотек
+
+### Базовый Popover (Chrome 114+, Firefox 125+, Safari 17+)
+```html
+<!-- Автоматическое закрытие по клику вне, ESC, потере фокуса -->
+<button popovertarget="my-popover">Открыть</button>
+
+<div id="my-popover" popover>
+  <h3>Заголовок попапа</h3>
+  <p>Контент попапа</p>
+  <button popovertarget="my-popover" popovertargetaction="hide">Закрыть</button>
+</div>
+```
+
+### Popover Types
+```html
+<!-- Auto popover (default) — закрывается по клику вне, ESC -->
+<div popover="auto" id="auto-popover">...</div>
+
+<!-- Manual popover — НЕ закрывается автоматически, нужен JS -->
+<div popover="manual" id="manual-popover">...</div>
+```
+
+### CSS стилизация Popover
+```css
+/* Базовые стили */
+[popover] {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  border: none;
+  background: var(--color-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  padding: 1.5rem;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+
+  /* Анимация появления */
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease,
+    display 0.2s allow-discrete,
+    overlay 0.2s allow-discrete;
+}
+
+/* Состояния */
+[popover]:popover-open {
+  opacity: 1;
+  transform: scale(1);
+}
+
+[popover] {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+/* Backdrop */
+[popover]::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  transition: opacity 0.2s ease;
+}
+```
+
+### JavaScript API
+```javascript
+const popover = document.getElementById('my-popover');
+
+// Открытие
+popover.showPopover();           // auto
+popover.showPopover({ source: button });  // с привязкой к элементу
+
+// Закрытие
+popover.hidePopover();
+
+// Toggle
+popover.togglePopover(force);
+
+// События
+popover.addEventListener('beforetoggle', (e) => {
+  if (e.newState === 'open') {
+    // Подготовка контента
+    loadContent();
+  }
+});
+
+popover.addEventListener('toggle', (e) => {
+  console.log('Popover:', e.newState);  // 'open' или 'closed'
+});
+
+// Проверка поддержки
+if (!HTMLDivElement.prototype.showPopover) {
+  // Fallback: custom modal implementation
+}
+```
+
+### Popover + Anchor Positioning = идеальные тултипы
+```html
+<button id="tooltip-trigger" popovertarget="tooltip">Наведи</button>
+<div id="tooltip" popover="auto" role="tooltip">
+  Текст подсказки
+</div>
+```
+```css
+#tooltip {
+  position: absolute;
+  position-anchor: --tooltip-trigger;
+  top: anchor(bottom);
+  left: anchor(center);
+  transform: translateX(-50%);
+  position-try-options: flip-block;
+  margin-top: 8px;
+  padding: 0.5rem 1rem;
+  background: var(--color-gray-900);
+  color: white;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+#tooltip-trigger {
+  anchor-name: --tooltip-trigger;
+}
+```
+
+---
+
+## 5. Position: Sticky — продвинутые кейсы
+
+### Sticky внутри Scroll Container
+```css
+/* Sticky работает относительно ближайшего scroll container */
+.scroll-container {
+  height: 400px;
+  overflow-y: auto;
+}
+
+.sticky-header {
+  position: sticky;
+  top: 0;
+  background: var(--color-bg);
+  z-index: var(--z-index-sticky);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Важно: родитель НЕ должен иметь overflow: hidden/clipping */
+```
+
+### Sticky с несколькими порогами
+```css
+.sticky-nav {
+  position: sticky;
+  top: 0;
+}
+
+.sticky-nav__item--secondary {
+  position: sticky;
+  top: 48px;  /* Высота основной навигации */
+}
+
+.sticky-nav__item--tertiary {
+  position: sticky;
+  top: 96px;  /* Сумма высот вышестоящих */
+}
+```
+
+### Sticky Footer Pattern
+```css
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.content {
+  flex: 1;
+}
+
+.footer {
+  position: sticky;
+  bottom: 0;
+  /* Прижимается к низу при коротком контенте,
+     уходит вниз при длинном — нативно! */
+}
+```
+
+### Sticky + IntersectionObserver для индикаторов
+```javascript
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (!entry.isIntersecting) {
+      // Элемент "прилип" — показываем индикатор
+      document.body.classList.add('has-stuck-header');
+    } else {
+      document.body.classList.remove('has-stuck-header');
+    }
+  });
+}, {
+  threshold: 0,
+  rootMargin: '-1px 0px 0px 0px'  // Срабатывает ровно на границе
+});
+
+observer.observe(document.querySelector('.sticky-header'));
+```
+
+---
+
+## 6. Практическое задание
+
+### Задача 1: z-index Architecture System
+Создай полную систему z-index для приложения:
+```css
+/* Требования:
+1. Design tokens для всех слоёв
+2. CSS Layers для гарантии порядка
+3. Isolation contexts для компонентов
+4. Документация: таблица слоёв с описанием
+5. Тесты: модалка поверх попапа поверх тултипа
+*/
+```
+
+### Задача 2: Anchor Positioning Tooltip Library
+Напиши библиотеку тултипов на Anchor Positioning:
+- Автоматическое позиционирование (top/bottom/left/right)
+- Flip при нехватке места
+- Анимация появления через ::backdrop
+- Доступность: role="tooltip", aria-describedby
+- Fallback для браузеров без поддержки
+
+### Задача 3: Popover-based Modal System
+Реализуй систему модалок на Popover API:
+- Stack модалок (одна над другой)
+- Focus trap внутри модалки
+- Анимации через @starting-style
+- Esc для закрытия, клик по backdrop
+- Portal pattern для вложенных модалок
+
+### Задача 4: Sticky Layouts Playground
+Создай интерактивный демо:
+- Holy Grail layout с sticky header/sidebar
+- Table с sticky header И first column
+- Nested sticky контейнеры
+- Визуализация stacking contexts
+- Debug панель: показать текущие z-index и контексты
+
+---
+
+## 7. Таблица поддержки (2024)
+
+| Фича | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| Stacking Context | 1+ | 1+ | 1+ | 12+ |
+| isolation: isolate | 61+ | 52+ | 13+ | 79+ |
+| Anchor Positioning | 125+ (flag) | Behind flag | Behind flag | 125+ (flag) |
+| Popover API (auto) | 114+ | 125+ | 17+ | 114+ |
+| Popover API (manual) | 114+ | 125+ | 17+ | 114+ |
+| ::backdrop | 69+ | 64+ | 15.4+ | 79+ |
+| @starting-style | 117+ | Behind flag | 17+ | 117+ |
+| position: sticky | 56+ | 32+ | 6.1+ | 79+ |
+
+---
+
+## 8. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| z-index: 9999 везде | "Z-index wars", непредсказуемость | Система токенов + CSS Layers + isolation |
+| z-index на static элементе | Не работает | Нужен position: relative/absolute/fixed/sticky |
+| Родитель с overflow: hidden режет sticky | Sticky не работает | Убери overflow или используй containment |
+| Popover не закрывается по ESC | popover="manual" | Используй popover="auto" или обработай ESC в JS |
+| Anchor Positioning без HTTPS | Не работает в небезопасных контекстах | Требуется HTTPS или localhost |
+| ::backdrop не стилизуется | Псевдоэлемент не наследует | Стилизуй явно: [popover]::backdrop { } |
+| position-try-options игнорируется | Нет флага/поддержки | Проверь @supports, используй polyfill |
+
+---
+
+## 9. Полезные ресурсы
+
+### Спецификации
+- [CSS Positioned Layout Level 3](https://www.w3.org/TR/css-position-3/)
+- [CSS Anchor Positioning](https://www.w3.org/TR/css-anchor-position-1/)
+- [Popover API](https://developer.mozilla.org/en-US/docs/Web/API/Popover_API)
+- [CSS Containment](https://www.w3.org/TR/css-contain-3/)
+
+### Статьи
+- [Understanding Stacking Contexts](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Positioning/Understanding_z_index/The_stacking_context)
+- [Anchor Positioning Explainer](https://github.com/microsoft/anchor-positioning)
+- [Popover API Guide](https://web.dev/popover-api/)
+- [Modern CSS Tooltips](https://www.bram.us/2023/11/16/css-anchor-positioning/)
+
+### Инструменты
+- [Chrome DevTools] — Layers панель для визуализации stacking contexts
+- [Firefox DevTools] — 3D View для stacking contexts
+- [Anchor Positioning Playground](https://anchor-positioning.vercel.app/)
+
+---
+
+## 10. Ключевые выводы
+
+1. **Stacking Context** — невидимая ловушка. `isolation: isolate` создаёт контекст без визуальных изменений.
+2. **z-index Architecture** — используй токены, слои и scoped контексты вместо магических чисел.
+3. **Anchor Positioning** — нативное решение для тултипов/дропдаунов/попапов. Flip, fallback, множественные якоря — из коробки.
+4. **Popover API** — заменяет 90% модальных библиотек. Доступность, focus management, backdrop — бесплатно.
+4. **Sticky** — работает относительно scroll container. Проверяй overflow родителей.
+5. **Testing** — всегда тестируй вложенность: модалка в попапе в тултипе.
+
+---
+
+*Следующий урок: 15_Visual_Effects.txt — Визуальные эффекты: Filters, Blend Modes, Masking, Clipping, Shapes, Scroll-driven Animations*

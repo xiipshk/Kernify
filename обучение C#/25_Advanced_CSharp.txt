@@ -1,0 +1,556 @@
+# Урок 3.3: Advanced C# — Extension Members, Operator Overloading, Indexers, ref/in/out, Spans, Unsafe
+
+## Цели урока
+- Создавать extension methods, properties, interfaces (C# 12+)
+- Перегружать операторы: арифметические, сравнения, неявные/явные преобразования
+- Использовать indexers и range/index operators (^ и ..)
+- Работать с ref, in, out, ref struct, ref readonly
+- Применять Span<T>, Memory<T>, ReadOnlySpan<T> для zero-allocation
+- Понимать unsafe код, fixed, stackalloc, pointers
+
+---
+
+## 1. Extension Members
+
+### Extension Methods (C# 3.0+)
+```csharp
+public static class StringExtensions
+{
+    // this string — расширяемый тип
+    public static bool IsNullOrEmpty(this string? str) => string.IsNullOrEmpty(str);
+
+    // Generic extension
+    public static TResult? Pipe<T, TResult>(this T value, Func<T, TResult> func)
+        => value is null ? default : func(value);
+}
+
+// Использование
+"hello".IsNullOrEmpty(); // false
+5.Pipe(x => x * 2).Pipe(x => x.ToString()); // "10"
+```
+
+### Extension Properties (C# 12+ — preview, требует `<LangVersion>preview</LangVersion>`)
+```csharp
+// В C# 12 можно создавать extension properties через static virtual members в интерфейсах
+public interface INumber<T> where T : INumber<T>
+{
+    static abstract T Zero { get; }
+    static abstract T One { get; }
+}
+
+// Extension property syntax (future)
+// extension string
+// {
+//     public int WordCount => this.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+// }
+```
+
+### Extension Interfaces (C# 12+)
+```csharp
+// Можно "добавить" реализацию интерфейса к существующему типу
+public interface IJsonSerializable
+{
+    string ToJson();
+    static IJsonSerializable FromJson(string json) => throw new NotImplementedException();
+}
+
+// extension для типа без изменения его кода
+extension(string) : IJsonSerializable
+{
+    public string ToJson() => $"\"{this}\"";
+    public static IJsonSerializable FromJson(string json) => json.Trim('"');
+}
+```
+
+---
+
+## 2. Operator Overloading
+
+### Арифметические операторы
+```csharp
+public readonly struct Vector2
+{
+    public double X { get; }
+    public double Y { get; }
+
+    public Vector2(double x, double y) => (X, Y) = (x, y);
+
+    // Бинарные операторы
+    public static Vector2 operator +(Vector2 a, Vector2 b) => new(a.X + b.X, a.Y + b.Y);
+    public static Vector2 operator -(Vector2 a, Vector2 b) => new(a.X - b.X, a.Y - b.Y);
+    public static Vector2 operator *(Vector2 a, double scalar) => new(a.X * scalar, a.Y * scalar);
+    public static Vector2 operator *(double scalar, Vector2 a) => a * scalar; // commutative
+    public static Vector2 operator /(Vector2 a, double scalar) => new(a.X / scalar, a.Y / scalar);
+
+    // Унарные операторы
+    public static Vector2 operator -(Vector2 a) => new(-a.X, -a.Y);
+    public static Vector2 operator ++(Vector2 a) => a + new Vector2(1, 1);
+    public static Vector2 operator --(Vector2 a) => a - new Vector2(1, 1);
+
+    public override string ToString() => $"({X}, {Y})";
+}
+
+// Использование
+var v1 = new Vector2(1, 2);
+var v2 = new Vector2(3, 4);
+var v3 = v1 + v2;        // (4, 6)
+var v4 = v1 * 2.5;       // (2.5, 5)
+var v5 = -v1;            // (-1, -2)
+```
+
+### Операторы сравнения
+```csharp
+public readonly struct Version : IComparable<Version>, IEquatable<Version>
+{
+    public int Major { get; }
+    public int Minor { get; }
+    public int Patch { get; }
+
+    public Version(int major, int minor, int patch) => (Major, Minor, Patch) = (major, minor, patch);
+
+    // Обязательно парами: ==/!=, </>, <=/>=
+    public static bool operator ==(Version a, Version b) => a.Equals(b);
+    public static bool operator !=(Version a, Version b) => !a.Equals(b);
+    public static bool operator <(Version a, Version b) => a.CompareTo(b) < 0;
+    public static bool operator >(Version a, Version b) => a.CompareTo(b) > 0;
+    public static bool operator <=(Version a, Version b) => a.CompareTo(b) <= 0;
+    public static bool operator >=(Version a, Version b) => a.CompareTo(b) >= 0;
+
+    public int CompareTo(Version other)
+    {
+        var c = Major.CompareTo(other.Major);
+        if (c != 0) return c;
+        c = Minor.CompareTo(other.Minor);
+        if (c != 0) return c;
+        return Patch.CompareTo(other.Patch);
+    }
+
+    public bool Equals(Version other) => Major == other.Major && Minor == other.Minor && Patch == other.Patch;
+    public override bool Equals(object? obj) => obj is Version v && Equals(v);
+    public override int GetHashCode() => HashCode.Combine(Major, Minor, Patch);
+}
+```
+
+### Неявные и явные преобразования
+```csharp
+public readonly struct Celsius
+{
+    public double Degrees { get; }
+    public Celsius(double degrees) => Degrees = degrees;
+
+    // Implicit: безопасное, не теряет данных
+    public static implicit operator Celsius(double degrees) => new(degrees);
+    public static implicit operator double(Celsius c) => c.Degrees;
+
+    // Explicit: может терять данные или быть неочевидным
+    public static explicit operator Fahrenheit(Celsius c) => new(c.Degrees * 9 / 5 + 32);
+    public static explicit operator Celsius(Fahrenheit f) => new((f.Degrees - 32) * 5 / 9);
+}
+
+public readonly struct Fahrenheit
+{
+    public double Degrees { get; }
+    public Fahrenheit(double degrees) => Degrees = degrees;
+}
+
+// Использование
+Celsius c = 25;                    // implicit double -> Celsius
+double d = c;                      // implicit Celsius -> double
+Fahrenheit f = (Fahrenheit)c;      // explicit cast required
+```
+
+### Пользовательские операторы для ссылочных типов (C# 10+)
+```csharp
+public class Money
+{
+    public decimal Amount { get; }
+    public string Currency { get; }
+
+    public Money(decimal amount, string currency) => (Amount, Currency) = (amount, currency);
+
+    // Для классов операторы должны быть static
+    public static Money operator +(Money a, Money b)
+    {
+        if (a.Currency != b.Currency) throw new InvalidOperationException("Currency mismatch");
+        return new Money(a.Amount + b.Amount, a.Currency);
+    }
+}
+```
+
+---
+
+## 3. Indexers и Range/Index Operators
+
+### Indexers
+```csharp
+public class BitArray
+{
+    private readonly ulong[] _bits;
+
+    public BitArray(int capacity) => _bits = new ulong[(capacity + 63) / 64];
+
+    // Indexer с get/set
+    public bool this[int index]
+    {
+        get
+        {
+            if (index < 0 || index >= _bits.Length * 64) throw new IndexOutOfRangeException();
+            return (_bits[index / 64] & (1UL << (index % 64))) != 0;
+        }
+        set
+        {
+            if (index < 0 || index >= _bits.Length * 64) throw new IndexOutOfRangeException();
+            if (value) _bits[index / 64] |= 1UL << (index % 64);
+            else _bits[index / 64] &= ~(1UL << (index % 64));
+        }
+    }
+
+    // Indexer с параметрами
+    public int this[int start, int count]
+    {
+        get
+        {
+            int result = 0;
+            for (int i = 0; i < count; i++)
+                if (this[start + i]) result |= 1 << i;
+            return result;
+        }
+    }
+}
+```
+
+### Range (..) и Index (^) operators (C# 8.0+)
+```csharp
+int[] arr = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+// Index ^ — от конца
+Console.WriteLine(arr[^1]);  // 9 (последний)
+Console.WriteLine(arr[^2]);  // 8 (предпоследний)
+
+// Range .. — диапазон
+var slice1 = arr[2..5];      // [2, 3, 4] (5 не включается)
+var slice2 = arr[..3];       // [0, 1, 2] (от начала)
+var slice3 = arr[7..];       // [7, 8, 9] (до конца)
+var slice4 = arr[^3..^1];    // [7, 8] (3 с конца до 1 с конца)
+
+// Range как переменная
+Range r = 2..5;
+var slice5 = arr[r];
+
+// Пользовательский тип с поддержкой Range/Index
+public class CustomList<T>
+{
+    private T[] _items;
+    public int Count { get; private set; }
+
+    public T this[Index index] => _items[index.GetOffset(Count)];
+    public CustomList<T> this[Range range]
+    {
+        get
+        {
+            var (offset, length) = range.GetOffsetAndLength(Count);
+            var result = new CustomList<T> { _items = new T[length], Count = length };
+            Array.Copy(_items, offset, result._items, 0, length);
+            return result;
+        }
+    }
+}
+```
+
+---
+
+## 4. ref, in, out, ref struct
+
+### ref / out / in параметры
+```csharp
+// out — обязательно присвоить перед выходом
+public bool TryParse(string s, out int result)
+{
+    result = 0; // обязательно!
+    return int.TryParse(s, out result);
+}
+
+// ref — чтение и запись, значение должно быть инициализировано
+public void Swap(ref int a, ref int b)
+{
+    (a, b) = (b, a);
+}
+
+// in — readonly reference (C# 7.2+), для больших struct без копирования
+public readonly struct BigStruct
+{
+    public long A, B, C, D, E, F, G, H; // 64 bytes
+}
+
+public double Compute(in BigStruct s) // передача по ссылке, но readonly
+{
+    // s.A = 1; // ОШИБКА: cannot assign to readonly variable
+    return s.A + s.B;
+}
+
+// ref readonly return — возврат по ссылке без копирования (C# 7.2+)
+public ref readonly BigStruct GetBigStruct() => ref _cachedStruct;
+```
+
+### ref struct — только стек (C# 7.2+)
+```csharp
+// ref struct не может быть полем класса, элементом массива, generic argument
+public ref struct SpanWrapper
+{
+    private Span<int> _span;
+    public SpanWrapper(Span<int> span) => _span = span;
+
+    // Нельзя: public SpanWrapper(int[] arr) — array на куче
+    // Можно: public SpanWrapper(ref int ptr, int length) — stackalloc
+}
+
+public ref struct StackOnly
+{
+    private int _value;
+    // Нельзя box'ить, нельзя использовать в async/iterator методах
+}
+```
+
+### ref fields (C# 11+)
+```csharp
+// Ref fields в ref struct
+public ref struct BufferWriter
+{
+    private Span<byte> _buffer;
+    private int _position;
+
+    // ref field — ссылка на поле другого struct
+    public ref int Position => ref _position;
+}
+
+// В обычных классах ref fields запрещены (кроме unsafe)
+```
+
+---
+
+## 5. Span<T>, Memory<T>, ReadOnlySpan<T>
+
+### Span<T> — stack-only view over memory
+```csharp
+// Создание
+Span<int> stackSpan = stackalloc int[100];        // на стеке
+Span<int> arraySpan = new int[100];               // над массивом
+Span<byte> nativeSpan = new Span<byte>(ptr, 100); // над unmanaged памятью
+
+// Slicing — БЕЗ КОПИРОВАНИЯ!
+var slice = stackSpan[10..20]; // Span<int>, указывает на ту же память
+
+// Заполнение
+stackSpan.Fill(42);
+stackSpan[5..10].Clear(); // обнулить диапазон
+
+// Копирование
+Span<int> dest = stackalloc int[50];
+stackSpan[10..60].CopyTo(dest); // копирует 50 элементов
+```
+
+### Memory<T> — heap-friendly (для async)
+```csharp
+// Memory можно хранить в полях классов, использовать в async
+public class BufferPool
+{
+    private Memory<byte> _buffer = new byte[4096];
+
+    public Memory<byte> Rent(int size) => _buffer[..size];
+    public void Return(Memory<byte> memory) { /* ... */ }
+}
+
+// Асинхронное чтение в Memory
+public async Task ReadAsync(Memory<byte> buffer)
+{
+    await _stream.ReadAsync(buffer); // ReadAsync принимает Memory<byte>
+}
+
+// Memory<T> -> Span<T> (только синхронно)
+Span<byte> span = buffer.Span;
+```
+
+### ReadOnlySpan<T> / ReadOnlyMemory<T>
+```csharp
+// Для строк и неизменяемых данных
+ReadOnlySpan<char> span = "Hello World".AsSpan();
+ReadOnlySpan<byte> bytes = "UTF8 string"u8; // UTF-8 literal (C# 11+)
+
+// Поиск без аллокаций
+int index = span.IndexOf('W'); // 6
+bool startsWith = span.StartsWith("Hello"); // true
+
+// Парсинг без substring аллокаций
+ReadOnlySpan<char> line = "key=value";
+int eqIndex = line.IndexOf('=');
+var key = line[..eqIndex];      // ReadOnlySpan<char>
+var value = line[(eqIndex + 1)..];
+```
+
+### Span и строки
+```csharp
+// String -> ReadOnlySpan<char> (zero allocation)
+ReadOnlySpan<char> span = "Hello".AsSpan();
+
+// Parsing без Substring
+string input = "id=123,name=test";
+foreach (var pair in input.Split(','))
+{
+    var kv = pair.Split('=');
+    // Но Split аллоцирует массивы!
+
+    // Лучше: ручной парсинг на Span
+    // См. System.Text.Utf8Parser или реализуйте сам
+}
+
+// Span-based parsing (high performance)
+public static bool TryParseId(ReadOnlySpan<char> input, out int id)
+{
+    id = 0;
+    if (!input.StartsWith("id=")) return false;
+    return int.TryParse(input[3..], out id);
+}
+```
+
+---
+
+## 6. Unsafe Code — Pointers, fixed, stackalloc
+
+### Включение unsafe
+```xml
+<!-- .csproj -->
+<PropertyGroup>
+  <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+</PropertyGroup>
+```
+
+### Базовые указатели
+```csharp
+unsafe void PointerBasics()
+{
+    int value = 42;
+    int* ptr = &value;        // адрес переменной
+    Console.WriteLine(*ptr);  // разыменование: 42
+
+    *ptr = 100;               // изменение через указатель
+    Console.WriteLine(value); // 100
+
+    // Указатели на массивы (fixed)
+    int[] arr = [1, 2, 3, 4, 5];
+    fixed (int* p = arr)
+    {
+        for (int i = 0; i < arr.Length; i++)
+            Console.WriteLine(p[i]); // p[i] == *(p + i)
+    }
+}
+```
+
+### stackalloc — выделение на стеке
+```csharp
+unsafe void StackAllocExample()
+{
+    // Выделение на стеке (быстро, автоматически освобождается)
+    int* buffer = stackalloc int[100];
+
+    for (int i = 0; i < 100; i++)
+        buffer[i] = i * i;
+
+    // Span<T> over stackalloc (без unsafe контекста!)
+    Span<int> span = stackalloc int[100];
+    span.Fill(42);
+}
+
+// Большие буферы — осторожно (StackOverflow!)
+unsafe void LargeBuffer()
+{
+    // Для больших буферов используйте ArrayPool или Memory<T>
+    const int MaxStackAlloc = 1024; // conservative limit
+    Span<byte> buffer = MaxStackAlloc <= 1024 ? stackalloc byte[MaxStackAlloc] : new byte[MaxStackAlloc];
+}
+```
+
+### fixed statement — закрепление объекта в памяти
+```csharp
+unsafe void FixedExample()
+{
+    byte[] managedArray = new byte[1000];
+
+    // Закрепляем массив, чтобы GC не двигал его
+    fixed (byte* p = managedArray)
+    {
+        // p указывает на начало массива
+        // Можно передать в unmanaged API
+        NativeApi.Process(p, managedArray.Length);
+    } // разблокировка после блока
+
+    // fixed с Span (C# 7.3+)
+    fixed (byte* p = managedArray.AsSpan()[100..200])
+    {
+        // Указатель на середину массива
+    }
+}
+
+// Fixed size buffers в struct (для interop)
+unsafe struct FixedBufferStruct
+{
+    public fixed byte Data[256]; // inline array, 256 байт в struct
+}
+```
+
+### Unsafe и Span взаимодействие
+```csharp
+// MemoryMarshal — мост между safe и unsafe
+using System.Runtime.InteropServices;
+
+unsafe void InteropExample()
+{
+    Span<byte> span = stackalloc byte[100];
+
+    // Получить указатель из Span
+    void* ptr = Unsafe.AsPointer(ref MemoryMarshal.GetReference(span));
+
+    // Или через GetPinnableReference (для pinned)
+    ref byte pinnedRef = ref MemoryMarshal.GetReference(span);
+    fixed (byte* p = &pinnedRef)
+    {
+        NativeWrite(p, 100);
+    }
+}
+```
+
+---
+
+## 7. Практические задания
+
+1. **Vector Math Library**: Реализуйте `Vector2`, `Vector3`, `Vector4` с полным набором операторов (+, -, *, /, ==, !=, -, ++, --), implicit/explicit conversions
+
+2. **Matrix Indexer**: Создайте `Matrix<T>` с indexer `[row, col]`, поддержкой Range (`matrix[0..2, 1..3]`), операторами +, *, transpose
+
+3. **High-Performance Parser**: Напишите парсер CSV/JSON используя только `ReadOnlySpan<char>`, `Utf8Parser`, без аллокаций строк
+
+4. **Custom Buffer Pool**: Реализуйте `ArrayPool<byte>` wrapper с `Memory<byte>` арендой, возвратом, статистикой
+
+5. **Unsafe Bitmap**: Класс `Bitmap` с `fixed byte[]` buffer, методами `SetPixel`, `GetPixel`, `Blur` через указатели
+
+---
+
+## 8. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `ref struct` как поле класса | `ref struct` только на стеке: локальные переменные, параметры, возвращаемые значения |
+| `in` параметр модифицируется | `in` — readonly, используйте `ref` если нужно изменять |
+| `stackalloc` больших буферов | Ограничивайте ~1KB, для большего — `ArrayPool` или `Memory` |
+| `fixed` забыт при работе с managed массивами в unsafe | Всегда `fixed` при взятии адреса managed объекта |
+| Operator `==` без `!=` и `Equals`/`GetHashCode` | Всегда перегружайте пары, переопределяйте `Equals`/`GetHashCode` |
+
+---
+
+## 9. Полезные ресурсы
+
+- **C# Reference: Operators** — https://learn.microsoft.com/dotnet/csharp/language-reference/operators
+- **Span<T> and Memory<T]** — https://learn.microsoft.com/dotnet/standard/memory-and-spans
+- **ref struct** — https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/ref-struct
+- **Unsafe Code** — https://learn.microsoft.com/dotnet/csharp/language-reference/unsafe-code
+- **Index and Range** — https://learn.microsoft.com/dotnet/csharp/language-reference/operators/index-range
+- **C# 12 Features** — https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-12

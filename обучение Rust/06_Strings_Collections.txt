@@ -1,0 +1,450 @@
+# Урок 6: Строки и коллекции
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Различать `String` и `&str`, знать когда использовать что
+- Работать с методами строк: конкатенация, форматирование, поиск, замена
+- Использовать `Vec<T>` — динамические массивы
+- Использовать `HashMap<K, V>` — хеш-таблицы
+- Использовать `HashSet<T>` — множества
+- Понимать производительность и capacity коллекций
+
+---
+
+## 1. Строки в Rust: `String` vs `&str`
+
+### `String` — владеющая, изменяемая, UTF-8
+```rust
+fn main() {
+    let mut s = String::new();        // Пустая
+    let s = String::from("hello");    // Из литерала
+    let s = "hello".to_string();      // Через trait
+    let s = format!("{} world", "hello"); // Через макрос
+}
+```
+
+### `&str` — срез строки (string slice), неизменяемая view
+```rust
+fn main() {
+    let s: &str = "hello";        // Строковый литерал (&'static str)
+    let s = &String::from("hello")[..]; // Срез от String
+    let s = "hello world".split_whitespace().next().unwrap();
+}
+```
+
+### Когда что использовать
+| Ситуация | Тип |
+|----------|-----|
+| Владеете данными, нужны мутации | `String` |
+| Параметры функций (читаете) | `&str` |
+| Возврат части строки | `&str` |
+| Ключи в HashMap | `String` (владелец) |
+| Строковые литералы | `&'static str` |
+
+---
+
+## 2. Основные операции со строками
+
+### Конкатенация
+```rust
+fn main() {
+    let s1 = String::from("Hello");
+    let s2 = String::from("World");
+
+    // 1. + (потребляет s1, заимствует s2)
+    let s3 = s1 + " " + &s2; // s1 moved!
+
+    // 2. format! (не потребляет)
+    let s4 = format!("{} {}", "Hello", "World");
+
+    // 3. push_str (мутирует)
+    let mut s5 = String::from("Hello");
+    s5.push_str(" World");
+
+    // 4. push (один символ)
+    s5.push('!');
+}
+```
+
+### Форматирование
+```rust
+fn main() {
+    let name = "Rust";
+    let version = 1.75;
+
+    // format! — возвращает String
+    let s = format!("{} v{}", name, version);
+
+    // println! / eprintln! — вывод в stdout/stderr
+    println!("{} v{}", name, version);
+
+    // write! / writeln! — запись в любой Write
+    use std::fmt::Write;
+    let mut buf = String::new();
+    write!(buf, "{} v{}", name, version).unwrap();
+}
+```
+
+### Полезные методы `String`/`&str`
+```rust
+fn main() {
+    let s = String::from("  Hello, Rust!  ");
+
+    // Длина
+    println!("len: {}", s.len());           // байты
+    println!("chars: {}", s.chars().count()); // символы
+
+    // Обрезка
+    println!("trim: '{}'", s.trim());
+
+    // Поиск
+    println!("contains 'Rust': {}", s.contains("Rust"));
+    println!("starts_with 'He': {}", s.starts_with("He"));
+    println!("find ',': {:?}", s.find(','));
+
+    // Замена
+    println!("replace: {}", s.replace("Rust", "World"));
+
+    // Разделение
+    for part in s.split(',') {
+        println!("part: '{}'", part.trim());
+    }
+
+    // Преобразование
+    println!("uppercase: {}", s.to_uppercase());
+    println!("lowercase: {}", s.to_lowercase());
+}
+```
+
+### Итерация по символам и байтам
+```rust
+fn main() {
+    let s = "Rust 🦀";
+
+    for c in s.chars() {
+        print!("'{}' ", c); // 'R' 'u' 's' 't' ' ' '🦀'
+    }
+    println!();
+
+    for b in s.bytes() {
+        print!("{} ", b); // байты UTF-8
+    }
+    println!();
+}
+```
+
+---
+
+## 3. `Vec<T>` — динамический массив
+
+### Создание
+```rust
+fn main() {
+    let v: Vec<i32> = Vec::new();
+    let v = vec![1, 2, 3];           // Макрос
+    let v = Vec::with_capacity(100); // С зарезервированной ёмкостью
+}
+```
+
+### Добавление/удаление
+```rust
+fn main() {
+    let mut v = vec![1, 2];
+
+    v.push(3);        // В конец
+    v.insert(1, 10);  // По индексу (сдвигает остальные)
+
+    let last = v.pop();     // Option — удаляет и возвращает последний
+    let first = v.remove(0); // Удаляет по индексу
+}
+```
+
+### Доступ
+```rust
+fn main() {
+    let v = vec![10, 20, 30];
+
+    // Прямой доступ (panic при выходе за границы)
+    println!("{}", v[1]);        // 20
+    // println!("{}", v[100]);   // PANIC!
+
+    // Безопасный доступ
+    println!("{:?}", v.get(1));   // Some(&20)
+    println!("{:?}", v.get(100)); // None
+
+    // Первые/последние
+    println!("first: {:?}, last: {:?}", v.first(), v.last());
+}
+```
+
+### Итерация
+```rust
+fn main() {
+    let mut v = vec![1, 2, 3];
+
+    // Неизменяемая
+    for i in &v {
+        println!("{}", i);
+    }
+
+    // Изменяемая
+    for i in &mut v {
+        *i *= 2;
+    }
+
+    // Потребляющая (move)
+    for i in v {
+        println!("owned: {}", i);
+    }
+}
+```
+
+### Capacity vs Length
+```rust
+fn main() {
+    let mut v = Vec::with_capacity(10);
+    println!("len: {}, cap: {}", v.len(), v.capacity()); // 0, 10
+
+    for i in 0..10 {
+        v.push(i);
+    }
+    println!("len: {}, cap: {}", v.len(), v.capacity()); // 10, 10
+
+    v.push(11);
+    println!("len: {}, cap: {}", v.len(), v.capacity()); // 11, 20 (удвоение)
+}
+```
+
+---
+
+## 4. `HashMap<K, V>` — хеш-таблица
+
+```rust
+use std::collections::HashMap;
+
+fn main() {
+    // Создание
+    let mut scores = HashMap::new();
+    scores.insert(String::from("Blue"), 10);
+    scores.insert(String::from("Red"), 50);
+
+    // Из массива кортежей
+    let teams = vec![("Blue", 10), ("Red", 50)];
+    let scores: HashMap<_, _> = teams.into_iter().collect();
+
+    // Доступ
+    let score = scores.get("Blue"); // Option<&V>
+    println!("{:?}", score); // Some(&10)
+
+    // Прямой (panic если нет)
+    // println!("{}", scores["Blue"]); // 10
+
+    // Обновление
+    scores.insert("Blue".to_string(), 20); // Перезапись
+
+    // entry API — идиоматичный способ
+    scores.entry("Yellow".to_string()).or_insert(30); // Вставка если нет
+    scores.entry("Blue".to_string()).and_modify(|v| *v += 5); // Модификация
+
+    // Итерация
+    for (k, v) in &scores {
+        println!("{}: {}", k, v);
+    }
+}
+```
+
+### Паттерны entry API
+```rust
+fn main() {
+    let mut map = HashMap::new();
+    let key = "counter";
+
+    // or_insert — вернуть &mut V, вставив default если пусто
+    *map.entry(key).or_insert(0) += 1;
+
+    // or_insert_with — ленивое создание
+    let val = map.entry("expensive").or_insert_with(|| compute_expensive());
+
+    // and_modify — изменить если существует
+    map.entry(key).and_modify(|v| *v *= 2).or_insert(1);
+
+    // or_default — вставить Default::default()
+    let vec = map.entry("vec").or_default(); // &mut Vec<T>
+    vec.push(1);
+}
+```
+
+---
+
+## 5. `HashSet<T>` — множество
+
+```rust
+use std::collections::HashSet;
+
+fn main() {
+    let mut set = HashSet::new();
+    set.insert(1);
+    set.insert(2);
+    set.insert(2); // Игнорируется (дубликат)
+
+    println!("len: {}", set.len()); // 2
+    println!("contains 1: {}", set.contains(&1));
+
+    // Операции над множествами
+    let a: HashSet<_> = [1, 2, 3].into_iter().collect();
+    let b: HashSet<_> = [2, 3, 4].into_iter().collect();
+
+    println!("union: {:?}", a.union(&b).collect::<Vec<_>>());       // 1,2,3,4
+    println!("intersection: {:?}", a.intersection(&b).collect::<Vec<_>>()); // 2,3
+    println!("difference: {:?}", a.difference(&b).collect::<Vec<_>>());     // 1
+    println!("symmetric_diff: {:?}", a.symmetric_difference(&b).collect::<Vec<_>>()); // 1,4
+}
+```
+
+---
+
+## 6. Другие полезные коллекции
+
+| Коллекция | Описание | Когда использовать |
+|-----------|----------|-------------------|
+| `VecDeque<T>` | Двусторонняя очередь | push/pop с обеих сторон O(1) |
+| `LinkedList<T>` | Двусвязный список | Частые insert/remove в середине |
+| `BinaryHeap<T>` | Макс-куча (priority queue) | Приоритетные очереди |
+| `BTreeMap<K,V>` / `BTreeSet<T>` | Дерево (упорядоченные) | Нужен порядок ключей, range queries |
+| `IndexMap<K,V>` (crate) | HashMap + порядок вставки | Нужен детерминированный порядок |
+
+---
+
+## 7. Практические упражнения
+
+### Упражнение 1: Обработка текста
+```rust
+fn word_count(text: &str) -> HashMap<String, usize> {
+    let mut map = HashMap::new();
+    for word in text.split_whitespace() {
+        let clean = word.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        *map.entry(clean).or_insert(0) += 1;
+    }
+    map
+}
+
+fn main() {
+    let text = "Hello, world! Hello, Rust!";
+    for (word, count) in word_count(text) {
+        println!("{}: {}", word, count);
+    }
+}
+```
+
+### Упражнение 2: Удаление дубликатов с сохранением порядка
+```rust
+fn dedup<T: Clone + std::hash::Hash + Eq>(items: &[T]) -> Vec<T> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for item in items {
+        if seen.insert(item.clone()) {
+            result.push(item.clone());
+        }
+    }
+    result
+}
+
+fn main() {
+    let data = vec![3, 1, 4, 1, 5, 9, 2, 6, 5];
+    println!("{:?}", dedup(&data)); // [3, 1, 4, 5, 9, 2, 6]
+}
+```
+
+### Упражнение 3: Группировка по ключу
+```rust
+fn group_by_first_letter(words: Vec<String>) -> HashMap<char, Vec<String>> {
+    let mut map = HashMap::new();
+    for word in words {
+        if let Some(first) = word.chars().next() {
+            map.entry(first).or_default().push(word);
+        }
+    }
+    map
+}
+
+fn main() {
+    let words = vec!["apple", "banana", "apricot", "blueberry", "cherry"]
+        .into_iter().map(String::from).collect();
+    for (k, v) in group_by_first_letter(words) {
+        println!("{}: {:?}", k, v);
+    }
+}
+```
+
+### Упражнение 4: Эффективная конкатенация строк
+```rust
+fn join_with_capacity(words: &[&str], sep: &str) -> String {
+    // Приблизительная оценка capacity
+    let total_len: usize = words.iter().map(|w| w.len()).sum()
+        + sep.len() * (words.len().saturating_sub(1));
+    let mut result = String::with_capacity(total_len);
+
+    for (i, w) in words.iter().enumerate() {
+        if i > 0 { result.push_str(sep); }
+        result.push_str(w);
+    }
+    result
+}
+
+fn main() {
+    let words = ["Rust", "is", "awesome"];
+    println!("{}", join_with_capacity(&words, " "));
+}
+```
+
+---
+
+## 8. Типичные ошибки новичков
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `index out of bounds` | `v[i]` за пределами | Используйте `v.get(i)` или проверяйте `len()` |
+| `use of moved value` | `String` передано по значению | Используйте `&str` в параметрах или `.clone()` |
+| `cannot borrow as mutable` | Одновременные `&` и `&mut` | Ограничьте область видимости ссылок `{}` |
+| `no method named 'push' for '&str'` | `&str` неизменяем | Используйте `String` для мутаций |
+| `expected struct HashMap, found ()` | `insert` возвращает `Option<V>` | Игнорируйте или используйте результат |
+
+---
+
+## 9. Производительность: шпаргалка
+
+| Операция | `Vec` | `HashMap` | `HashSet` | `String` |
+|----------|-------|-----------|-----------|----------|
+| push/insert | O(1)* | O(1)* | O(1)* | O(1)* |
+| get/index | O(1) | O(1)* | O(1)* | O(1) |
+| contains | O(n) | O(1)* | O(1)* | O(n) |
+| remove | O(n) | O(1)* | O(1)* | O(n) |
+| iteration | O(n) | O(n) | O(n) | O(n) |
+| *амортизированно | | | | |
+
+**Совет**: всегда используйте `with_capacity`/`reserve`, если знаете приблизительный размер.
+
+---
+
+## 10. Полезные ресурсы
+
+- **The Book — Strings**: https://doc.rust-lang.org/book/ch08-02-strings.html
+- **The Book — Vectors**: https://doc.rust-lang.org/book/ch08-01-vectors.html
+- **The Book — Hash Maps**: https://doc.rust-lang.org/book/ch08-03-hash-maps.html
+- **std::collections**: https://doc.rust-lang.org/std/collections/index.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- `String` (владеющая, мутируемая) vs `&str` (view, неизменяемая)
+- UTF-8: `len()` = байты, `chars()` = символы
+- `Vec<T>`: динамический массив, `push`, `pop`, `get`, capacity
+- `HashMap<K,V>`: `insert`, `get`, `entry` API (and_modify, or_insert)
+- `HashSet<T>`: уникальные значения, операции над множествами
+- Другие коллекции: `VecDeque`, `BTreeMap`, `BinaryHeap`
+
+---
+
+**Следующий урок:** Структуры и перечисления (`07_Structs_Enums.txt`)

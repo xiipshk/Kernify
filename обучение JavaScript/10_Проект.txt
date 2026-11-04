@@ -1,0 +1,904 @@
+# Урок 10: Проект для начинающих — «Список задач (Todo App)»
+
+## Цели проекта
+- Закрепить все темы уроков 1-9 на практике
+- Научиться структурировать небольшое приложение
+- Понять разделение: данные (State), представление (View), логика (Controller)
+- Получить работающее приложение в портфолио
+
+---
+
+## Требования к приложению
+
+**Функционал (MVP):**
+1. Добавление задачи (Enter или кнопка)
+2. Отметка выполненной (чекбокс)
+3. Удаление задачи (кнопка ×)
+4. Фильтры: Все / Активные / Выполненные
+5. Счётчик оставшихся задач
+6. Кнопка «Очистить выполненные»
+7. Сохранение в localStorage (данные не пропадают после перезагрузки)
+
+**Дополнительно (Bonus):**
+- Редактирование задачи по двойному клику
+- Drag & Drop для переупорядочивания
+- Анимации появления/удаления
+- Горячие клавиши (Esc — отмена редактирования)
+
+---
+
+## Архитектура (упрощённый MVC)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      index.html                          │
+│  <input id="todo-input"> <ul id="todo-list"> ... </ul>  │
+└─────────────────────────────────────────────────────────┘
+                           │
+                    ┌──────▼──────┐
+                    │   View      │  ← Рендеринг, события UI
+                    │  (DOM ops)  │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │ Controller  │  ← Обработка событий, координация
+                    │  (logic)    │
+                    └──────┬──────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        ┌──────────┐ ┌──────────┐ ┌──────────┐
+        │  Model   │ │  Model   │ │  Model   │
+        │ (State)  │ │(Storage) │ │(Filters) │
+        └──────────┘ └──────────┘ └──────────┘
+```
+
+---
+
+## 1. HTML структура (index.html)
+
+```html
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Todo App</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <section class="todoapp">
+    <header class="header">
+      <h1>Задачи</h1>
+      <input
+        id="new-todo"
+        class="new-todo"
+        placeholder="Что нужно сделать?"
+        autocomplete="off"
+      >
+    </header>
+
+    <section class="main" hidden>
+      <input id="toggle-all" class="toggle-all" type="checkbox">
+      <label for="toggle-all">Все</label>
+
+      <ul id="todo-list" class="todo-list"></ul>
+    </section>
+
+    <footer class="footer" hidden>
+      <span id="todo-count" class="todo-count">
+        <strong>0</strong> задач осталось
+      </span>
+
+      <ul class="filters">
+        <li>
+          <a href="#/" class="filter selected" data-filter="all">Все</a>
+        </li>
+        <li>
+          <a href="#/active" class="filter" data-filter="active">Активные</a>
+        </li>
+        <li>
+          <a href="#/completed" class="filter" data-filter="completed">Выполненные</a>
+        </li>
+      </ul>
+
+      <button id="clear-completed" class="clear-completed" hidden>
+        Очистить выполненные
+      </button>
+    </footer>
+  </section>
+
+  <footer class="info">
+    <p>Создано в рамках обучения JavaScript</p>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
+```
+
+---
+
+## 2. CSS базовые стили (style.css)
+
+```css
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f5f5f5;
+  color: #4d4d4d;
+  min-height: 100vh;
+  padding: 40px 20px;
+}
+
+.todoapp {
+  max-width: 550px;
+  margin: 0 auto;
+  background: white;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1), 0 8px 16px rgba(0,0,0,0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.header {
+  padding: 20px;
+  border-bottom: 1px solid #e6e6e6;
+}
+
+.header h1 {
+  font-size: 60px;
+  font-weight: 100;
+  text-align: center;
+  color: rgba(175, 47, 47, 0.15);
+  margin-bottom: 10px;
+}
+
+.new-todo {
+  width: 100%;
+  padding: 16px;
+  font-size: 24px;
+  border: none;
+  outline: none;
+  background: rgba(0,0,0,0.003);
+  box-shadow: inset 0 -2px 1px rgba(0,0,0,0.03);
+}
+
+.main {
+  position: relative;
+}
+
+.toggle-all {
+  position: absolute;
+  opacity: 0;
+}
+
+.toggle-all + label {
+  width: 40px;
+  height: 40px;
+  font-size: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  cursor: pointer;
+}
+
+.toggle-all + label:before {
+  content: '❯';
+  font-size: 22px;
+  color: #e6e6e6;
+  padding: 10px 20px;
+}
+
+.toggle-all:checked + label:before {
+  color: #737373;
+}
+
+.todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  padding: 15px 20px;
+  border-bottom: 1px solid #ededed;
+  transition: background 0.2s;
+}
+
+.todo-item:last-child {
+  border-bottom: none;
+}
+
+.todo-item:hover {
+  background: #fafafa;
+}
+
+.todo-item.completed .todo-text {
+  text-decoration: line-through;
+  color: #d9d9d9;
+}
+
+.toggle {
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #ddd;
+  border-radius: 50%;
+  margin-right: 15px;
+  cursor: pointer;
+  position: relative;
+}
+
+.toggle:checked {
+  border-color: #4caf50;
+  background: #4caf50;
+}
+
+.toggle:checked::after {
+  content: '✓';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 16px;
+}
+
+.todo-text {
+  flex: 1;
+  font-size: 20px;
+  word-break: break-word;
+}
+
+.destroy {
+  width: 30px;
+  height: 30px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #cc9a9a;
+  font-size: 24px;
+  opacity: 0;
+  transition: opacity 0.2s, color 0.2s;
+}
+
+.todo-item:hover .destroy {
+  opacity: 1;
+}
+
+.destroy:hover {
+  color: #e74c3c;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  border-top: 1px solid #e6e6e6;
+  color: #777;
+  font-size: 14px;
+}
+
+.filters {
+  display: flex;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.filters li {
+  margin: 0 5px;
+}
+
+.filter {
+  color: inherit;
+  text-decoration: none;
+  padding: 3px 7px;
+  border-radius: 3px;
+}
+
+.filter:hover,
+.filter.selected {
+  border: 1px solid rgba(175, 47, 47, 0.3);
+  color: #af2f2f;
+}
+
+.clear-completed {
+  background: none;
+  border: none;
+  color: #777;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.clear-completed:hover {
+  color: #e74c3c;
+}
+
+.info {
+  text-align: center;
+  margin-top: 30px;
+  color: #aaa;
+  font-size: 12px;
+}
+
+.editing .todo-text {
+  display: none;
+}
+
+.editing .edit-input {
+  display: block;
+  width: 100%;
+  padding: 12px 15px;
+  font-size: 20px;
+  border: 1px solid #999;
+  outline: none;
+}
+```
+
+---
+
+## 3. JavaScript (app.js) — Модель
+
+```javascript
+// ==================== MODEL ====================
+
+const STORAGE_KEY = 'todos-vanilla-js';
+
+/** Хранилище задач */
+class TodoModel {
+  constructor() {
+    this.todos = this.load();
+    this.listeners = new Set();
+  }
+
+  /** Подписка на изменения */
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  /** Уведомить слушателей */
+  notify() {
+    this.listeners.forEach(fn => fn(this.todos));
+  }
+
+  /** Загрузка из localStorage */
+  load() {
+    try {
+      const data = localStorage.getItem(STORAGE_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Сохранение в localStorage */
+  save() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.todos));
+  }
+
+  /** Генерация ID */
+  generateId() {
+    return Date.now() + Math.random().toString(36).slice(2, 9);
+  }
+
+  /** Получить все */
+  getAll() {
+    return [...this.todos];
+  }
+
+  /** Добавить задачу */
+  add(text) {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    const todo = {
+      id: this.generateId(),
+      text: trimmed,
+      completed: false,
+      createdAt: Date.now()
+    };
+
+    this.todos.push(todo);
+    this.save();
+    this.notify();
+    return todo;
+  }
+
+  /** Переключить статус */
+  toggle(id) {
+    const todo = this.todos.find(t => t.id === id);
+    if (todo) {
+      todo.completed = !todo.completed;
+      this.save();
+      this.notify();
+    }
+  }
+
+  /** Удалить задачу */
+  remove(id) {
+    const index = this.todos.findIndex(t => t.id === id);
+    if (index !== -1) {
+      this.todos.splice(index, 1);
+      this.save();
+      this.notify();
+    }
+  }
+
+  /** Очистить выполненные */
+  clearCompleted() {
+    this.todos = this.todos.filter(t => !t.completed);
+    this.save();
+    this.notify();
+  }
+
+  /** Переключить все */
+  toggleAll(completed) {
+    let changed = false;
+    this.todos.forEach(t => {
+      if (t.completed !== completed) {
+        t.completed = completed;
+        changed = true;
+      }
+    });
+    if (changed) {
+      this.save();
+      this.notify();
+    }
+  }
+
+  /** Обновить текст */
+  updateText(id, text) {
+    const trimmed = text.trim();
+    const todo = this.todos.find(t => t.id === id);
+    if (todo && trimmed) {
+      todo.text = trimmed;
+      this.save();
+      this.notify();
+      return true;
+    }
+    return false;
+  }
+
+  /** Получить отфильтрованные */
+  getFiltered(filter) {
+    switch (filter) {
+      case 'active':
+        return this.todos.filter(t => !t.completed);
+      case 'completed':
+        return this.todos.filter(t => t.completed);
+      default:
+        return [...this.todos];
+    }
+  }
+
+  /** Счётчик активных */
+  getActiveCount() {
+    return this.todos.filter(t => !t.completed).length;
+  }
+
+  /** Есть ли выполненные */
+  hasCompleted() {
+    return this.todos.some(t => t.completed);
+  }
+
+  /** Все ли выполнены */
+  allCompleted() {
+    return this.todos.length > 0 && this.todos.every(t => t.completed);
+  }
+}
+```
+
+---
+
+## 4. JavaScript (app.js) — View
+
+```javascript
+// ==================== VIEW ====================
+
+class TodoView {
+  constructor() {
+    // Кэш DOM элементов
+    this.elements = {
+      newTodo: document.getElementById('new-todo'),
+      todoList: document.getElementById('todo-list'),
+      main: document.querySelector('.main'),
+      footer: document.querySelector('.footer'),
+      toggleAll: document.getElementById('toggle-all'),
+      todoCount: document.getElementById('todo-count'),
+      clearCompleted: document.getElementById('clear-completed'),
+      filters: document.querySelectorAll('.filter')
+    };
+
+    // Текущий фильтр
+    this.currentFilter = 'all';
+
+    // Callback'и (устанавливаются контроллером)
+    this.onAddTodo = null;
+    this.onToggleTodo = null;
+    this.onRemoveTodo = null;
+    this.onToggleAll = null;
+    this.onClearCompleted = null;
+    this.onFilterChange = null;
+    this.onEditTodo = null;
+    this.onCancelEdit = null;
+  }
+
+  /** Привязка событий */
+  bindEvents() {
+    // Добавление
+    this.elements.newTodo.addEventListener('keypress', e => {
+      if (e.key === 'Enter' && this.onAddTodo) {
+        this.onAddTodo(e.target.value);
+        e.target.value = '';
+      }
+    });
+
+    // Делегирование для списка
+    this.elements.todoList.addEventListener('click', e => {
+      const item = e.target.closest('.todo-item');
+      if (!item) return;
+
+      const id = item.dataset.id;
+
+      // Чекбокс
+      if (e.target.matches('.toggle')) {
+        this.onToggleTodo?.(id);
+      }
+      // Удаление
+      else if (e.target.matches('.destroy')) {
+        this.onRemoveTodo?.(id);
+      }
+      // Двойной клик — редактирование
+      else if (e.target.matches('.todo-text')) {
+        this.startEditing(item, id);
+      }
+    });
+
+    // Редактирование — клавиши
+    this.elements.todoList.addEventListener('keydown', e => {
+      if (e.target.matches('.edit-input')) {
+        if (e.key === 'Enter') {
+          this.finishEditing(e.target);
+        } else if (e.key === 'Escape') {
+          this.cancelEditing(e.target);
+        }
+      }
+    });
+
+    // Потеря фокуса — сохранение
+    this.elements.todoList.addEventListener('focusout', e => {
+      if (e.target.matches('.edit-input')) {
+        this.finishEditing(e.target);
+      }
+    });
+
+    // Toggle all
+    this.elements.toggleAll.addEventListener('change', e => {
+      this.onToggleAll?.(e.target.checked);
+    });
+
+    // Clear completed
+    this.elements.clearCompleted.addEventListener('click', () => {
+      this.onClearCompleted?.();
+    });
+
+    // Фильтры
+    this.elements.filters.forEach(link => {
+      link.addEventListener('click', e => {
+        e.preventDefault();
+        const filter = e.target.dataset.filter;
+        this.setFilter(filter);
+        this.onFilterChange?.(filter);
+      });
+    });
+  }
+
+  /** Рендер списка */
+  render(todos) {
+    this.elements.todoList.innerHTML = '';
+
+    todos.forEach(todo => {
+      const li = this.createTodoElement(todo);
+      this.elements.todoList.append(li);
+    });
+
+    this.updateUI(todos);
+  }
+
+  /** Создать элемент задачи */
+  createTodoElement(todo) {
+    const li = document.createElement('li');
+    li.className = `todo-item${todo.completed ? ' completed' : ''}`;
+    li.dataset.id = todo.id;
+
+    li.innerHTML = `
+      <input class="toggle" type="checkbox" ${todo.completed ? 'checked' : ''}>
+      <label class="todo-text">${this.escapeHtml(todo.text)}</label>
+      <input class="edit-input" type="text" value="${this.escapeHtml(todo.text)}" style="display:none">
+      <button class="destroy" aria-label="Удалить">×</button>
+    `;
+
+    return li;
+  }
+
+  /** Обновление счётчиков и видимости */
+  updateUI(todos) {
+    const activeCount = todos.filter(t => !t.completed).length;
+    const hasCompleted = todos.some(t => t.completed);
+    const allCompleted = todos.length > 0 && todos.every(t => t.completed);
+
+    // Счётчик
+    this.elements.todoCount.innerHTML = `
+      <strong>${activeCount}</strong> ${this.pluralize(activeCount, 'задача', 'задачи', 'задач')} осталось
+    `;
+
+    // Toggle all
+    this.elements.toggleAll.checked = allCompleted;
+
+    // Показать/скрыть main и footer
+    this.elements.main.hidden = todos.length === 0;
+    this.elements.footer.hidden = todos.length === 0;
+
+    // Clear completed
+    this.elements.clearCompleted.hidden = !hasCompleted;
+
+    // Активный фильтр
+    this.elements.filters.forEach(link => {
+      link.classList.toggle('selected', link.dataset.filter === this.currentFilter);
+    });
+  }
+
+  /** Установить активный фильтр */
+  setFilter(filter) {
+    this.currentFilter = filter;
+    this.elements.filters.forEach(link => {
+      link.classList.toggle('selected', link.dataset.filter === filter);
+    });
+  }
+
+  /** Начало редактирования */
+  startEditing(item, id) {
+    item.classList.add('editing');
+    const input = item.querySelector('.edit-input');
+    input.style.display = 'block';
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
+  /** Завершение редактирования */
+  finishEditing(input) {
+    const item = input.closest('.todo-item');
+    const id = item.dataset.id;
+    const text = input.value;
+
+    item.classList.remove('editing');
+    input.style.display = 'none';
+
+    if (this.onEditTodo) {
+      this.onEditTodo(id, text);
+    }
+  }
+
+  /** Отмена редактирования */
+  cancelEditing(input) {
+    const item = input.closest('.todo-item');
+    item.classList.remove('editing');
+    input.style.display = 'none';
+    this.onCancelEdit?.();
+  }
+
+  /** Экранирование HTML */
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  /** Склонение слов */
+  pluralize(n, one, two, five) {
+    const mod10 = n % 10;
+    const mod100 = n % 100;
+    if (mod10 === 1 && mod100 !== 11) return one;
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return two;
+    return five;
+  }
+
+  /** Очистка поля ввода */
+  clearInput() {
+    this.elements.newTodo.value = '';
+    this.elements.newTodo.focus();
+  }
+}
+```
+
+---
+
+## 5. JavaScript (app.js) — Controller & Init
+
+```javascript
+// ==================== CONTROLLER ====================
+
+class TodoController {
+  constructor(model, view) {
+    this.model = model;
+    this.view = view;
+
+    // Привязка callback'ов
+    view.onAddTodo = this.handleAddTodo.bind(this);
+    view.onToggleTodo = this.handleToggleTodo.bind(this);
+    view.onRemoveTodo = this.handleRemoveTodo.bind(this);
+    view.onToggleAll = this.handleToggleAll.bind(this);
+    view.onClearCompleted = this.handleClearCompleted.bind(this);
+    view.onFilterChange = this.handleFilterChange.bind(this);
+    view.onEditTodo = this.handleEditTodo.bind(this);
+    view.onCancelEdit = this.handleCancelEdit.bind(this);
+
+    // Подписка на изменения модели
+    this.unsubscribe = model.subscribe(this.onModelChange.bind(this));
+
+    // Инициализация
+    view.bindEvents();
+    this.render();
+  }
+
+  /** Модель изменилась — перерисовать */
+  onModelChange(todos) {
+    this.render();
+  }
+
+  /** Рендер с текущим фильтром */
+  render() {
+    const filtered = this.model.getFiltered(this.view.currentFilter);
+    this.view.render(filtered);
+  }
+
+  // --- Handlers ---
+
+  handleAddTodo(text) {
+    this.model.add(text);
+  }
+
+  handleToggleTodo(id) {
+    this.model.toggle(id);
+  }
+
+  handleRemoveTodo(id) {
+    this.model.remove(id);
+  }
+
+  handleToggleAll(completed) {
+    this.model.toggleAll(completed);
+  }
+
+  handleClearCompleted() {
+    this.model.clearCompleted();
+  }
+
+  handleFilterChange(filter) {
+    this.render();
+  }
+
+  handleEditTodo(id, text) {
+    this.model.updateText(id, text);
+  }
+
+  handleCancelEdit() {
+    // просто перерисовать (вернёт старый текст)
+    this.render();
+  }
+
+  /** Очистка при удалении приложения */
+  destroy() {
+    this.unsubscribe();
+  }
+}
+
+// ==================== INIT ====================
+
+// Ждём готовности DOM
+document.addEventListener('DOMContentLoaded', () => {
+  const model = new TodoModel();
+  const view = new TodoView();
+  const controller = new TodoController(model, view);
+
+  // Глобальный доступ для отладки в консоли
+  window.__todoApp = { model, view, controller };
+});
+
+/*
+  Дополнительные идеи для расширения:
+  1. Drag & Drop (SortableJS или нативный HTML5 DnD)
+  2. Категории/теги для задач
+  3. Даты дедлайнов
+  4. Синхронизация с сервером (fetch)
+  5. Service Worker для офлайн работы
+  6. Тесты (Jest + Testing Library)
+  7. TypeScript типизация
+*/
+```
+
+---
+
+## 6. Запуск и проверка
+
+1. Создайте папку `todo-app`
+2. Сохраните 3 файла: `index.html`, `style.css`, `app.js`
+3. Откройте `index.html` в браузере (или через локальный сервер: `npx serve`)
+
+**Чек-лист проверки:**
+- [ ] Добавление задачи работает
+- [ ] Чекбокс переключает статус
+- [ ] Удаление работает
+- [ ] Фильтры переключаются
+- [ ] Счётчик верный
+- [ ] «Очистить выполненные» работает
+- [ ] Перезагрузка страницы — задачи на месте
+- [ ] Редактирование по двойному клику работает
+- [ ] Enter сохраняет, Escape отменяет
+
+---
+
+## Разбор ключевых моментов
+
+### Разделение ответственности
+- **Model** — только данные и localStorage, ничего не знает про DOM
+- **View** — только DOM манипуляции, не знает про localStorage
+- **Controller** — связывает их, содержит бизнес-логику
+
+### Делегирование событий
+Один слушатель на `ul.todo-list` вместо по слушателю на каждый `li`.
+
+### localStorage
+- `JSON.stringify/parse` для сериализации
+- `try/catch` на случай поврежденных данных
+
+### Безопасность
+- `escapeHtml` при выводе пользовательского текста
+- `textContent` вместо `innerHTML` где возможно
+
+---
+
+## Практические задания для углубления
+
+1. **Добавьте дату создания** — показывайте «Создано: 15.01.2024» под задачей
+2. **Добавьте приоритеты** — высокий/средний/низкий с цветными метками
+3. **Реализуйте Drag & Drop** — перетаскивание для изменения порядка
+4. **Добавьте анимации** — CSS transition для появления/удаления
+5. **Напишите тесты** — используйте Vitest + @testing-library/dom
+6. **Перепишите на TypeScript** — добавьте типы для Model, View, Controller
+7. **Сделайте PWA** — manifest.json + Service Worker для офлайн работы
+
+---
+
+## Типичные ошибки в проекте
+
+| Ошибка | Решение |
+|--------|---------|
+| Забыли `e.preventDefault()` на ссылках фильтров | Страница перезагружается |
+| `innerHTML` с пользовательским вводом | XSS — используйте `textContent` или `escapeHtml` |
+| Не обновили UI после изменения модели | Всегда вызывайте `render()` после мутации |
+| `forEach` с `async` коллбеками | Используйте `for...of` или `Promise.all` |
+| Слушатели не удаляются при перерисовке | Делегирование на контейнере решает проблему |
+
+---
+
+## Что дальше?
+
+- **Урок 11**: Семантика, типы, приведение, равенство
+- **Урок 12**: Scope, Closures, Hoisting, This
+- **Урок 13**: Функциональный стиль (map, filter, reduce, composition)
+- **Урок 14**: Прототипы, Classes, Наследование
+- **Урок 15**: Modules, Tooling, ESM, NPM, Bundlers
+
+Поздравляю! Вы построили первое полноценное JS-приложение! 🎉

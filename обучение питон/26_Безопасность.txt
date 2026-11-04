@@ -1,0 +1,438 @@
+# Урок 3.4: Безопасность — OWASP, инъекции, криптография, аутентификация, аудит
+
+## Цели урока
+- Понимать OWASP Top 10 для веб-приложений
+- Защищаться от инъекций (SQL, NoSQL, команда, LDAP)
+- Правильно использовать криптографию (hashing, encryption, signing)
+- Реализовывать безопасную аутентификацию и авторизацию
+- Проводить аудит зависимостей и кода
+
+---
+
+## 1. OWASP Top 10 (2021)
+
+| # | Уязвимость | Описание |
+|---|------------|----------|
+| A01 | Broken Access Control | Нарушение контроля доступа |
+| A02 | Cryptographic Failures | Ошибки криптографии |
+| A03 | Injection | Инъекции (SQL, NoSQL, OS, LDAP) |
+| A04 | Insecure Design | Небезопасный дизайн |
+| A05 | Security Misconfiguration | Ошибки конфигурации |
+| A06 | Vulnerable Components | Уязвимые компоненты |
+| A07 | Authentication Failures | Ошибки аутентификации |
+| A08 | Software Integrity Failures | Нарушение целостности ПО |
+| A09 | Logging Failures | Недостаточное логирование |
+| A10 | SSRF | Server-Side Request Forgery |
+
+---
+
+## 2. Защита от инъекций
+
+### SQL Injection — параметризованные запросы
+```python
+# ПЛОХО
+cursor.execute(f"SELECT * FROM users WHERE name = '{name}'")
+
+# ХОРОШО — параметры
+cursor.execute("SELECT * FROM users WHERE name = ?", (name,))
+
+# SQLAlchemy ORM — безопасно
+session.query(User).filter(User.name == name).first()
+
+# Raw SQL в SQLAlchemy — text() с bindparams
+from sqlalchemy import text
+session.execute(text("SELECT * FROM users WHERE name = :name"), {"name": name})
+```
+
+### NoSQL Injection (MongoDB)
+```python
+# ПЛОХО
+db.users.find({"username": username, "password": password})
+
+# ХОРОШО — валидация типов
+db.users.find({"username": {"$eq": username}, "password": {"$eq": password}})
+
+# Или используйте ODM (Beanie, Motor) с моделями
+```
+
+### Command Injection
+```python
+# ПЛОХО
+os.system(f"ping {host}")
+subprocess.run(f"ping {host}", shell=True)
+
+# ХОРОШО — без shell, список аргументов
+import subprocess
+subprocess.run(["ping", "-c", "3", host], capture_output=True)
+
+# shlex.quote для экранирования (если нужен shell)
+import shlex
+cmd = f"ping {shlex.quote(host)}"
+```
+
+### LDAP Injection
+```python
+# ПЛОХО
+filter = f"(cn={user_input})"
+
+# ХОРОШО — escape
+import ldap3
+from ldap3.utils.conv import escape_filter_chars
+filter = f"(cn={escape_filter_chars(user_input)})"
+```
+
+---
+
+## 3. Криптография
+
+### Хэширование паролей — bcrypt/argon2
+```bash
+pip install passlib[bcrypt] argon2-cffi
+```
+
+```python
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt", "argon2"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+# Использование
+hashed = hash_password("secret123")  # $2b$12$...
+verify_password("secret123", hashed)  # True
+```
+
+### Симметричное шифрование — Fernet (AES-128)
+```bash
+pip install cryptography
+```
+
+```python
+from cryptography.fernet import Fernet
+
+key = Fernet.generate_key()  # сохранить в секрете!
+f = Fernet(key)
+
+token = f.encrypt(b"секретные данные")
+data = f.decrypt(token)
+```
+
+### Асимметричное шифрование — RSA
+```python
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import hashes, serialization
+
+# Генерация ключей
+private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+public_key = private_key.public_key()
+
+# Шифрование (публичный ключ)
+ciphertext = public_key.encrypt(
+    b"secret",
+    padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+)
+
+# Расшифрование (приватный ключ)
+plaintext = private_key.decrypt(
+    ciphertext,
+    padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+)
+```
+
+### Подпись — HMAC / Ed25519
+```python
+import hmac
+import hashlib
+
+# HMAC для проверки целостности
+secret = b"shared-secret"
+message = b"data"
+sig = hmac.new(secret, message, hashlib.sha256).hexdigest()
+
+# Проверка
+hmac.compare_digest(sig, hmac.new(secret, message, hashlib.sha256).hexdigest())
+```
+
+```python
+# Ed25519 (современное, быстрое)
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
+private_key = ed25519.Ed25519PrivateKey.generate()
+public_key = private_key.public_key()
+
+sig = private_key.sign(b"message")
+public_key.verify(sig, b"message")  # исключение если неверно
+```
+
+### JWT (JSON Web Tokens)
+```bash
+pip install python-jose[cryptography]
+```
+
+```python
+from jose import jwt, JWTError
+from datetime import datetime, timedelta
+
+SECRET = "your-256-bit-secret"
+ALGORITHM = "HS256"
+
+def create_token(user_id: str, expires_minutes: int = 30) -> str:
+    payload = {
+        "sub": user_id,
+        "exp": datetime.utcnow() + timedelta(minutes=expires_minutes),
+        "iat": datetime.utcnow()
+    }
+    return jwt.encode(payload, SECRET, algorithm=ALGORITHM)
+
+def decode_token(token: str) -> dict:
+    return jwt.decode(token, SECRET, algorithms=[ALGORITHM])
+```
+
+---
+
+## 4. Аутентификация и авторизация
+
+### Безопасные cookies
+```python
+from fastapi import Response, Cookie
+
+response.set_cookie(
+    key="session",
+    value=token,
+    httponly=True,      # недоступен JS
+    secure=True,        # только HTTPS
+    samesite="lax",     # CSRF защита
+    max_age=3600
+)
+```
+
+### CSRF защита
+```bash
+pip install fastapi-csrf-protect
+```
+
+```python
+from fastapi_csrf_protect import CsrfProtect
+from pydantic import BaseModel
+
+class CsrfSettings(BaseModel):
+    secret_key: str = "csrf-secret-key"
+
+@CsrfProtect.load_config
+def get_csrf_config():
+    return CsrfSettings()
+
+@app.post("/form")
+def submit_form(csrf_protect: CsrfProtect = Depends()):
+    csrf_protect.validate_csrf(request)
+    ...
+```
+
+### Rate Limiting
+```bash
+pip install slowapi
+```
+
+```python
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.get("/api")
+@limiter.limit("10/minute")
+def api(request: Request):
+    return {"ok": True}
+```
+
+### Content Security Policy
+```python
+from fastapi import Response
+
+@app.middleware("http")
+async def add_csp(request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+```
+
+---
+
+## 5. Безопасность зависимостей
+
+### pip-audit
+```bash
+pip install pip-audit
+pip-audit
+pip-audit -r requirements.txt --fix
+```
+
+### Safety
+```bash
+pip install safety
+safety check
+safety check -r requirements.txt
+```
+
+### Dependabot / Renovate (GitHub)
+```yaml
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+```
+
+### Sigstore / SLSA — подпись пакетов
+```bash
+pip install sigstore
+sigstore sign dist/*
+sigstore verify dist/*
+```
+
+---
+
+## 6. Безопасная работа с секретами
+
+### python-dotenv (только для dev!)
+```bash
+pip install python-dotenv
+```
+
+```python
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # .env файл НЕ в git!
+SECRET_KEY = os.getenv("SECRET_KEY")
+```
+
+### Продакшн: переменные окружения / Secret Manager
+```python
+# AWS Secrets Manager
+import boto3
+client = boto3.client('secretsmanager')
+secret = client.get_secret_value(SecretId="prod/db-password")['SecretString']
+
+# HashiCorp Vault
+import hvac
+client = hvac.Client(url="https://vault.example.com")
+secret = client.secrets.kv.v2.read_secret_version(path="app/config")
+```
+
+### .gitignore
+```
+.env
+*.key
+*.pem
+secrets/
+```
+
+---
+
+## 7. Аудит кода
+
+### Bandit — статический анализ безопасности
+```bash
+pip install bandit
+bandit -r src/
+bandit -r src/ -f json -o report.json
+```
+
+### Semgrep — паттерны безопасности
+```bash
+pip install semgrep
+semgrep --config=auto src/
+```
+
+### Pre-commit hooks
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: ["-r", "src/"]
+  - repo: https://github.com/returntocorp/semgrep
+    rev: v1.0.0
+    hooks:
+      - id: semgrep
+        args: ["--config=auto", "src/"]
+```
+
+---
+
+## 8. Logging и Monitoring
+
+```python
+import logging
+import json
+from datetime import datetime
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        return json.dumps({
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        })
+
+logging.basicConfig(level=logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(JSONFormatter())
+logging.getLogger().handlers = [handler]
+
+# Логирование событий безопасности
+logger = logging.getLogger("security")
+logger.warning("Failed login attempt", extra={"ip": "1.2.3.4", "user": "admin"})
+```
+
+---
+
+## Практические задания
+
+1. **SQLi Demo**: создайте уязвимый эндпоинт, эксплуатируйте, исправьте
+2. **Password Hashing**: реализуйте регистрацию/логин с argon2
+3. **JWT Auth**: access + refresh tokens, revocation через Redis
+4. **Dependency Scan**: настройте pip-audit + dependabot в CI
+5. **Secrets**: внедрите Vault или AWS Secrets Manager
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| MD5/SHA1 для паролей | bcrypt / argon2 / scrypt |
+| Секреты в коде / git | Переменные окружения / Secret Manager |
+| `shell=True` в subprocess | Список аргументов без shell |
+| Отсутствие rate limiting | Лимиты на логин, API, формы |
+| Логирование паролей/токенов | Фильтрация чувствительных полей |
+| Старые зависимости | Регулярные pip-audit / dependabot |
+
+---
+
+## Полезные ресурсы
+- **OWASP Top 10** — https://owasp.org/www-project-top-ten/
+- **OWASP Python** — https://owasp.org/www-project-python-security/
+- **Cryptography.io** — https://cryptography.io/
+- **passlib** — https://passlib.readthedocs.io/
+- **Bandit** — https://bandit.readthedocs.io/
+- **Semgrep Rules** — https://semgrep.dev/explore

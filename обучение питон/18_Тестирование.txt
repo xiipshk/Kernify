@@ -1,0 +1,441 @@
+# Урок 2.7: Тестирование — pytest, unittest, mock, coverage, TDD
+
+## Цели урока
+- Писать тесты с pytest (фикстуры, параметризация, маркеры)
+- Использовать unittest.mock для изоляции (patch, MagicMock)
+- Измерять покрытие кода (coverage)
+- Понимать TDD (Test-Driven Development)
+- Организовывать тесты в проекте
+
+---
+
+## 1. pytest — современный фреймворк
+
+### Установка и запуск
+```bash
+pip install pytest
+pytest                    # найти и запустить все test_*.py
+pytest test_module.py     # конкретный файл
+pytest -k "test_add"      # только тесты с "add" в имени
+pytest -v                 # verbose
+pytest --tb=short         # короткий трейсбек
+```
+
+### Базовый тест
+```python
+# test_math.py
+def add(a, b):
+    return a + b
+
+def test_add():
+    assert add(2, 3) == 5
+    assert add(-1, 1) == 0
+    assert add(0, 0) == 0
+```
+
+### Assert — понятные сообщения об ошибках
+```python
+def test_list_contains():
+    lst = [1, 2, 3]
+    assert 2 in lst
+    assert 4 not in lst
+
+# pytest автоматически показывает diff для:
+assert [1, 2, 3] == [1, 2, 4]
+# AssertionError: assert [1, 2, 3] == [1, 2, 4]
+#   At index 2 diff: 3 != 4
+```
+
+---
+
+## 2. Фикстуры (fixtures) — подготовка и очистка
+
+### Простая фикстура
+```python
+import pytest
+
+@pytest.fixture
+def sample_data():
+    return {"users": ["Анна", "Борис"], "count": 2}
+
+def test_users(sample_data):
+    assert sample_data["count"] == 2
+    assert "Анна" in sample_data["users"]
+```
+
+### Фикстура с очисткой (yield)
+```python
+@pytest.fixture
+def temp_file(tmp_path):
+    f = tmp_path / "test.txt"
+    f.write_text("hello")
+    yield f
+    # cleanup после теста
+    if f.exists():
+        f.unlink()
+
+def test_read(temp_file):
+    assert temp_file.read_text() == "hello"
+```
+
+### Scope — область действия
+```python
+@pytest.fixture(scope="session")      # на всю сессию
+def db_connection():
+    conn = connect_to_db()
+    yield conn
+    conn.close()
+
+@pytest.fixture(scope="module")       # на модуль
+def api_client():
+    return APIClient()
+
+@pytest.fixture(scope="function")     # на каждый тест (по умолчанию)
+def fresh_list():
+    return []
+```
+
+### Автоматические фикстуры (autouse)
+```python
+@pytest.fixture(autouse=True)
+def reset_singleton():
+    Singleton._instance = None
+    yield
+    Singleton._instance = None
+```
+
+---
+
+## 3. Параметризация — запуск одного теста с разными данными
+
+```python
+import pytest
+
+@pytest.mark.parametrize("a,b,expected", [
+    (1, 2, 3),
+    (0, 0, 0),
+    (-1, 1, 0),
+    (100, 200, 300),
+])
+def test_add(a, b, expected):
+    assert add(a, b) == expected
+
+# Сложные параметры
+@pytest.mark.parametrize("user,expected_role", [
+    ({"name": "admin", "role": "admin"}, "admin"),
+    ({"name": "user", "role": "user"}, "user"),
+    ({"name": "guest"}, "guest"),
+], ids=["admin", "regular", "default"])
+def test_role(user, expected_role):
+    assert get_role(user) == expected_role
+```
+
+---
+
+## 4. Маркеры (marks) — метаданные тестов
+
+```python
+import pytest
+
+@pytest.mark.slow
+def test_heavy_computation():
+    ...
+
+@pytest.mark.skip(reason="не реализовано")
+def test_future_feature():
+    ...
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="нужен Python 3.10+")
+def test_match_statement():
+    ...
+
+@pytest.mark.xfail(reason="известный баг #123")
+def test_buggy_behavior():
+    assert False  # ожидаемо падает
+
+# Запуск по маркерам
+pytest -m "not slow"      # пропустить медленные
+pytest -m "slow"          # только медленные
+```
+
+### Конфигурация маркеров (pyproject.toml)
+```toml
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+```
+
+---
+
+## 5. unittest.mock — изоляция зависимостей
+
+### patch — подмена объекта
+```python
+from unittest.mock import patch, MagicMock
+import requests
+
+def get_user(user_id):
+    resp = requests.get(f"https://api.example.com/users/{user_id}")
+    return resp.json()
+
+@patch("requests.get")
+def test_get_user(mock_get):
+    mock_get.return_value.json.return_value = {"id": 1, "name": "Анна"}
+
+    user = get_user(1)
+
+    assert user == {"id": 1, "name": "Анна"}
+    mock_get.assert_called_once_with("https://api.example.com/users/1")
+```
+
+### patch как контекстный менеджер
+```python
+def test_with_context_manager():
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {"ok": True}
+
+        result = fetch_data()
+
+        assert result == {"ok": True}
+```
+
+### patch.object — подмена атрибута объекта
+```python
+class PaymentProcessor:
+    def charge(self, amount):
+        return api.charge(amount)
+
+def test_payment():
+    processor = PaymentProcessor()
+    with patch.object(processor, "charge", return_value=True):
+        assert processor.charge(100) is True
+```
+
+### MagicMock — гибкий мок
+```python
+from unittest.mock import MagicMock
+
+mock = MagicMock()
+mock.method.return_value = 42
+mock.method(1, 2, key="val")
+mock.method.assert_called_with(1, 2, key="val")
+
+# Автоматические атрибуты
+mock.attribute = "value"
+mock["key"] = "value"
+```
+
+### side_effect — побочные эффекты
+```python
+mock = MagicMock()
+mock.side_effect = [1, 2, 3]  # последовательные возвраты
+mock()  # 1
+mock()  # 2
+mock()  # 3
+
+# Исключение
+mock.side_effect = ValueError("ошибка")
+mock()  # поднимает ValueError
+
+# Функция
+def dynamic_return(arg):
+    return arg * 2
+mock.side_effect = dynamic_return
+mock(5)  # 10
+```
+
+---
+
+## 6. Тестирование асинхронного кода
+
+```python
+import pytest
+import asyncio
+
+@pytest.mark.asyncio
+async def test_async_function():
+    result = await async_func()
+    assert result == "ok"
+
+# Фикстура для event loop (pytest-asyncio)
+@pytest.fixture
+def event_loop():
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+```
+
+---
+
+## 7. Coverage — измерение покрытия
+
+```bash
+pip install pytest-cov
+
+# Запуск с покрытием
+pytest --cov=my_package --cov-report=term-missing
+
+# HTML отчёт
+pytest --cov=my_package --cov-report=html
+
+# Порог покрытия
+pytest --cov=my_package --cov-fail-under=80
+```
+
+### Конфигурация (pyproject.toml)
+```toml
+[tool.coverage.run]
+source = ["my_package"]
+omit = ["*/tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
+```
+
+---
+
+## 8. TDD (Test-Driven Development)
+
+### Цикл Red-Green-Refactor
+```
+1. RED:    Напишите падающий тест
+2. GREEN:  Напишите минимальный код для прохождения теста
+3. REFACTOR: Улучшите код, сохраняя тесты зелёными
+```
+
+### Пример: калькулятор
+```python
+# test_calc.py — сначала тесты
+def test_add():
+    assert add(2, 3) == 5
+
+def test_subtract():
+    assert subtract(5, 3) == 2
+
+# calc.py — потом реализация
+def add(a, b):
+    return a + b
+
+def subtract(a, b):
+    return a - b
+```
+
+---
+
+## 9. Организация тестов в проекте
+
+```
+project/
+├── src/
+│   └── mypackage/
+│       ├── __init__.py
+│       ├── core.py
+│       └── utils.py
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py          # общие фикстуры
+│   ├── unit/
+│   │   ├── test_core.py
+│   │   └── test_utils.py
+│   └── integration/
+│       └── test_api.py
+├── pyproject.toml
+└── pytest.ini (или в pyproject.toml)
+```
+
+### conftest.py — общие фикстуры
+```python
+# tests/conftest.py
+import pytest
+from mypackage.database import Database
+
+@pytest.fixture(scope="session")
+def db():
+    db = Database(":memory:")
+    yield db
+    db.close()
+
+@pytest.fixture
+def sample_user(db):
+    return db.create_user("test@example.com")
+```
+
+---
+
+## 10. Продвинутые темы
+
+### Property-based testing (hypothesis)
+```bash
+pip install hypothesis
+```
+
+```python
+from hypothesis import given, strategies as st
+
+@given(st.integers(), st.integers())
+def test_add_commutative(a, b):
+    assert add(a, b) == add(b, a)
+
+@given(st.lists(st.integers()))
+def test_sort_idempotent(lst):
+    assert sorted(sorted(lst)) == sorted(lst)
+```
+
+### Snapshot testing (syrupy)
+```bash
+pip install syrupy
+```
+
+```python
+def test_user_snapshot(snapshot):
+    user = create_user("Анна", 25)
+    assert user == snapshot
+```
+
+### Mutation testing (mutmut)
+```bash
+pip install mutmut
+mutmut run
+# Проверяет, находят ли тесты искусственные баги
+```
+
+---
+
+## Практические задания
+
+1. **API клиент**: протестируйте с моками `requests.get`, `post`, обработку ошибок 4xx/5xx
+2. **БД репозиторий**: используйте `sqlite3 :memory:` для быстрых интеграционных тестов
+3. **CLI приложение**: протестируйте через `capsys` (перехват stdout/stderr)
+4. **Покрытие**: добивайтесь 90%+ coverage, настройте `--cov-fail-under`
+5. **Property tests**: проверьте свойства сортировки, сериализации, кодирования
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Тесты зависят друг от друга | Каждый тест изолирован, фикстуры дают свежие данные |
+| Моки не проверяют вызов | `mock.assert_called_once_with(...)` |
+| Патч не там, где используется | `@patch("module.where.used.Class", ...)` не где определено |
+| Фикстура `scope="session"` меняет состояние | Используйте `function` scope или сбрасывайте состояние |
+| Тестируют приватные методы | Тестируйте публичный API |
+
+---
+
+## Полезные ресурсы
+- **pytest docs** — https://docs.pytest.org/
+- **unittest.mock docs** — https://docs.python.org/3/library/unittest.mock.html
+- **Real Python: pytest** — https://realpython.com/pytest-python-testing/
+- **pytest-cov** — https://pytest-cov.readthedocs.io/
+- **hypothesis** — https://hypothesis.readthedocs.io/
+- **Test-Driven Development by Example** — Kent Beck

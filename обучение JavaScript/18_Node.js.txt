@@ -1,0 +1,815 @@
+# Урок 18: Node.js — Runtime, Modules, Filesystem, HTTP Server, Env Vars
+
+## Цели урока
+- Понимать архитектуру Node.js: V8, libuv, Event Loop, Worker Threads
+- Мастерски работать с модулями: ESM, CommonJS, interop, package.json exports
+- Работать с файловой системой: fs/promises, streams, watchers
+- Создавать HTTP серверы: нативный http, Express/Fastify, middleware
+- Управлять переменными окружения: dotenv, конфигурация, секреты
+- Использовать процессы: child_process, worker_threads, кластеризация
+
+---
+
+## 1. Node.js Runtime Architecture
+
+### Компоненты
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Node.js Process                         │
+│  ┌──────────────┐    ┌──────────────────────────────────┐   │
+│  │   V8 Engine  │    │           libuv                  │   │
+│  │  (JS Heap)   │    │  ┌──────────┐ ┌──────────────┐   │   │
+│  │  Call Stack  │    │  │ Timer    │ │ I/O (poll)   │   │   │
+│  └──────────────┘    │  │ Queue    │ │ (network, fs)│   │   │
+│         │            │  └──────────┘ └──────────────┘   │   │
+│         ▼            │  ┌──────────┐ ┌──────────────┐   │   │
+│  ┌──────────────┐    │  │ Check    │ │ Close        │   │   │
+│  │ Microtask    │    │  │ Queue    │ │ Callbacks    │   │   │
+│  │ Queue        │    │  └──────────┘ └──────────────┘   │   │
+│  └──────────────┘    └──────────────────────────────────┘   │
+│         │                    │                               │
+│         └────────────────────┼───────────────────────────────┘
+│                              ▼
+│                     ┌──────────────┐
+│                     │  Event Loop  │
+│                     └──────────────┘
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Глобальные объекты
+```javascript
+// В Node.js (не в браузере)
+globalThis;        // глобальный объект (как window)
+global;            // alias для globalThis
+process;           // информация о процессе
+module;            // текущий модуль (CJS)
+require;           // CJS импорт
+__dirname;         // директория текущего файла (CJS)
+__filename;        // полный путь к файлу (CJS)
+Buffer;            // бинарные данные
+console;           // расширенный (stdout/stderr)
+setImmediate;      // после I/O callbacks
+queueMicrotask;    // микрозадача
+```
+
+### process объект
+```javascript
+process.argv;           // аргументы командной строки
+process.env;            // переменные окружения
+process.cwd();          // текущая рабочая директория
+process.chdir("/path"); // смена директории
+process.exit(code);     // выход (0 = успех)
+process.kill(pid, sig); // отправка сигнала
+process.pid;            // PID процесса
+process.ppid;           // PID родителя
+process.platform;       // "win32", "linux", "darwin"
+process.arch;           // "x64", "arm64"
+process.version;        // "v20.10.0"
+process.versions;       // { node, v8, uv, zlib, ... }
+process.memoryUsage();  // { rss, heapUsed, heapTotal, external }
+process.cpuUsage();     // { user, system } микросекунды
+process.hrtime.bigint(); // высокоточное время (нс)
+process.nextTick(fn);   // перед микрозадачами!
+
+// Сигналы
+process.on("SIGINT", () => {});   // Ctrl+C
+process.on("SIGTERM", () => {});  // kill
+process.on("exit", (code) => {}); // синхронный cleanup
+process.on("uncaughtException", (err) => {}); // не перехватывайте в проде!
+process.on("unhandledRejection", (reason) => {});
+```
+
+---
+
+## 2. Modules — ESM и CommonJS
+
+### ESM (рекомендуется)
+```javascript
+// package.json: "type": "module"
+// или файл .mjs
+
+// Именованные экспорты
+export function add(a, b) { return a + b; }
+export const PI = 3.14159;
+
+// Default экспорт
+export default function multiply(a, b) { return a * b; }
+
+// Реэкспорт
+export { add, PI } from "./math.js";
+export { default } from "./multiply.js";
+export * from "./constants.js";
+
+// Импорт
+import { add, PI } from "./math.js";
+import multiply from "./multiply.js";
+import * as Math from "./math.js";
+import { default as mul } from "./multiply.js";
+
+// Динамический импорт
+const { add } = await import("./math.js");
+
+// import.meta
+import.meta.url;           // file:///path/to/file.js
+import.meta.dirname;       // /path/to (Node 20.11+)
+import.meta.resolve("./x"); // resolve specifier
+```
+
+### CommonJS (legacy)
+```javascript
+// package.json без "type" или файл .cjs
+
+// Экспорт
+function add(a, b) { return a + b; }
+module.exports = { add };
+// или
+exports.add = add;
+
+// Импорт
+const { add } = require("./math.cjs");
+const math = require("./math.cjs"); // { add }
+
+// Динамический require
+const mod = require(`./lang/${lang}.cjs`);
+
+// __dirname / __filename доступны
+console.log(__dirname);
+```
+
+### ESM ↔ CJS Interop
+```javascript
+// ESM импортирует CJS
+import lodash from "lodash";           // default = module.exports
+import { debounce } from "lodash";     // именованные из свойств default
+
+// CJS импортирует ESM (ТОЛЬКО динамически!)
+const esm = await import("./esm-module.js");
+// require("./esm-module.js") — ОШИБКА!
+
+// Проверка типа модуля
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+```
+
+### package.json exports (современный)
+```json
+{
+  "name": "my-lib",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./utils": {
+      "import": "./dist/utils.js",
+      "require": "./dist/utils.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "imports": {
+    "#internal/*": "./src/internal/*"
+  }
+}
+```
+
+### Node.js Built-in Modules (Node 20+)
+```javascript
+// Файловая система
+import * as fs from "fs/promises";
+import * as path from "path";
+import * as os from "os";
+
+// HTTP
+import * as http from "http";
+import * as https from "https";
+
+// Утилиты
+import * as crypto from "crypto";
+import * as util from "util";
+import * as events from "events";
+import * as stream from "stream";
+import * as assert from "assert";
+
+// Новые (Node 18+)
+import { fetch } from "undici"; // или глобальный fetch
+import { WebSocket } from "ws"; // нативный в Node 22+
+
+// Проверка доступности
+import { availableParallelism } from "os";
+const cores = availableParallelism();
+```
+
+---
+
+## 3. Filesystem — fs/promises, Streams, Watchers
+
+### fs/promises (async/await)
+```javascript
+import * as fs from "fs/promises";
+import * as path from "path";
+
+// Чтение/запись
+const content = await fs.readFile("file.txt", "utf-8");
+await fs.writeFile("file.txt", "Hello", "utf-8");
+await fs.appendFile("log.txt", "\nNew line");
+
+// JSON
+const pkg = await fs.readFile("package.json", "utf-8").then(JSON.parse);
+await fs.writeFile("config.json", JSON.stringify(config, null, 2));
+
+// Директории
+await fs.mkdir("dir/subdir", { recursive: true });
+const entries = await fs.readdir("dir", { withFileTypes: true });
+for (const entry of entries) {
+  console.log(entry.name, entry.isDirectory(), entry.isFile());
+}
+
+// Статус
+const stats = await fs.stat("file.txt");
+stats.isFile();        // true
+stats.isDirectory();   // false
+stats.size;            // байты
+stats.mtime;           // Date модификации
+
+// Существование
+await fs.access("file.txt", fs.constants.R_OK | fs.constants.W_OK);
+// или
+try { await fs.stat("file.txt"); exists = true; } catch { exists = false; }
+
+// Удаление/перемещение
+await fs.rm("file.txt");
+await fs.rm("dir", { recursive: true, force: true });
+await fs.rename("old.txt", "new.txt");
+await fs.copyFile("src.txt", "dest.txt");
+
+// Симлинки
+await fs.symlink("target", "link");
+await fs.readlink("link"); // "target"
+await fs.unlink("link");
+
+// Временные файлы
+import { tmpdir } from "os";
+import { mkdtemp, writeFile } from "fs/promises";
+const tempDir = await mkdtemp(path.join(tmpdir(), "myapp-"));
+await writeFile(path.join(tempDir, "data.json"), "{}");
+```
+
+### Streams — для больших файлов
+```javascript
+import { createReadStream, createWriteStream } from "fs";
+import { pipeline } from "stream/promises";
+import { createGzip } from "zlib";
+import { createCipheriv } from "crypto";
+
+// Копирование больших файлов (backpressure handled)
+await pipeline(
+  createReadStream("input.txt"),
+  createWriteStream("output.txt")
+);
+
+// Сжатие на лету
+await pipeline(
+  createReadStream("huge.log"),
+  createGzip(),
+  createWriteStream("huge.log.gz")
+);
+
+// Шифрование
+const key = crypto.randomBytes(32);
+const iv = crypto.randomBytes(16);
+await pipeline(
+  createReadStream("secret.txt"),
+  createCipheriv("aes-256-gcm", key, iv),
+  createWriteStream("secret.enc")
+);
+
+// Readable stream как async iterator
+for await (const chunk of createReadStream("file.txt", { highWaterMark: 64 * 1024 })) {
+  // chunk — Buffer
+  processChunk(chunk);
+}
+
+// Object mode streams
+import { Readable } from "stream";
+const readable = Readable.from([1, 2, 3, 4, 5], { objectMode: true });
+for await (const item of readable) {
+  console.log(item);
+}
+```
+
+### File Watchers
+```javascript
+import { watch, watchFile } from "fs";
+
+// watch — событийный (лучше для директорий)
+const watcher = watch("src", { recursive: true }, (eventType, filename) => {
+  console.log(eventType, filename); // "rename", "change"
+});
+watcher.close(); // остановка
+
+// watchFile — polling (fallback)
+watchFile("config.json", { interval: 1000 }, (curr, prev) => {
+  if (curr.mtime !== prev.mtime) reloadConfig();
+});
+unwatchFile("config.json");
+
+// chokidar — production выбор (батчерит события)
+import chokidar from "chokidar";
+const watcher = chokidar.watch("src/**/*.js", {
+  ignored: /node_modules/,
+  persistent: true,
+  ignoreInitial: true
+});
+watcher.on("change", path => console.log("Changed:", path));
+watcher.on("add", path => console.log("Added:", path));
+watcher.on("unlink", path => console.log("Removed:", path));
+await watcher.close();
+```
+
+---
+
+## 4. HTTP Server — Native, Express, Fastify
+
+### Native http модуль
+```javascript
+import { createServer } from "http";
+import { parse } from "url";
+import { readFile } from "fs/promises";
+import { join, extname } from "path";
+
+const server = createServer(async (req, res) => {
+  // Парсинг URL
+  const { pathname, query } = parse(req.url, true);
+
+  // CORS
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    return res.end();
+  }
+
+  // Routing
+  if (pathname === "/api/users" && req.method === "GET") {
+    const users = await getUsers();
+    res.setHeader("Content-Type", "application/json");
+    return res.end(JSON.stringify(users));
+  }
+
+  if (pathname === "/api/users" && req.method === "POST") {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const user = JSON.parse(body);
+    const created = await createUser(user);
+    res.writeHead(201, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify(created));
+  }
+
+  // Static files
+  if (pathname.startsWith("/static/")) {
+    try {
+      const filePath = join(process.cwd(), "public", pathname.slice(8));
+      const content = await readFile(filePath);
+      const mime = getMimeType(extname(filePath));
+      res.setHeader("Content-Type", mime);
+      return res.end(content);
+    } catch {
+      res.writeHead(404);
+      return res.end("Not Found");
+    }
+  }
+
+  res.writeHead(404);
+  res.end("Not Found");
+});
+
+server.listen(3000, () => console.log("Server on :3000"));
+
+// Graceful shutdown
+const shutdown = () => {
+  server.close(() => {
+    console.log("Closed");
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 10000); // force
+};
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+```
+
+### Express (популярный фреймворк)
+```bash
+npm install express
+npm install -D @types/express
+```
+
+```javascript
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import morgan from "morgan";
+import rateLimit from "express-rate-limit";
+
+const app = express();
+
+// Middleware
+app.use(helmet());           // security headers
+app.use(cors());             // CORS
+app.use(express.json());     // JSON body parser
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan("combined")); // logging
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 })); // rate limit
+
+// Routes
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+app.get("/api/users", async (req, res, next) => {
+  try {
+    const users = await getUsers(req.query);
+    res.json(users);
+  } catch (err) {
+    next(err); // передача в error handler
+  }
+});
+
+app.post("/api/users", async (req, res, next) => {
+  try {
+    const user = await createUser(req.body);
+    res.status(201).json(user);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Параметры маршрута
+app.get("/api/users/:id", async (req, res, next) => {
+  try {
+    const user = await getUserById(req.params.id);
+    if (!user) return res.status(404).json({ error: "Not found" });
+    res.json(user);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Error handler (4 аргумента!)
+app.use((err, req, res, next) => {
+  console.error(err);
+  const status = err.statusCode || 500;
+  res.status(status).json({
+    error: err.message,
+    ...(process.env.NODE_ENV === "development" && { stack: err.stack })
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+const server = app.listen(3000, () => console.log("Express on :3000"));
+```
+
+### Fastify (быстрый, современный)
+```bash
+npm install fastify
+```
+
+```javascript
+import Fastify from "fastify";
+
+const fastify = Fastify({ logger: true });
+
+// Плагины
+await fastify.register(import("@fastify/cors"));
+await fastify.register(import("@fastify/helmet"));
+await fastify.register(import("@fastify/rate-limit"), {
+  max: 100,
+  timeWindow: "15 minutes"
+});
+
+// Валидация схем (JSON Schema)
+fastify.post("/api/users", {
+  schema: {
+    body: {
+      type: "object",
+      required: ["name", "email"],
+      properties: {
+        name: { type: "string", minLength: 1 },
+        email: { type: "string", format: "email" }
+      }
+    },
+    response: {
+      201: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          email: { type: "string" }
+        }
+      }
+    }
+  }
+}, async (request, reply) => {
+  const user = await createUser(request.body);
+  return reply.code(201).send(user);
+});
+
+// Hooks
+fastify.addHook("onRequest", async (request, reply) => {
+  // auth check, logging, etc.
+});
+
+fastify.addHook("onError", async (request, reply, error) => {
+  fastify.log.error(error);
+});
+
+await fastify.listen({ port: 3000, host: "0.0.0.0" });
+```
+
+---
+
+## 5. Environment Variables & Configuration
+
+### dotenv
+```bash
+npm install dotenv
+# или встроенный в Node 20.6+: node --env-file=.env
+```
+
+```javascript
+// .env (НЕ коммитить в git!)
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/db
+DB_POOL_SIZE=10
+
+# Redis
+REDIS_URL=redis://localhost:6379
+
+# Auth
+JWT_SECRET=super-secret-key-min-32-chars
+JWT_EXPIRY=1h
+
+# External API
+STRIPE_SECRET_KEY=sk_live_...
+SENDGRID_API_KEY=SG....
+
+# App
+NODE_ENV=development
+PORT=3000
+LOG_LEVEL=debug
+```
+
+```javascript
+// config.js — централизованная конфигурация
+import { config } from "dotenv";
+config(); // загружает .env в process.env
+
+// Валидация (zod рекомендуется)
+import { z } from "zod";
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  PORT: z.coerce.number().default(3000),
+  DATABASE_URL: z.string().url(),
+  DB_POOL_SIZE: z.coerce.number().default(10),
+  REDIS_URL: z.string().url().optional(),
+  JWT_SECRET: z.string().min(32),
+  JWT_EXPIRY: z.string().default("1h"),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info")
+});
+
+export const env = envSchema.parse(process.env);
+
+// Использование
+console.log(env.DATABASE_URL);
+```
+
+### Конфигурация по окружениям
+```javascript
+// config/index.js
+import { env } from "./env.js";
+
+export const config = {
+  development: {
+    db: { ...env.DATABASE_URL, logging: true },
+    cache: { ttl: 60 },
+    cors: { origin: "http://localhost:5173" }
+  },
+  production: {
+    db: { ...env.DATABASE_URL, logging: false, pool: { max: 20 } },
+    cache: { ttl: 3600 },
+    cors: { origin: "https://app.example.com" }
+  },
+  test: {
+    db: { url: "sqlite::memory:", logging: false },
+    cache: { ttl: 0 },
+    cors: { origin: "*" }
+  }
+}[env.NODE_ENV];
+```
+
+### Секреты в продакшене
+```bash
+# Docker secrets
+echo "super-secret" > /run/secrets/jwt_secret
+
+# Node.js чтение
+import { readFile } from "fs/promises";
+const jwtSecret = (await readFile("/run/secrets/jwt_secret", "utf-8")).trim();
+
+# Kubernetes secrets / AWS Secrets Manager / HashiCorp Vault
+# Используйте sidecar или init container для инжекта в env
+```
+
+---
+
+## 6. Processes — Child Process, Worker Threads, Clustering
+
+### child_process
+```javascript
+import { spawn, execFile, fork } from "child_process";
+import { promisify } from "util";
+
+// spawn — потоковый, для длинных процессов
+const child = spawn("ffmpeg", ["-i", "input.mp4", "output.mp4"]);
+child.stdout.on("data", data => console.log(data.toString()));
+child.stderr.on("data", data => console.error(data.toString()));
+child.on("close", code => console.log(`Exited: ${code}`));
+
+// execFile — буферизированный, для коротких
+const { stdout, stderr } = await promisify(execFile)("git", ["status", "--porcelain"]);
+
+// fork — отдельный Node.js процесс (IPC)
+const worker = fork("./worker.js", ["arg1"], {
+  env: { ...process.env, WORKER_ID: "1" },
+  stdio: ["pipe", "pipe", "pipe", "ipc"] // 4-й канал для IPC
+});
+worker.send({ type: "task", data: [1, 2, 3] });
+worker.on("message", (msg) => console.log("Result:", msg));
+
+// В worker.js
+process.on("message", (msg) => {
+  if (msg.type === "task") {
+    const result = msg.data.reduce((a, b) => a + b, 0);
+    process.send({ type: "result", value: result });
+  }
+});
+```
+
+### Worker Threads (CPU-intensive задачи)
+```bash
+npm install node:worker_threads (built-in Node 12+)
+```
+
+```javascript
+// main.js
+import { Worker, isMainThread, parentPort, workerData } from "worker_threads";
+import { resolve } from "path";
+
+if (isMainThread) {
+  const worker = new Worker(resolve("./worker.js"), {
+    workerData: { iterations: 1000000 }
+  });
+
+  worker.on("message", (result) => {
+    console.log("Result:", result);
+  });
+  worker.on("error", (err) => console.error(err));
+  worker.on("exit", (code) => {
+    if (code !== 0) console.error(`Worker stopped with code ${code}`);
+  });
+} else {
+  // worker.js код
+  const { iterations } = workerData;
+  let sum = 0;
+  for (let i = 0; i < iterations; i++) sum += Math.sqrt(i);
+  parentPort.postMessage(sum);
+}
+```
+
+### SharedArrayBuffer (память между тредами)
+```javascript
+// main.js
+const buffer = new SharedArrayBuffer(1024);
+const view = new Int32Array(buffer);
+const worker = new Worker("./worker.js", { workerData: { buffer } });
+view[0] = 42; // запись из main
+worker.postMessage({ buffer }); // передача ссылки
+```
+
+### Clustering (multi-core)
+```javascript
+// cluster.js
+import cluster from "cluster";
+import { cpus } from "os";
+import { createServer } from "http";
+
+if (cluster.isPrimary) {
+  const numCPUs = cpus().length;
+  console.log(`Primary ${process.pid} forking ${numCPUs} workers`);
+
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+
+  cluster.on("exit", (worker, code, signal) => {
+    console.log(`Worker ${worker.process.pid} died (${signal || code}). Restarting...`);
+    cluster.fork();
+  });
+} else {
+  // Worker процесс — ваш сервер
+  const server = createServer((req, res) => {
+    res.writeHead(200);
+    res.end(`Hello from worker ${process.pid}`);
+  });
+  server.listen(3000);
+}
+```
+
+### PM2 (production process manager)
+```bash
+npm install -g pm2
+pm2 start ecosystem.config.js
+pm2 monit
+pm2 logs
+pm2 reload all --update-env
+```
+
+```javascript
+// ecosystem.config.js
+export default {
+  apps: [{
+    name: "my-api",
+    script: "./dist/server.js",
+    instances: "max", // или число
+    exec_mode: "cluster",
+    env: { NODE_ENV: "development" },
+    env_production: { NODE_ENV: "production" },
+    error_file: "/var/log/pm2/error.log",
+    out_file: "/var/log/pm2/out.log",
+    log_date_format: "YYYY-MM-DD HH:mm:ss",
+    max_memory_restart: "500M",
+    watch: false,
+    ignore_watch: ["node_modules", "logs"]
+  }]
+};
+```
+
+---
+
+## Практические задания
+
+1. **CLI Tool**: Напишите CLI на ESM с `commander`: команды `init`, `build`, `deploy`, `--watch` флаг. Используйте `chalk` для цветов, `ora` для спиннеров, `inquirer` для промптов.
+
+2. **File Watcher Service**: Сервис, который следит за директорией `uploads/`, при появлении нового файла — обрабатывает (resize картинки через `sharp`, конвертирует видео через `ffmpeg`), кладёт результат в `processed/`, пишет метаданные в SQLite.
+
+3. **REST API с Express/Fastify**: CRUD для сущности `Task` (title, description, status, dueDate). Валидация через `zod`, пагинация, фильтрация, сортировка. Swagger/OpenAPI документация.
+
+4. **Worker Pool**: Класс `WorkerPool` с методами `exec(fn, args)` — выполняет функцию в воркере, возвращает Promise. Лимит воркеров, очередь задач, graceful shutdown.
+
+5. **Config Loader**: Модуль `loadConfig()` — читает `.env`, `.env.local`, `.env.${NODE_ENV}`, валидирует через `zod`, поддерживает секреты из файлов (`_FILE` суффикс: `JWT_SECRET_FILE=/run/secrets/jwt`), кэширует результат.
+
+6. **Graceful Shutdown**: Класс `Lifecycle` — регистрирует `onShutdown(fn)`, обрабатывает `SIGTERM`/`SIGINT`, ждёт завершения всех async задач с таймаутом, логирует зависшие.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `require("esm-module")` в CJS | Только `await import("esm-module")` |
+| `__dirname` в ESM | `import { dirname } from "path"; import { fileURLToPath } from "url"; const __dirname = dirname(fileURLToPath(import.meta.url))` |
+| `fs.readFile` без `await` / не промис | Используйте `fs/promises` или `promisify` |
+| Большие файлы в память (`readFile`) | Используйте `createReadStream` + `pipeline` |
+| `process.on("uncaughtException")` в проде | Не перехватывайте — падайте и рестартуйте (PM2, systemd) |
+| `child_process.exec` с пользовательским вводом | `execFile` / `spawn` с массивом аргументов (no shell injection) |
+| Воркеры для I/O задач | Worker Threads — для CPU-bound, для I/O — async/await |
+| Кластеризация без sticky sessions для WebSocket | Используйте Redis adapter или отдельный WS сервер |
+| Хардкод конфига в коде | Только через `process.env` + валидация (zod) |
+| `.env` в git | `.env` в `.gitignore`, `.env.example` в репо |
+
+---
+
+## Полезные ресурсы
+
+- **Node.js Docs** — https://nodejs.org/docs/latest/api/
+- **Node.js ESM** — https://nodejs.org/api/esm.html
+- **Node.js fs/promises** — https://nodejs.org/api/fs.html#fs_promises_api
+- **Node.js Streams** — https://nodejs.org/api/stream.html
+- **Node.js Worker Threads** — https://nodejs.org/api/worker_threads.html
+- **Node.js Cluster** — https://nodejs.org/api/cluster.html
+- **Express.js** — https://expressjs.com/
+- **Fastify** — https://fastify.dev/
+- **PM2** — https://pm2.keymetrics.io/
+- **Zod** — https://zod.dev/
+- **dotenv** — https://github.com/motdotla/dotenv

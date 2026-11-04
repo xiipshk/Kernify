@@ -1,0 +1,567 @@
+# Урок 3.4: Memory — GC, Generations, Finalizers, IDisposable, Span/Memory, Allocation Reduction
+
+## Цели урока
+- Понимать работу GC: поколения, сегменты, ephemeral/large object heap
+- Правильно реализовывать IDisposable и IAsyncDisposable
+- Работать с finalizers и SafeHandle для unmanaged ресурсов
+- Применять Span<T>, Memory<T> для снижения аллокаций
+- Использовать ArrayPool, object pooling, struct-based дизайн
+
+---
+
+## 1. Garbage Collector — Внутреннее устройство
+
+### Поколения (Generations)
+```csharp
+// Gen 0 — короткоживущие объекты (новые аллокации)
+// Gen 1 — буфер между Gen 0 и Gen 2
+// Gen 2 — долгоживущие объекты (статические поля, кэши, синглтоны)
+// LOH (Large Object Heap) — объекты >= 85,000 байт (только Gen 2)
+// POH (Pinned Object Heap, .NET 5+) — закрепленные объекты
+```
+
+### Режимы GC
+```xml
+<!-- .csproj настройки -->
+<PropertyGroup>
+  <!-- Workstation GC (default для клиентских приложений) -->
+  <ServerGarbageCollection>false</ServerGarbageCollection>
+  <!-- Concurrent GC (background) — меньше пауз -->
+  <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  <!-- Для высоконагруженных серверов -->
+  <!-- <ServerGarbageCollection>true</ServerGarbageCollection> -->
+</PropertyGroup>
+```
+
+### Мониторинг GC
+```csharp
+using System.Diagnostics.Metrics;
+using System.Runtime;
+
+// GC уведомления (дляGraceful scaling)
+GC.RegisterForFullGCNotification(10, 10);
+Task.Run(async () =>
+{
+    while (true)
+    {
+        GCNotificationStatus status = GC.WaitForFullGCApproach();
+        if (status == GCNotificationStatus.Succeeded)
+        {
+            // Перенаправлять трафик, дропать кэш
+            await RedirectTrafficAsync();
+            GC.WaitForFullGCComplete();
+        }
+        await Task.Delay(1000);
+    }
+});
+
+// Метрики
+var meter = new Meter("MyApp.GC");
+var counter = meter.CreateCounter<long>("gen0.collections");
+GC.RegisterForFullGCNotification(10, 10);
+```
+
+---
+
+## 2. Finalizers и SafeHandle
+
+### Finalizer Pattern (классический)
+```csharp
+public class ResourceHolder : IDisposable
+{
+    private IntPtr _unmanagedHandle;
+    private bool _disposed;
+
+    ~ResourceHolder() => Dispose(false);
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this); // Не вызывать финализатор
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Освобождение managed ресурсов
+        }
+
+        // Освобождение unmanaged ресурсов
+        if (_unmanagedHandle != IntPtr.Zero)
+        {
+            NativeMethods.CloseHandle(_unmanagedHandle);
+            _unmanagedHandle = IntPtr.Zero;
+        }
+        _disposed = true;
+    }
+}
+```
+
+### SafeHandle — правильный способ (C# 2.0+)
+```csharp
+using Microsoft.Win32.SafeHandles;
+using System.Runtime.InteropServices;
+
+public sealed class SafeFileHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    private SafeFileHandle() : base(true) { } // ownsHandle = true
+
+    public static SafeFileHandle Open(string path, FileMode mode)
+    {
+        var handle = CreateFile(path, ...);
+        return new SafeFileHandle { handle = handle };
+    }
+
+    protected override bool ReleaseHandle()
+    {
+        return CloseHandle(handle);
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(...);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr hObject);
+}
+
+// Использование
+using (var handle = SafeFileHandle.Open("file.txt", FileMode.Open))
+{
+    // Автоматическое закрытие, даже при исключении
+    // Нет финализатора — SafeHandle сам управляет жизненным циклом
+}
+```
+
+### CriticalFinalizerObject
+```csharp
+// Гарантирует выполнение финализатора даже при AppDomain unload
+public class CriticalResource : CriticalFinalizerObject
+{
+    private SafeHandle _handle;
+
+    ~CriticalResource() => _handle?.Dispose();
+}
+```
+
+---
+
+## 3. IDisposable и IAsyncDisposable
+
+### Полный паттерн Dispose
+```csharp
+public class DatabaseConnection : IAsyncDisposable, IDisposable
+{
+    private readonly SqlConnection _connection;
+    private bool _disposed;
+
+    public DatabaseConnection(string connectionString)
+    {
+        _connection = new SqlConnection(connectionString);
+    }
+
+    public async Task OpenAsync() => await _connection.OpenAsync();
+
+    // Синхронный Dispose
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    // Асинхронный Dispose (.NET Core 3.0+)
+    public async ValueTask DisposeAsync()
+    {
+        await DisposeAsyncCore();
+        Dispose(false);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing) _connection?.Dispose();
+        _disposed = true;
+    }
+
+    protected virtual async ValueTask DisposeAsyncCore()
+    {
+        if (_connection != null)
+            await _connection.DisposeAsync();
+    }
+}
+
+// Using declarations (C# 8.0+)
+using var conn = new DatabaseConnection(cs);
+await conn.OpenAsync();
+// Автоматический Dispose в конце scope
+
+// Асинхронный using
+await using var asyncConn = new DatabaseConnection(cs);
+```
+
+### IAsyncDisposable для асинхронных ресурсов
+```csharp
+public class AsyncResourcePool : IAsyncDisposable
+{
+    private readonly Channel<Resource> _pool;
+    private readonly CancellationTokenSource _cts = new();
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts.Cancel();
+        // Ждем возврата всех ресурсов
+        while (_pool.Reader.TryRead(out var resource))
+        {
+            await resource.ReleaseAsync();
+        }
+        _cts.Dispose();
+    }
+}
+```
+
+---
+
+## 4. Span<T>, Memory<T> — Allocation-Free Programming
+
+### Span<T> — только стек
+```csharp
+public class SpanExamples
+{
+    // Parsing без аллокаций
+    public static bool TryParseInt(ReadOnlySpan<char> input, out int value)
+    {
+        value = 0;
+        if (input.IsEmpty) return false;
+
+        var sign = 1;
+        var start = 0;
+        if (input[0] == '-') { sign = -1; start = 1; }
+        else if (input[0] == '+') { start = 1; }
+
+        for (int i = start; i < input.Length; i++)
+        {
+            var c = input[i];
+            if (c < '0' || c > '9') return false;
+            value = value * 10 + (c - '0');
+        }
+        value *= sign;
+        return true;
+    }
+
+    // String.Split без аллокаций (ручная реализация)
+    public static ReadOnlySpan<char> GetNextToken(
+        ref ReadOnlySpan<char> input, char separator)
+    {
+        int index = input.IndexOf(separator);
+        if (index < 0)
+        {
+            var token = input;
+            input = ReadOnlySpan<char>.Empty;
+            return token;
+        }
+        var result = input[..index];
+        input = input[(index + 1)..];
+        return result;
+    }
+
+    // Zero-copy substring
+    public static ReadOnlySpan<char> Trim(ReadOnlySpan<char> span)
+    {
+        int start = 0;
+        while (start < span.Length && char.IsWhiteSpace(span[start])) start++;
+
+        int end = span.Length - 1;
+        while (end >= start && char.IsWhiteSpace(span[end])) end--;
+
+        return span[start..(end + 1)];
+    }
+}
+```
+
+### Memory<T> — для async и полей классов
+```csharp
+public class BufferManager
+{
+    private readonly Memory<byte> _buffer = new byte[64 * 1024]; // 64KB
+
+    public async Task ProcessStreamAsync(Stream stream)
+    {
+        while (true)
+        {
+            var memory = _buffer[..4096]; // Slice без копирования
+            int read = await stream.ReadAsync(memory);
+            if (read == 0) break;
+
+            // Обрабатываем только прочитанную часть
+            await ProcessChunkAsync(memory[..read]);
+        }
+    }
+
+    private Task ProcessChunkAsync(Memory<byte> chunk) => Task.CompletedTask;
+}
+
+// MemoryPool — пул памяти для аренды
+public class PooledBuffer : IDisposable
+{
+    private readonly MemoryPool<byte> _pool = MemoryPool<byte>.Shared;
+    private IMemoryOwner<byte>? _owner;
+
+    public Memory<byte> Rent(int size)
+    {
+        _owner = _pool.Rent(size);
+        return _owner.Memory[..size];
+    }
+
+    public void Dispose() => _owner?.Dispose();
+}
+```
+
+---
+
+## 5. ArrayPool и Object Pooling
+
+### ArrayPool<T>
+```csharp
+public class HighPerformanceProcessor
+{
+    private readonly ArrayPool<byte> _pool = ArrayPool<byte>.Shared;
+
+    public void ProcessLargeData(Stream input)
+    {
+        // Аренда буфера
+        byte[] buffer = _pool.Rent(81920); // 80KB — попадает в LOH без пула!
+
+        try
+        {
+            int totalRead = 0;
+            int read;
+            while ((read = input.Read(buffer, totalRead, buffer.Length - totalRead)) > 0)
+            {
+                totalRead += read;
+                if (totalRead == buffer.Length)
+                {
+                    // Расширяем через новый Rent
+                    var newBuffer = _pool.Rent(buffer.Length * 2);
+                    Array.Copy(buffer, newBuffer, buffer.Length);
+                    _pool.Return(buffer);
+                    buffer = newBuffer;
+                }
+            }
+
+            ProcessData(buffer.AsSpan(0, totalRead));
+        }
+        finally
+        {
+            _pool.Return(buffer); // Всегда возвращаем!
+        }
+    }
+
+    private void ProcessData(ReadOnlySpan<byte> data) { }
+}
+
+// Кастомный ArrayPool с настройками
+var customPool = ArrayPool<byte>.Create(
+    maxArrayLength: 1_000_000,
+    maxArraysPerBucket: 50
+);
+```
+
+### Object Pool для сложных объектов
+```csharp
+using Microsoft.Extensions.ObjectPool;
+
+public class StringBuilderPool
+{
+    private readonly ObjectPool<StringBuilder> _pool;
+
+    public StringBuilderPool()
+    {
+        _pool = new DefaultObjectPool<StringBuilder>(
+            new StringBuilderPooledObjectPolicy(),
+            maximumRetained: 100
+        );
+    }
+
+    public StringBuilder Get() => _pool.Get();
+    public void Return(StringBuilder sb) => _pool.Return(sb);
+}
+
+public class StringBuilderPooledObjectPolicy : PooledObjectPolicy<StringBuilder>
+{
+    public override StringBuilder Create() => new StringBuilder(256);
+
+    public override bool Return(StringBuilder obj)
+    {
+        obj.Clear();
+        return true; // Вернуть в пул
+    }
+}
+
+// Использование
+var sb = _pool.Get();
+try { sb.Append("data"); /* ... */ }
+finally { _pool.Return(sb); }
+
+// Microsoft.Extensions.ObjectPool.DefaultObjectPoolProvider
+var provider = new DefaultObjectPoolProvider();
+var pool = provider.Create<StringBuilder>(new StringBuilderPooledObjectPolicy());
+```
+
+---
+
+## 6. Struct-Based Design для снижения аллокаций
+
+### Value Types вместо Reference Types
+```csharp
+// Плохо: класс для маленьких данных
+class PointClass { public int X, Y; }
+
+// Хорошо: readonly struct
+readonly struct Point
+{
+    public int X { get; }
+    public int Y { get; }
+    public Point(int x, int y) => (X, Y) = (x, y);
+
+    public double Distance => Math.Sqrt(X * X + Y * Y);
+
+    // Operators без аллокаций
+    public static Point operator +(Point a, Point b) =>
+        new(a.X + b.X, a.Y + b.Y);
+}
+
+// Избегайте boxing
+interface IDrawable { void Draw(); }
+// Плохо: boxing при вызове через интерфейс
+// Хорошо: generic constraints
+void DrawAll<T>(T[] items) where T : struct, IDrawable
+{
+    foreach (var item in items) item.Draw();
+}
+```
+
+### Ref Structs для stack-only типов
+```csharp
+// Только стек, никаких аллокаций
+public ref struct SpanParser
+{
+    private ReadOnlySpan<char> _input;
+    private int _position;
+
+    public SpanParser(ReadOnlySpan<char> input)
+    {
+        _input = input;
+        _position = 0;
+    }
+
+    public bool TryReadInt(out int value)
+    {
+        value = 0;
+        if (_position >= _input.Length) return false;
+
+        // Парсинг без аллокаций
+        // ...
+        return true;
+    }
+
+    // Нельзя: public List<int> Items; // ОШИБКА: ref struct не может иметь ref поля классов
+    // Можно: public Span<int> Items;
+}
+```
+
+---
+
+## 7. Weak References и ConditionalWeakTable
+
+### WeakReference — не удерживает объект в памяти
+```csharp
+public class Cache<TKey, TValue> where TValue : class
+{
+    private readonly Dictionary<TKey, WeakReference<TValue>> _cache = new();
+
+    public bool TryGet(TKey key, out TValue? value)
+    {
+        if (_cache.TryGetValue(key, out var weakRef) &&
+            weakRef.TryGetTarget(out value))
+        {
+            return true;
+        }
+        value = default;
+        return false;
+    }
+
+    public void Set(TKey key, TValue value)
+    {
+        _cache[key] = new WeakReference<TValue>(value);
+    }
+
+    // Очистка мертвых ссылок
+    public void Cleanup()
+    {
+        var deadKeys = _cache
+            .Where(kvp => !kvp.Value.TryGetTarget(out _))
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in deadKeys) _cache.Remove(key);
+    }
+}
+```
+
+### ConditionalWeakTable — ассоциация без удержания
+```csharp
+// Ключ не удерживается, запись удаляется когда ключ собран GC
+var table = new ConditionalWeakTable<object, AttachedData>();
+
+var obj = new MyClass();
+table.Add(obj, new AttachedData { Metadata = "info" });
+
+// obj можно собрать GC — запись в таблице исчезнет автоматически
+obj = null;
+GC.Collect();
+// table теперь пуст для этого ключа
+```
+
+---
+
+## 8. Практические задания
+
+1. **Custom Memory Pool**: Реализуйте `MemoryPool<byte>` с преаллоцированными блоками разного размера, статистикой попаданий/промахов
+
+2. **Zero-Allocation JSON Parser**: Напишите парсер подмножества JSON используя только `ReadOnlySpan<char>`, `Utf8JsonReader`, без строковых аллокаций
+
+3. **Disposable Resource Manager**: Создайте класс, управляющий множеством `IDisposable`/`IAsyncDisposable` ресурсов с правильным порядком очистки и обработкой ошибок
+
+4. **Object Pool Benchmark**: Сравните производительность `ArrayPool`, кастомного пула объектов и обычного `new` с помощью BenchmarkDotNet
+
+5. **Weak Event Pattern**: Реализуйте слабые события с `ConditionalWeakTable` для предотвращения утечек памяти в pub/sub
+
+---
+
+## 9. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Забывают `GC.SuppressFinalize` в `Dispose()` | Всегда подавляйте финализатор после ручной очистки |
+| `Dispose` не защищен от повторного вызова | Проверяйте флаг `_disposed` в начале |
+| `Span<T>` в полях класса или async методах | `Span<T>` — только `ref struct`, используйте `Memory<T>` |
+| Возвращают `Span<T>` из метода, где он создан на стеке | `Span<T>` умирает при выходе из метода, используйте `Memory<T>` или копируйте |
+| Не возвращают массив в `ArrayPool` | Всегда `try/finally` с `Return()` |
+| `struct` с большим количеством полей передают по значению | Используйте `in` параметр или `readonly struct` |
+
+---
+
+## 10. Полезные ресурсы
+
+- **GC Fundamentals** — https://learn.microsoft.com/dotnet/standard/garbage-collection/fundamentals
+- **IDisposable Pattern** — https://learn.microsoft.com/dotnet/standard/garbage-collection/implementing-dispose
+- **SafeHandle** — https://learn.microsoft.com/dotnet/api/system.runtime.interopservices.safehandle
+- **Span<T> and Memory<T>** — https://learn.microsoft.com/dotnet/standard/memory-and-spans
+- **ArrayPool** — https://learn.microsoft.com/dotnet/api/system.buffers.arraypool-1
+- **ObjectPool** — https://learn.microsoft.com/dotnet/api/microsoft.extensions.objectpool
+- **WeakReference** — https://learn.microsoft.com/dotnet/api/system.weakreference-1
+- **Pro .NET Memory Management** — Konrad Kokosa (книга)

@@ -1,0 +1,366 @@
+# Урок 13: Функциональный стиль — HOF, callbacks, pure functions, map/filter/reduce
+
+## Цели урока
+- Понимать функции высшего порядка (Higher-Order Functions)
+- Писать чистые функции и избегать побочных эффектов
+- Мастерски использовать map, filter, reduce, find, some, every
+- Работать с композицией и каррированием
+- Применять функциональные паттерны в реальном коде
+
+---
+
+## 1. Функции высшего порядка (Higher-Order Functions)
+
+### Определение
+```javascript
+// HOF — функция, которая:
+// 1. Принимает функцию как аргумент
+// 2. ИЛИ возвращает функцию
+
+// Пример 1: принимает функцию
+function map(arr, fn) {
+  const result = [];
+  for (const item of arr) result.push(fn(item));
+  return result;
+}
+
+// Пример 2: возвращает функцию (каррирование)
+function multiplyBy(factor) {
+  return function(n) { return n * factor; };
+}
+const double = multiplyBy(2);
+double(5); // 10
+```
+
+### Встроенные HOF массивов (ES2015+)
+```javascript
+const users = [
+  { name: "Анна", age: 25, active: true },
+  { name: "Борис", age: 17, active: false },
+  { name: "Виктор", age: 30, active: true },
+  { name: "Галина", age: 45, active: true }
+];
+
+// map — трансформация каждого элемента
+const names = users.map(u => u.name);
+// ["Анна", "Борис", "Виктор", "Галина"]
+
+// filter — отбор по условию
+const adults = users.filter(u => u.age >= 18);
+// [{ name: "Анна", ... }, { name: "Виктор", ... }, { name: "Галина", ... }]
+
+// find — первый подходящий
+const firstActive = users.find(u => u.active);
+// { name: "Анна", age: 25, active: true }
+
+// some / every — проверка условия
+const hasMinor = users.some(u => u.age < 18); // true
+const allActive = users.every(u => u.active); // false
+
+// reduce — свёртка к единственному значению
+const totalAge = users.reduce((sum, u) => sum + u.age, 0); // 117
+const byActive = users.reduce((acc, u) => {
+  acc[u.active ? "active" : "inactive"].push(u);
+  return acc;
+}, { active: [], inactive: [] });
+
+// flatMap = map + flat (ES2019)
+const tags = users.flatMap(u => u.tags || []); // если у каждого есть tags[]
+```
+
+### Методы объектов (ES2017+)
+```javascript
+const obj = { a: 1, b: 2, c: 3 };
+
+Object.entries(obj).map(([k, v]) => [k, v * 2]); // [["a",2],["b",4],["c",6]]
+Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, v * 2])); // {a:2,b:4,c:6}
+
+Object.keys(obj);   // ["a","b","c"]
+Object.values(obj); // [1,2,3]
+```
+
+---
+
+## 2. Чистые функции (Pure Functions)
+
+### Характеристики
+```javascript
+// ✅ ЧИСТАЯ: тот же вход → тот же выход, нет side effects
+function add(a, b) { return a + b; }
+function double(arr) { return arr.map(x => x * 2); }
+
+// ❌ НЕЧИСТАЯ: мутирует аргумент
+function pushItem(arr, item) { arr.push(item); }
+
+// ❌ НЕЧИСТАЯ: зависит от внешнего состояния
+let factor = 2;
+function multiply(x) { return x * factor; }
+
+// ❌ НЕЧИСТАЯ: side effect (I/O, логирование)
+function saveToDb(data) { db.write(data); return data; }
+
+// ❌ НЕЧИСТАЯ: случайность / дата
+function randomId() { return Math.random(); }
+function now() { return Date.now(); }
+```
+
+### Преимущества чистых функций
+```javascript
+// 1. Тестируемость
+expect(add(2, 3)).toBe(5); // всегда работает
+
+// 2. Кэшируемость (мемоизация)
+const memoizedAdd = memoize(add);
+
+// 3. Параллелизуемость — нет гонок данных
+const results = items.map(pureTransform); // можно распараллелить
+
+// 4. Композиция
+const process = pipe(validate, transform, save);
+```
+
+### Иммутабельность вместо мутации
+```javascript
+// ❌ Мутация
+const arr = [1, 2, 3];
+arr.push(4);
+
+// ✅ Иммутабельно
+const newArr = [...arr, 4];
+// или
+const newArr = arr.concat(4);
+
+// Объекты
+const user = { name: "Анна", age: 25 };
+// ❌ user.age = 26;
+// ✅
+const olderUser = { ...user, age: 26 };
+
+// Вложенные обновления (иммутабельно)
+const state = {
+  user: { profile: { settings: { theme: "light" } } }
+};
+// ❌ state.user.profile.settings.theme = "dark";
+// ✅ с spread (verbose)
+const newState = {
+  ...state,
+  user: {
+    ...state.user,
+    profile: {
+      ...state.user.profile,
+      settings: { ...state.user.profile.settings, theme: "dark" }
+    }
+  }
+};
+// ✅ с библиотекой (Immer, lodash.set, Ramda lens)
+```
+
+---
+
+## 3. Каррирование и частичное применение
+
+### Каррирование (currying)
+```javascript
+// Функция от N аргументов → N функций от 1 аргумента
+function curry(fn) {
+  return function curried(...args) {
+    if (args.length >= fn.length) return fn.apply(this, args);
+    return (...more) => curried.apply(this, [...args, ...more]);
+  };
+}
+
+const add = (a, b, c) => a + b + c;
+const curriedAdd = curry(add);
+
+curriedAdd(1)(2)(3);   // 6
+curriedAdd(1, 2)(3);   // 6
+curriedAdd(1)(2, 3);   // 6
+curriedAdd(1, 2, 3);   // 6
+
+// Практический пример: конфигурируемые валидаторы
+const minLength = curry((min, str) => str.length >= min);
+const maxLength = curry((max, str) => str.length <= max);
+
+const validateName = pipe(
+  minLength(2),
+  maxLength(50)
+);
+```
+
+### Частичное применение (partial application)
+```javascript
+// Фиксируем часть аргументов
+function partial(fn, ...presetArgs) {
+  return (...laterArgs) => fn(...presetArgs, ...laterArgs);
+}
+
+const fetchUser = async (baseUrl, id) => {
+  const res = await fetch(`${baseUrl}/users/${id}`);
+  return res.json();
+};
+
+const fetchFromAPI = partial(fetchUser, "https://api.example.com");
+const user = await fetchFromAPI(42); // только id
+```
+
+---
+
+## 4. Композиция функций
+
+### Pipe / Compose
+```javascript
+// pipe: слева направо (как читаем)
+function pipe(...fns) {
+  return (value) => fns.reduce((acc, fn) => fn(acc), value);
+}
+
+// compose: справа налево (математическая традиция)
+function compose(...fns) {
+  return (value) => fns.reduceRight((acc, fn) => fn(acc), value);
+}
+
+// Пример: обработка строки
+const process = pipe(
+  s => s.trim(),
+  s => s.toLowerCase(),
+  s => s.replace(/\s+/g, "-"),
+  s => s.slice(0, 50)
+);
+
+process("  Hello   World  "); // "hello-world"
+
+// С асинхронными функциями
+async function pipeAsync(...fns) {
+  return (value) => fns.reduce(
+    (promise, fn) => promise.then(fn),
+    Promise.resolve(value)
+  );
+}
+
+const processUser = pipeAsync(
+  fetchUser,
+  validateUser,
+  transformUser,
+  saveUser
+);
+```
+
+### Комбинаторы (utils)
+```javascript
+// identity
+const identity = x => x;
+
+// constant
+const constant = x => () => x;
+
+// tap — side effect в цепочке (логирование)
+const tap = fn => x => { fn(x); return x; };
+
+// flip — меняет порядок аргументов
+const flip = fn => (a, b) => fn(b, a);
+
+// props — извлечение свойств
+const prop = key => obj => obj[key];
+const props = (...keys) => obj => keys.map(k => obj[k]);
+
+// Использование
+const getNames = users => users.map(prop("name"));
+const getNameAndAge = props("name", "age");
+```
+
+---
+
+## 5. Продвинутые паттерны массивов
+
+### Reduce как универсальный инструмент
+```javascript
+// Реализация других методов через reduce
+const myMap = (arr, fn) => arr.reduce((acc, x, i, a) => [...acc, fn(x, i, a)], []);
+const myFilter = (arr, fn) => arr.reduce((acc, x, i, a) => fn(x, i, a) ? [...acc, x] : acc, []);
+const myFind = (arr, fn) => arr.reduce((acc, x, i, a) => acc !== undefined ? acc : fn(x, i, a) ? x : undefined, undefined);
+
+// Группировка
+const groupBy = (arr, keyFn) => arr.reduce((acc, item) => {
+  const key = keyFn(item);
+  (acc[key] = acc[key] || []).push(item);
+  return acc;
+}, {});
+
+const byFirstLetter = groupBy(users, u => u.name[0]);
+
+// Уникальные значения (через Set)
+const unique = arr => [...new Set(arr)];
+const uniqueBy = (arr, keyFn) => [...new Map(arr.map(x => [keyFn(x), x])).values()];
+
+// Топ N
+const topN = (arr, n, compareFn = (a, b) => b - a) =>
+  [...arr].sort(compareFn).slice(0, n);
+
+// Chunk / partition
+const chunk = (arr, size) => arr.reduce((acc, _, i) =>
+  i % size === 0 ? [...acc, arr.slice(i, i + size)] : acc, []);
+```
+
+### Ленивые вычисления (generators)
+```javascript
+// Бесконечные последовательности без переполнения памяти
+function* range(start, end) {
+  for (let i = start; i <= end; i++) yield i;
+}
+
+function* mapGen(iterable, fn) {
+  for (const x of iterable) yield fn(x);
+}
+
+function* filterGen(iterable, fn) {
+  for (const x of iterable) if (fn(x)) yield x;
+}
+
+function* takeGen(iterable, n) {
+  let i = 0;
+  for (const x of iterable) {
+    if (i++ >= n) break;
+    yield x;
+  }
+}
+
+// Использование: обрабатываем только нужно
+const result = [...takeGen(filterGen(mapGen(range(1, Infinity), x => x * 2), x => x % 3 === 0), 5)];
+// [6, 12, 18, 24, 30] — только 5 первых чётных, делящихся на 3
+```
+
+---
+
+## Практические задания
+
+1. **Реализуйте утилиты**: `pipe`, `compose`, `curry`, `partial`, `memoize`, `debounce`, `throttle` без библиотек.
+
+2. **Data pipeline**: Дан массив товаров `{id, name, price, category, tags[]}`. Напишите цепочку: фильтр по категории → сортировка по цене → группировка по тегам → топ-3 в каждой группе.
+
+3. **Валидатор форм**: Создайте `createValidator(rules)` где rules = `{ field: [validatorFn, ...] }`, возвращает функцию валидации объекта.
+
+4. **Event emitter на замыканиях**: `createEmitter()` → `{ on, off, emit }` с приватным хранилищем слушателей.
+
+5. **Lazy sequence**: Напишите `lazy(arr).map(fn).filter(fn).take(n).toArray()` — цепочка, не создающая промежуточные массивы.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `arr.map(x => x.prop)` падает если `x` — `null` | `arr.map(x => x?.prop)` или `arr.filter(Boolean).map(...)` |
+| `reduce` без `initialValue` на пустом массиве → TypeError | Всегда передавайте начальное значение: `reduce(fn, [])` |
+| `sort` мутирует исходный массив | `[...arr].sort(...)` или `arr.toSorted(...)` (ES2023) |
+| `forEach` не возвращает значение, нельзя прервать | Используйте `for...of` или `some`/`every` для раннего выхода |
+| Каррирование: `fn.length` не работает с rest/spread | Явно указывайте арность: `curryN(3, fn)` |
+
+---
+
+## Полезные ресурсы
+
+- **MDN: Array methods** — https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array
+- **Professor Frisby's Mostly Adequate Guide to Functional Programming** — https://mostly-adequate.gitbook.io/mostly-adequate-guide/
+- **Ramda.js docs** — https://ramdajs.com/docs/ (справочник FP функций)
+- **Functional Light JS** — Kyle Simpson
+- **ES2023 Array methods** — `toSorted`, `toReversed`, `toSpliced`, `with`, `findLast`, `findLastIndex`

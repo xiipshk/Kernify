@@ -1,0 +1,858 @@
+# Урок 30: Systems Programming (Системное программирование)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Понимать data layout: `#[repr(C)]`, `#[repr(transparent)]`, `#[repr(packed)]`, `#[repr(align)]`
+- Работать с C FFI: `extern "C"`, `bindgen`, `cxx`, безопасность границ
+- Вызывать system calls напрямую: `syscall!`, `libc`, `nix`, `windows-rs`
+- Писать код для embedded: `no_std`, `#[panic_handler]`, `#[alloc_error_handler]`
+- Использовать `std::arch` для SIMD и интринсиков
+- Работать с raw pointers, `NonNull`, `addr_of!`, `addr_of_mut!`
+- Понимать memory mapping: `mmap`, `VirtualAlloc`, `shm`
+- Писать безопасные обёртки над небезопасным кодом
+
+---
+
+## 1. Data Layout (Размещение данных в памяти)
+
+### `#[repr(C)]` — C-совместимое размещение
+```rust
+#[repr(C)]
+struct CCompatible {
+    a: u8,      // offset 0
+    b: u32,     // offset 4 (padding 3 bytes)
+    c: u16,     // offset 8
+    // size = 12, align = 4
+}
+
+// Порядок полей гарантирован, padding вставляется как в C
+```
+
+### `#[repr(transparent)]` — нулевая стоимость обёртки
+```rust
+#[repr(transparent)]
+struct NewType(u32); // Тот же layout, что и u32
+
+#[repr(transparent)]
+struct Wrapper<T>(T); // Layout = layout of T
+
+// Можно безопасно transmute между Wrapper<T> и T
+```
+
+### `#[repr(packed)]` — упакованные структуры
+```rust
+#[repr(packed)]
+struct Packed {
+    a: u8,
+    b: u32, // offset 1, нет padding!
+    c: u16, // offset 5
+}
+// size = 7, align = 1
+
+// ⚠️ Небезопасное чтение/запись невыровненных полей:
+// let b = unsafe { std::ptr::read_unaligned(&packed.b) };
+```
+
+### `#[repr(align(N))]` — принудительное выравнивание
+```rust
+#[repr(align(64))]
+struct CacheLine {
+    data: [u8; 64],
+}
+// Гарантированно выровнено на 64 байта (cache line)
+// Полезно для избежания false sharing
+```
+
+### `#[repr(u8)]` для enum — фиксированный дискриминант
+```rust
+#[repr(u8)]
+enum Status {
+    Ok = 0,
+    Error = 1,
+    Pending = 255,
+}
+// Размер = 1 байт, discriminant = u8
+```
+
+---
+
+## 2. C FFI (Foreign Function Interface)
+
+### Базовый `extern "C"`
+```rust
+// Объявление внешней C-функции
+extern "C" {
+    fn malloc(size: usize) -> *mut u8;
+    fn free(ptr: *mut u8);
+    fn strlen(s: *const u8) -> usize;
+    static mut errno: i32;
+}
+
+// Вызов
+unsafe {
+    let ptr = malloc(100);
+    if !ptr.is_null() {
+        free(ptr);
+    }
+}
+```
+
+### Экспорт Rust-функций для C
+```rust
+#[no_mangle]
+pub extern "C" fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+// В C: extern int add(int a, int b);
+```
+
+### Безопасная обёртка над FFI
+```rust
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
+
+/// Безопасная обёртка над C-функцией
+pub fn c_strlen(s: &str) -> Result<usize, NulError> {
+    let c_str = CString::new(s)?;
+    unsafe { Ok(strlen(c_str.as_ptr()) as usize) }
+}
+
+/// Приём C-строки
+pub unsafe fn from_c_str(ptr: *const c_char) -> Result<&'static str, Utf8Error> {
+    if ptr.is_null() {
+        return Err(/* ... */);
+    }
+    CStr::from_ptr(ptr).to_str()
+}
+```
+
+### `bindgen` — автоматическая генерация bindings
+```toml
+# Cargo.toml
+[build-dependencies]
+bindgen = "0.69"
+
+# build.rs
+fn main() {
+    let bindings = bindgen::Builder::default()
+        .header("wrapper.h")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .generate()
+        .expect("Unable to generate bindings");
+
+    let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    bindings.write_to_file(out_path.join("bindings.rs")).unwrap();
+}
+```
+
+```rust
+// Использование
+include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+
+fn main() {
+    unsafe {
+        let result = some_c_function(42);
+        println!("Result: {}", result);
+    }
+}
+```
+
+### `cxx` — безопасный FFI для C++
+```toml
+[dependencies]
+cxx = "1.0"
+cxx-build = "1.0"
+```
+
+```rust
+// bridge.rs
+#[cxx::bridge]
+mod ffi {
+    unsafe extern "C++" {
+        include!("my_cpp.h");
+        fn cpp_function(x: i32) -> i32;
+
+        type MyCppClass;
+        fn create_cpp() -> UniquePtr<MyCppClass>;
+        fn method(self: &MyCppClass) -> i32;
+    }
+
+    extern "Rust" {
+        fn rust_callback(x: i32) -> i32;
+    }
+}
+
+// Реализация Rust callback
+fn rust_callback(x: i32) -> i32 {
+    x * 2
+}
+```
+
+---
+
+## 3. System Calls (Системные вызовы)
+
+### Linux: `libc` и `nix`
+```rust
+use libc::{c_int, c_void, size_t, off_t};
+use std::os::unix::io::AsRawFd;
+
+/// Читаем файл через syscall read
+unsafe fn read_raw(fd: c_int, buf: *mut c_void, count: size_t) -> isize {
+    libc::read(fd, buf, count) as isize
+}
+
+/// Использование nix (безопасная обёртка)
+use nix::unistd::{read, write, close};
+use nix::fcntl::{open, OFlag};
+use nix::sys::stat::Mode;
+
+fn read_file_nix(path: &str) -> Result<Vec<u8>, nix::Error> {
+    let fd = open(path, OFlag::O_RDONLY, Mode::empty())?;
+    let mut buf = vec![0u8; 4096];
+    let n = read(fd, &mut buf)?;
+    buf.truncate(n);
+    close(fd)?;
+    Ok(buf)
+}
+```
+
+### Windows: `windows-rs`
+```rust
+use windows::Win32::Foundation::{HANDLE, GENERIC_READ, FILE_SHARE_READ};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, ReadFile, CloseHandle, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL
+};
+use windows::core::PCWSTR;
+
+fn read_file_windows(path: &str) -> windows::core::Result<Vec<u8>> {
+    let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+
+    unsafe {
+        let handle = CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            GENERIC_READ.0,
+            FILE_SHARE_READ,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )?;
+
+        let mut buf = vec![0u8; 4096];
+        let mut bytes_read = 0u32;
+        ReadFile(handle, Some(&mut buf), Some(&mut bytes_read), None)?;
+        CloseHandle(handle)?;
+
+        buf.truncate(bytes_read as usize);
+        Ok(buf)
+    }
+}
+```
+
+### Прямые syscall через `syscall!` (Linux, nightly)
+```rust
+#![feature(asm_experimental_arch)]
+
+// x86_64 Linux syscall numbers
+const SYS_WRITE: u64 = 1;
+const SYS_EXIT: u64 = 60;
+
+unsafe fn sys_write(fd: u64, buf: *const u8, count: u64) -> i64 {
+    let mut ret: i64;
+    core::arch::asm!(
+        "syscall",
+        in("rax") SYS_WRITE,
+        in("rdi") fd,
+        in("rsi") buf,
+        in("rdx") count,
+        lateout("rax") ret,
+        out("rcx") _, out("r11") _,
+    );
+    ret
+}
+```
+
+---
+
+## 4. Embedded Development (`no_std`)
+
+### Минимальный `no_std` проект
+```toml
+# Cargo.toml
+[package]
+name = "embedded"
+edition = "2021"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "z"
+codegen-units = 1
+```
+
+```rust
+// main.rs
+#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {}
+}
+
+#[no_mangle]
+pub extern "C" fn _start() -> ! {
+    // Entry point
+    loop {}
+}
+```
+
+### `#[panic_handler]` и `#[alloc_error_handler]`
+```rust
+#![no_std]
+
+use core::alloc::Layout;
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    // Можно использовать UART, ITM, semihosting
+    if let Some(loc) = info.location() {
+        // log::error!("Panic at {}:{}:{}", loc.file(), loc.line(), loc.column());
+    }
+    loop {}
+}
+
+#[alloc_error_handler]
+fn alloc_error(layout: Layout) -> ! {
+    // OOM в embedded — обычно фатально
+    loop {}
+}
+```
+
+### Работа с памятью и периферией
+```rust
+use core::ptr::{read_volatile, write_volatile};
+
+/// Memory-mapped register
+#[repr(transparent)]
+struct Register<T> {
+    value: T,
+}
+
+impl<T> Register<T> {
+    fn read(&self) -> T {
+        unsafe { read_volatile(&self.value) }
+    }
+
+    fn write(&mut self, value: T) {
+        unsafe { write_volatile(&mut self.value, value) }
+    }
+
+    fn modify<F>(&mut self, f: F) where F: FnOnce(T) -> T {
+        self.write(f(self.read()));
+    }
+}
+
+// Использование
+const GPIO_BASE: *mut Register<u32> = 0x4002_0000 as _;
+
+fn set_pin_high(pin: u8) {
+    let gpio = unsafe { &mut *GPIO_BASE };
+    gpio.modify(|v| v | (1 << pin));
+}
+```
+
+### `cortex-m` и `cortex-m-rt`
+```rust
+use cortex_m::asm;
+use cortex_m_rt::entry;
+
+#[entry]
+fn main() -> ! {
+    // Настройка тактирования, GPIO, прерываний
+    let dp = cortex_m::Peripherals::take().unwrap();
+
+    // Включаем тактирование GPIOA
+    dp.RCC.ahb1enr.modify(|_, w| w.gpioaen().enabled());
+
+    // Настраиваем PA5 как выход
+    dp.GPIOA.moder.modify(|_, w| w.moder5().output());
+
+    loop {
+        dp.GPIOA.odr.modify(|_, w| w.odr5().high());
+        asm::delay(8_000_000);
+        dp.GPIOA.odr.modify(|_, w| w.odr5().low());
+        asm::delay(8_000_000);
+    }
+}
+```
+
+---
+
+## 5. SIMD и `std::arch`
+
+### Платформозависимые интринсики
+```rust
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
+
+#[cfg(target_arch = "aarch64")]
+use core::arch::aarch64::*;
+
+/// Пример: векторное сложение f32 (SSE/AVX)
+#[cfg(target_arch = "x86_64")]
+fn add_f32_simd(a: &[f32], b: &[f32], dst: &mut [f32]) {
+    unsafe {
+        // Проверка поддержки AVX
+        if is_x86_feature_detected!("avx") {
+            let mut i = 0;
+            while i + 8 <= a.len() {
+                let va = _mm256_loadu_ps(a.as_ptr().add(i));
+                let vb = _mm256_loadu_ps(b.as_ptr().add(i));
+                let vr = _mm256_add_ps(va, vb);
+                _mm256_storeu_ps(dst.as_mut_ptr().add(i), vr);
+                i += 8;
+            }
+            // Остаток скалярно
+            while i < a.len() {
+                dst[i] = a[i] + b[i];
+                i += 1;
+            }
+        } else {
+            // Fallback на SSE или скалярный
+            add_f32_scalar(a, b, dst);
+        }
+    }
+}
+```
+
+### Портативный SIMD (`std::simd` — nightly)
+```rust
+#![feature(portable_simd)]
+use core::simd::{f32x8, SimdFloat};
+
+fn add_f32_portable(a: &[f32], b: &[f32], dst: &mut [f32]) {
+    let mut i = 0;
+    while i + 8 <= a.len() {
+        let va = f32x8::from_slice(&a[i..]);
+        let vb = f32x8::from_slice(&b[i..]);
+        let vr = va + vb;
+        vr.copy_to_slice(&mut dst[i..]);
+        i += 8;
+    }
+    // Остаток
+    while i < a.len() {
+        dst[i] = a[i] + b[i];
+        i += 1;
+    }
+}
+```
+
+---
+
+## 6. Raw Pointers и адресная арифметика
+
+### `*const T`, `*mut T`, `NonNull<T>`
+```rust
+use core::ptr::NonNull;
+
+/// Безопасная обёртка над raw pointer
+struct MyBox<T> {
+    ptr: NonNull<T>,
+}
+
+impl<T> MyBox<T> {
+    fn new(value: T) -> Self {
+        let ptr = Box::into_raw(Box::new(value));
+        Self { ptr: NonNull::new(ptr).unwrap() }
+    }
+
+    fn as_ref(&self) -> &T {
+        unsafe { self.ptr.as_ref() }
+    }
+
+    fn as_mut(&mut self) -> &mut T {
+        unsafe { self.ptr.as_mut() }
+    }
+}
+
+impl<T> Drop for MyBox<T> {
+    fn drop(&mut self) {
+        unsafe { drop(Box::from_raw(self.ptr.as_ptr())) }
+    }
+}
+```
+
+### `addr_of!` и `addr_of_mut!` (Rust 1.73+)
+```rust
+struct UnsafeCell<T> {
+    value: T,
+}
+
+impl<T> UnsafeCell<T> {
+    fn get(&self) -> *mut T {
+        // Создаёт указатель БЕЗ создания промежуточной ссылки
+        core::ptr::addr_of_mut!(self.value)
+    }
+}
+
+// Старый способ (UB если value невалиден):
+// &self.value as *const T as *mut T
+
+// Новый способ (безопасен):
+// addr_of_mut!(self.value)
+```
+
+### `offset`, `add`, `sub`, `wrapping_*`
+```rust
+fn pointer_arithmetic(ptr: *mut u8, len: usize) {
+    unsafe {
+        // Проверенная арифметика (panic при overflow в debug)
+        let end = ptr.add(len);
+
+        // Непроверенная (wrap-around)
+        let end_wrapped = ptr.wrapping_add(len);
+
+        // Offset в байтах
+        let offset_ptr = ptr.byte_add(10);
+
+        // Разница указателей
+        let diff = end.offset_from(ptr); // isize
+    }
+}
+```
+
+---
+
+## 7. Memory Mapping (Отображение памяти)
+
+### `mmap` на Unix
+```rust
+use std::fs::File;
+use std::os::unix::io::AsRawFd;
+use libc::{mmap, munmap, MAP_SHARED, PROT_READ, PROT_WRITE, MAP_FAILED};
+
+struct MmapRegion {
+    ptr: *mut u8,
+    len: usize,
+}
+
+impl MmapRegion {
+    fn new(file: &File, len: usize) -> Result<Self, std::io::Error> {
+        let ptr = unsafe {
+            mmap(
+                core::ptr::null_mut(),
+                len,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED,
+                file.as_raw_fd(),
+                0,
+            )
+        };
+
+        if ptr == MAP_FAILED {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        Ok(Self { ptr: ptr as *mut u8, len })
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
+}
+
+impl Drop for MmapRegion {
+    fn drop(&mut self) {
+        unsafe { munmap(self.ptr as *mut _, self.len) };
+    }
+}
+```
+
+### `memmap2` крейт (кроссплатформенно)
+```rust
+use memmap2::{Mmap, MmapMut, MmapOptions};
+use std::fs::OpenOptions;
+
+fn map_file(path: &str) -> std::io::Result<Mmap> {
+    let file = OpenOptions::new().read(true).open(path)?;
+    unsafe { Mmap::map(&file) }
+}
+
+fn map_file_mut(path: &str) -> std::io::Result<MmapMut> {
+    let file = OpenOptions::new().read(true).write(true).open(path)?;
+    unsafe { MmapMut::map_mut(&file) }
+}
+
+// Использование
+let mmap = map_file("large_file.dat")?;
+println!("First 10 bytes: {:?}", &mmap[..10]);
+```
+
+---
+
+## 8. Безопасные абстракции над `unsafe`
+
+### Паттерн: "Encapsulate Unsafety"
+```rust
+/// Небезопасная низкоуровневая операция
+mod raw {
+    pub unsafe fn dangerous_operation(ptr: *mut u8, len: usize) -> i32 {
+        // Реальная небезопасная работа
+        0
+    }
+}
+
+/// Безопасная обёртка
+pub struct SafeBuffer {
+    data: Vec<u8>,
+}
+
+impl SafeBuffer {
+    pub fn new(size: usize) -> Self {
+        Self { data: vec![0; size] }
+    }
+
+    pub fn perform_operation(&mut self) -> Result<i32, Error> {
+        if self.data.is_empty() {
+            return Err(Error::Empty);
+        }
+
+        // UNSAFE БЛОК ИЗОЛИРОВАН, инварианты проверены
+        let result = unsafe {
+            raw::dangerous_operation(self.data.as_mut_ptr(), self.data.len())
+        };
+
+        Ok(result)
+    }
+}
+```
+
+### `Pin<P>` для самореференциальных структур
+```rust
+use std::pin::Pin;
+use std::marker::PhantomPinned;
+
+struct SelfRef {
+    data: String,
+    // Указатель на data внутри этой же структуры
+    self_ptr: *const String,
+    _pin: PhantomPinned,
+}
+
+impl SelfRef {
+    fn new(data: String) -> Pin<Box<Self>> {
+        let mut boxed = Box::pin(SelfRef {
+            data,
+            self_ptr: core::ptr::null(),
+            _pin: PhantomPinned,
+        });
+
+        // Безопасно: мы закрепили boxed, адрес не изменится
+        let self_ptr: *const String = &boxed.data;
+        unsafe {
+            let mut_ref: Pin<&mut SelfRef> = Pin::as_mut(&mut boxed);
+            Pin::get_unchecked_mut(mut_ref).self_ptr = self_ptr;
+        }
+
+        boxed
+    }
+
+    fn print_self(&self) {
+        println!("Data: {}", unsafe { &*self.self_ptr });
+    }
+}
+```
+
+---
+
+## 9. Практические упражнения
+
+### Упражнение 1: FFI обёртка над C библиотекой
+```rust
+// Создайте безопасную обёртку над libz (zlib)
+// 1. Используйте bindgen для генерации bindings
+// 2. Напишите safe wrapper: compress/decompress
+// 3. Обработайте ошибки через Result
+// 4. Реализуйте Drop для очистки z_stream
+
+// build.rs
+// extern crate bindgen;
+// ...
+
+// lib.rs
+use std::ffi::CString;
+use std::os::raw::{c_int, c_ulong};
+
+#[link(name = "z")]
+extern "C" {
+    fn compress(dest: *mut u8, dest_len: *mut c_ulong,
+                source: *const u8, source_len: c_ulong) -> c_int;
+    fn uncompress(dest: *mut u8, dest_len: *mut c_ulong,
+                  source: *const u8, source_len: c_ulong) -> c_int;
+}
+
+pub fn compress_data(data: &[u8]) -> Result<Vec<u8>, CompressError> {
+    // Реализуйте безопасную обёртку
+    todo!()
+}
+```
+
+### Упражнение 2: `no_std` драйвер UART
+```rust
+#![no_std]
+
+use core::ptr::{read_volatile, write_volatile};
+
+/// UART регистры (упрощённый пример для STM32)
+#[repr(C)]
+struct UartRegisters {
+    sr: u32,      // Status register
+    dr: u32,      // Data register
+    brr: u32,     // Baud rate register
+    cr1: u32,     // Control register 1
+    cr2: u32,     // Control register 2
+    cr3: u32,     // Control register 3
+    gtpr: u32,    // Guard time and prescaler
+}
+
+const UART1_BASE: *mut UartRegisters = 0x4001_1000 as _;
+
+pub struct Uart {
+    regs: &'static mut UartRegisters,
+}
+
+impl Uart {
+    pub fn new() -> Self {
+        let regs = unsafe { &mut *UART1_BASE };
+        // Настройка: 115200 baud, 8N1
+        regs.brr.write_volatile(0x1D4C); // Пример для 72MHz
+        regs.cr1.write_volatile(0x200C); // UE | TE | RE
+        Self { regs }
+    }
+
+    pub fn write_byte(&mut self, byte: u8) {
+        // Ждём пока TXE (transmit data register empty)
+        while (self.regs.sr.read_volatile() & (1 << 7)) == 0 {}
+        self.regs.dr.write_volatile(byte as u32);
+    }
+
+    pub fn read_byte(&mut self) -> Option<u8> {
+        if (self.regs.sr.read_volatile() & (1 << 5)) != 0 {
+            Some(self.regs.dr.read_volatile() as u8)
+        } else {
+            None
+        }
+    }
+}
+```
+
+### Упражнение 3: Memory-mapped файл с синхронизацией
+```rust
+use memmap2::{MmapMut, MmapOptions};
+use std::fs::OpenOptions;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::os::unix::io::AsRawFd;
+
+/// Shared memory counter для IPC
+struct SharedCounter {
+    mmap: MmapMut,
+    counter: *mut AtomicU64,
+}
+
+impl SharedCounter {
+    fn new(path: &str) -> std::io::Result<Self> {
+        let file = OpenOptions::new()
+            .read(true).write(true).create(true)
+            .open(path)?;
+
+        file.set_len(8)?; // Размер AtomicU64
+
+        let mut mmap = unsafe { MmapOptions::new().map_mut(&file)? };
+        let counter = mmap.as_mut_ptr() as *mut AtomicU64;
+
+        // Инициализация при первом создании
+        unsafe { (*counter).store(0, Ordering::Relaxed) };
+
+        Ok(Self { mmap, counter })
+    }
+
+    fn increment(&self) -> u64 {
+        unsafe { (*self.counter).fetch_add(1, Ordering::SeqCst) + 1 }
+    }
+
+    fn get(&self) -> u64 {
+        unsafe { (*self.counter).load(Ordering::SeqCst) }
+    }
+}
+```
+
+---
+
+## 10. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `unaligned reference` | Доступ к packed полю через ссылку | `read_unaligned`/`write_unaligned` |
+| `dangling pointer` | Использование после `drop`/`free` | `Pin`, `Box::leak`, lifetime tracking |
+| `data race` | Несинхронизированный доступ из FFI | `Mutex`, `Atomic`, `Send`/`Sync` bounds |
+| `ABI mismatch` | Несовпадение calling convention | `extern "C"`, `#[repr(C)]`, bindgen |
+| `panic in FFI` | Unwind через C границу | `catch_unwind`, `#[no_mangle]` + abort |
+| `use after free` | C код хранит указатель на Rust память | `Box::leak`, `Arc`, manual lifetime |
+| `stack overflow` | Рекурсия в `no_std` без guard page | Итеративные алгоритмы, `#[inline(never)]` |
+
+---
+
+## 11. Шпаргалка: Systems Programming
+
+| Задача | Инструмент/Крейт | Ключевые типы |
+|--------|------------------|---------------|
+| C FFI | `bindgen`, `cxx`, `libc` | `extern "C"`, `c_char`, `c_int` |
+| System calls | `nix`, `windows-rs`, `libc` | `RawFd`, `HANDLE`, `ioctl` |
+| Embedded | `cortex-m`, `embassy`, `rtic` | `no_std`, `#[panic_handler]` |
+| SIMD | `std::arch`, `std::simd` | `__m256`, `f32x8`, `i32x4` |
+| Memory map | `memmap2`, `mmap` | `Mmap`, `MmapMut` |
+| Raw pointers | `NonNull`, `addr_of!` | `*const T`, `*mut T` |
+| Layout control | `#[repr(...)]` | `C`, `transparent`, `packed`, `align` |
+
+---
+
+## 12. Полезные ресурсы
+
+- **Rust FFI Omnibus**: https://github.com/rust-embedded/rust-ffi-omnibus
+- **Embedded Rust Book**: https://docs.rust-embedded.org/book/
+- **nomicon (Unsafe Rust)**: https://doc.rust-lang.org/nomicon/
+- **bindgen docs**: https://rust-lang.github.io/rust-bindgen/
+- **cxx docs**: https://cxx.rs/
+- **windows-rs**: https://github.com/microsoft/windows-rs
+- **nix crate**: https://github.com/nix-rust/nix
+- **memmap2**: https://docs.rs/memmap2/
+- **std::arch**: https://doc.rust-lang.org/core/arch/
+- **Portable SIMD**: https://github.com/rust-lang/portable-simd
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- **Data layout**: `#[repr(C)]`, `transparent`, `packed`, `align`, enum discriminants
+- **C FFI**: `extern "C"`, `bindgen` для генерации bindings, `cxx` для C++
+- **System calls**: `libc`/`nix` (Linux), `windows-rs` (Windows), прямые syscall
+- **Embedded**: `no_std`, `#[panic_handler]`, `#[alloc_error_handler]`, MMIO
+- **SIMD**: `std::arch` (платформозависимое), `std::simd` (переносимое, nightly)
+- **Raw pointers**: `*const`/`*mut`, `NonNull`, `addr_of!`, pointer arithmetic
+- **Memory mapping**: `mmap`/`VirtualAlloc`, `memmap2` кроссплатформенно
+- **Безопасность**: инкапсуляция `unsafe`, `Pin` для self-referential, ABI границы
+
+---
+
+**Следующий урок:** Cargo Ecosystem (`31_Cargo_Ecosystem.txt`)

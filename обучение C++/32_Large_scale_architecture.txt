@@ -1,0 +1,509 @@
+# Урок 32: Large-scale architecture — library design, module boundaries, stable APIs, compiler portability
+
+## Цели урока
+- Понять принципы проектирования больших C++ систем
+- Освоить модульные границы и управление зависимостями
+- Изучить stable API/ABI design и versioning
+- Научиться писать portable код под разные компиляторы/платформы
+- Разобрать паттерны архитектуры: plugins, components, layers
+
+---
+
+## 1. Library Design Principles
+
+### Physical Design (Large Scale C++ — Lakos)
+```
+Level 0:  No dependencies (leaf components)
+Level 1:  Depends only on level 0
+Level 2:  Depends on level 0, 1
+...
+Level N:  Depends on lower levels only
+
+Rule: No cycles! Acyclic component dependencies.
+```
+
+### Component Organization
+```
+myproject/
+├── core/           # Level 0: базовые утилиты, нет внешних депсов
+│   ├── memory/
+│   ├── string/
+│   └── algorithm/
+├── infra/          # Level 1: logging, config, fs, net
+│   ├── logging/
+│   ├── config/
+│   └── filesystem/
+├── domain/         # Level 2: бизнес-логика
+│   ├── user/
+│   ├── order/
+│   └── payment/
+├── service/        # Level 3: приложения/сервисы
+│   ├── api-gateway/
+│   └── worker/
+└── app/            # Level 4: main executables
+```
+
+### CMake для Component-Based Architecture
+```cmake
+# core/CMakeLists.txt
+add_library(core_memory STATIC memory.cpp)
+target_include_directories(core_memory PUBLIC include)
+
+add_library(core_string STATIC string.cpp)
+target_link_libraries(core_string PUBLIC core_memory)
+
+# infra/CMakeLists.txt
+add_library(infra_logging STATIC logging.cpp)
+target_link_libraries(infra_logging PUBLIC core_string core_memory)
+
+# domain/CMakeLists.txt
+add_library(domain_user STATIC user.cpp)
+target_link_libraries(domain_user PUBLIC infra_logging core_string)
+
+# Enforce acyclic deps с помощью CMake dependency graph
+# Используйте: cmake --graphviz=deps.dot
+```
+
+---
+
+## 2. Module Boundaries & Encapsulation
+
+### Pimpl Idiom (Compilation Firewall)
+```cpp
+// widget.h — публичный заголовок
+class Widget {
+    struct Impl;                    // forward declaration
+    std::unique_ptr<Impl> pimpl_;   // opaque pointer
+public:
+    Widget();
+    ~Widget();                      // нужен в .cpp для destroy
+    Widget(Widget&&) noexcept;
+    Widget& operator=(Widget&&) noexcept;
+    void do_work(int param);
+    int get_value() const;
+};
+
+// widget.cpp
+#include "widget.h"
+#include "internal/detail.h"        // приватные детали
+
+struct Widget::Impl {
+    Detail detail_;
+    int cache_;
+};
+
+Widget::Widget() : pimpl_(std::make_unique<Impl>()) {}
+Widget::~Widget() = default;
+Widget::Widget(Widget&&) noexcept = default;
+Widget& Widget::operator=(Widget&&) noexcept = default;
+
+void Widget::do_work(int param) {
+    pimpl_->detail_.process(param);
+    pimpl_->cache_ = param * 2;
+}
+```
+
+### Interface Segregation (Abstract Base Classes)
+```cpp
+// ILogger.h — чистый интерфейс
+class ILogger {
+public:
+    virtual ~ILogger() = default;
+    virtual void log(Level level, std::string_view msg) = 0;
+    virtual void flush() = 0;
+};
+
+// Реализация скрыта
+class SpdlogLogger : public ILogger {
+    std::shared_ptr<spdlog::logger> logger_;
+public:
+    explicit SpdlogLogger(std::string name);
+    void log(Level level, std::string_view msg) override;
+    void flush() override;
+};
+
+// Factory
+std::unique_ptr<ILogger> create_logger(std::string name);
+```
+
+### Plugin Architecture
+```cpp
+// plugin_api.h — stable C API для плагинов
+#ifdef PLUGIN_EXPORTS
+#define PLUGIN_API __declspec(dllexport)
+#else
+#define PLUGIN_API __declspec(dllimport)
+#endif
+
+extern "C" {
+    PLUGIN_API int plugin_get_version();
+    PLUGIN_API const char* plugin_get_name();
+    PLUGIN_API bool plugin_init(PluginContext* ctx);
+    PLUGIN_API void plugin_shutdown();
+    PLUGIN_API void plugin_process(const Input* in, Output* out);
+}
+
+// PluginContext — opaque struct для passing services
+struct PluginContext {
+    void (*log)(int level, const char* msg);
+    void* (*alloc)(size_t size);
+    void (*free)(void* ptr);
+};
+```
+
+---
+
+## 3. Stable API / ABI Design
+
+### Versioning Strategy
+```cpp
+// Semantic Versioning: MAJOR.MINOR.PATCH
+// MAJOR — breaking ABI/API
+// MINOR — backward-compatible additions
+// PATCH — bug fixes, no API changes
+
+// В заголовках
+#define MYLIB_VERSION_MAJOR 2
+#define MYLIB_VERSION_MINOR 3
+#define MYLIB_VERSION_PATCH 1
+
+#define MYLIB_VERSION \
+    (MYLIB_VERSION_MAJOR * 10000 + MYLIB_VERSION_MINOR * 100 + MYLIB_VERSION_PATCH)
+
+// Runtime version check
+inline int mylib_version() { return MYLIB_VERSION; }
+```
+
+### API Evolution — Backward Compatibility
+```cpp
+// v1.0
+struct Config {
+    int port;
+    int timeout_ms;
+};
+
+// v1.1 — добавили поле (DEFAULT для binary compat)
+struct Config {
+    int port;
+    int timeout_ms;
+    bool use_ssl = false;        // OK: добавление в конце с default
+    // НЕ МЕНЯТЬ порядок полей!
+};
+
+// v2.0 — breaking change
+struct ConfigV2 {
+    std::string address;         // новое поле
+    uint16_t port;               // тип изменился
+    std::chrono::milliseconds timeout; // тип изменился
+    // ...
+};
+
+// Поддержка обеих версий
+bool parse_config_v1(const char* json, Config* out);
+bool parse_config_v2(const char* json, ConfigV2* out);
+```
+
+### Symbol Versioning (Linux)
+```ld
+// mylib.map
+MYLIB_1.0 {
+    global:
+        mylib_init;
+        mylib_process;
+        mylib_config_v1_parse;
+    local: *;
+};
+
+MYLIB_2.0 {
+    global:
+        mylib_config_v2_parse;
+    local: *;
+} MYLIB_1.0;
+```
+
+### Deprecation Policy
+```cpp
+// C++14 [[deprecated]]
+[[deprecated("Use process_v2() instead. Will be removed in v3.0.")]]
+int process_v1(const Input* in, Output* out);
+
+// C++23 [[deprecated("reason")]] на namespace/enum
+namespace [[deprecated("Use v2 namespace")]] v1 { ... }
+
+// Компилятор предупредит при использовании
+```
+
+---
+
+## 4. Compiler Portability
+
+### Feature Test Macros
+```cpp
+// config.h — генерируется CMake
+#pragma once
+
+// Compiler detection
+#if defined(_MSC_VER)
+    #define MYLIB_COMPILER_MSVC 1
+    #define MYLIB_COMPILER_VERSION _MSC_VER
+#elif defined(__clang__)
+    #define MYLIB_COMPILER_CLANG 1
+    #define MYLIB_COMPILER_VERSION (__clang_major__ * 10000 + __clang_minor__ * 100 + __clang_patchlevel__)
+#elif defined(__GNUC__)
+    #define MYLIB_COMPILER_GCC 1
+    #define MYLIB_COMPILER_VERSION (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
+#endif
+
+// Feature detection
+#if defined(__cpp_lib_format) && __cpp_lib_format >= 201907L
+    #define MYLIB_HAS_STD_FORMAT 1
+#endif
+
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+    #define MYLIB_HAS_CONCEPTS 1
+#endif
+
+// Workarounds
+#if MYLIB_COMPILER_MSVC
+    #pragma warning(disable: 4251)  // dll-interface
+    #define MYLIB_FORCE_INLINE __forceinline
+#elif MYLIB_COMPILER_GCC || MYLIB_COMPILER_CLANG
+    #define MYLIB_FORCE_INLINE __attribute__((always_inline)) inline
+#endif
+```
+
+### Portable Attributes
+```cpp
+// Portable macros
+#if defined(__GNUC__) || defined(__clang__)
+    #define MYLIB_UNUSED __attribute__((unused))
+    #define MYLIB_NORETURN __attribute__((noreturn))
+    #define MYLIB_PURE __attribute__((pure))
+    #define MYLIB_CONST __attribute__((const))
+    #define MYLIB_FORMAT(archetype, string_index, first_to_check) \
+        __attribute__((format(archetype, string_index, first_to_check)))
+#elif defined(_MSC_VER)
+    #define MYLIB_UNUSED
+    #define MYLIB_NORETURN __declspec(noreturn)
+    #define MYLIB_PURE
+    #define MYLIB_CONST
+    #define MYLIB_FORMAT(archetype, string_index, first_to_check)
+#else
+    #define MYLIB_UNUSED
+    #define MYLIB_NORETURN
+    #define MYLIB_PURE
+    #define MYLIB_CONST
+    #define MYLIB_FORMAT(archetype, string_index, first_to_check)
+#endif
+
+// Usage
+MYLIB_NORETURN void abort_program();
+MYLIB_PURE int pure_func(int x);
+MYLIB_FORMAT(printf, 1, 2) void log(const char* fmt, ...);
+```
+
+### Standard Library Differences
+```cpp
+// std::filesystem — GCC < 8: experimental
+#if __has_include(<filesystem>)
+    #include <filesystem>
+    namespace fs = std::filesystem;
+#elif __has_include(<experimental/filesystem>)
+    #include <experimental/filesystem>
+    namespace fs = std::experimental::filesystem;
+#endif
+
+// std::optional — C++17, но может быть в experimental
+#if __cplusplus >= 201703L
+    #include <optional>
+#else
+    #include <experimental/optional>
+    namespace std { using experimental::optional; }
+#endif
+```
+
+### Cross-Platform Abstractions
+```cpp
+// platform.h
+#if defined(_WIN32)
+    #define MYLIB_EXPORT __declspec(dllexport)
+    #define MYLIB_IMPORT __declspec(dllimport)
+    #define MYLIB_PATH_SEP '\\'
+    #define MYLIB_DYNLIB_EXT ".dll"
+#else
+    #define MYLIB_EXPORT __attribute__((visibility("default")))
+    #define MYLIB_IMPORT __attribute__((visibility("default")))
+    #define MYLIB_PATH_SEP '/'
+    #define MYLIB_DYNLIB_EXT ".so"
+#endif
+
+// Thread-local storage
+#if defined(_WIN32)
+    #define MYLIB_THREAD_LOCAL __declspec(thread)
+#else
+    #define MYLIB_THREAD_LOCAL __thread
+#endif
+
+// C++11 thread_local предпочтительнее
+thread_local int tls_var;  // C++11
+```
+
+---
+
+## 5. Build System Integration
+
+### Config Package (CMake)
+```cmake
+# MyLibConfig.cmake.in (configure_file)
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(fmt @FMT_VERSION@)
+find_dependency(spdlog @SPDLOG_VERSION@)
+
+include("${CMAKE_CURRENT_LIST_DIR}/MyLibTargets.cmake")
+
+set(MYLIB_INCLUDE_DIRS "@PACKAGE_INSTALL_PREFIX@/include")
+set(MYLIB_LIBRARIES MyLib::MyLib)
+```
+
+```cmake
+# Consumer CMakeLists.txt
+find_package(MyLib 2.3 REQUIRED)
+target_link_libraries(myapp PRIVATE MyLib::MyLib)
+```
+
+### pkg-config
+```bash
+# mylib.pc.in
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: MyLib
+Description: My Awesome Library
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lmylib
+Cflags: -I${includedir}
+Requires: fmt >= 9.0, spdlog >= 1.11
+```
+
+---
+
+## 6. Architectural Patterns
+
+### Layered Architecture
+```
+┌─────────────────────────────────────┐
+│           Presentation              │  (CLI, GUI, REST API)
+├─────────────────────────────────────┤
+│            Application              │  (Use Cases, Orchestration)
+├─────────────────────────────────────┤
+│              Domain                 │  (Entities, Business Rules)
+├─────────────────────────────────────┤
+│           Infrastructure            │  (DB, Network, FS, Logging)
+└─────────────────────────────────────┘
+Dependency Rule: Inner layers NOT depend on outer.
+```
+
+### Dependency Injection
+```cpp
+// Интерфейсы
+class IDatabase { virtual ~IDatabase() = default; virtual User get_user(int id) = 0; };
+class IEmailService { virtual ~IEmailService() = default; virtual void send(const Email&) = 0; };
+
+// Implementation
+class PostgresDatabase : public IDatabase { ... };
+class SmtpEmailService : public IEmailService { ... };
+
+// Composition Root (main.cpp)
+int main() {
+    auto db = std::make_unique<PostgresDatabase>(conn_str);
+    auto email = std::make_unique<SmtpEmailService>(smtp_config);
+
+    UserService user_service(std::move(db), std::move(email));
+    user_service.run();
+}
+
+// UserService получает абстракции, не конкретные типы
+class UserService {
+    std::unique_ptr<IDatabase> db_;
+    std::unique_ptr<IEmailService> email_;
+public:
+    UserService(std::unique_ptr<IDatabase> db, std::unique_ptr<IEmailService> email)
+        : db_(std::move(db)), email_(std::move(email)) {}
+};
+```
+
+### Event-Driven / Message Bus
+```cpp
+// Event types
+struct UserCreated { int user_id; std::string name; };
+struct OrderPlaced { int order_id; int user_id; double amount; };
+
+// Message Bus
+class EventBus {
+    std::unordered_map<std::type_index, std::vector<std::function<void(const void*)>>> handlers_;
+public:
+    template <typename Event>
+    void subscribe(std::function<void(const Event&)> handler) {
+        handlers_[typeid(Event)].push_back(
+            [h=std::move(handler)](const void* e){ h(*static_cast<const Event*>(e)); });
+    }
+
+    template <typename Event>
+    void publish(const Event& event) {
+        auto it = handlers_.find(typeid(Event));
+        if (it != handlers_.end())
+            for (auto& h : it->second) h(&event);
+    }
+};
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Component Architecture
+Разбейте монолитный проект на компоненты (core, infra, domain, service). Настройте CMake с acyclic dependencies. Визуализируйте граф зависимостей (`cmake --graphviz`).
+
+### Задание 2: Stable Plugin API
+Спроектируйте C-совместимый plugin API для вашей системы:
+- Версионирование плагинов
+- Opaque context для сервисов
+- Жизненный цикл: init/shutdown/process
+Напишите хост-приложение и пример плагина.
+
+### Задание 3: Pimpl Refactoring
+Возьмите класс с публичными private членами (в header). Рефакторьте на Pimpl. Измерьте время компиляции до/после изменения private члена.
+
+### Задание 4: Cross-Compiler CI
+Настройте CI (GitHub Actions) для сборки под:
+- GCC 11, 12, 13
+- Clang 15, 16, 17
+- MSVC latest
+- Linux, Windows, macOS
+Исправьте все предупреждения и ошибки портируемости.
+
+### Задание 5: API Evolution
+Создайте библиотеку v1.0 с API. Выпустите v1.1 (добавление), v2.0 (breaking). Настройте symbol versioning. Напишите тесты, проверяющие binary compatibility v1.0 -> v1.1.
+
+### Задание 6: Dependency Injection Container
+Реализуйте простой DI контейнер:
+- Регистрация: `container.bind<IDatabase, PostgresDatabase>()`
+- Разрешение: `auto db = container.resolve<IDatabase>()`
+- Поддержка scopes: singleton, transient, scoped
+Используйте в проекте вместо ручного wiring.
+
+---
+
+## Полезные ресурсы
+- **Large-Scale C++ Software Design** (John Lakos) — классика
+- **Large-Scale C++ Volume II & III** (Lakos et al.) — современные практики
+- **Clean Architecture** (Robert Martin) — слои и правила зависимостей
+- **C++ Core Guidelines: Interfaces** — https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Ri
+- **Semantic Versioning** — https://semver.org/
+- **Itanium C++ ABI** — https://itanium-cxx-abi.github.io/cxx-abi/
+- **CppCon: "Physical Design" (John Lakos)**
+- **CppCon: "API Design for C++ Libraries" (Titus Winters)**

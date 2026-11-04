@@ -1,0 +1,498 @@
+# Урок 9: Модули и Cargo
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Организовывать код в модули (`mod`) и файлы
+- Использовать `pub`, `pub(crate)`, `pub(super)` для контроля видимости
+- Импортировать элементы через `use`
+- Работать с `Cargo.toml`: зависимости, фичи, профили
+- Публиковать пакеты на crates.io
+- Использовать workspace для монолитов
+- Понимать edition'ы Rust
+
+---
+
+## 1. Модули (Modules)
+
+### Объявление модулей
+```rust
+// Внутри файла
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+        fn seat_at_table() {}
+    }
+    mod serving {
+        fn take_order() {}
+        fn serve_order() {}
+        fn take_payment() {}
+    }
+}
+```
+
+### Файловая структура (Rust 2018+)
+```
+src/
+├── main.rs / lib.rs (корень crate)
+├── front_of_house.rs (или front_of_house/mod.rs)
+│   └── hosting.rs
+│   └── serving.rs
+```
+
+**front_of_house.rs:**
+```rust
+pub mod hosting;
+pub mod serving;
+```
+
+**front_of_house/hosting.rs:**
+```rust
+pub fn add_to_waitlist() {}
+fn seat_at_table() {}
+```
+
+---
+
+## 2. Видимость (Visibility)
+
+### Правила
+- По умолчанию: **private** (только внутри модуля и детей)
+- `pub` — публичный везде
+- `pub(crate)` — публичный внутри текущего crate
+- `pub(super)` — публичный в родительском модуле
+- `pub(in path::to::module)` — публичный в конкретном модуле
+
+```rust
+mod outer {
+    pub mod inner {
+        pub(super) fn inner_fn() {} // Видно в outer
+        pub(crate) fn crate_fn() {} // Видно во всем crate
+        pub(in crate::outer) fn specific_fn() {} // Только в outer
+    }
+    fn outer_fn() {
+        inner::inner_fn(); // OK
+    }
+}
+```
+
+### Structs и enums
+```rust
+pub struct PublicStruct {
+    pub public_field: i32,
+    private_field: i32, // private по умолчанию
+}
+
+pub enum PublicEnum {
+    Variant1,      // pub если enum pub
+    Variant2(i32), // поле pub
+}
+```
+
+---
+
+## 3. Импорт через `use`
+
+### Базовый синтаксис
+```rust
+use crate::front_of_house::hosting;
+
+fn main() {
+    hosting::add_to_waitlist();
+}
+```
+
+### Идиоматичные паттерны
+```rust
+// Функции/типы — до родителя
+use std::collections::HashMap;
+use std::io::{self, Read, Write};
+
+// Реэкспорт (pub use)
+pub use self::front_of_house::hosting;
+
+// as — переименование
+use std::io::Result as IoResult;
+
+// glob — всё из модуля (редко)
+use std::collections::*;
+```
+
+### `use` в `extern crate` (до Rust 2018)
+```rust
+// В Rust 2018+ extern crate не нужен для стандартной библиотеки
+// extern crate rand; // только для Rust 2015 edition
+use rand::Rng;
+```
+
+---
+
+## 4. Пути (Paths)
+
+### Абсолютные (от корня crate)
+```rust
+crate::front_of_house::hosting::add_to_waitlist();
+```
+
+### Относительные (от текущего модуля)
+```rust
+// Внутри front_of_house
+super::hosting::add_to_waitlist(); // родитель
+self::hosting::add_to_waitlist();  // текущий
+```
+
+---
+
+## 5. Cargo.toml — детально
+
+### Базовые поля
+```toml
+[package]
+name = "my_project"
+version = "0.1.0"
+edition = "2021"
+authors = ["You <you@example.com>"]
+description = "A cool project"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/user/repo"
+homepage = "https://example.com"
+documentation = "https://docs.rs/my_project"
+readme = "README.md"
+keywords = ["cli", "tool"]
+categories = ["command-line-utilities"]
+```
+
+### Зависимости
+```toml
+[dependencies]
+# Версия (semver)
+serde = "1.0"
+# С фичами
+serde = { version = "1.0", features = ["derive"] }
+# С git
+regex = { git = "https://github.com/rust-lang/regex" }
+# С path (локально)
+my_lib = { path = "../my_lib" }
+# Опциональная
+reqwest = { version = "0.11", optional = true }
+```
+
+### Dev-зависимости (только для тестов/примеров)
+```toml
+[dev-dependencies]
+pretty_assertions = "1.0"
+tokio = { version = "1.0", features = ["test-util"] }
+```
+
+### Build-зависимости (build.rs)
+```toml
+[build-dependencies]
+cc = "1.0"
+```
+
+### Фичи (Features)
+```toml
+[features]
+default = ["std"]
+std = ["serde/std"]
+async = ["tokio"]
+full = ["std", "async"]
+
+# Зависимость с фичей
+reqwest = { version = "0.11", optional = true }
+
+[dependencies]
+reqwest = { version = "0.11", optional = true }
+```
+
+**Использование:**
+```bash
+cargo build --features async
+cargo build --no-default-features
+cargo build --features "std async"
+```
+
+### Профили (Profiles)
+```toml
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true          # Link Time Optimization
+codegen-units = 1   # Лучше оптимизация
+panic = "abort"     # Меньший бинарник
+
+[profile.test]
+opt-level = 2
+
+[profile.bench]
+opt-level = 3
+```
+
+### Workspace (много пакетов)
+```toml
+# Cargo.toml в корне
+[workspace]
+members = [
+    "crate_a",
+    "crate_b",
+    "tools/*",
+]
+resolver = "2" # Новый резолвер (Rust 1.51+)
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+```
+
+**В crate_a/Cargo.toml:**
+```toml
+[dependencies]
+serde = { workspace = true }
+tokio = { workspace = true }
+```
+
+---
+
+## 6. Cargo команды — продвинутые
+
+### Сборка и проверка
+```bash
+cargo check              # Быстрая проверка типов
+cargo build              # Debug
+cargo build --release    # Release
+cargo build --all-targets # Включая тесты, бенчмарки
+cargo build --target x86_64-unknown-linux-gnu # Кросскомпиляция
+```
+
+### Тестирование
+```bash
+cargo test               # Все тесты
+cargo test --lib         # Только lib тесты
+cargo test --bins        # Только бинарники
+cargo test my_test       # Фильтр по имени
+cargo test -- --nocapture # Показать println в тестах
+cargo test -- --test-threads=1 # Последовательно
+```
+
+### Документация
+```bash
+cargo doc                # Генерация
+cargo doc --open         # Генерация + открыть в браузере
+cargo doc --no-deps      # Без зависимостей
+cargo doc --document-private-items # Включая private
+```
+
+### Публикация
+```bash
+cargo login              # Сохранить токен
+cargo publish --dry-run  # Проверка
+cargo publish            # Публикация на crates.io
+cargo yank --vers 1.0.0  # Отозвать версию
+```
+
+### Информация
+```bash
+cargo tree               # Дерево зависимостей
+cargo tree -d            # Только дубликаты
+cargo metadata --format-version=1 | jq . # JSON метаданные
+cargo outdated           # Требует cargo-outdated
+cargo audit              # Требует cargo-audit (безопасность)
+```
+
+---
+
+## 7. Edition'ы Rust
+
+| Edition | Год | Ключевые изменения |
+|---------|-----|-------------------|
+| 2015 | 2015 | Базовая |
+| 2018 | 2018 | NLL, модули без `mod.rs`, `try` -> `?`, `dyn Trait` |
+| 2021 | 2021 | Прелюдия 2021, `IntoIterator` для массивов, резолвер 2 |
+| 2024 | 2024 | (планируется) |
+
+**Указание в Cargo.toml:**
+```toml
+[package]
+edition = "2021"
+```
+
+**Миграция:**
+```bash
+cargo fix --edition
+```
+
+---
+
+## 8. Примеры, тесты и бенчмарки
+
+### Структура проекта
+```
+src/
+├── lib.rs
+├── main.rs
+├── bin/
+│   └── tool.rs        # Дополнительные бинарники
+examples/
+├── simple.rs          # cargo run --example simple
+tests/
+├── integration.rs     # Интеграционные тесты
+benches/
+├── bench.rs           # Бенчмарки (nightly)
+```
+
+### Интеграционные тесты (tests/)
+```rust
+// tests/integration.rs
+use my_crate::public_api;
+
+#[test]
+fn test_public_api() {
+    assert_eq!(public_api(), 42);
+}
+```
+
+### Примеры (examples/)
+```rust
+// examples/simple.rs
+use my_crate::Client;
+
+fn main() {
+    let client = Client::new();
+    client.do_something();
+}
+```
+
+```bash
+cargo run --example simple
+cargo test --example simple # Компиляция примеров как тестов
+```
+
+---
+
+## 9. Практические упражнения
+
+### Упражнение 1: Модульная структура
+```
+src/
+├── lib.rs
+├── models/
+│   ├── mod.rs
+│   ├── user.rs
+│   └── post.rs
+├── services/
+│   ├── mod.rs
+│   └── auth.rs
+└── utils/
+    └── mod.rs
+```
+
+**src/lib.rs:**
+```rust
+pub mod models;
+pub mod services;
+mod utils; // private
+
+pub use models::User;
+pub use services::auth::authenticate;
+```
+
+**src/models/user.rs:**
+```rust
+#[derive(Debug)]
+pub struct User {
+    pub id: u64,
+    pub name: String,
+}
+```
+
+### Упражнение 2: Cargo features
+```toml
+# Cargo.toml
+[features]
+default = ["json"]
+json = ["serde_json"]
+yaml = ["serde_yaml"]
+full = ["json", "yaml"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", optional = true }
+serde_yaml = { version = "0.9", optional = true }
+```
+
+```rust
+// src/lib.rs
+#[cfg(feature = "json")]
+pub fn to_json<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_string(v).unwrap()
+}
+
+#[cfg(feature = "yaml")]
+pub fn to_yaml<T: serde::Serialize>(v: &T) -> String {
+    serde_yaml::to_string(v).unwrap()
+}
+```
+
+### Упражнение 3: Workspace
+```bash
+# Создание workspace
+cargo new my_workspace --workspace
+cd my_workspace
+cargo new core --lib
+cargo new cli --bin
+```
+
+**my_workspace/Cargo.toml:**
+```toml
+[workspace]
+members = ["core", "cli"]
+resolver = "2"
+
+[workspace.dependencies]
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+```
+
+---
+
+## 10. Типичные ошибки новичков
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `module not found` | Неправильный путь/файл | Проверьте `mod name;` и файл `name.rs` или `name/mod.rs` |
+| `item is private` | Нет `pub` | Добавьте `pub` к модулю/функции/структуре |
+| `unused import` | `use` не используется | Удалите или добавьте `#[allow(unused_imports)]` |
+| `cyclic dependency` | Крейты зависят друг от друга | Вынесите общий код в третий крейт |
+| `feature not found` | Опечатка в имени фичи | Проверьте `[features]` в Cargo.toml |
+| `version solving failed` | Конфликт версий | `cargo update`, проверьте `Cargo.lock` |
+
+---
+
+## 11. Полезные ресурсы
+
+- **The Book — Modules**: https://doc.rust-lang.org/book/ch07-00-managing-growing-projects-with-packages-crates-and-modules.html
+- **Cargo Book**: https://doc.rust-lang.org/cargo/
+- **Cargo Reference**: https://doc.rust-lang.org/cargo/reference/
+- **SemVer**: https://semver.org/
+- **crates.io**: https://crates.io/
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- `mod` — объявление модулей, файловая структура
+- Видимость: `pub`, `pub(crate)`, `pub(super)`, `pub(in path)`
+- `use` — импорт, реэкспорт (`pub use`), glob, `as`
+- Пути: абсолютные (`crate::`), относительные (`super::`, `self::`)
+- `Cargo.toml`: зависимости, фичи, профили, workspace
+- Edition'ы: 2015, 2018, 2021
+- Примеры (`examples/`), интеграционные тесты (`tests/`)
+- Публикация: `cargo login`, `cargo publish`
+
+---
+
+**Следующий урок:** Трейты и дженерики (`10_Traits_Generics.txt`)

@@ -1,0 +1,885 @@
+# Урок 26: Анимация/эффекты — compositing, 3D трансформации, маски, фильтры, производительность, reduced motion
+
+## Цели урока
+- Изучить compositing и какие свойства анимируются на GPU (дешево)
+- Освоить 3D трансформации (rotateX, rotateY, rotateZ, perspective, transform-style)
+- Научиться использовать CSS-маски (mask-image, mask-border) и фильтры (filter, backdrop-filter)
+- Обеспечить производительность анимаций (will-change, contain, избегать layout thrashing)
+- Уважать настройку prefers-reduced-motion
+
+---
+
+## 1. Compositing конвейер браузера
+
+### Конвейер рендеринга
+```
+JavaScript → Style → Layout → Paint → Composite → Display
+     ↑                                                    │
+     └── Свойства, затрагивающие конвейер ──→             │
+```
+
+### Какие свойства затрагивают какой этап
+
+| Этап | Свойства | Стоимость |
+|------|----------|-----------|
+| **Layout** | width, height, margin, padding, top, left, font-size, flex, grid | 🔴 Дорого |
+| **Paint** | color, background, box-shadow, border-radius, border | 🟡 Средне |
+| **Composite** | transform, opacity, filter, will-change | 🟢 Дешево (GPU) |
+
+### Что анимировать — дешево vs дорого
+
+```css
+/* 🟢 ДЕШЕВО — compositing поток (GPU, 60fps) */
+.good {
+  animation: move 1s;
+}
+@keyframes move {
+  to {
+    transform: translate3d(100px, 0, 0);  /* translateX + translateZ для принудительного слоя */
+    opacity: 0.5;
+    filter: blur(2px);  /* С осторожностью —blur может быть дорог */
+  }
+}
+
+/* 🔴 ДОРОГО — главный поток (layout/paint, дроп кадров) */
+.bad {
+  animation: move 1s;
+}
+@keyframes move {
+  to {
+    width: 200px;           /* Layout */
+    height: 200px;          /* Layout */
+    margin-left: 100px;     /* Layout */
+    top: 50px;              /* Layout (если position: absolute) */
+    left: 50px;             /* Layout (если position: absolute) */
+    background: red;        /* Paint */
+    box-shadow: 0 10px 20px rgb(0 0 0 / 0.3);  /* Paint */
+    border-radius: 10px;    /* Paint */
+  }
+}
+```
+
+### rules for performant animation
+1. Анимируй только `transform` и `opacity` (и `filter` аккуратно)
+2. Используй `translate3d(x, y, 0)` или `will-change: transform` для создания отдельного compositing слоя
+3. Не анимируй `width`, `height`, `top`, `left`, `margin` — используй `transform: scale()`, `transform: translate()`
+4. Используй `contain: strict` для изоляции дорогостоящих элементов
+5. Проверяй в DevTools → Performance → Animations (badge GPU)
+
+---
+
+## 2. will-change и contain
+
+### will-change — сообщи браузеру заранее
+```css
+/* Правильно — только перед анимацией, сбрасываем после */
+.will-animate {
+  will-change: transform, opacity;
+}
+
+.will-animate:hover {
+  will-change: transform;
+  transition: transform 0.3s ease;
+}
+
+.will-animate {
+  will-change: auto;  /* Сбрасываем после анимации */
+}
+
+/* Через JavaScript — точный контроль */
+function animate(el) {
+  el.style.willChange = 'transform, opacity';
+  el.animate(
+    [{ transform: 'translateX(0)' }, { transform: 'translateX(100px)' }],
+    { duration: 500, fill: 'forwards' }
+  ).finished.then(() => {
+    el.style.willChange = 'auto';
+  });
+}
+```
+
+### Антипаттерн will-change
+```css
+/* ПЛОХО — на всё подряд, пожирает память */
+.bad {
+  will-change: all;
+  will-change: transform, opacity, filter, width, height; /* Лишние свойства */
+}
+
+/* ПЛОХО — никогда не сбрасывается */
+.stuck {
+  will-change: transform;  /* Остаётся навсегда — память не освобождается */
+}
+```
+
+### contain — изоляция для производительности
+```css
+/* Layout containment — изменения внутри не влияют на родителя */
+.card {
+  contain: layout;
+}
+
+/*Layout + paint */
+.card {
+  contain: layout paint;
+}
+
+/* Strict — layout + paint + size + style */
+.card {
+  contain: strict;
+}
+
+/* Content — layout + paint + style (без size) */
+.card {
+  contain: content;
+}
+```
+
+### Практический кейс — список с анимациями
+```css
+.list {
+  contain: strict;  /* Анимация одной карточки не пересчитывает весь список */
+}
+
+.list-item {
+  animation: slide 0.3s ease;
+}
+
+@keyframes slide {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+```
+
+---
+
+## 3. 3D трансформации
+
+### perspective — глубина сцены
+```css
+.scene {
+  perspective: 1000px;  /* Чем меньше — тем выраженнее эффект глубины */
+  /* perspective: none — нет 3D эффекта */
+}
+
+/* perspective-origin — точка наблюдения */
+.scene {
+  perspective-origin: 50% 50%;
+}
+```
+
+### transform-style: preserve-3d — дочерние элементы в 3D пространстве
+```css
+.card {
+  transform-style: preserve-3d;  /* Дети существуют в 3D пространстве */
+  /* transform-style: flat — дети приплюсовываются к плоскости родителя (по умолчанию) */
+}
+```
+
+### backface-visibility — обратная сторона элемента
+```css
+.card__face {
+  backface-visibility: hidden;  /* Скрыть обратную сторону при повороте */
+  /* backface-visibility: visible — показать обратную сторону (по умолчанию) */
+}
+```
+
+### rotateX, rotateY, rotateZ — вращение вокруг осей
+```css
+.box {
+  transform: rotateX(45deg);  /* Вращение вокруг горизонтальной оси */
+  transform: rotateY(45deg);  /* Вращение вокруг вертикальной оси */
+  transform: rotateZ(45deg);  /* Вращение вокруг оси Z (как 2D rotate) */
+  transform: rotate3d(1, 1, 0, 45deg);  /* Вращение вокруг произвольной оси */
+}
+```
+
+### translateZ — движение вдоль оси Z (вперед/назад)
+```css
+.box {
+  transform: translateZ(100px);  /* Ближе к наблюдателю */
+  transform: translate3d(100px, 50px, -100px);  /* X, Y, Z */
+}
+```
+
+### scale3d — масштабирование в 3D
+```css
+.box {
+  transform: scale3d(1.2, 1.2, 1.2);
+  transform: scaleZ(1.5);  /* Только по Z */
+}
+```
+
+### Пример: переворачивающаяся карточка (Flip Card)
+```html
+<div class="flip-card">
+  <div class="flip-card__inner">
+    <div class="flip-card__face flip-card__face--front">Лицевая сторона</div>
+    <div class="flip-card__face flip-card__face--back">Обратная сторона</div>
+  </div>
+</div>
+```
+
+```css
+.flip-card {
+  perspective: 1000px;
+  width: 300px;
+  height: 200px;
+}
+
+.flip-card__inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+  transition: transform 0.6s;
+  transform-style: preserve-3d;
+  cursor: pointer;
+}
+
+.flip-card:hover .flip-card__inner {
+  transform: rotateY(180deg);
+}
+
+.flip-card__face {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1rem;
+  color: white;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.flip-card__face--front {
+  background: oklch(0.62 0.22 264);
+}
+
+.flip-card__face--back {
+  background: oklch(0.65 0.22 20);
+  transform: rotateY(180deg);
+}
+```
+
+### Пример: 3D куб
+```html
+<div class="cube-scene">
+  <div class="cube">
+    <div class="cube__face face--front">Front</div>
+    <div class="cube__face face--back">Back</div>
+    <div class="cube__face face--right">Right</div>
+    <div class="cube__face face--left">Left</div>
+    <div class="cube__face face--top">Top</div>
+    <div class="cube__face face--bottom">Bottom</div>
+  </div>
+</div>
+```
+
+```css
+.cube-scene {
+  perspective: 600px;
+  width: 200px;
+  height: 200px;
+}
+
+.cube {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  animation: spin 10s linear infinite;
+}
+
+.cube__face {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border: 2px solid oklch(0.62 0.22 264);
+  background: color-mix(in oklch, oklch(0.62 0.22 264), white 70%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.face--front  { transform: rotateY(0deg) translateZ(100px); }
+.face--back   { transform: rotateY(180deg) translateZ(100px); }
+.face--right  { transform: rotateY(90deg) translateZ(100px); }
+.face--left   { transform: rotateY(-90deg) translateZ(100px); }
+.face--top    { transform: rotateX(90deg) translateZ(100px); }
+.face--bottom { transform: rotateX(-90deg) translateZ(100px); }
+
+@keyframes spin {
+  from { transform: rotateX(0deg) rotateY(0deg); }
+  to { transform: rotateX(360deg) rotateY(360deg); }
+}
+```
+
+---
+
+## 4. CSS-маски (mask-image, mask-border)
+
+### mask-image — маска для отображения части элемента
+```css
+.card {
+  mask-image: linear-gradient(black 50%, transparent 50%);
+  /* Черное = видимое, прозрачное = скрытое */
+}
+
+.avatar {
+  mask-image: url('mask.png');  /* PNG с прозрачностью */
+  mask-size: cover;
+  mask-position: center;
+  mask-repeat: no-repeat;
+}
+```
+
+### mask-composite — как соединять несколько масок
+```css
+.complex-mask {
+  mask-image: url('shape1.png'), url('shape2.png');
+  mask-composite: exclude;  /* exclude, add, intersect, subtract */
+}
+```
+
+### mask-border — граничная маска (как border-image, но для маски)
+```css
+.card {
+  mask-border: url('frame.png') 30 round;
+  mask-border-slice: 30;
+  mask-border-width: 10px;
+  mask-border-outset: 5px;
+  mask-border-repeat: round;
+}
+```
+
+### Пример: текст с маской изображения
+```html
+<h1 class="masked-text">Заголовок</h1>
+```
+
+```css
+.masked-text {
+  font-size: 4rem;
+  font-weight: 900;
+  text-align: center;
+  margin: 0;
+
+  /* Маска — картинка показывается только внутри букв */
+  -webkit-mask-image: url('texture.jpg');  /* Safari prefixed */
+  mask-image: url('texture.jpg');
+  -webkit-mask-size: cover;
+  mask-size: cover;
+  -webkit-mask-position: center;
+  mask-position: center;
+
+  color: transparent;  /* Текст прозрачный, видно только маску */
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  /* Или background-clip: text для поддержки */
+}
+```
+
+### Поддержка масок
+Chrome 18+ (с -webkit-), Firefox 53+, Safari 4+. Для production — проверяй caniuse и имей фолбэк.
+
+---
+
+## 5. CSS-фильтры (filter и backdrop-filter)
+
+### filter — фильтр элемента
+```css
+/* Размытие */
+.blur {
+  filter: blur(4px);
+}
+
+/* Яркость */
+.brightness {
+  filter: brightness(1.5);  /* 1.0 = без изменений, 0 = чёрный, >1 = ярче */
+}
+
+/* Контраст */
+.contrast {
+  filter: contrast(1.2);
+}
+
+/* Оттенок серого */
+.grayscale {
+  filter: grayscale(100%);  /* 0% = цвет, 100% = Ч/Б */
+}
+
+/* Сепия */
+.sepia {
+  filter: sepia(80%);
+}
+
+/* Насыщенность */
+.saturate {
+  filter: saturate(2);  /* 1 = без изменений, 0 = Ч/Б, >1 = насыщеннее */
+}
+
+/* Оттенок (hue-rotate) */
+.hue-rotate {
+  filter: hue-rotate(90deg);
+}
+
+/* Инверсия */
+.invert {
+  filter: invert(100%);
+}
+
+/* Непрозрачность (альтернатива opacity) */
+.opacity {
+  filter: opacity(50%);
+}
+
+/* Комбинирование */
+.combined {
+  filter: grayscale(50%) contrast(1.2) blur(1px);
+}
+```
+
+### backdrop-filter — фильтр фона за элементом
+```css
+.glass {
+  background: rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);  /* Safari */
+
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 1rem;
+}
+```
+
+```css
+/* Стекло с насыщенностью и контрастом */
+.glass-card {
+  background: rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(12px) saturate(1.8) contrast(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.8) contrast(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 1rem;
+  color: white;
+}
+```
+
+### Производительность фильтров
+- `blur()` — может быть дорогим, особенно с большими радиусами
+- `backdrop-filter` — дороже, чем `filter`, так как требует сэмплирования области за элементом
+- Используй `will-change: filter` если анимируешь фильтр
+- На мобильных устройствах backdrop-filter может снижать FPS
+
+---
+
+## 6. prefers-reduced-motion — уважение пользователя
+
+### Обнаружение настройки
+```css
+/* Пользователь включил «Уменьшить движение» в ОС */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Конкретный элемент */
+.slider {
+  transition: transform 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slider {
+    transition: none;
+  }
+
+  .animated {
+    animation: none;
+  }
+}
+
+/* Пустая строка = нет предпочтений (показывать анимации) */
+@media (prefers-reduced-motion: no-preference) {
+  .fancy {
+    animation: fade-in 0.5s ease;
+  }
+}
+```
+
+### JavaScript проверка
+```javascript
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+if (prefersReducedMotion.matches) {
+  // Отключить анимации в JS
+  element.style.animation = 'none';
+}
+
+// Слушать изменения настройки
+prefersReducedMotion.addEventListener('change', (e) => {
+  if (e.matches) {
+    // Отключить анимации
+  } else {
+    // Включить анимации
+  }
+});
+```
+
+### Что отключать при reduced motion
+- autoplay анимации (carousel, parallax)
+- transition на hover/ focus (опционально, можно оставить мгновенные)
+- parallax эффекты
+- 애니메이션 при скролле
+- кнопочные микро-анимации (можно оставить, если не раздражают)
+
+### Что оставить
+- Мгновенные переходы (transition: none, но цвет может меняться сразу)
+- Funktionalные анимации (загрузка, отправка формы)
+- Видео и GIF (пользователь контролирует паузу)
+
+---
+
+## 7. animation и transition — детали
+
+### animation — свойства
+```css
+.element {
+  animation-name: fade-in;
+  animation-duration: 0.5s;
+  animation-timing-function: ease;
+  animation-delay: 0.2s;
+  animation-iteration-count: 3;  /* infinite для бесконечной */
+  animation-direction: alternate;  /* normal, reverse, alternate, alternate-reverse */
+  animation-fill-mode: forwards;  /* none, forwards, backwards, both */
+  animation-play-state: running;  /* paused */
+
+  /* Шортхэнд */
+  animation: fade-in 0.5s ease 0.2s 3 alternate forwards;
+}
+```
+
+### animation-composition — как комбинировать анимации
+```css
+.element {
+  animation: move 1s, scale 1s;
+
+  /* replace — по умолчанию, последняя анимация побеждает */
+  /* add — анимации складываются (transform) */
+  /* accumulate — как add, но для filter и др. */
+  animation-composition: add;
+}
+
+.card {
+  animation:
+    float 3s ease-in-out infinite,
+    rotate 10s linear infinite;
+  animation-composition: add;  /* Обе работают одновременно! */
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+@keyframes rotate {
+  to { transform: rotate(360deg); }
+}
+```
+
+### transition — свойства
+```css
+.btn {
+  transition-property: background, transform, opacity;
+  transition-duration: 0.2s;
+  transition-timing-function: ease;
+  transition-delay: 0s;
+
+  /* Шортхэнд */
+  transition: background 0.2s, transform 0.2s, opacity 0.2s;
+
+  /* transition-behavior: allow-discrete — для анимации display */
+  transition: display 0.3s allow-discrete;
+}
+
+.btn:hover {
+  background: oklch(0.55 0.22 264);
+  transform: scale(1.05);
+  opacity: 0.9;
+}
+```
+
+### @starting-style — для анимации входа (display: none → block)
+```css
+.modal {
+  display: none;
+  opacity: 0;
+  transition: opacity 0.3s, display 0.3s allow-discrete;
+}
+
+/* Начальное состояние перед появлением */
+@starting-style {
+  .modal {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+.modal.is-open {
+  display: block;
+  opacity: 1;
+  transform: scale(1);
+}
+```
+
+---
+
+## 8. Комплексный пример: производительная карточка с эффектами
+
+```html
+<div class="perf-card">
+  <div class="perf-card__media">
+    <img src="photo.jpg" alt="" class="perf-card__img">
+    <div class="perf-card__badge">Новинка</div>
+  </div>
+  <div class="perf-card__body">
+    <h3 class="perf-card__title">Название товара</h3>
+    <p class="perf-card__text">Описание товара...</p>
+    <button class="perf-card__btn">Подробнее</button>
+  </div>
+</div>
+```
+
+```css
+.perf-card {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem;
+  border: 1px solid oklch(0.88 0.006 285);
+  border-radius: 1rem;
+  background: white;
+
+  /* Дешёвые анимации — только transform и opacity */
+  transition:
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.3s ease,
+    border-color 0.3s ease;
+
+  will-change: auto;  /* Сбрасываем по умолчанию */
+}
+
+.perf-card:hover {
+  will-change: transform, box-shadow;  /* Включаем перед ховером */
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.1);
+  border-color: oklch(0.62 0.22 264);
+}
+
+.perf-card:focus-within {
+  outline: 3px solid oklch(0.62 0.22 264);
+  outline-offset: 2px;
+}
+
+.perf-card:active {
+  transform: translateY(-2px) scale(0.98);
+}
+
+/* Сбрасываем will-change после взаимодействия */
+.perf-card:not(:hover):not(:focus-within) {
+  will-change: auto;
+}
+
+.perf-card__media {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  background: oklch(0.97 0.001 285);
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.perf-card__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+
+  /* Дешёвая анимация масштабирования при ховере */
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.perf-card:hover .perf-card__img {
+  transform: scale(1.05);
+}
+
+.perf-card__badge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  background: oklch(0.65 0.22 20);
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* Маска для изображения (опциональный эффект) */
+.perf-card__img--masked {
+  -webkit-mask-image: linear-gradient(black 80%, transparent 100%);
+  mask-image: linear-gradient(black 80%, transparent 100%);
+}
+
+/* Фильтр на изображение — используй осторожно, может быть дорого */
+.perf-card:hover .perf-card__img {
+  filter: brightness(1.1);
+}
+
+/* Анимация входа */
+@keyframes card-appear {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.perf-card {
+  animation: card-appear 0.5s ease forwards;
+  animation-delay: 0.1s;
+  opacity: 0;  /* Начальное состояние для JS или CSS */
+}
+
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .perf-card,
+  .perf-card__img {
+    transition: none;
+    animation: none;
+  }
+
+  .perf-card:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  .perf-card:hover .perf-card__img {
+    transform: none;
+    filter: none;
+  }
+}
+
+/* Forced colors (Windows High Contrast) */
+@media (forced-colors: active) {
+  .perf-card {
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+
+  .perf-card__badge {
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+```
+
+---
+
+## 9. Чек-лист производительности анимаций
+
+| Проверка | Как проверить |
+|----------|---------------|
+| Анимирую только transform и opacity | Поиск `width`, `height`, `top`, `left`, `margin` в @keyframes |
+| will-change сбрасывается после анимации | Нет永久 will-change: transform |
+| contain на контейнерах со списками | contain: layout paint на списках |
+| GPU-слой создан | DevTools → Animations → бейдж «GPU» |
+| FPS стабильно 60 | DevTools → Performance → запись анимации |
+| prefers-reduced-motion respected | Включить в ОС, анимации отключаются |
+| Нет layout thrashing | Чтение/запись layout-свойств разделены в JS |
+| backface-visibility: hidden для 3D | На элементах с rotateY/rotateX |
+| perspective на сцене 3D | perspective у родителя 3D элементов |
+
+---
+
+## 10. Практическое задание
+
+### Задача 1: Анимация только на GPU-свойствах
+Создай карточку, при ховере на которую:
+- Поднимается вверх (transform: translateY)
+- Появляется тень (box-shadow — paint, но только при ховере, не анимируется continuously)
+- Изображение масштабируется (transform: scale)
+Проверь в DevTools, что анимация идет на compositing потоке (бейдж GPU).
+
+### Задача 2: will-change контроль
+Реализуй кнопку, при клике на которую:
+- will-change включается через JS перед анимацией
+- will-change сбрасывается после завершения анимации (.finished.then)
+- Измерь потребление памяти до и после
+
+### Задача 3: 3D Flip Card
+Создай переворачивающуюся карточку с:
+- perspective на контейнере
+- transform-style: preserve-3d на внутреннем элементе
+- backface-visibility: hidden на гранях
+- rotateY(180deg) при ховере
+
+### Задача 4: Маска и фильтр
+Создай элемент с:
+- mask-image (линейный градиент или картинка)
+- filter: blur() или grayscale() при ховере
+- backdrop-filter для стеклянного эффекта
+Проверь производительность на больших элементах.
+
+### Задача 5: prefers-reduced-motion
+Создай страницу с анимациями:
+- Автопрокрутка карусели — отключается при reduced motion
+- Плавный скролл — становится мгновенным
+- Hover-анимации — остаются или отключаются (на твой выбор)
+Проверь в настройках ОС (Windows: Параметры → Доступность → Эффекты анимации; macOS: Доступность → Дисплей → Уменьшить движение).
+
+### Задача 6: Contain для списка
+Создай список из 50 элементов с анимацией появления:
+- contain: strict на контейнере списка
+- contain: layout paint на элементах списка
+- Сравните производительность с и без contain в DevTools Performance
+
+---
+
+## 11. Полезные ресурсы
+
+- [MDN: CSS Transforms](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_transforms)
+- [MDN: Using CSS animations](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_animations/Using_CSS_animations)
+- [MDN: will-change](https://developer.mozilla.org/en-US/docs/Web/CSS/will-change)
+- [MDN: CSS contain](https://developer.mozilla.org/en-US/docs/Web/CSS/contain)
+- [MDN: backdrop-filter](https://developer.mozilla.org/en-US/docs/Web/CSS/backdrop-filter)
+- [MDN: mask-image](https://developer.mozilla.org/en-US/docs/Web/CSS/mask-image)
+- [High Performance Animations](https://www.html5rocks.com/en/tutorials/speed/high-performance-animations/)
+- [FLIP Your Animations](https://aerotwist.com/blog/flip-your-animations/)
+- [Web Vitals — CLS](https://web.dev/vitals/cls)
+
+---
+
+## 12. Ключевые выводы
+
+1. **Compositing** — анимируй только `transform`, `opacity`, `filter` (дешево, GPU). Избегай `width`, `height`, `top`, `left` (дорого, layout)
+2. **will-change** — включай перед анимацией, сбрасывай после. Никогда не `will-change: all`
+3. **contain** — `contain: strict` изолирует дорогостоящие элементы от пересчета всей страницы
+4. **3D трансформации** — `perspective`, `transform-style: preserve-3d`, `backface-visibility: hidden`, `rotateX/Y/Z`
+5. **Маски и фильтры** — `mask-image`, `filter`, `backdrop-filter` — использовать осторожно, могут быть дорогими
+6. **prefers-reduced-motion** — всегда уважай настройку пользователя, отключай или упрощай анимации
+7. **@starting-style** — анимация входа из `display: none`
+8. **DevTools** — Performance → Animations, бейдж GPU, FPS мониторинг
+
+*Следующий урок: 27_New_CSS.txt — Новый CSS: nesting, @property, новые функции/цветовые пространства, scroll-driven animations*

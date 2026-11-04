@@ -1,0 +1,489 @@
+# Урок 19: Тестирование и качество — unit/mocking/integration tests, analyzers, debugging
+
+## Цели урока
+- Писать эффективные unit-тесты с xUnit/NUnit/MSTest
+- Использовать моки (Moq, NSubstitute) для изоляции зависимостей
+- Проводить интеграционные тесты с Testcontainers
+- Настроить статический анализ (Roslyn analyzers, StyleCop, SonarAnalyzer)
+- Отлаживать эффективно: breakpoints, watch, dump analysis
+
+---
+
+## 1. Unit Testing Frameworks
+
+### xUnit (рекомендуемый для .NET Core)
+```csharp
+// xUnit.net — современный, extensible, параллельный по умолчанию
+public class CalculatorTests
+{
+    [Fact]
+    public void Add_TwoNumbers_ReturnsSum()
+    {
+        // Arrange
+        var calc = new Calculator();
+
+        // Act
+        var result = calc.Add(2, 3);
+
+        // Assert
+        Assert.Equal(5, result);
+    }
+
+    [Theory]
+    [InlineData(1, 2, 3)]
+    [InlineData(-1, 1, 0)]
+    [InlineData(0, 0, 0)]
+    public void Add_MultipleCases_ReturnsSum(int a, int b, int expected)
+    {
+        Assert.Equal(expected, new Calculator().Add(a, b));
+    }
+
+    [Fact]
+    public void Divide_ByZero_Throws()
+    {
+        var calc = new Calculator();
+        Assert.Throws<DivideByZeroException>(() => calc.Divide(5, 0));
+    }
+}
+```
+
+### NUnit (классический, богатый API)
+```csharp
+[TestFixture]
+public class CalculatorTests
+{
+    [Test]
+    public void Add_ReturnsSum() => Assert.That(new Calculator().Add(2, 3), Is.EqualTo(5));
+
+    [TestCase(1, 2, 3)]
+    [TestCase(-1, 1, 0)]
+    public void Add_Cases(int a, int b, int expected) =>
+        Assert.That(new Calculator().Add(a, b), Is.EqualTo(expected));
+}
+```
+
+### MSTest (встроенный в Visual Studio)
+```csharp
+[TestClass]
+public class CalculatorTests
+{
+    [TestMethod]
+    public void Add_ReturnsSum() => Assert.AreEqual(5, new Calculator().Add(2, 3));
+}
+```
+
+### Сравнение
+| Feature | xUnit | NUnit | MSTest |
+|---------|-------|-------|--------|
+| Параллелизм | По умолчанию | [Parallelizable] | [DoNotParallelize] |
+| Theory/Params | [Theory]+[InlineData] | [TestCase] | [DataRow] |
+| Fixture/Setup | Конструктор / IClassFixture | [SetUp]/[TearDown] | [TestInitialize]/[TestCleanup] |
+| Extensibility | Высокая | Высокая | Низкая |
+
+---
+
+## 2. AAA Pattern и Best Practices
+
+### Arrange-Act-Assert
+```csharp
+[Fact]
+public void Transfer_ValidAmount_UpdatesBalances()
+{
+    // ARRANGE: подготовка данных и моков
+    var from = new Account("A", 100);
+    var to = new Account("B", 50);
+    var service = new TransferService();
+
+    // ACT: одно действие под тестом
+    service.Transfer(from, to, 30);
+
+    // ASSERT: проверки результата
+    Assert.Equal(70, from.Balance);
+    Assert.Equal(80, to.Balance);
+}
+```
+
+### Именование тестов
+```
+Метод_Сценарий_ОжидаемыйРезультат
+Transfer_ValidAmount_UpdatesBalances
+Transfer_InsufficientFunds_ThrowsException
+Transfer_NegativeAmount_ThrowsArgumentException
+```
+
+### Тестовые данные: Builders / Object Mother
+```csharp
+// Test Data Builder pattern
+public class AccountBuilder
+{
+    private string _id = "ACC-1";
+    private decimal _balance = 100;
+    private AccountStatus _status = AccountStatus.Active;
+
+    public AccountBuilder WithId(string id) { _id = id; return this; }
+    public AccountBuilder WithBalance(decimal b) { _balance = b; return this; }
+    public AccountBuilder Closed() { _status = AccountStatus.Closed; return this; }
+
+    public Account Build() => new(_id, _balance, _status);
+}
+
+// Использование
+var account = new AccountBuilder().WithBalance(0).Closed().Build();
+```
+
+---
+
+## 3. Mocking Frameworks
+
+### Moq (популярный, expressive)
+```csharp
+[Fact]
+public void OrderService_PlaceOrder_CallsPaymentAndInventory()
+{
+    // Arrange
+    var paymentMock = new Mock<IPaymentService>();
+    var inventoryMock = new Mock<IInventoryService>();
+    var loggerMock = new Mock<ILogger<OrderService>>();
+
+    paymentMock.Setup(p => p.ChargeAsync(It.IsAny<PaymentRequest>()))
+               .ReturnsAsync(new PaymentResult { Success = true });
+
+    inventoryMock.Setup(i => i.ReserveAsync(It.IsAny<int>(), It.IsAny<int>()))
+                 .ReturnsAsync(true);
+
+    var service = new OrderService(paymentMock.Object, inventoryMock.Object, loggerMock.Object);
+
+    // Act
+    var result = await service.PlaceOrderAsync(new Order { ProductId = 1, Quantity = 2 });
+
+    // Assert
+    Assert.True(result.Success);
+
+    // Verify вызовы
+    paymentMock.Verify(p => p.ChargeAsync(It.Is<PaymentRequest>(r => r.Amount == 200)), Times.Once);
+    inventoryMock.Verify(i => i.ReserveAsync(1, 2), Times.Once);
+    loggerMock.Verify(l => l.LogInformation(It.IsAny<string>()), Times.AtLeastOnce);
+}
+```
+
+### NSubstitute (чистый синтаксис)
+```csharp
+[Fact]
+public void OrderService_PlaceOrder_NSubstituteStyle()
+{
+    var payment = Substitute.For<IPaymentService>();
+    var inventory = Substitute.For<IInventoryService>();
+
+    payment.ChargeAsync(Arg.Any<PaymentRequest>()).Returns(new PaymentResult { Success = true });
+    inventory.ReserveAsync(Arg.Any<int>(), Arg.Any<int>()).Returns(true);
+
+    var service = new OrderService(payment, inventory, Substitute.For<ILogger<OrderService>>());
+
+    var result = await service.PlaceOrderAsync(new Order { ProductId = 1, Quantity = 2 });
+
+    Assert.True(result.Success);
+
+    await payment.Received(1).ChargeAsync(Arg.Is<PaymentRequest>(r => r.Amount == 200));
+    await inventory.Received(1).ReserveAsync(1, 2);
+}
+```
+
+### FakeItEasy (ещё один вариант)
+```csharp
+var payment = A.Fake<IPaymentService>();
+A.CallTo(() => payment.ChargeAsync(A<PaymentRequest>._)).Returns(new PaymentResult { Success = true });
+```
+
+### Когда НЕ мокать
+- Value types, DTOs, простые классы без поведения
+- `List<T>`, `Dictionary` — используйте реальные коллекции
+- Внутренние детали (private методы) — тестируйте через публичный API
+
+---
+
+## 4. Integration Testing
+
+### Testcontainers (реальные БД, Redis, Kafka в Docker)
+```csharp
+// NuGet: Testcontainers, Testcontainers.PostgreSql
+public class DatabaseTests : IAsyncLifetime
+{
+    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder()
+        .WithImage("postgres:16")
+        .WithDatabase("testdb")
+        .WithUsername("test")
+        .WithPassword("test")
+        .Build();
+
+    public async Task InitializeAsync() => await _db.StartAsync();
+    public async Task DisposeAsync() => await _db.DisposeAsync();
+
+    [Fact]
+    public async Task UserRepository_SaveAndLoad_Works()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(_db.GetConnectionString())
+            .Options;
+
+        await using var context = new AppDbContext(options);
+        await context.Database.EnsureCreatedAsync();
+
+        var repo = new UserRepository(context);
+        var user = new User { Email = "test@example.com", Name = "Test" };
+        await repo.AddAsync(user);
+
+        var loaded = await repo.GetByEmailAsync("test@example.com");
+        Assert.NotNull(loaded);
+        Assert.Equal("Test", loaded.Name);
+    }
+}
+```
+
+### WebApplicationFactory (ASP.NET Core integration tests)
+```csharp
+public class ApiTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    private readonly HttpClient _client;
+
+    public ApiTests(WebApplicationFactory<Program> factory)
+    {
+        _client = factory.CreateClient();
+    }
+
+    [Fact]
+    public async Task GetUsers_ReturnsOk()
+    {
+        var response = await _client.GetAsync("/api/users");
+        response.EnsureSuccessStatusCode();
+
+        var users = await response.Content.ReadFromJsonAsync<List<UserDto>>();
+        Assert.NotEmpty(users);
+    }
+}
+```
+
+### Testcontainers + WebApplicationFactory
+```csharp
+// Полный стек: реальная БД + реальный HTTP pipeline
+public class FullStackTests : IAsyncLifetime
+{
+    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder().Build();
+    private WebApplicationFactory<Program> _factory;
+    private HttpClient _client;
+
+    public async Task InitializeAsync()
+    {
+        await _db.StartAsync();
+        _factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureServices(services =>
+                {
+                    // Заменяем connection string на Testcontainers
+                    services.ReplaceDbContext<AppDbContext>(_db.GetConnectionString());
+                });
+            });
+        _client = _factory.CreateClient();
+    }
+    // ...
+}
+```
+
+---
+
+## 5. Static Analysis (Roslyn Analyzers)
+
+### Включение в проекте
+```xml
+<!-- .csproj -->
+<PropertyGroup>
+  <EnableNETAnalyzers>true</EnableNETAnalyzers>
+  <AnalysisLevel>latest</AnalysisLevel>
+  <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+</PropertyGroup>
+
+<ItemGroup>
+  <PackageReference Include="StyleCop.Analyzers" Version="1.2.0-beta.*" PrivateAssets="all" />
+  <PackageReference Include="SonarAnalyzer.CSharp" Version="9.0.*" PrivateAssets="all" />
+  <PackageReference Include="Meziantou.Analyzer" Version="2.0.*" PrivateAssets="all" />
+  <PackageReference Include="Roslynator.Analyzers" Version="4.0.*" PrivateAssets="all" />
+</ItemGroup>
+```
+
+### EditorConfig (единый стиль для команды)
+```ini
+# .editorconfig
+root = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+end_of_line = crlf
+charset = utf-8-bom
+insert_final_newline = true
+
+# StyleCop
+dotnet_diagnostic.SA1200.severity = warning  # using directives order
+dotnet_diagnostic.SA1600.severity = warning  # documentation
+
+# Performance
+dotnet_diagnostic.CA1812.severity = suggestion # avoid uninstantiated internal class
+dotnet_diagnostic.CA1822.severity = suggestion # make member static
+
+# Reliability
+dotnet_diagnostic.CA2007.severity = warning # await ConfigureAwait(false)
+```
+
+### Полезные анализаторы
+| Пакет | Назначение |
+|-------|------------|
+| `Microsoft.CodeAnalysis.NetAnalyzers` | Базовые правила .NET (CAxxx) |
+| `StyleCop.Analyzers` | Стиль кода (SAxxxx) |
+| `SonarAnalyzer.CSharp` | Качество, security, bugs |
+| `Meziantou.Analyzer` | Много правил: async, nullability, performance |
+| `Roslynator.Analyzers` | 500+ рефакторингов и правил |
+| `Nullable` | Nullable Reference Types (встроен) |
+
+---
+
+## 6. Code Coverage
+
+### coverlet + ReportGenerator
+```bash
+# Запуск тестов с покрытием
+dotnet test --collect:"XPlat Code Coverage" --results-directory ./coverage
+
+# Генерация отчёта
+dotnet tool install -g dotnet-reportgenerator-globaltool
+reportgenerator -reports:"./coverage/**/coverage.cobertura.xml" -targetdir:"./coverage/report" -reporttypes:Html
+```
+
+### Thresholds (пороги покрытия)
+```xml
+<!-- .csproj -->
+<PropertyGroup>
+  <CoverletOutputFormat>cobertura,opencover</CoverletOutputFormat>
+  <Threshold>80</Threshold>  <!-- минимальное покрытие -->
+  <ThresholdType>line</ThresholdType>
+  <ThresholdStat>total</ThresholdStat>
+</PropertyGroup>
+```
+
+---
+
+## 7. Debugging Techniques
+
+### Visual Studio / VS Code Debugger
+```csharp
+// Conditional breakpoint: правый клик на breakpoint → Conditions
+// Hit count: прерывание каждый N-й раз
+// Logpoint: вывод в Output без остановки (прямо в коде: $"{var}")
+
+// Watch windows: добавляйте выражения
+// Immediate Window: выполнение кода во время остановки
+```
+
+### OzCode / DevExpress CodeRush (расширения)
+- Упрощают инспекцию коллекций, LINQ, async
+- "Reveal" — показать значения в LINQ pipeline
+
+### dotnet-dump / SOS / ClrMD (post-mortem)
+```bash
+# Дамп процесса
+dotnet-dump collect -p <pid>
+
+# Анализ
+dotnet-dump analyze <dump>
+> dumpheap -stat           # статистика кучи
+> dumpheap -type MyClass   # экземпляры типа
+> gcroot <addr>            # кто держит ссылку
+> threads                  # все управляемые потоки
+> clrstack                 # стек вызовов
+```
+
+### BenchmarkDotNet (производительность)
+```csharp
+[MemoryDiagnoser]
+[SimpleJob(RuntimeMoniker.Net80)]
+public class StringConcatBenchmarks
+{
+    [Benchmark(Baseline = true)]
+    public string Concat() => "a" + "b" + "c";
+
+    [Benchmark]
+    public string Interpolated() => $"a{"b"}{"c"}";
+
+    [Benchmark]
+    public string StringBuilder()
+    {
+        var sb = new StringBuilder();
+        sb.Append("a").Append("b").Append("c");
+        return sb.ToString();
+    }
+}
+```
+
+---
+
+## 8. CI/CD Integration
+
+### GitHub Actions пример
+```yaml
+# .github/workflows/test.yml
+name: Test
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet restore
+      - run: dotnet build --no-restore --configuration Release
+      - run: dotnet test --no-restore --configuration Release --collect:"XPlat Code Coverage"
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+```
+
+---
+
+## 9. Практические задания
+
+1. **Test Pyramid**: напишите unit, integration, e2e тесты для одной фичи, измерьте время выполнения
+2. **Mutation Testing**: установите `Stryker.NET` — проверьте качество тестов мутациями
+3. **Contract Tests**: используйте `PactNet` для consumer-driven contract testing
+4. **Architecture Tests**: используйте `NetArchTest` для проверки слоёв (Domain не зависит от Infrastructure)
+5. **Flaky Test Detection**: запустите тесты 100 раз в CI, найдите нестабильные
+
+---
+
+## 10. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Тесты зависят друг от друга (shared state) | Изолированные тесты, `IClassFixture` для общего setup |
+| Мокать всё подряд | Мокать только внешние зависимости (IO, БД, HTTP) |
+| Один тест проверяет много вещей | Один тест — один Assert (или логическая группа) |
+| Игнорирование предупреждений анализаторов | `TreatWarningsAsErrors`, фиксить все warnings |
+| Нет CI проверки покрытия | Блокируйте PR если покрытие < порога |
+| `Thread.Sleep` в тестах | `await Task.Delay` с токеном отмены / виртуальное время |
+| Тесты только happy path | Тестируйте edge cases, ошибки, boundary values |
+
+---
+
+## 11. Полезные ресурсы
+
+- **xUnit.net** — https://xunit.net/
+- **Moq** — https://github.com/moq/moq4
+- **NSubstitute** — https://nsubstitute.github.io/
+- **Testcontainers** — https://dotnet.testcontainers.org/
+- **BenchmarkDotNet** — https://benchmarkdotnet.org/
+- **Roslyn Analyzers** — https://github.com/dotnet/roslyn-analyzers
+- **StyleCop** — https://github.com/DotNetAnalyzers/StyleCopAnalyzers
+- **Stryker.NET** (mutation testing) — https://stryker-mutator.io/docs/stryker-net/introduction/
+- **NetArchTest** — https://github.com/BenMorris/NetArchTest
+- **Book: "Unit Testing Principles, Practices, and Patterns" by Vladimir Khorikov**

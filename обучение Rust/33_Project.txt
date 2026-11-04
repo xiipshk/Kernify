@@ -1,0 +1,488 @@
+# Урок 33: Проект — библиотека, системный инструмент или сетевой сервис
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Выбрать тип проекта: библиотека, системный инструмент или сетевой сервис
+- Организовать структуру проекта (единичный крейт или workspace)
+- Обеспечить гарантии безопасности (безопасные API, clippy, fuzzing, Miri, аудит зависимостей)
+- Написать тесты: unit, integration и doc-тесты
+- Написать документацию с rustdoc и примерами
+- Настроить CI/CD: тесты, clippy, fmt, аудит, сборка, релиз
+- Подготовить и (опционально) опубликовать крейт на crates.io
+
+---
+
+## 1. Выбор типа проекта и структура
+
+Выберите один из трёх типов в зависимости от цели:
+
+| Тип | Что создаём | Основные крейты | Пример использования |
+|-----|-------------|-----------------|----------------------|
+| **Библиотека** | `src/lib.rs` с публичным API | `thiserror`, `serde`, `anyhow` | パкет для других проектов, публикуется на crates.io |
+| **Системный инструмент** | `src/main.rs` CLI-утилита | `clap`, `console`, `walkdir` | Инструмент командной строки, работа с файлами |
+| **Сетевой сервис** | `src/main.rs` сервер | `tokio`, `axum` / `actix-web`, `tower` | HTTP/TCP-сервер с асинхронной обработкой |
+
+### Структура unitsного крейта (библиотека)
+```
+my_project/
+├── Cargo.toml
+├── Cargo.lock
+├── .cargo/config.toml
+├── .github/workflows/ci.yml
+├── README.md
+├── LICENSE
+├── src/
+│   ├── lib.rs          # публичный API, re-export
+│   ├── error.rs        # ошибки (thiserror)
+│   └── ...
+├── benches/            # Criterion бенчмарки
+├── examples/           # примеры использования (и doc-тесты)
+├── tests/              # интеграционные тесты
+│   ├── integration.rs
+│   └── common/
+└── docs/               # дополнительная документация
+```
+
+### Структура workspace (библиотека + CLI + сервер)
+```
+my_project/
+├── Cargo.toml          # виртуальный манифест (workspace, без [package])
+├── Cargo.lock
+├── .cargo/config.toml
+├── .github/workflows/ci.yml
+├── core/               # библиотека с логикой
+│   ├── Cargo.toml
+│   └── src/lib.rs
+├── cli/                # системный инструмент
+│   ├── Cargo.toml
+│   └── src/main.rs
+├── server/             # сетевой сервис
+│   ├── Cargo.toml
+│   └── src/main.rs
+└── benches/            # общиеベンчмарки (опционально)
+```
+
+Виртуальный манифест:
+```toml
+# Cargo.toml (корень workspace)
+[workspace]
+resolver = "2"
+members = ["core", "cli", "server"]
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+```
+
+Член workspace:
+```toml
+# core/Cargo.toml
+[package]
+name = "my-project-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+```
+
+---
+
+## 2. Гарантии безопасности
+
+### Запрет unsafe там, где не нужен
+В корне библиотеки можно явно запретить unsafe-код:
+```rust
+// src/lib.rs
+#![forbid(unsafe_code)]
+
+// если нужно разрешить в одном модуле:
+// #[allow(unsafe_code)]
+// mod unsafe_module;
+```
+
+### Safe wrappers над unsafe
+Если unsafe unavoidable, инкапсулируйте его в безопасный API с документированными инвариантами:
+```rust
+/// Safe wrapper over raw buffer.
+/// # Safety invariants
+/// - `ptr` must be non-null and properly aligned for `T`.
+/// - `len` must be the number of valid elements.
+pub struct Buffer<T> {
+    ptr: *mut T,
+    len: usize,
+    cap: usize,
+}
+
+impl<T> Buffer<T> {
+    /// Создаёт буфер. Все операции с указателем инкапсулированы.
+    pub fn new(cap: usize) -> Self { /* ... */ }
+    pub fn as_slice(&self) -> &[T] {
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl<T> Drop for Buffer<T> {
+    fn drop(&mut self) {
+        unsafe { /* освобождение памяти */ }
+    }
+}
+```
+
+### Статический анализ
+```bash
+cargo install clippy          # обычно уже есть с rustup
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all --check
+```
+
+### Аудит зависимостей
+```bash
+cargo install cargo-audit cargo-deny
+cargo audit                   # проверка уязвимостей (RustSec)
+cargo deny check              # лицензии, advisories, múltiples версии
+```
+
+### Фаззинг и Miri для безопасности
+- Добавьте цели фаззинга в `fuzz/` для парсеров и обработки входных данных.
+- Прогонайте unsafe-тесты под `cargo miri test`.
+
+---
+
+## 3. Тестирование: unit, integration, doc
+
+### Unit-тесты (внутри исходников)
+```rust
+// src/lib.rs
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add() {
+        assert_eq!(add(2, 3), 5);
+    }
+
+    #[test]
+    fn test_add_negative() {
+        assert_eq!(add(-1, 1), 0);
+    }
+}
+```
+
+### Integration-тесты (в `tests/`)
+```rust
+// tests/integration.rs
+use my_project_core::add;
+
+#[test]
+fn test_add_integration() {
+    assert_eq!(add(10, 20), 30);
+}
+```
+
+Общий код для интеграционных тестов — в `tests/common/mod.rs`:
+```rust
+// tests/common/mod.rs
+pub fn setup() { /* общая инициализация */ }
+
+// tests/integration.rs
+mod common;
+use common::setup;
+```
+
+### Doc-тесты (в комментариях `///`)
+```rust
+/// Складывает два числа.
+///
+/// # Examples
+///
+/// ```
+/// use my_project_core::add;
+/// assert_eq!(add(2, 3), 5);
+/// ```
+///
+/// # Errors
+/// Возвращает ошибку, если ...
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+```
+
+Запуск тестов:
+```bash
+cargo test                    # все тесты (unit + integration + doc)
+cargo test --lib              # только unit
+cargo test --test integration # конкретный integration-тест
+cargo test --doc              # только doc-тесты
+cargo test -- --nocapture     # показать println!
+```
+
+---
+
+## 4. Документация (rustdoc)
+
+### Комментарии к публичным элементам
+```rust
+/// Краткое описание типа или функции.
+///
+/// Более подробное описание, почему это нужно и как использовать.
+///
+/// # Examples
+///
+/// Базовое использование:
+/// ```
+/// let result = my_crate::compute(42);
+/// assert_eq!(result, 42);
+/// ```
+///
+/// # Panics
+///
+/// Паникует если `input` пуст.
+///
+/// # Errors
+///
+/// Возвращает `MyError`, если не удалось ...
+pub fn compute(input: i32) -> i32 {
+    input * 2
+}
+```
+
+### Примеры в папке `examples/`
+```rust
+// examples/quickstart.rs
+use my_project_core::add;
+
+fn main() {
+    println!("{}", add(1, 2));
+}
+```
+
+Сборка и просмотр документации:
+```bash
+cargo doc --no-deps --open   # открыть docs.rs-подобную документацию локально
+cargo doc --document-private-items  # включить приватные элементы
+```
+
+Для публикации на docs.rs достаточно publicar крейт на crates.io — документация соберётся автоматически.
+
+### Ссылки между элементами
+```rust
+/// См. также [`add`](fn.add.html) и [`MyError`](enum.MyError.html).
+```
+
+---
+
+## 5. CI/CD (GitHub Actions)
+
+Пример `.github/workflows/ci.yml`:
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Format check
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --all-features
+      - name: Doc tests
+        run: cargo test --workspace --doc
+      - name: Build release
+        run: cargo build --workspace --release
+      - name: Audit dependencies
+        run: |
+          cargo install cargo-audit
+          cargo audit
+
+  # Опционально:ベンчмарки
+  bench:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Benchmarks
+        run: cargo bench --workspace
+
+  # Опционально: Miri для unsafe
+  miri:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: rustup component add miri
+      - run: cargo miri test --workspace
+```
+
+### CD / релиз
+```yaml
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Publish to crates.io
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+```
+
+Добавьте секрет `CARGO_REGISTRY_TOKEN` в настройки репозитория (токен с crates.io, полученный через `cargo login`).
+
+---
+
+## 6. Подготовка к публикации на crates.io
+
+```toml
+# Cargo.toml
+[package]
+name = "my-awesome-crate"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <email@example.com>"]
+description = "Краткое описание (до одной строки)"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/user/repo"
+homepage = "https://docs.rs/my-awesome-crate"
+documentation = "https://docs.rs/my-awesome-crate"
+keywords = ["async", "web", "http"]
+categories = ["web-programming", "asynchronous"]
+exclude = [
+    "**/tests/fixtures/**",
+    ".github/**",
+    "benches/**",
+]
+```
+
+Проверка и публикация:
+```bash
+cargo package --list      # что войдёт в пакет
+cargo package --dry-run   # симуляция
+cargo login               # сохранить токен crates.io
+cargo publish
+```
+
+Версионирование (SemVer):
+- `0.y.z` — ранняя разработка, ломающие изменения допустимы
+- `1.0.0` — стабильный API
+- MAJOR — ломающие изменения
+- MINOR — новые 기능, обратно совместимо
+- PATCH — исправления ошибок
+
+---
+
+## Практические задания
+
+1. **Выбор типа проекта**: Определите тип вашего проекта (библиотека, системный инструмент или сетевой сервис) и создайте соответствующую структуру папок с `Cargo.toml`.
+
+2. **Безопасность**: Добавьте `#![forbid(unsafe_code)]` (если проект не требует unsafe), настройте `cargo clippy` с `-D warnings` и `cargo fmt --all --check`. Прогоните `cargo audit` на уязвимости зависимостей.
+
+3. **Тестирование**: Напишите:
+   - хотя бы 3 unit-теста (`#[cfg(test)] mod tests`),
+   - 1 integration-тест в `tests/`,
+   - 2 doc-теста с примерами в комментариях `///`.
+   Запустите `cargo test` и убедитесь, что всё зелёное.
+
+4. **Документация**: Напишите полную rustdoc-документацию для всех публичных функций и типов с разделами `# Examples`, `# Panics`, `# Errors`. Запустите `cargo doc --no-deps --open` и проверьте вывод.
+
+5. **CI/CD**: Добавьте в репозиторий `.github/workflows/ci.yml` со шагами: `cargo fmt --check`, `cargo clippy`, `cargo test`, `cargo build --release`, `cargo audit`.
+
+6. **Опубликовать (опционально)**: Подготовьте `Cargo.toml` для публикации, запустите `cargo publish --dry-run`, и при желании опубликуйте крейт на crates.io.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `cargo clippy` ругается на warnings | Код не соответствует стилю или имеет потенциальные баги | Исправьте все warnings или обоснованно добавьте `#[allow(...)]` |
+| Doc-тест не компилируется | Пример использует непубличный элемент или неверный путь | Сделайте элемент `pub` или используйте полный путь `crate::...` |
+| Integration-тест не видит библиотеку | Тест в `tests/` использует имя крейта, не модуль | Используйте `use my_crate::...` (имя из `[package]`) |
+| `cargo publish` ошибка аутентификации | Нет токена crates.io | Выполните `cargo login` и добавьте `CARGO_REGISTRY_TOKEN` в secrets |
+| Публикация включает лишние файлы (target/, .git) | Нет `exclude` в Cargo.toml | Добавьте секцию `exclude` со списком файлов |
+| Разные версии одной зависимости в workspace | Отсутствует `resolver = "2"` и `[workspace.dependencies]` | Настройте общие зависимости в workspace |
+
+---
+
+## Шпаргалка: Структура и CI проекта
+
+| Задача | Команда / файл |
+|--------|----------------|
+| Unit-тесты | `cargo test --lib` |
+| Integration-тесты | `cargo test --test <name>` |
+| Doc-тесты | `cargo test --doc` |
+| Все тесты | `cargo test --workspace --all-features` |
+| Форматирование | `cargo fmt --all --check` |
+| Clippy | `cargo clippy --workspace --all-targets -- -D warnings` |
+| Сборка релиза | `cargo build --workspace --release` |
+| Документация | `cargo doc --no-deps --open` |
+| Аудит зависимостей | `cargo audit` |
+| Подготовка к публикации | `cargo package --list && cargo publish --dry-run` |
+| Публикация | `cargo publish` (нужен `CARGO_REGISTRY_TOKEN`) |
+| CI конфиг | `.github/workflows/ci.yml` |
+
+---
+
+## Полезные ресурсы
+
+- **The Book — Projects**: https://doc.rust-lang.org/book/
+- **API Guidelines**: https://rust-lang.github.io/api-guidelines/
+- **rustdoc**: https://doc.rust-lang.org/rustdoc/
+- **docs.rs**: https://docs.rs/
+- **crates.io publishing**: https://doc.rust-lang.org/cargo/reference/publishing.html
+- **SemVer**: https://semver.org/
+- **GitHub Actions for Rust**: https://github.com/actions-rust-lang/setup-rust-toolchain
+- **cargo-audit**: https://github.com/rustsec/rustsec/tree/main/cargo-audit
+- **cargo-deny**: https://github.com/EmbarkStudios/cargo-deny
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- **Типы проектов**: библиотека, системный инструмент, сетевой сервис; структура unitsного крейта и workspace
+- **Безопасность**: `#![forbid(unsafe_code)]`, safe wrappers, `clippy`, `cargo audit`, `cargo deny`, fuzzing и Miri
+- **Тестирование**: unit-тесты, integration-тесты в `tests/`, doc-тесты, общий код в `tests/common/`
+- **Документация**: rustdoc (`///`, `# Examples`, `# Panics`, `# Errors`), `examples/`, `cargo doc --open`
+- **CI/CD**: GitHub Actions (fmt, clippy, test, build, audit), Veröffentlichung на crates.io, SemVer
+
+Это был последний урок курса Rust. Поздравляем с завершением обучения!

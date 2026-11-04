@@ -1,0 +1,418 @@
+# Урок 15: LINQ — query/method syntax, deferred execution, IEnumerable/IQueryable, grouping/join
+
+## Цели урока
+- Освоить оба синтаксиса LINQ: query syntax и method syntax
+- Понимать deferred execution (отложенное выполнение) и streaming
+- Различать IEnumerable (LINQ to Objects) и IQueryable (LINQ to SQL/EF)
+- Сложные запросы: grouping, join, set operations, aggregation
+- Оптимизация производительности и частые ошибки
+
+---
+
+## 1. Два синтаксиса LINQ
+
+### Method Syntax (Fluent API) — более гибкий
+```csharp
+var numbers = new[] { 5, 2, 8, 1, 9, 3 };
+
+var result = numbers
+    .Where(n => n > 3)
+    .OrderBy(n => n)
+    .Select(n => n * 2)
+    .ToList(); // [8, 10, 16, 18]
+
+// Чейнинг — читается слева направо
+```
+
+### Query Syntax (Comprehension Syntax) — ближе к SQL
+```csharp
+var result = from n in numbers
+             where n > 3
+             orderby n
+             select n * 2;
+
+// Компилируется в method syntax
+// Удобно для: join, group by, let, into
+```
+
+### Когда что использовать
+| Сценарий | Рекомендация |
+|----------|--------------|
+| Простые цепочки (Where/Select/OrderBy) | Method syntax |
+| Join, GroupBy, сложные проекции | Query syntax |
+| Let (промежуточные переменные) | Query syntax |
+| Динамические запросы (условные Where) | Method syntax |
+
+### `let` — промежуточные вычисления (только query syntax)
+```csharp
+var files = Directory.GetFiles(".", "*.cs");
+
+var query = from file in files
+            let info = new FileInfo(file)
+            let length = info.Length
+            where length > 1000
+            orderby length descending
+            select new { file, length, info.CreationTime };
+```
+
+### `into` — продолжение запроса после group/join/select
+```csharp
+var grouped = from n in numbers
+              group n by n % 2 into g
+              where g.Count() > 1
+              select new { Key = g.Key, Count = g.Count(), Sum = g.Sum() };
+```
+
+---
+
+## 2. Deferred Execution (Отложенное выполнение)
+
+### Как работает
+```csharp
+var numbers = new[] { 1, 2, 3 };
+
+var query = numbers.Where(n => n > 1); // НИЧЕГО НЕ ВЫПОЛНЯЕТСЯ!
+
+Console.WriteLine("Before enumeration");
+foreach (var n in query) // ТУТ выполняется фильтрация
+    Console.WriteLine(n);
+Console.WriteLine("After enumeration");
+```
+
+### Streaming vs Buffering
+```csharp
+// STREAMING (lazy) — по одному элементу, память O(1)
+numbers.Where(n => n > 1)           // streaming
+numbers.Select(n => n * 2)          // streaming
+numbers.Take(5)                     // streaming
+numbers.Skip(3)                     // streaming (но пропускает)
+
+// BUFFERING (eager) — материализуют всю последовательность
+numbers.OrderBy(n => n)             // buffering — нужен весь массив
+numbers.GroupBy(n => n % 2)         // buffering
+numbers.Distinct()                  // buffering (HashSet внутри)
+numbers.ToList()                    // forcing execution
+numbers.Count()                     // forcing execution
+```
+
+### Опасность: многократное перечисление
+```csharp
+var query = numbers.Where(n => n > 1).Select(n => ExpensiveOperation(n));
+
+Console.WriteLine(query.Count());  // 1-й проход — ExpensiveOperation вызывается N раз
+Console.WriteLine(query.First());  // 2-й проход — ExpensiveOperation вызывается ЕЩЁ РАЗ!
+
+// Исправление: материализуйте один раз
+var list = query.ToList();
+Console.WriteLine(list.Count());
+Console.WriteLine(list.First());
+```
+
+### `IEnumerable` vs `IQueryable`
+```csharp
+// IEnumerable — LINQ to Objects, выполняется в памяти
+IEnumerable<User> users = GetUsersFromMemory();
+var local = users.Where(u => u.Age > 18).ToList(); // весь Where в памяти
+
+// IQueryable — LINQ to SQL/EF, переводится в SQL
+IQueryable<User> dbUsers = context.Users;
+var sql = dbUsers.Where(u => u.Age > 18).ToList(); // WHERE Age > 18 в SQL!
+
+// Разница в выражениях
+Expression<Func<User, bool>> expr = u => u.Age > 18; // Expression Tree
+Func<User, bool> func = u => u.Age > 18;             // Delegate (скомпилирован)
+
+// IQueryable принимает Expression, IEnumerable — Func
+```
+
+---
+
+## 3. Основные операторы
+
+### Фильтрация
+```csharp
+var adults = people.Where(p => p.Age >= 18);
+var firstAdult = people.FirstOrDefault(p => p.Age >= 18);
+var single = people.Single(p => p.Id == 1); // исключение, если 0 или >1
+var byIndex = people.ElementAt(5);
+var byIndexSafe = people.ElementAtOrDefault(100); // null/default
+```
+
+### Проекция
+```csharp
+// Select — 1 к 1
+var names = people.Select(p => p.Name);
+
+// SelectMany — развертывание коллекций (flatten)
+var allPhones = people.SelectMany(p => p.PhoneNumbers);
+var flat = new[] { new[] {1,2}, new[] {3} }.SelectMany(x => x); // [1,2,3]
+
+// Анонимные типы
+var dto = people.Select(p => new { p.Name, p.Age, IsAdult = p.Age >= 18 });
+
+// Index в Select
+var indexed = people.Select((p, i) => new { Index = i, p.Name });
+```
+
+### Сортировка
+```csharp
+var sorted = people
+    .OrderBy(p => p.LastName)
+    .ThenBy(p => p.FirstName)
+    .ThenByDescending(p => p.Age);
+
+// Random shuffle
+var shuffled = people.OrderBy(_ => Guid.NewGuid());
+```
+
+### Группировка (GroupBy)
+```csharp
+// По одному ключу
+var byDept = employees.GroupBy(e => e.Department);
+
+// По составному ключу
+var byDeptAndRole = employees.GroupBy(e => new { e.Department, e.Role });
+
+// Результат: IGrouping<TKey, TElement> — реализует IEnumerable<TElement>
+foreach (var group in byDept)
+{
+    Console.WriteLine($"Department: {group.Key}, Count: {group.Count()}");
+    foreach (var emp in group) Console.WriteLine($"  {emp.Name}");
+}
+
+// GroupBy с проекцией результата
+var stats = employees
+    .GroupBy(e => e.Department)
+    .Select(g => new {
+        Department = g.Key,
+        Count = g.Count(),
+        AvgSalary = g.Average(e => e.Salary),
+        MaxSalary = g.Max(e => e.Salary)
+    });
+```
+
+### Соединения (Join)
+```csharp
+// Inner Join
+var query = from e in employees
+            join d in departments on e.DeptId equals d.Id
+            select new { e.Name, DeptName = d.Name };
+
+// Method syntax
+var query2 = employees.Join(
+    departments,
+    e => e.DeptId,
+    d => d.Id,
+    (e, d) => new { e.Name, DeptName = d.Name }
+);
+
+// Group Join (Left Outer Join)
+var query3 = from d in departments
+             join e in employees on d.Id equals e.DeptId into emps
+             select new { Dept = d.Name, Employees = emps };
+
+// Cross Join (Cartesian product)
+var pairs = from a in list1
+            from b in list2
+            select (a, b);
+
+// Zip — попарно (кратчайшая длина)
+var zipped = list1.Zip(list2, (a, b) => a + b);
+```
+
+### Set Operations (Множественные операции)
+```csharp
+var a = new[] { 1, 2, 3, 4 };
+var b = new[] { 3, 4, 5, 6 };
+
+a.Union(b)        // 1,2,3,4,5,6 (distinct)
+a.Intersect(b)    // 3,4
+a.Except(b)       // 1,2
+a.Concat(b)       // 1,2,3,4,3,4,5,6 (без distinct)
+a.Distinct()      // 1,2,3,4
+```
+
+### Агрегация
+```csharp
+numbers.Sum()
+numbers.Average()
+numbers.Min() / Max()
+numbers.Count() / LongCount()
+
+// Aggregate — свертка (reduce)
+var product = numbers.Aggregate(1, (acc, n) => acc * n); // 1*1*2*3*4 = 24
+var csv = strings.Aggregate((a, b) => a + ", " + b);
+
+// Seed + func + resultSelector
+var stats = numbers.Aggregate(
+    (Count: 0, Sum: 0, Min: int.MaxValue, Max: int.MinValue),
+    (acc, n) => (acc.Count + 1, acc.Sum + n, Math.Min(acc.Min, n), Math.Max(acc.Max, n)),
+    acc => new { acc.Count, acc.Sum, Avg = (double)acc.Sum / acc.Count, acc.Min, acc.Max }
+);
+```
+
+### Кванторы (Quantifiers)
+```csharp
+numbers.All(n => n > 0)      // все
+numbers.Any(n => n > 10)     // хотя бы один
+numbers.Contains(5)          // равенство через EqualityComparer
+numbers.SequenceEqual(other) // поэлементное сравнение
+```
+
+### Генерация
+```csharp
+Enumerable.Range(1, 10)           // 1..10
+Enumerable.Repeat("x", 5)         // "x", "x", "x", "x", "x"
+Enumerable.Empty<int>()           // пустая последовательность
+
+// Бесконечные последовательности
+var odds = Enumerable.Range(0, int.MaxValue).Where(n => n % 2 == 1);
+var fibs = GenerateFibonacci().Take(20);
+```
+
+---
+
+## 4. IQueryable и Expression Trees
+
+### Как EF Core переводит в SQL
+```csharp
+// Это создаёт Expression Tree, а не delegate
+IQueryable<User> query = context.Users
+    .Where(u => u.Age > 18 && u.IsActive)
+    .OrderBy(u => u.LastName)
+    .Take(10);
+
+// EF Core обходит Expression Tree и генерирует SQL:
+// SELECT TOP 10 * FROM Users WHERE Age > 18 AND IsActive = 1 ORDER BY LastName
+```
+
+### Client-side evaluation (опасно!)
+```csharp
+// ПЛОХО: метод не может быть переведён в SQL
+var bad = context.Users
+    .Where(u => u.Name.Contains(GetPrefix())) // GetPrefix() — клиентский метод
+    .ToList(); // Выбросит исключение или загрузит ВСЕХ пользователей в память!
+
+// ХОРОШО: вычислите заранее
+var prefix = GetPrefix();
+var good = context.Users
+    .Where(u => u.Name.Contains(prefix))
+    .ToList();
+```
+
+### AsEnumerable() — принудительный переход к LINQ to Objects
+```csharp
+// Сначала SQL, потом в памяти
+var result = context.Users
+    .Where(u => u.Age > 18)           // SQL
+    .AsEnumerable()                   // переключение на IEnumerable
+    .Where(u => ComplexCheck(u))      // в памяти (не переводится в SQL)
+    .ToList();
+```
+
+---
+
+## 5. Продвинутые сценарии
+
+### Pagination
+```csharp
+public PagedResult<T> GetPage(IQueryable<T> query, int page, int pageSize)
+{
+    var total = query.Count();
+    var items = query
+        .Skip((page - 1) * pageSize)
+        .Take(pageSize)
+        .ToList();
+    return new PagedResult<T>(items, total, page, pageSize);
+}
+```
+
+### Dynamic LINQ (runtime queries)
+```csharp
+using System.Linq.Dynamic.Core; // NuGet: System.Linq.Dynamic.Core
+
+var query = context.Users
+    .Where("Age > @0 and Name.Contains(@1)", 18, "John")
+    .OrderBy("LastName desc, FirstName")
+    .Select("new (Id, Name, Age)");
+```
+
+### Chunk (обработка батчами) — .NET 6+
+```csharp
+foreach (var chunk in largeCollection.Chunk(1000))
+{
+    await ProcessBatchAsync(chunk);
+}
+```
+
+### DistinctBy / MaxBy / MinBy — .NET 6+
+```csharp
+var uniqueByEmail = users.DistinctBy(u => u.Email);
+var oldest = users.MaxBy(u => u.Age);
+var youngest = users.MinBy(u => u.Age);
+```
+
+---
+
+## 6. Параллельный LINQ (PLINQ)
+
+```csharp
+using System.Linq.Parallel;
+
+// Автоматическая параллелизация
+var result = numbers.AsParallel()
+    .Where(n => ExpensiveCheck(n))
+    .Select(n => ExpensiveTransform(n))
+    .ToList();
+
+// Управление степенью параллелизма
+var result2 = numbers.AsParallel()
+    .WithDegreeOfParallelism(4)
+    .Where(...);
+
+// Сохранение порядка (медленнее)
+var ordered = numbers.AsParallel()
+    .AsOrdered()
+    .Select(...);
+
+// Отмена
+var cts = new CancellationTokenSource();
+var result3 = numbers.AsParallel()
+    .WithCancellation(cts.Token)
+    .Select(...);
+```
+
+---
+
+## 7. Практические задания
+
+1. **LINQ to Objects vs SQL**: напишите запрос, который работает по-разному на `List<User>` и `DbSet<User>` (client-side evaluation)
+2. **GroupBy с подзапросом**: для каждого отдела найдите топ-3 сотрудников по зарплате
+3. **Dynamic Where**: постройте `Expression<Func<T, bool>>` динамически из фильтров UI
+4. **PLINQ benchmark**: сравните скорость `AsParallel()` vs последовательного для CPU-bound операций
+5. **Custom LINQ operator**: реализуйте `Batch(int size)` — разбивает последовательность на батчи
+
+---
+
+## 8. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Многократное перечисление `IEnumerable` | `.ToList()` / `.ToArray()` один раз |
+| `Count() > 0` вместо `Any()` | `Any()` — останавливается на первом |
+| `Where(...).First()` вместо `FirstOrDefault(...)` | `FirstOrDefault(predicate)` — один проход |
+| `Select` в EF с сложной логикой (client eval) | Выносите вычисления или используйте SQL функции |
+| `OrderBy` без `ThenBy` для вторичных ключей | `OrderBy(p => p.A).ThenBy(p => p.B)` |
+| `GroupBy` без понимания buffering | Используйте `ToLookup` для многократного доступа |
+| `Concat` вместо `Union` когда нужны уникальные | `Union` для distinct, `Concat` для сохранения всех |
+
+---
+
+## 9. Полезные ресурсы
+
+- **LINQ Overview** — https://learn.microsoft.com/dotnet/csharp/linq/
+- **Standard Query Operators** — https://learn.microsoft.com/dotnet/api/system.linq.enumerable
+- **Expression Trees** — https://learn.microsoft.com/dotnet/csharp/expression-trees
+- **IQueryable vs IEnumerable** — https://learn.microsoft.com/dotnet/api/system.linq.iqueryable
+- **PLINQ** — https://learn.microsoft.com/dotnet/standard/parallel-programming/parallel-linq-plinq
+- **MoreLINQ** (extensions) — https://github.com/morelinq/MoreLINQ

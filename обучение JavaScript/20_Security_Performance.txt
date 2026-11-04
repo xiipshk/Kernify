@@ -1,0 +1,456 @@
+# Урок 20: Security & Performance — Безопасность и производительность
+
+## 🎯 Цели урока
+- Понять основные векторы атак: XSS, CSRF, Clickjacking, CSP
+- Научиться защищать приложения: санитизация, CSP, HttpOnly, SameSite
+- Освоить профилирование: Performance tab, Lighthouse, Web Vitals
+- Понять Critical Rendering Path, оптимизацию загрузки, кэширование
+- Научиться оптимизировать JS: code splitting, tree shaking, lazy loading
+
+---
+
+## 1. Безопасность (Security)
+
+### 1.1 XSS (Cross-Site Scripting) — главный враг
+
+**Типы XSS:**
+- **Reflected** — вредоносный скрипт в URL/параметрах, отражается в ответе
+- **Stored** — скрипт сохраняется в БД, выполняется при просмотре
+- **DOM-based** — клиентский JS небезопасно использует данные из URL
+
+```javascript
+// ❌ ОПАСНО — innerHTML с пользовательскими данными
+element.innerHTML = userInput; // <img src=x onerror=alert(1)>
+
+// ✅ БЕЗОПАСНО — textContent
+element.textContent = userInput;
+
+// ✅ БЕЗОПАСНО — создание элементов
+const div = document.createElement('div');
+div.textContent = userInput;
+container.append(div);
+
+// ✅ Если НУЖНО HTML — санитизация (DOMPurify)
+import DOMPurify from 'dompurify';
+element.innerHTML = DOMPurify.sanitize(userHtml);
+```
+
+### 1.2 Content Security Policy (CSP)
+
+Заголовок, ограничивающий источники скриптов, стилей, картинок.
+
+```http
+Content-Security-Policy:
+  default-src 'self';
+  script-src 'self' 'nonce-{random}' https://cdn.example.com;
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+  img-src 'self' data: https:;
+  font-src 'self' https://fonts.gstatic.com;
+  connect-src 'self' https://api.example.com;
+  frame-ancestors 'none';
+  base-uri 'self';
+  form-action 'self';
+```
+
+**Директивы:**
+| Директива | Назначение |
+|-----------|------------|
+| `default-src` | Фоллбэк для остальных |
+| `script-src` | Источники JS |
+| `style-src` | Источники CSS |
+| `img-src` | Источники изображений |
+| `connect-src` | fetch, XHR, WebSocket, EventSource |
+| `font-src` | Веб-шрифты |
+| `frame-ancestors` | Кто может вставить в iframe (замена X-Frame-Options) |
+| `base-uri` | Ограничение `<base>` |
+| `form-action` | Куда могут отправлять формы |
+
+**Nonce/Hash для инлайн-скриптов:**
+```html
+<!-- Генерация nonce на сервере для каждого запроса -->
+<script nonce="r4nd0mN0nc3V4lu3">console.log('allowed');</script>
+
+<!-- Или hash -->
+<script>console.log('allowed');</script>
+<!-- CSP: script-src 'sha256-...' -->
+```
+
+### 1.3 Cookies — безопасные флаги
+
+```http
+Set-Cookie: session=abc123;
+  HttpOnly;           /* JS не имеет доступа (защита от XSS) */
+  Secure;             /* Только HTTPS */
+  SameSite=Strict;    /* CSRF защита: Lax/Strict/None */
+  Path=/;             /* Область действия */
+  Max-Age=3600;       /* TTL в секундах */
+```
+
+**SameSite:**
+- `Strict` — куки не отправляются при кросс-сайтовых запросах (самое безопасное)
+- `Lax` — отправляются при безопасных навигациях (линки) — дефолт в современных браузерах
+- `None` — отправляются всегда (требует `Secure`)
+
+### 1.4 CSRF (Cross-Site Request Forgery)
+
+Атака: злоумышленник заставляет браузер жертвы выполнить запрос к другому сайту.
+
+**Защита:**
+1. **SameSite Cookies** (основная современная защита)
+2. **CSRF Token** — уникальный токен в формах/заголовках
+3. **Проверка Origin/Referer** заголовков
+4. **Double Submit Cookie** — токен в куке + в заголовке
+
+```javascript
+// Генерация токена (на сервере)
+const csrfToken = crypto.randomBytes(32).toString('hex');
+res.cookie('csrf', csrfToken, { httpOnly: true, sameSite: 'strict' });
+// В форму / заголовок
+res.locals.csrfToken = csrfToken;
+
+// Проверка (middleware)
+app.use((req, res, next) => {
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+    const token = req.headers['x-csrf-token'] || req.body._csrf;
+    if (token !== req.cookies.csrf) {
+      return res.status(403).send('Invalid CSRF token');
+    }
+  }
+  next();
+});
+```
+
+### 1.5 Clickjacking — защита фреймами
+
+```http
+X-Frame-Options: DENY
+/* или */
+Content-Security-Policy: frame-ancestors 'none';
+```
+
+### 1.6 Другие заголовки безопасности
+
+```http
+X-Content-Type-Options: nosniff        /* Не угадывать MIME */
+X-XSS-Protection: 1; mode=block        /* Устарел, но не мешает */
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: camera=(), microphone=(), geolocation=()  /* Feature Policy */
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+### 1.7 Subresource Integrity (SRI)
+
+```html
+<script src="https://cdn.example.com/lib.js"
+        integrity="sha384-...hash..."
+        crossorigin="anonymous"></script>
+```
+
+### 1.8 Безопасность зависимостей
+
+```bash
+# Аудит
+npm audit
+npm audit fix
+
+# Автоматические PR (Dependabot, Renovate)
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+```
+
+---
+
+## 2. Производительность (Performance)
+
+### 2.1 Web Vitals — ключевые метрики
+
+| Метрика | Хорошо | Нормально | Плохо | Что измеряет |
+|---------|--------|-----------|-------|--------------|
+| **LCP** (Largest Contentful Paint) | ≤2.5s | ≤4s | >4s | Скорость загрузки главного контента |
+| **FID** (First Input Delay) | ≤100ms | ≤300ms | >300ms | Отзывчивость на первое взаимодействие |
+| **CLS** (Cumulative Layout Shift) | ≤0.1 | ≤0.25 | >0.25 | Визуальная стабильность |
+| **FCP** (First Contentful Paint) | ≤1.8s | ≤3s | >3s | Первый контент на экране |
+| **TTFB** (Time to First Byte) | ≤800ms | ≤1.8s | >1.8s | Скорость сервера |
+| **INP** (Interaction to Next Paint) | ≤200ms | ≤500ms | >500ms | Отзывчивость всех взаимодействий |
+
+### 2.2 Critical Rendering Path
+
+```
+HTML → DOM → CSSOM → Render Tree → Layout → Paint → Composite
+```
+
+**Оптимизация:**
+1. **Минимизировать критический CSS** — инлайн critical, остальное async
+2. **Defer/async скрипты** — не блокировать парсинг
+3. **Preload критичных ресурсов**
+4. **Server-side rendering (SSR)** — быстрее FCP/LCP
+
+```html
+<!-- Критичный CSS инлайн -->
+<style>/* critical css */</style>
+
+<!-- Остальной CSS асинхронно -->
+<link rel="preload" href="/styles.css" as="style" onload="this.rel='stylesheet'">
+
+<!-- Скрипты -->
+<script defer src="app.js"></script>          /* После парсинга HTML */
+<script async src="analytics.js"></script>    /* Не блокирует, порядок не гарантирован */
+<script type="module" src="app.js"></script>  /* Автоматически defer */
+
+<!-- Preload -->
+<link rel="preload" href="/font.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/hero.jpg" as="image">
+<link rel="prefetch" href="/next-page.js">    /* Низкий приоритет */
+<link rel="preconnect" href="https://api.example.com"> /* DNS+TCP+TLS */
+```
+
+### 2.3 Code Splitting & Lazy Loading
+
+```javascript
+// Динамический импорт (webpack, vite, rollup, esbuild)
+const HeavyComponent = lazy(() import('./HeavyComponent'));
+
+// React Suspense
+<Suspense fallback={<Spinner />}>
+  <HeavyComponent />
+</Suspense>
+
+// Route-based splitting
+const routes = [
+  { path: '/', component: () => import('./Home') },
+  { path: '/dashboard', component: () => import('./Dashboard') },
+];
+
+// Preload при наведении
+<link rel="prefetch" href="/dashboard.js">
+// или программно
+import('/* webpackPrefetch: true */ ./Dashboard');
+```
+
+### 2.4 Tree Shaking — удаление мёртвого кода
+
+```javascript
+// package.json
+{
+  "sideEffects": false  // для webpack/rollup — модуль чистый
+}
+
+// Или массив файлов с сайд-эффектами
+{
+  "sideEffects": ["./polyfills.js", "*.css"]
+}
+```
+
+**Требования:**
+- ES Modules (`import`/`export`)
+- `mode: 'production'`
+- Нет CommonJS `require` в ESM коде
+- Babel: `@babel/preset-env` с `modules: false`
+
+### 2.5 Кэширование
+
+**HTTP кэш:**
+```http
+# Неизменяемые ресурсы (хеш в имени) — долгий кэш
+Cache-Control: public, max-age=31536000, immutable
+
+# HTML, API — нет кэша или короткий
+Cache-Control: no-cache, must-revalidate
+# или
+Cache-Control: public, max-age=0, must-revalidate
+
+# Stale-while-revalidate — показать старое, обновить в фоне
+Cache-Control: public, max-age=300, stale-while-revalidate=86400
+```
+
+**ETag / Last-Modified:**
+```http
+ETag: "abc123"
+If-None-Match: "abc123"  → 304 Not Modified
+
+Last-Modified: Wed, 21 Oct 2023 07:28:00 GMT
+If-Modified-Since: ...   → 304 Not Modified
+```
+
+**Service Worker (Workbox):**
+```javascript
+// sw.js
+import { precacheAndRoute } from 'workbox-precaching';
+import { registerRoute } from 'workbox-routing';
+import { StaleWhileRevalidate, CacheFirst } from 'workbox-strategies';
+
+precacheAndRoute(self.__WB_MANIFEST);
+
+// API — Stale While Revalidate
+registerRoute(
+  ({ url }) => url.pathname.startsWith('/api/'),
+  new StaleWhileRevalidate({ cacheName: 'api' })
+);
+
+// Статика — Cache First
+registerRoute(
+  ({ request }) => request.destination === 'image',
+  new CacheFirst({ cacheName: 'images' })
+);
+```
+
+### 2.6 Оптимизация изображений
+
+```html
+<!-- Современные форматы -->
+<picture>
+  <source srcset="hero.avif" type="image/avif">
+  <source srcset="hero.webp" type="image/webp">
+  <img src="hero.jpg" alt="Hero" width="800" height="400" loading="lazy">
+</picture>
+
+<!-- Responsive images -->
+<img srcset="
+  small.jpg 400w,
+  medium.jpg 800w,
+  large.jpg 1200w
+" sizes="(max-width: 600px) 400px, 800px"
+src="medium.jpg" alt="...">
+
+<!-- Lazy loading (нативное) -->
+<img src="..." loading="lazy" alt="...">
+
+<!-- LCP изображение — eager! -->
+<img src="hero.jpg" loading="eager" fetchpriority="high" alt="...">
+```
+
+### 2.7 Шрифты
+
+```css
+/* font-display: swap — показывает системный шрифт до загрузки */
+@font-face {
+  font-family: 'Inter';
+  src: url('inter.woff2') format('woff2');
+  font-display: swap;        /* или optional, fallback */
+  font-weight: 400 700;      /* variable font */
+}
+
+/* Preload критичного шрифта */
+<link rel="preload" href="/inter.woff2" as="font" type="font/woff2" crossorigin>
+```
+
+### 2.8 Bundle Analysis
+
+```bash
+# Webpack
+npx webpack-bundle-analyzer dist/stats.json
+
+# Vite
+npm run build -- --mode=analyze
+
+# Rollup
+npm install -D rollup-plugin-visualizer
+# rollup.config.js: visualizer()
+
+# esbuild
+esbuild --analyze
+```
+
+### 2.9 Профилирование в DevTools
+
+**Performance Tab:**
+1. Record → взаимодействие → Stop
+2. Анализ: Main thread, Frames, Network, Timings
+3. Ищите: Long Tasks (>50ms), Forced Reflows, Excessive GC
+
+**Memory Tab:**
+- Heap Snapshot → сравнение (3 snapshot technique)
+- Allocation instrumentation on timeline
+
+**Lighthouse (в DevTools / CLI):**
+```bash
+npx lighthouse https://example.com --view
+```
+
+```javascript
+// CI интеграция
+// .github/workflows/lighthouse.yml
+- uses: treosh/lighthouse-ci-action@v11
+  with:
+    urls: |
+      https://staging.example.com
+    budgetPath: ./lighthouse-budget.json
+```
+
+### 2.10 Оптимизация React/Vue/Svelte (кратко)
+
+```javascript
+// React.memo — мемоизация компонента
+const Button = React.memo(({ onClick, children }) => (
+  <button onClick={onClick}>{children}</button>
+));
+
+// useMemo / useCallback — мемоизация значений/функций
+const value = useMemo(() => expensive(a, b), [a, b]);
+const handler = useCallback(() => doSomething(a), [a]);
+
+// Virtualization (react-window, @tanstack/virtual)
+import { FixedSizeList } from 'react-window';
+<FixedSizeList height={400} itemCount={10000} itemSize={35} width={300}>
+  {Row}
+</FixedSizeList>
+```
+
+---
+
+## 3. Практика
+
+1. **Security Audit**: Прогоните `npm audit`, настройте CSP заголовки для своего проекта
+2. **Performance Budget**: Создайте `lighthouse-budget.json` с лимитами для LCP, TBT, CLS
+3. **Code Splitting**: Настройте route-based splitting в своём приложении
+4. **Service Worker**: Добавьте Workbox для офлайн-кэширования
+5. **Images**: Оптимизируйте все изображения (avif/webp, responsive, lazy)
+6. **Bundle Analysis**: Найдите 3 самых тяжелых модуля и подумайте как уменьшить
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Решение |
+|--------|---------|
+| Нет CSP | Добавьте строгий CSP с nonce/hash для инлайн скриптов |
+| `innerHTML` с user input | `textContent` или DOMPurify |
+| Куки без HttpOnly/SameSite | Всегда ставьте `HttpOnly; Secure; SameSite=Lax` |
+| Нет `loading="lazy"` на изображениях | Добавьте, кроме LCP изображения |
+| Блокирующие скрипты в `<head>` | `defer` или перенос в конец `<body>` |
+| Один огромный бандл | Code splitting, dynamic import |
+| Нет кэширования статики | `Cache-Control: public, max-age=31536000, immutable` + хеш в имени |
+| Шрифты блокируют рендер | `font-display: swap` + preload |
+
+---
+
+## Контрольные вопросы
+
+1. Чем Reflected XSS отличается от Stored и DOM-based?
+2. Зачем нужен `nonce` в CSP?
+3. В чём разница между `SameSite=Strict` и `Lax`?
+4. Что такое LCP, FID, CLS и какие у них хорошие значения?
+5. Как `defer` отличается от `async`?
+6. Зачем нужен `sideEffects: false` в package.json?
+7. Что делает `stale-while-revalidate` в Cache-Control?
+8. Как Service Worker помогает производительности?
+
+---
+
+## Дополнительное чтение
+
+- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
+- [MDN: CSP](https://developer.mozilla.org/ru/docs/Web/HTTP/CSP)
+- [Web.dev: Performance](https://web.dev/performance/)
+- [Web Vitals](https://web.dev/vitals/)
+- [HTTP Caching](https://developer.mozilla.org/ru/docs/Web/HTTP/Caching)
+- [Workbox](https://developer.chrome.com/docs/workbox/)
+- [Bundle Analysis](https://webpack.js.org/guides/code-splitting/)
+- [Chrome DevTools Performance](https://developer.chrome.com/docs/devtools/performance/)

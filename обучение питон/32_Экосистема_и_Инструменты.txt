@@ -1,0 +1,276 @@
+# Урок 32: Экосистема Python — веб, автоматизация, научные вычисления, базы данных, выбор инструментов
+
+## Цели урока
+- Ориентироваться в основных доменах экосистемы Python
+- Выбирать правильные инструменты для задач: веб, данные, авто, БД
+- Понимать плюсы/минусы популярных фреймворков и библиотек
+
+---
+
+## 1. Веб-разработка
+
+### Синхронные фреймворки
+| Фреймворк | Особенности | Когда использовать |
+|-----------|-------------|-------------------|
+| **Django** | batteries-included: ORM, админка, auth, миграции, шаблоны | Полноценные приложения, CRM, CMS, быстрый старт |
+| **Flask** | микрофреймворк, расширяемость, простота | Малые/средние API, микросервисы, прототипы |
+| **FastAPI** | async, автодокументация (OpenAPI), Pydantic-валидация | Современные REST/gRPC API, высокая нагрузка |
+| **Starlette** | низкоуровневый ASGI, основа FastAPI | Когда нужен полный контроль |
+
+### Асинхронные (ASGI)
+```python
+# FastAPI пример
+from fastapi import FastAPI, Depends, HTTPException
+from pydantic import BaseModel
+from typing import Annotated
+
+app = FastAPI(title="My API")
+
+class Item(BaseModel):
+    name: str
+    price: float
+    in_stock: bool = True
+
+@app.post("/items")
+async def create_item(item: Item):
+    return {"id": 42, **item.model_dump()}
+
+# Запуск: uvicorn main:app --reload
+```
+
+### Деплой веб-приложений
+| Инструмент | Назначение |
+|------------|------------|
+| **Gunicorn + Uvicorn workers** | Production ASGI сервер |
+| **Nginx** | Reverse proxy, статика, SSL termination |
+| **Docker** | Контейнеризация |
+| **Kubernetes / ECS / Fly.io / Railway** | Оркестрация |
+
+---
+
+## 2. Автоматизация и скриптинг
+
+### CLI-инструменты
+```python
+# click — декларативные CLI
+import click
+
+@click.group()
+def cli(): pass
+
+@cli.command()
+@click.argument("name")
+@click.option("--count", "-c", default=1)
+def greet(name, count):
+    for _ in range(count):
+        click.echo(f"Hello, {name}!")
+
+if __name__ == "__main__":
+    cli()
+```
+
+| Библиотека | Назначение |
+|------------|------------|
+| **click / typer** | Создание CLI (typer = click + type hints) |
+| **rich** | Красивый вывод: таблицы, прогресс-бары, синтаксис |
+| **tqdm** | Прогресс-бары для циклов |
+| **watchdog** | Мониторинг файловой системы |
+| **schedule / apscheduler** | Планировщик задач |
+| **fabric / invoke** | Удалённое выполнение команд (SSH) |
+
+### Системная автоматизация
+```python
+# pathlib + subprocess — современная замена bash-скриптам
+from pathlib import Path
+import subprocess
+
+def backup_project(src: Path, dst: Path):
+    dst.mkdir(parents=True, exist_ok=True)
+    for file in src.rglob("*.py"):
+        rel = file.relative_to(src)
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        file.replace(target)  # или shutil.copy2
+    result = subprocess.run(["tar", "-czf", "backup.tar.gz", "-C", str(dst), "."], capture_output=True)
+    result.check_returncode()
+```
+
+---
+
+## 3. Научные вычисления и Data Science
+
+### Стек Data Science
+| Библиотека | Назначение |
+|------------|------------|
+| **NumPy** | N-мерные массивы, линейная алгебра, случайные числа |
+| **pandas** | DataFrame, манипуляции табличными данными, I/O (CSV, Parquet, Excel) |
+| **polars** | Быстрый DataFrame (Rust), ленивые вычисления, альтернатива pandas |
+| **matplotlib / seaborn** | Базовое/статистическое визуализирование |
+| **plotly / altair** | Интерактивные графики |
+| **scikit-learn** | Классическая ML: классификация, регрессия, кластеринг, preprocessing |
+| **scipy** | Научные алгоритмы: оптимизация, статистика, сигналы |
+| **statsmodels** | Статистическое моделирование, эконометрика |
+
+### Пример пайплайна
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+
+df = pd.read_parquet("data.parquet")
+X = df.drop("target", axis=1)
+y = df["target"]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+model = RandomForestClassifier(n_estimators=200, n_jobs=-1)
+model.fit(X_train, y_train)
+
+print(classification_report(y_test, model.predict(X_test)))
+```
+
+### Глубокое обучение
+| Фреймворк | Особенности |
+|-----------|-------------|
+| **PyTorch** | Динамический граф, research-friendly, экосистема (Lightning, HF) |
+| **TensorFlow / Keras** | Статический граф, production-ready, TFX, TFLite |
+| **JAX** | Функциональный, автодифф, JIT (XLA), для research/HPC |
+
+---
+
+## 4. Работа с базами данных
+
+### ORM
+| ORM | Синхронность | Особенности |
+|-----|--------------|-------------|
+| **SQLAlchemy 2.0** | Sync + Async | Mature, гибкий, Core + ORM, миграции (Alembic) |
+| **Tortoise ORM** | Async-only | Django-like API, быстрый для async |
+| **Prisma (Python client)** | Sync + Async | Type-safe, генерация из схемы |
+| **Django ORM** | Sync (async в 4.1+) | Встроен в Django |
+
+```python
+# SQLAlchemy 2.0 async
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import String, select
+
+class Base(DeclarativeBase): pass
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+
+engine = create_async_engine("postgresql+asyncpg://user:pass@localhost/db")
+
+async def get_user(email: str) -> User | None:
+    async with AsyncSession(engine) as session:
+        return await session.scalar(select(User).where(User.email == email))
+```
+
+### Миграции
+```bash
+# Alembic (для SQLAlchemy)
+pip install alembic
+alembic init migrations
+# редактируйте env.py, затем:
+alembic revision --autogenerate -m "create users table"
+alembic upgrade head
+```
+
+### NoSQL / Специализированные БД
+| База | Клиент | Кейс |
+|------|--------|------|
+| **Redis** | redis-py (async) | Кэш, сессии, очереди, rate limit |
+| **MongoDB** | motor (async) | Документы, гибкая схема |
+| **Elasticsearch** | elasticsearch-py | Полнотекстовый поиск, логи |
+| **ClickHouse** | clickhouse-connect | OLAP, аналитика |
+| **DuckDB** | duckdb | Встраиваемая аналитика, Parquet |
+
+---
+
+## 5. Выбор инструментов: чек-лист решения
+
+### Для нового проекта — вопросы
+1. **Тип приложения**: API / CLI / Web UI / Data pipeline / ML model serving?
+2. **Нагрузка**: RPS, latency requirements, необходима ли асинхронность?
+3. **Команда**: опыт с async, типизацией, конкретными фреймворками?
+4. **Сроки**: нужен ли быстрый старт (Django) или гибкость (FastAPI/Flask)?
+5. **Деплой**: контейнеры, serverless, VM, managed services?
+
+### Декларативный выбор (пример)
+```python
+DECISION_MATRIX = {
+    "fullstack_monolith": "Django + HTMX/Alpine.js",
+    "rest_api_high_perf": "FastAPI + SQLAlchemy async + PostgreSQL",
+    "microservice": "FastAPI / Starlette + Pydantic",
+    "data_pipeline": "pandas/polars + Airflow/Prefect/Dagster",
+    "ml_serving": "FastAPI + ONNX/TensorRT + Triton / BentoML",
+    "cli_tool": "typer + rich",
+    "realtime_ws": "FastAPI WebSocket / socket.io (python-socketio)",
+    "graphql": "Strawberry (FastAPI integration) / Ariadne",
+}
+```
+
+---
+
+## 6. Мониторинг и observability
+
+| Категория | Инструменты |
+|-----------|-------------|
+| **Метрики** | Prometheus client, OpenTelemetry, Datadog |
+| **Логи** | structlog + Loki/ELK/Datadog |
+| **Трейсинг** | OpenTelemetry + Jaeger/Zipkin/Tempo |
+| **Профилирование** | py-spy, scalene, pyinstrument |
+| **Ошибки** | Sentry, Rollbar, Honeybadger |
+
+```python
+# OpenTelemetry минимальный сетап
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+trace.set_tracer_provider(TracerProvider())
+tracer = trace.get_tracer(__name__)
+
+with tracer.start_as_current_span("db_query") as span:
+    span.set_attribute("db.statement", "SELECT * FROM users")
+    result = await db.execute(...)
+```
+
+---
+
+## Практические задания
+
+1. **Веб**: Создайте FastAPI CRUD API с PostgreSQL (SQLAlchemy async) и Alembic миграциями
+2. **CLI**: Напишите `typer` приложение для бэкапа папки с прогресс-баром (`rich.progress`)
+3. **Данные**: Загрузите датасет (Kaggle/UCI), сделайте EDA в pandas/polars, обучите baseline модель
+4. **БД**: Настройте Redis для кэширования + rate limiting в FastAPI
+5. **Наблюдаемость**: Добавьте OpenTelemetry трейсинг в существующий проект, отправьте в Jaeger
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Django для простого REST API | FastAPI / Flask |
+| pandas для стриминга/big data | polars / DuckDB / Dask / Ray |
+| Сырые SQL строки в коде | SQLAlchemy ORM / Core + параметризованные запросы |
+| Отсутствие connection pooling | `pool_size`, `max_overflow` в SQLAlchemy engine |
+| Синхронные вызовы в async коде | `run_in_threadpool` / асинхронные драйверы (asyncpg, aioredis) |
+| Непиннутые зависимости в проде | `pip-tools` / `uv lock` / lockfile в репо |
+
+---
+
+## Полезные ресурсы
+
+- **Awesome Python** — https://github.com/vinta/awesome-python (курируемый список)
+- **Python Package Index Trends** — https://pypistats.org/
+- **Django vs FastAPI vs Flask** — https://testdriven.io/blog/fastapi-vs-flask-vs-django/
+- **SQLAlchemy 2.0 Tutorial** — https://docs.sqlalchemy.org/en/20/tutorial/
+- **Polars User Guide** — https://docs.pola.rs/
+- **OpenTelemetry Python** — https://opentelemetry.io/docs/instrumentation/python/

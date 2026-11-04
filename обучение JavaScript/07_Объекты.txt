@@ -1,0 +1,501 @@
+# Урок 7: Объекты
+
+## Цели урока
+- Понять, что такое объекты и как они хранят данные
+- Научиться создавать, читать и изменять свойства
+- Освоить методы объекта, дескрипторы свойств, геттеры/сеттеры
+- Разобраться с прототипами, наследованием и `this`
+
+---
+
+## Что такое объект?
+
+Объект — это коллекция пар «ключ-значение» (свойств). Ключи — строки или Symbols, значения — любые типы.
+
+```javascript
+// Объектный литерал
+const user = {
+  name: 'Алекс',
+  age: 25,
+  isAdmin: false,
+  skills: ['JS', 'React'],
+  address: {
+    city: 'Москва',
+    zip: 101000
+  }
+};
+
+// Доступ к свойствам
+user.name;           // 'Алекс' — точка
+user['age'];         // 25 — скобки (для динамических ключей)
+user['full name'];   // работает с пробелами
+user.missing;        // undefined
+```
+
+---
+
+## Создание объектов
+
+```javascript
+// 1. Литерал (самый частый способ)
+const obj = { a: 1, b: 2 };
+
+// 2. Object.create() — с указанием прототипа
+const proto = { greet() { return 'Hi'; } };
+const obj2 = Object.create(proto);
+obj2.greet(); // 'Hi'
+
+// 3. Конструктор
+const obj3 = new Object();
+obj3.key = 'value';
+
+// 4. Object.fromEntries() — из пар [key, value]
+const entries = [['a', 1], ['b', 2]];
+Object.fromEntries(entries); // { a: 1, b: 2 }
+
+// 5. Object.assign() — слияние (shallow)
+const merged = Object.assign({}, { a: 1 }, { b: 2 }); // { a: 1, b: 2 }
+
+// 6. Spread (ES2018) — тоже shallow merge
+const merged2 = { ...{ a: 1 }, ...{ b: 2 } }; // { a: 1, b: 2 }
+```
+
+---
+
+## Работа со свойствами
+
+### Чтение, запись, удаление
+
+```javascript
+const obj = { a: 1 };
+
+// Запись
+obj.b = 2;           // добавление
+obj['c'] = 3;        // через скобки
+obj.a = 10;          // изменение
+
+// Удаление
+delete obj.a;        // true, obj = { b: 2, c: 3 }
+delete obj.missing;  // true (нет ошибки)
+
+// Проверка наличия
+'a' in obj;              // false
+'b' in obj;              // true
+obj.hasOwnProperty('b'); // true (собственное свойство)
+Object.hasOwn(obj, 'b'); // true (современный статический метод, ES2022)
+```
+
+### Вычисляемые имена свойств (ES2015)
+
+```javascript
+const prop = 'name';
+const user = {
+  [prop]: 'Alex',           // вычисляемое имя
+  [`get${prop}`]() {        // метод с вычисляемым именем
+    return this[prop];
+  }
+};
+
+user.name;        // 'Alex'
+user.getname();   // 'Alex'
+```
+
+### Сокращённая запись (Shorthand)
+
+```javascript
+const name = 'Alex';
+const age = 25;
+
+const user = { name, age }; // { name: 'Alex', age: 25 }
+
+// Методы
+const obj = {
+  method() { return 'hi'; }, // кратко
+  method2: function() { return 'hi'; } // подробно
+};
+```
+
+---
+
+## Дескрипторы свойств
+
+Каждое свойство имеет атрибуты (дескриптор):
+
+```javascript
+const obj = { a: 1 };
+
+// Получение дескриптора
+Object.getOwnPropertyDescriptor(obj, 'a');
+// {
+//   value: 1,
+//   writable: true,      // можно менять value
+//   enumerable: true,    // видно в for...in, Object.keys
+//   configurable: true   // можно delete, менять дескриптор
+// }
+
+// Установка дескриптора
+Object.defineProperty(obj, 'b', {
+  value: 2,
+  writable: false,       // только чтение
+  enumerable: false,     // скрыто от перечисления
+  configurable: false    // нельзя удалить/изменить дескриптор
+});
+
+obj.b = 100;             // игнорируется (в строгом режиме — ошибка)
+delete obj.b;            // false, свойство остаётся
+Object.keys(obj);        // ['a'] — 'b' не перечисляется
+```
+
+### Массовое управление дескрипторами
+
+```javascript
+const obj = { a: 1, b: 2 };
+
+// Запретить добавление новых свойств
+Object.preventExtensions(obj);
+obj.c = 3; // игнорируется / ошибка в strict
+
+// Запретить удаление и изменение дескрипторов (но значения можно менять)
+Object.seal(obj);
+delete obj.a; // false
+Object.defineProperty(obj, 'a', { writable: false }); // ошибка
+
+// Полная заморозка: нельзя добавлять, удалять, менять значения, дескрипторы
+Object.freeze(obj);
+obj.a = 100; // игнорируется / ошибка
+
+// Проверки
+Object.isExtensible(obj); // false
+Object.isSealed(obj);     // true
+Object.isFrozen(obj);     // true
+```
+
+> **Важно:** `freeze`/`seal` — поверхностные (shallow). Вложенные объекты не замораживаются!
+
+---
+
+## Геттеры и сеттеры (Accessors)
+
+```javascript
+const user = {
+  firstName: 'Алекс',
+  lastName: 'Иванов',
+
+  // Геттер — читается как свойство
+  get fullName() {
+    return `${this.firstName} ${this.lastName}`;
+  },
+
+  // Сеттер — вызывается при записи
+  set fullName(value) {
+    const [first, last] = value.split(' ');
+    this.firstName = first;
+    this.lastName = last;
+  }
+};
+
+user.fullName;        // 'Алекс Иванов' (геттер)
+user.fullName = 'Мария Петрова'; // сеттер
+user.firstName;       // 'Мария'
+```
+
+**Дескриптор accessor-свойства:**
+```javascript
+Object.getOwnPropertyDescriptor(user, 'fullName');
+// { get: [Function], set: [Function], enumerable: true, configurable: true }
+```
+
+---
+
+## Методы объекта и `this`
+
+```javascript
+const calculator = {
+  value: 0,
+
+  add(n) {
+    this.value += n;
+    return this; // чейнинг
+  },
+
+  multiply(n) {
+    this.value *= n;
+    return this;
+  },
+
+  getResult() {
+    return this.value;
+  }
+};
+
+calculator.add(5).multiply(2).getResult(); // 10
+```
+
+### Потеря контекста
+
+```javascript
+const user = {
+  name: 'Alex',
+  sayHi() { return `Hi, ${this.name}`; }
+};
+
+const fn = user.sayHi;
+fn(); // 'Hi, undefined' — this потерян!
+
+// Решения:
+const bound = user.sayHi.bind(user);
+bound(); // 'Hi, Alex'
+
+user.sayHi.call({ name: 'Guest' }); // 'Hi, Guest'
+user.sayHi.apply({ name: 'Guest' }); // то же самое
+```
+
+---
+
+## Перебор свойств
+
+```javascript
+const obj = { a: 1, b: 2, c: 3 };
+Object.prototype.d = 4; // унаследованное
+
+// Object.keys — только свои перечисляемые строковые ключи
+Object.keys(obj); // ['a', 'b', 'c']
+
+// Object.values — только свои перечисляемые значения
+Object.values(obj); // [1, 2, 3]
+
+// Object.entries — пары [key, value]
+Object.entries(obj); // [['a',1], ['b',2], ['c',3]]
+
+// for...in — свои + унаследованные перечисляемые
+for (const key in obj) {
+  console.log(key); // a, b, c, d
+  if (Object.hasOwn(obj, key)) { ... } // фильтр своих
+}
+
+// Object.getOwnPropertyNames — свои (в т.ч. не перечисляемые)
+Object.getOwnPropertyNames(obj); // ['a', 'b', 'c']
+
+// Object.getOwnPropertySymbols — свои Symbol-ключи
+const sym = Symbol('id');
+const o = { [sym]: 123 };
+Object.getOwnPropertySymbols(o); // [Symbol(id)]
+
+// Reflect.ownKeys — все свои ключи (строки + Symbols)
+Reflect.ownKeys(o); // ['a', 'b', 'c', Symbol(id)]
+```
+
+---
+
+## Прототипы и наследование
+
+### `[[Prototype]]` и `__proto__`
+
+```javascript
+const animal = {
+  eats: true,
+  walk() { console.log('Walking...'); }
+};
+
+const rabbit = {
+  jumps: true,
+  __proto__: animal // устаревший, но наглядный способ
+};
+
+rabbit.eats;     // true (из animal)
+rabbit.walk();   // 'Walking...'
+rabbit.jumps;    // true (своё)
+```
+
+### Современные способы
+
+```javascript
+// Object.create(proto) — создаёт объект с заданным прототипом
+const rabbit = Object.create(animal);
+rabbit.jumps = true;
+
+// Object.getPrototypeOf / Object.setPrototypeOf
+Object.getPrototypeOf(rabbit); // animal
+Object.setPrototypeOf(rabbit, null); // отключить наследование
+```
+
+### Цепочка прототипов
+
+```javascript
+const a = { x: 1 };
+const b = Object.create(a);
+const c = Object.create(b);
+
+c.x; // 1 — поиск вверх по цепочке
+c.y = 2; // создаёт собственное свойство c.y (shadowing)
+```
+
+### `hasOwnProperty` vs `in`
+
+```javascript
+const obj = Object.create({ inherited: 1 });
+obj.own = 2;
+
+'own' in obj;           // true
+'inherited' in obj;     // true
+obj.hasOwnProperty('own');      // true
+obj.hasOwnProperty('inherited'); // false
+Object.hasOwn(obj, 'own');      // true (рекомендуется)
+```
+
+---
+
+## Классы (Syntax Sugar над прототипами)
+
+```javascript
+class User {
+  constructor(name, age) {
+    this.name = name;
+    this.age = age;
+  }
+
+  // Метод в прототипе
+  greet() {
+    return `Привет, я ${this.name}`;
+  }
+
+  // Геттер/сеттер
+  get isAdult() { return this.age >= 18; }
+  set isAdult(val) { throw new Error('Readonly'); }
+
+  // Статический метод (на самом классе)
+  static createGuest() {
+    return new User('Гость', 0);
+  }
+}
+
+const user = new User('Alex', 25);
+user.greet();           // 'Привет, я Alex'
+user.isAdult;           // true
+User.createGuest();     // User { name: 'Гость', age: 0 }
+```
+
+### Наследование классов
+
+```javascript
+class Animal {
+  constructor(name) { this.name = name; }
+  speak() { return 'Sound'; }
+}
+
+class Dog extends Animal {
+  constructor(name, breed) {
+    super(name); // обязательно до this!
+    this.breed = breed;
+  }
+
+  speak() {
+    return `${super.speak()} — Гав!`;
+  }
+}
+
+const dog = new Dog('Рекс', 'Овчарка');
+dog.speak(); // 'Sound — Гав!'
+```
+
+---
+
+## Symbolы — уникальные ключи
+
+```javascript
+const id = Symbol('id');
+const id2 = Symbol('id');
+
+id === id2; // false — каждый Symbol уникален
+
+const user = {
+  name: 'Alex',
+  [id]: 123 // скрытое свойство
+};
+
+user[id];              // 123
+Object.keys(user);     // ['name'] — Symbol не видно
+Object.getOwnPropertySymbols(user); // [Symbol(id)]
+JSON.stringify(user);  // '{"name":"Alex"}' — Symbol игнорируется
+
+// Well-known Symbols
+const arr = [1, 2, 3];
+arr[Symbol.iterator]; // функция итератора
+
+// Symbol.for — глобальный реестр
+Symbol.for('app.id') === Symbol.for('app.id'); // true
+Symbol.keyFor(Symbol.for('app.id')); // 'app.id'
+```
+
+---
+
+## Деструктуризация объектов
+
+```javascript
+const user = { name: 'Alex', age: 25, city: 'Moscow' };
+
+// Базовая
+const { name, age } = user;
+
+// Переименование
+const { name: userName, age: userAge } = user;
+
+// Значения по умолчанию
+const { role = 'user' } = user; // 'user'
+
+// Вложенная
+const { address: { city } } = { address: { city: 'Moscow' } };
+
+// Rest
+const { name, ...rest } = user; // rest = { age: 25, city: 'Moscow' }
+
+// В параметрах функции
+function greet({ name, age = 18 }) {
+  return `Hi ${name}, ${age}`;
+}
+greet({ name: 'Alex' }); // 'Hi Alex, 18'
+```
+
+---
+
+## Практика
+
+1. Создайте объект `calculator` с методами `add`, `subtract`, `multiply`, `divide`, поддерживающими чейнинг
+2. Реализуйте `deepFreeze(obj)` — рекурсивную заморозку объекта со всеми вложенными
+3. Напишите `pick(obj, keys)` — возвращает новый объект только с указанными ключами
+4. Реализуйте `omit(obj, keys)` — возвращает объект без указанных ключей
+5. Создайте класс `EventEmitter` с методами `on(event, handler)`, `off(event, handler)`, `emit(event, ...args)`
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Неправильно | Правильно | Пояснение |
+|--------|-------------|-----------|-----------|
+| Мутация через прототип | `obj.__proto__.x = 1` | `Object.create(proto)` или классы | `__proto__` — deprecated, ломает оптимизации |
+| `for...in` без фильтра | `for (k in obj)` | `for (k in obj) if (Object.hasOwn(obj,k))` | Перебирает унаследованные свойства |
+| `freeze` не глубокий | `Object.freeze({ a: { b: 1 } })` | `deepFreeze` рекурсивно | Вложенные объекты остаются изменяемыми |
+| `this` в коллбеке | `setTimeout(obj.method, 100)` | `setTimeout(() => obj.method(), 100)` или `.bind(obj)` | Контекст теряется |
+| `hasOwnProperty` переопределён | `obj.hasOwnProperty('x')` | `Object.hasOwn(obj, 'x')` | Если у объекта свой метод `hasOwnProperty` — ошибка |
+
+---
+
+## Контрольные вопросы
+
+1. Чем `Object.create(null)` отличается от `{}`?
+2. Зачем нужны `get`/`set` если можно просто использовать методы?
+3. В чём разница между `seal` и `freeze`?
+4. Почему `Object.keys` не видит Symbol-свойства?
+5. Что делает `super` в классе-наследнике?
+6. Как проверить, является ли свойство собственным (не унаследованным)?
+7. Чем `Map` лучше обычного объекта для хранения пар ключ-значение?
+
+---
+
+## Дополнительное чтение
+
+- [MDN: Working with Objects](https://developer.mozilla.org/ru/docs/Web/JavaScript/Guide/Working_with_Objects)
+- [javascript.info: Объекты](https://javascript.info/object)
+- [MDN: Object](https://developer.mozilla.org/ru/docs/Web/JavaScript/Reference/Global_Objects/Object)
+- [You Don't Know JS: this & Object Prototypes](https://github.com/getify/You-Dont-Know-JS/tree/2nd-ed/this-object-prototypes)
+- [ExploringJS: Objects](https://exploringjs.com/impatient-js/ch_objects.html)

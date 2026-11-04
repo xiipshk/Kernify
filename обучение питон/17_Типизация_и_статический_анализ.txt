@@ -1,0 +1,449 @@
+# Урок 2.6: Типизация и статический анализ — type hints, mypy, generics, protocols
+
+## Цели урока
+- Писать аннотации типов (type hints)
+- Понимать Generics (List[T], Dict[K, V], и т.д.)
+- Использовать Union, Optional, Literal, TypedDict
+- Работать с Protocol (структурная типизация)
+- Настроить и использовать mypy для статической проверки
+
+---
+
+## 1. Базовые аннотации (Python 3.5+)
+
+```python
+# Переменные
+age: int = 25
+name: str = "Анна"
+height: float = 1.75
+is_student: bool = True
+
+# Функции
+def greet(name: str) -> str:
+    return f"Привет, {name}!"
+
+# Сложные типы
+from typing import List, Dict, Tuple, Set
+
+numbers: List[int] = [1, 2, 3]
+user: Dict[str, int] = {"age": 25, "score": 100}
+coords: Tuple[float, float] = (55.75, 37.61)
+unique: Set[str] = {"a", "b", "c"}
+```
+
+### Python 3.9+ — встроенные generics (без typing)
+```python
+# Вместо from typing import List, Dict...
+numbers: list[int] = [1, 2, 3]
+user: dict[str, int] = {"age": 25}
+coords: tuple[float, float] = (55.75, 37.61)
+unique: set[str] = {"a", "b"}
+
+# Callable
+from collections.abc import Callable
+handler: Callable[[str, int], bool] = lambda name, age: age > 18
+```
+
+---
+
+## 2. Optional, Union, Literal
+
+### Optional — может быть None
+```python
+from typing import Optional
+
+def find_user(id: int) -> Optional[str]:
+    if id == 1:
+        return "Анна"
+    return None
+
+# Эквивалентно:
+def find_user(id: int) -> str | None:  # Python 3.10+
+    ...
+```
+
+### Union — несколько возможных типов
+```python
+from typing import Union
+
+def process(id: Union[int, str]) -> str:
+    return str(id)
+
+# Python 3.10+
+def process(id: int | str) -> str:
+    return str(id)
+```
+
+### Literal — конкретные значения
+```python
+from typing import Literal
+
+Mode = Literal["r", "w", "a", "rb", "wb"]
+
+def open_file(path: str, mode: Mode = "r") -> None:
+    ...
+
+open_file("test.txt", "r")    # OK
+open_file("test.txt", "invalid")  # Ошибка mypy!
+```
+
+---
+
+## 3. TypedDict — типизированные словари
+
+```python
+from typing import TypedDict, NotRequired, Required
+
+class User(TypedDict):
+    name: str
+    age: int
+    email: NotRequired[str]  # может отсутствовать
+    id: Required[int]        # обязательно (Python 3.11+)
+
+user: User = {"name": "Анна", "age": 25, "id": 1}  # OK
+user2: User = {"name": "Борис", "id": 2}           # OK (email не обязателен)
+# user3: User = {"name": "Виктор", "age": 30}     # Ошибка: нет id
+```
+
+---
+
+## 4. Generics — параметризованные типы
+
+### TypeVar — переменная типа
+```python
+from typing import TypeVar, Generic, List
+
+T = TypeVar('T')
+
+def first(items: List[T]) -> T:
+    return items[0]
+
+print(first([1, 2, 3]))        # int
+print(first(["a", "b", "c"]))  # str
+```
+
+### Свой Generic класс
+```python
+from typing import Generic, TypeVar, Optional
+
+T = TypeVar('T')
+
+class Box(Generic[T]):
+    def __init__(self, value: T):
+        self.value = value
+
+    def get(self) -> T:
+        return self.value
+
+    def set(self, value: T) -> None:
+        self.value = value
+
+int_box: Box[int] = Box(42)
+str_box: Box[str] = Box("hello")
+```
+
+### Ковариантность / контравариантность
+```python
+from typing import TypeVar, Generic, Sequence
+
+# Ковариантный (только чтение) — Sequence, Iterable
+T_co = TypeVar('T_co', covariant=True)
+
+class ReadOnlyBox(Generic[T_co]):
+    def __init__(self, value: T_co):
+        self._value = value
+    def get(self) -> T_co:
+        return self._value
+
+# Контравариантный (только запись) — Callable[[T], ...]
+T_contra = TypeVar('T_contra', contravariant=True)
+
+class Writer(Generic[T_contra]):
+    def write(self, value: T_contra) -> None:
+        ...
+
+# Инвариантный (и чтение, и запись) — List, Dict
+T = TypeVar('T')
+class MutableBox(Generic[T]):
+    def __init__(self, value: T):
+        self.value = value
+    def get(self) -> T:
+        return self.value
+    def set(self, value: T) -> None:
+        self.value = value
+```
+
+---
+
+## 5. Protocol — структурная типизация (Python 3.8+)
+
+### Duck typing с проверкой типов
+```python
+from typing import Protocol
+
+class Drawable(Protocol):
+    def draw(self) -> None: ...
+    def area(self) -> float: ...
+
+class Circle:
+    def __init__(self, r: float):
+        self.r = r
+    def draw(self) -> None:
+        print(f"Круг радиусом {self.r}")
+    def area(self) -> float:
+        return 3.14 * self.r ** 2
+
+class Square:
+    def __init__(self, side: float):
+        self.side = side
+    def draw(self) -> None:
+        print(f"Квадрат стороной {self.side}")
+    def area(self) -> float:
+        return self.side ** 2
+
+def render(shape: Drawable) -> None:
+    shape.draw()
+    print(f"Площадь: {shape.area()}")
+
+render(Circle(5))   # OK — есть draw и area
+render(Square(3))   # OK — есть draw и area
+# render("строка")  # Ошибка mypy: нет draw/area
+```
+
+### Protocol с атрибутами
+```python
+class HasName(Protocol):
+    name: str
+
+def greet(obj: HasName) -> None:
+    print(f"Привет, {obj.name}")
+
+class Person:
+    def __init__(self, name: str):
+        self.name = name
+
+class Dog:
+    def __init__(self, name: str):
+        self.name = name
+
+greet(Person("Анна"))  # OK
+greet(Dog("Бобик"))    # OK
+```
+
+---
+
+## 6. Callable, Any, Never, NoReturn
+
+```python
+from typing import Callable, Any, Never, NoReturn
+
+# Callable[[arg_types], return_type]
+def apply(func: Callable[[int, int], int], a: int, b: int) -> int:
+    return func(a, b)
+
+# Any — отключает проверку типов
+def legacy_code(data: Any) -> Any:
+    return data.foo().bar()
+
+# NoReturn — функция никогда не возвращается (выбрасывает/выходит)
+def abort(msg: str) -> NoReturn:
+    raise SystemExit(msg)
+
+# Never — нисходящий тип (Python 3.11+), для exhaustiveness checking
+def handle(value: int | str) -> None:
+    match value:
+        case int(): ...
+        case str(): ...
+        case _:
+            # value здесь имеет тип Never
+            reveal_type(value)  # mypy покажет Never
+```
+
+---
+
+## 7. overload — перегрузка функций
+
+```python
+from typing import overload
+
+@overload
+def parse(data: str) -> int: ...
+@overload
+def parse(data: bytes) -> str: ...
+
+def parse(data: str | bytes) -> int | str:
+    if isinstance(data, str):
+        return int(data)
+    return data.decode()
+
+# mypy знает точный возвращаемый тип
+result1 = parse("42")      # int
+result2 = parse(b"hello")  # str
+```
+
+---
+
+## 8. Final, ClassVar, dataclass_transform
+
+```python
+from typing import Final, ClassVar
+from dataclasses import dataclass
+
+# Final — константа (не переопределяется)
+MAX_SIZE: Final[int] = 100
+# MAX_SIZE = 200  # Ошибка mypy!
+
+class Config:
+    # ClassVar — атрибут класса, не экземпляра
+    default_timeout: ClassVar[int] = 30
+    timeout: int = 30  # атрибут экземпляра
+
+@dataclass
+class Settings:
+    debug: bool = False
+    # поля автоматически типизируются
+```
+
+---
+
+## 9. mypy — статический анализатор типов
+
+### Установка и запуск
+```bash
+pip install mypy
+
+# Проверка файла
+mypy main.py
+
+# Проверка всего проекта
+mypy src/
+
+# Строгий режим
+mypy --strict main.py
+```
+
+### Конфигурация (pyproject.toml)
+```toml
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+# Игнорировать отсутствующие стабы
+[mypy-plugins.*]
+ignore_missing_imports = true
+```
+
+### Типичные флаги
+| Флаг | Описание |
+|------|----------|
+| `--strict` | Включает все строгие проверки |
+| `--disallow-untyped-defs` | Ошибка, если у функции нет аннотаций |
+| `--ignore-missing-imports` | Не ругаться на отсутствующие stubs |
+| `--show-error-codes` | Показывать коды ошибок (например, `[attr-defined]`) |
+
+### Инлайн-подавление
+```python
+x = some_untyped_function()  # type: ignore[assignment]
+
+# Или комментарием
+x = some_untyped_function()  # type: ignore
+```
+
+---
+
+## 10. stubs (.pyi) и typeshed
+
+### Создание stub-файла для сторонней библиотеки
+```
+mylib/
+├── __init__.py
+└── mylib.pyi
+```
+
+```python
+# mylib.pyi
+def connect(host: str, port: int = 5432) -> Connection: ...
+class Connection:
+    def execute(self, query: str) -> Result: ...
+    def close(self) -> None: ...
+```
+
+### Установка типов для популярных библиотек
+```bash
+pip install types-requests types-pyyaml types-redis
+# или
+pip install types-<package_name>
+```
+
+---
+
+## 11. Продвинутые трюки
+
+### Type narrowing (сужение типа)
+```python
+def process(value: int | str | None) -> str:
+    if value is None:
+        return "пусто"
+    if isinstance(value, int):
+        return f"число: {value * 2}"
+    # здесь value уже точно str
+    return f"строка: {value.upper()}"
+```
+
+### Assert для сужения
+```python
+def get_length(obj: object) -> int:
+    assert hasattr(obj, "__len__")
+    return len(obj)  # mypy знает, что __len__ есть
+```
+
+### TypedDict с Required/NotRequired (Python 3.11+)
+```python
+from typing import TypedDict, Required, NotRequired
+
+class Config(TypedDict):
+    host: Required[str]
+    port: NotRequired[int]  # по умолчанию 80
+    debug: NotRequired[bool]
+```
+
+---
+
+## Практические задания
+
+1. **Типизация API**: создайте TypedDict для JSON-ответов REST API
+2. **Generic репозиторий**: `Repository[T]` с методами `get(id) -> T`, `save(T) -> None`
+3. **Plugin system**: Protocol для плагинов с методами `init()`, `process()`, `cleanup()`
+4. **mypy config**: настройте строгий mypy для проекта, исправьте все ошибки
+5. **Overload для `__getitem__`**: класс с разным возвращаемым типом для int vs slice
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `List[str]()` — создание через конструктор | `list[str]()` или `[]` с аннотацией переменной |
+| `Optional[str]` без `from typing import Optional` | `str \| None` (3.10+) или импорт |
+| Мутируемый дефолт в аннотации | `field(default_factory=list)` в dataclass |
+| Игнорирование ошибок `type: ignore` без кода | `type: ignore[attr-defined]` — конкретно |
+| Protocol с `@abstractmethod` | Protocol не требует abstractmethod — достаточно сигнатуры |
+
+---
+
+## Полезные ресурсы
+- **Python Docs: typing** — https://docs.python.org/3/library/typing.html
+- **mypy docs** — https://mypy.readthedocs.io/
+- **PEP 484 — Type Hints** — https://peps.python.org/pep-0484/
+- **PEP 544 — Protocols** — https://peps.python.org/pep-0544/
+- **PEP 585 — Builtin Generics** — https://peps.python.org/pep-0585/
+- **PEP 604 — Union Types (X | Y)** — https://peps.python.org/pep-0604/
+- **Awesome Typing** — https://github.com/typeddjango/awesome-typing

@@ -1,0 +1,529 @@
+# Урок 2.3: Декораторы и замыкания — функции высшего порядка, functools, практические паттерны
+
+## Цели урока
+- Понимать замыкания (closures) и лексическое замыкание
+- Писать декораторы без аргументов и с аргументами
+- Использовать functools.wraps для сохранения метаданных
+- Знать стандартные декораторы: lru_cache, singledispatch, cached_property
+- Применять декораторы для логирования, тайминга, валидации, retry
+
+---
+
+## 1. Функции — объекты первого класса
+
+```python
+def greet(name):
+    return f"Привет, {name}!"
+
+# Функцию можно присваивать переменной
+say_hello = greet
+print(say_hello("Анна"))  # Привет, Анна!
+
+# Передавать как аргумент
+def caller(func, arg):
+    return func(arg)
+
+caller(greet, "Борис")  # Привет, Борис!
+
+# Возвращать из функции
+def make_greeter(prefix):
+    def greeter(name):
+        return f"{prefix}, {name}!"
+    return greeter
+
+formal = make_greeter("Здравствуйте")
+formal("Виктор")  # Здравствуйте, Виктор!
+```
+
+---
+
+## 2. Замыкания (Closures)
+
+### Что такое замыкание
+```python
+def outer(x):
+    # x — свободная переменная (из внешней области видимости)
+    def inner(y):
+        return x + y  # inner "запоминает" x
+    return inner
+
+add5 = outer(5)
+add5(3)  # 8
+
+# Проверка замыкания
+print(add5.__closure__[0].cell_contents)  # 5
+```
+
+### Лексическое замыкание — переменные ищутся по тексту кода
+```python
+def make_multiplier(factor):
+    def multiplier(n):
+        return n * factor  # factor захватывается по ссылке
+    return multiplier
+
+double = make_multiplier(2)
+triple = make_multiplier(3)
+
+print(double(5))  # 10
+print(triple(5))  # 15
+```
+
+### ⚠️ Ловушка: позднее связывание в циклах
+```python
+# ПРОБЛЕМА
+funcs = []
+for i in range(3):
+    funcs.append(lambda: i)
+
+for f in funcs:
+    print(f())  # 2, 2, 2 — все видят ПОСЛЕДНЕЕ значение i!
+
+# РЕШЕНИЕ 1: аргумент по умолчанию (захват значения)
+funcs = []
+for i in range(3):
+    funcs.append(lambda i=i: i)
+
+# РЕШЕНИЕ 2: сразу вызывать функцию
+funcs = [(lambda x: lambda: x)(i) for i in range(3)]
+```
+
+---
+
+## 3. Декораторы — базовый синтаксис
+
+### Декоратор без аргументов
+```python
+def my_decorator(func):
+    def wrapper(*args, **kwargs):
+        print("До вызова")
+        result = func(*args, **kwargs)
+        print("После вызова")
+        return result
+    return wrapper
+
+# @my_decorator — синтаксический сахар
+@my_decorator
+def say_hello(name):
+    return f"Привет, {name}!"
+
+# Эквивалентно:
+# say_hello = my_decorator(say_hello)
+
+say_hello("Анна")
+# До вызова
+# Привет, Анна!
+# После вызова
+```
+
+### Проблема: теряются метаданные функции
+```python
+@my_decorator
+def greet(name):
+    """Приветствует пользователя."""
+    return f"Привет, {name}!"
+
+print(greet.__name__)      # 'wrapper' — неверно!
+print(greet.__doc__)       # None — неверно!
+print(greet.__annotations__)  # {} — неверно!
+```
+
+### Решение: functools.wraps
+```python
+from functools import wraps
+
+def my_decorator(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("До вызова")
+        result = func(*args, **kwargs)
+        print("После вызова")
+        return result
+    return wrapper
+
+@my_decorator
+def greet(name):
+    """Приветствует пользователя."""
+    return f"Привет, {name}!"
+
+print(greet.__name__)   # 'greet' — верно!
+print(greet.__doc__)    # 'Приветствует пользователя.' — верно!
+```
+
+---
+
+## 4. Декораторы с аргументами
+
+```python
+def repeat(times):
+    # Внешняя функция принимает аргументы декоратора
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for _ in range(times):
+                result = func(*args, **kwargs)
+            return result
+        return wrapper
+    return decorator
+
+@repeat(times=3)
+def say_hi():
+    print("Hi!")
+
+say_hi()
+# Hi!
+# Hi!
+# Hi!
+```
+
+### Удобный паттерн: декоратор с опциональными аргументами
+```python
+from functools import wraps
+from typing import Callable, Optional
+
+def debug(func: Optional[Callable] = None, *, prefix: str = "DEBUG"):
+    """Можно использовать как @debug или @debug(prefix='INFO')"""
+
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            print(f"[{prefix}] Вызов {f.__name__}({args}, {kwargs})")
+            result = f(*args, **kwargs)
+            print(f"[{prefix}] Результат: {result}")
+            return result
+        return wrapper
+
+    if func is None:
+        return decorator  # @debug(prefix='...')
+    return decorator(func)  # @debug
+
+@debug
+def add(a, b):
+    return a + b
+
+@debug(prefix="TRACE")
+def mul(a, b):
+    return a * b
+```
+
+---
+
+## 5. Классовые декораторы
+
+```python
+class CountCalls:
+    def __init__(self, func):
+        self.func = func
+        self.count = 0
+        wraps(func)(self)
+
+    def __call__(self, *args, **kwargs):
+        self.count += 1
+        print(f"Вызов #{self.count}")
+        return self.func(*args, **kwargs)
+
+@CountCalls
+def say_hello(name):
+    return f"Привет, {name}!"
+
+say_hello("Анна")
+say_hello("Борис")
+print(say_hello.count)  # 2
+```
+
+---
+
+## 6. functools — стандартные декораторы
+
+### lru_cache — мемоизация (кэширование результатов)
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=128)
+def fibonacci(n):
+    if n < 2:
+        return n
+    return fibonacci(n-1) + fibonacci(n-2)
+
+# Без кэша: O(2^n), с кэшем: O(n)
+print(fibonacci(100))  # 354224848179261915075 — мгновенно!
+
+# Статистика
+print(fibonacci.cache_info())
+# CacheInfo(hits=98, misses=101, maxsize=128, currsize=101)
+
+fibonacci.cache_clear()  # очистить кэш
+```
+
+### cached_property — кэшируемое свойство (Python 3.8+)
+```python
+from functools import cached_property
+import time
+
+class DataProcessor:
+    def __init__(self, data):
+        self.data = data
+
+    @cached_property
+    def processed(self):
+        print("Тяжелая обработка...")
+        time.sleep(1)
+        return [x * 2 for x in self.data]
+
+dp = DataProcessor([1, 2, 3])
+print(dp.processed)  # Тяжелая обработка... [2, 4, 6]
+print(dp.processed)  # [2, 4, 6] — мгновенно, без вычислений
+```
+
+### singledispatch — перегрузка по типу первого аргумента
+```python
+from functools import singledispatch
+
+@singledispatch
+def serialize(obj):
+    raise NotImplementedError(f"Нельзя сериализовать {type(obj)}")
+
+@serialize.register
+def _(obj: int):
+    return str(obj)
+
+@serialize.register
+def _(obj: str):
+    return f'"{obj}"'
+
+@serialize.register
+def _(obj: list):
+    return "[" + ", ".join(serialize(x) for x in obj) + "]"
+
+print(serialize(42))        # "42"
+print(serialize("hello"))   # '"hello"'
+print(serialize([1, "a"]))  # '[42, "a"]'
+```
+
+### partial — частичное применение
+```python
+from functools import partial
+
+def power(base, exp):
+    return base ** 2
+
+square = partial(power, exp=2)
+cube = partial(power, exp=3)
+
+print(square(5))  # 25
+print(cube(3))    # 27
+```
+
+### reduce — свертка
+```python
+from functools import reduce
+import operator
+
+# Сумма
+reduce(operator.add, [1, 2, 3, 4], 0)  # 10
+
+# Произведение
+reduce(operator.mul, [1, 2, 3, 4], 1)  # 24
+
+# Объединение словарей (Python 3.9+)
+reduce(lambda a, b: {**a, **b}, [{'a': 1}, {'b': 2}])  # {'a': 1, 'b': 2}
+```
+
+---
+
+## 7. Практические паттерны декораторов
+
+### Таймер
+```python
+from functools import wraps
+import time
+
+def timer(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+        print(f"{func.__name__} выполнен за {elapsed:.4f} сек")
+        return result
+    return wrapper
+
+@timer
+def slow_function():
+    time.sleep(0.5)
+    return "Готово"
+```
+
+### Логгер
+```python
+import logging
+from functools import wraps
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def log_calls(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        logger.info(f"Вызов {func.__name__} с args={args}, kwargs={kwargs}")
+        try:
+            result = func(*args, **kwargs)
+            logger.info(f"{func.__name__} вернул {result}")
+            return result
+        except Exception as e:
+            logger.exception(f"{func.__name__} выбросил {e}")
+            raise
+    return wrapper
+```
+
+### Валидация аргументов
+```python
+from functools import wraps
+from inspect import signature
+
+def validate(**validators):
+    def decorator(func):
+        sig = signature(func)
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            bound = sig.bind(*args, **kwargs)
+            bound.apply_defaults()
+
+            for param, validator in validators.items():
+                value = bound.arguments.get(param)
+                if value is not None and not validator(value):
+                    raise ValueError(f"Валидация не пройдена для {param}={value}")
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+@validate(age=lambda x: x >= 0, name=lambda x: len(x) > 0)
+def create_user(name, age):
+    return {"name": name, "age": age}
+
+create_user("Анна", 25)   # OK
+create_user("", 25)       # ValueError
+create_user("Борис", -5)  # ValueError
+```
+
+### Retry с backoff
+```python
+from functools import wraps
+import time
+import random
+
+def retry(times=3, delay=1, backoff=2, exceptions=(Exception,)):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            current_delay = delay
+            for attempt in range(1, times + 1):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    if attempt == times:
+                        raise
+                    print(f"Попытка {attempt} не удалась: {e}. Жду {current_delay}с...")
+                    time.sleep(current_delay)
+                    current_delay *= backoff
+        return wrapper
+    return decorator
+
+@retry(times=3, delay=0.5, exceptions=(ConnectionError,))
+def unreliable_request():
+    if random.random() < 0.7:
+        raise ConnectionError("Сеть недоступна")
+    return "Успех!"
+```
+
+### Singleton
+```python
+from functools import wraps
+
+def singleton(cls):
+    instances = {}
+    @wraps(cls)
+    def get_instance(*args, **kwargs):
+        if cls not in instances:
+            instances[cls] = cls(*args, **kwargs)
+        return instances[cls]
+    return get_instance
+
+@singleton
+class Database:
+    def __init__(self):
+        self.connected = False
+
+db1 = Database()
+db2 = Database()
+print(db1 is db2)  # True
+```
+
+### Deprecated
+```python
+import warnings
+from functools import wraps
+
+def deprecated(reason="", version="next"):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            warnings.warn(
+                f"{func.__name__} устарел (версия {version}): {reason}",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+@deprecated("Используйте new_function()", version="2.0")
+def old_function():
+    pass
+```
+
+---
+
+## 8. Стек декораторов (порядок применения)
+
+```python
+@a
+@b
+@c
+def f():
+    pass
+
+# Эквивалентно:
+# f = a(b(c(f)))
+
+# Выполнение: a -> b -> c -> f -> c -> b -> a
+```
+
+---
+
+## Практические задания
+
+1. **Профилировщик**: декоратор, считающий время и память (tracemalloc)
+2. **Rate limiter**: `@rate_limit(calls=5, period=60)` — не чаще N вызовов в секунду
+3. **Type checker**: декоратор, проверяющий типы аргументов по аннотациям
+4. **Caching с TTL**: `@cache(ttl=300)` — кэш с временем жизни
+5. **Context manager decorator**: `@contextmanager` для превращения генератора в контекстный менеджер
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Забыли `@wraps` — теряется `__name__`, `__doc__` | Всегда используйте `@wraps(func)` |
+| Декоратор с аргументами: неверная вложенность | 3 уровня: `args -> decorator -> wrapper` |
+| Модификация `args`/`kwargs` в декораторе | Работайте с копиями или документируйте side effects |
+| `lru_cache` на методах класса — утечка памяти | Используйте `cached_property` или `weakref` |
+| Замыкание в цикле — все функции видят последнее значение | `lambda i=i: i` или `functools.partial` |
+
+---
+
+## Полезные ресурсы
+- **Python Docs: functools** — https://docs.python.org/3/library/functools.html
+- **Real Python: Primer on Python Decorators** — https://realpython.com/primer-on-python-decorators/
+- **Real Python: functools.lru_cache** — https://realpython.com/lru-cache-python/
+- **PEP 318 — Decorators** — https://peps.python.org/pep-0318/

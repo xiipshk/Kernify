@@ -1,0 +1,525 @@
+# Урок 3.3: Архитектура приложений — слои, DDD, чистая архитектура, паттерны
+
+## Цели урока
+- Понимать принципы чистой архитектуры
+- Разделять код на слои (domain, application, infrastructure)
+- Применять DDD (Domain-Driven Design) паттерны
+- Использовать Dependency Injection
+- Организовывать большие проекты
+
+---
+
+## 1. Проблема: спагетти-код
+
+```python
+# ПЛОХО: всё в одном месте
+def process_order(order_data):
+    # БД
+    conn = sqlite3.connect("db.sqlite")
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO orders ...", order_data)
+    conn.commit()
+
+    # Бизнес-логика
+    total = sum(item.price * item.qty for item in order_data.items)
+    if total > 1000:
+        total *= 0.9  # скидка
+
+    # Email
+    smtp = smtplib.SMTP("smtp.gmail.com")
+    smtp.sendmail(...)
+
+    # Логирование
+    logging.info(f"Order processed: {total}")
+```
+
+Проблемы:
+- Нельзя протестировать без БД и SMTP
+- Смена БД ломает бизнес-логику
+- Дублирование кода
+
+---
+
+## 2. Чистая архитектура (Clean Architecture)
+
+```
+┌─────────────────────────────────────┐
+│         Entities (Domain)           │  ← Бизнес-правила, нет зависимостей
+├─────────────────────────────────────┤
+│      Use Cases (Application)        │  ← Orchestration, зависит от Domain
+├─────────────────────────────────────┤
+│   Interface Adapters (Controllers)  │  ← Преобразование данных (API, CLI)
+├─────────────────────────────────────┤
+│     Frameworks (Infrastructure)     │  ← DB, Web, Email, UI
+└─────────────────────────────────────┘
+```
+
+### Правило зависимостей
+**Внутренние слои НЕ знают о внешних**. Зависимости направлены ВНУТРЬ.
+
+---
+
+## 3. Domain Layer — ядро бизнеса
+
+### Entities (сущности)
+```python
+# domain/order.py
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import List
+from uuid import UUID, uuid4
+
+@dataclass
+class OrderItem:
+    product_id: UUID
+    quantity: int
+    price: float
+
+@dataclass
+class Order:
+    id: UUID = field(default_factory=uuid4)
+    customer_id: UUID = None
+    items: List[OrderItem] = field(default_factory=list)
+    status: str = "pending"
+    created_at: datetime = field(default_factory=datetime.now)
+
+    def add_item(self, product_id: UUID, quantity: int, price: float):
+        if quantity <= 0:
+            raise ValueError("Quantity must be positive")
+        self.items.append(OrderItem(product_id, quantity, price))
+
+    def total(self) -> float:
+        return sum(item.price * item.quantity for item in self.items)
+
+    def apply_discount(self, threshold: float, rate: float):
+        if self.total() > threshold:
+            for item in self.items:
+                item.price *= (1 - rate)
+```
+
+### Value Objects (объекты-значения)
+```python
+# domain/value_objects.py
+from dataclasses import dataclass
+
+@dataclass(frozen=True)  # immutable!
+class Money:
+    amount: float
+    currency: str = "USD"
+
+    def __add__(self, other: "Money") -> "Money":
+        if self.currency != other.currency:
+            raise ValueError("Currency mismatch")
+        return Money(self.amount + other.amount, self.currency)
+
+    def __mul__(self, factor: float) -> "Money":
+        return Money(self.amount * factor, self.currency)
+```
+
+### Domain Events
+```python
+# domain/events.py
+from dataclasses import dataclass
+from datetime import datetime
+from uuid import UUID
+
+@dataclass
+class OrderCreated:
+    order_id: UUID
+    customer_id: UUID
+    total: float
+    occurred_at: datetime = datetime.now()
+```
+
+### Repository Interface (абстракция)
+```python
+# domain/repositories.py
+from abc import ABC, abstractmethod
+from typing import Optional
+from uuid import UUID
+
+class OrderRepository(ABC):
+    @abstractmethod
+    def save(self, order: Order) -> None: ...
+
+    @abstractmethod
+    def get(self, order_id: UUID) -> Optional[Order]: ...
+
+    @abstractmethod
+    def list_by_customer(self, customer_id: UUID) -> list[Order]: ...
+```
+
+---
+
+## 4. Application Layer — Use Cases
+
+```python
+# application/order_service.py
+from dataclasses import dataclass
+from uuid import UUID
+from domain.order import Order, OrderItem
+from domain.repositories import OrderRepository
+from domain.events import OrderCreated
+from application.events import EventPublisher
+
+@dataclass
+class CreateOrderCommand:
+    customer_id: UUID
+    items: list[dict]  # [{"product_id": "...", "qty": 1, "price": 10.0}]
+
+class OrderService:
+    def __init__(
+        self,
+        repo: OrderRepository,
+        events: EventPublisher,
+    ):
+        self.repo = repo
+        self.events = events
+
+    def create_order(self, cmd: CreateOrderCommand) -> Order:
+        order = Order(customer_id=cmd.customer_id)
+        for item in cmd.items:
+            order.add_item(
+                UUID(item["product_id"]),
+                item["qty"],
+                item["price"]
+            )
+
+        self.repo.save(order)
+        self.events.publish(OrderCreated(
+            order_id=order.id,
+            customer_id=order.customer_id,
+            total=order.total()
+        ))
+        return order
+
+    def get_order(self, order_id: UUID) -> Order:
+        order = self.repo.get(order_id)
+        if not order:
+            raise OrderNotFound(order_id)
+        return order
+```
+
+---
+
+## 5. Infrastructure Layer — реализации
+
+### SQLAlchemy Repository
+```python
+# infrastructure/sqlalchemy_repo.py
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from domain.order import Order
+from domain.repositories import OrderRepository
+from infrastructure.models import OrderModel
+
+class SqlAlchemyOrderRepository(OrderRepository):
+    def __init__(self, session: Session):
+        self.session = session
+
+    def save(self, order: Order) -> None:
+        model = OrderModel.from_domain(order)
+        self.session.merge(model)
+        self.session.commit()
+
+    def get(self, order_id: UUID) -> Optional[Order]:
+        model = self.session.get(OrderModel, order_id)
+        return model.to_domain() if model else None
+
+    def list_by_customer(self, customer_id: UUID) -> list[Order]:
+        stmt = select(OrderModel).where(OrderModel.customer_id == customer_id)
+        return [m.to_domain() for m in self.session.scalars(stmt)]
+```
+
+### Event Publisher (Redis, Kafka, in-memory)
+```python
+# infrastructure/event_publisher.py
+from application.events import EventPublisher
+from domain.events import OrderCreated
+import json
+import redis
+
+class RedisEventPublisher(EventPublisher):
+    def __init__(self, client: redis.Redis):
+        self.client = client
+
+    def publish(self, event: OrderCreated) -> None:
+        self.client.publish(
+            "order_events",
+            json.dumps({
+                "type": "OrderCreated",
+                "order_id": str(event.order_id),
+                "customer_id": str(event.customer_id),
+                "total": event.total,
+            })
+        )
+```
+
+---
+
+## 6. Dependency Injection — связывание
+
+```python
+# main.py / composition_root.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+import redis
+from infrastructure.sqlalchemy_repo import SqlAlchemyOrderRepository
+from infrastructure.event_publisher import RedisEventPublisher
+from application.order_service import OrderService
+
+# Конфигурация
+engine = create_engine("postgresql://user:pass@localhost/db")
+SessionLocal = sessionmaker(bind=engine)
+redis_client = redis.Redis()
+
+# Фабрика сервисов
+def create_order_service() -> OrderService:
+    session = SessionLocal()
+    repo = SqlAlchemyOrderRepository(session)
+    events = RedisEventPublisher(redis_client)
+    return OrderService(repo, events)
+
+# В FastAPI — через Depends
+from fastapi import Depends, FastAPI
+
+app = FastAPI()
+
+def get_order_service():
+    return create_order_service()
+
+@app.post("/orders")
+def create_order(cmd: CreateOrderCommand, service: OrderService = Depends(get_order_service)):
+    return service.create_order(cmd)
+```
+
+### DI контейнеры (python-dependency-injector)
+```bash
+pip install dependency-injector
+```
+
+```python
+# containers.py
+from dependency_injector import containers, providers
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+import redis
+
+class Container(containers.DeclarativeContainer):
+    config = providers.Configuration()
+
+    engine = providers.Singleton(
+        create_engine,
+        config.db.url,
+    )
+
+    session_factory = providers.Factory(
+        sessionmaker,
+        bind=engine,
+    )
+
+    session = providers.Factory(session_factory)
+
+    redis_client = providers.Singleton(
+        redis.Redis.from_url,
+        config.redis.url,
+    )
+
+    order_repo = providers.Factory(
+        SqlAlchemyOrderRepository,
+        session=session,
+    )
+
+    event_publisher = providers.Factory(
+        RedisEventPublisher,
+        client=redis_client,
+    )
+
+    order_service = providers.Factory(
+        OrderService,
+        repo=order_repo,
+        events=event_publisher,
+    )
+
+# Использование
+container = Container()
+container.config.db.url.from_env("DATABASE_URL")
+container.config.redis.url.from_env("REDIS_URL")
+
+service = container.order_service()
+```
+
+---
+
+## 7. DDD паттерны
+
+### Aggregate Root
+```python
+# domain/customer.py
+from dataclasses import dataclass, field
+from uuid import UUID, uuid4
+from typing import List
+
+@dataclass
+class Customer:
+    id: UUID = field(default_factory=uuid4)
+    name: str = ""
+    email: str = ""
+    _orders: List[UUID] = field(default_factory=list)  # только ID!
+
+    def place_order(self, order_id: UUID):
+        if not self.is_active:
+            raise DomainError("Customer not active")
+        self._orders.append(order_id)
+
+    @property
+    def order_ids(self) -> List[UUID]:
+        return list(self._orders)
+```
+
+### Domain Services (логика не в Entity)
+```python
+# domain/services/pricing.py
+from domain.order import Order
+from domain.customer import Customer
+
+class PricingService:
+    def calculate_price(self, order: Order, customer: Customer) -> float:
+        base = order.total()
+        if customer.is_vip:
+            base *= 0.9
+        if order.total() > 1000:
+            base *= 0.95
+        return round(base, 2)
+```
+
+### Specification Pattern
+```python
+# domain/specifications.py
+from abc import ABC, abstractmethod
+from domain.order import Order
+
+class OrderSpecification(ABC):
+    @abstractmethod
+    def is_satisfied_by(self, order: Order) -> bool: ...
+
+class HighValueOrderSpec(OrderSpecification):
+    def __init__(self, threshold: float):
+        self.threshold = threshold
+
+    def is_satisfied_by(self, order: Order) -> bool:
+        return order.total() > self.threshold
+
+# Использование
+spec = HighValueOrderSpec(1000)
+orders = [o for o in all_orders if spec.is_satisfied_by(o)]
+```
+
+---
+
+## 8. Структура проекта
+
+```
+my_project/
+├── src/
+│   └── myapp/
+│       ├── domain/
+│       │   ├── __init__.py
+│       │   ├── order.py
+│       │   ├── customer.py
+│       │   ├── value_objects.py
+│       │   ├── events.py
+│       │   ├── repositories.py
+│       │   ├── specifications.py
+│       │   └── exceptions.py
+│       ├── application/
+│       │   ├── __init__.py
+│       │   ├── order_service.py
+│       │   ├── customer_service.py
+│       │   ├── events.py
+│       │   └── dto.py
+│       ├── infrastructure/
+│       │   ├── __init__.py
+│       │   ├── sqlalchemy_repo.py
+│       │   ├── event_publisher.py
+│       │   ├── email_sender.py
+│       │   └── models.py
+│       ├── presentation/
+│       │   ├── __init__.py
+│       │   ├── api/
+│       │   │   ├── routes.py
+│       │   │   └── schemas.py
+│       │   └── cli/
+│       └── config/
+│           └── settings.py
+├── tests/
+│   ├── unit/
+│   │   ├── domain/
+│   │   └── application/
+│   └── integration/
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+## 9. Тестирование архитектуры
+
+### Unit тесты Domain (без моков!)
+```python
+def test_order_total():
+    order = Order()
+    order.add_item(UUID(...), 2, 10.0)
+    order.add_item(UUID(...), 1, 25.0)
+    assert order.total() == 45.0
+
+def test_order_discount():
+    order = Order()
+    order.add_item(UUID(...), 10, 200.0)  # 2000
+    order.apply_discount(1000, 0.1)
+    assert order.total() == 1800.0
+```
+
+### Application тесты (с моками репозиториев)
+```python
+def test_create_order():
+    mock_repo = Mock(spec=OrderRepository)
+    mock_events = Mock(spec=EventPublisher)
+    service = OrderService(mock_repo, mock_events)
+
+    order = service.create_order(CreateOrderCommand(...))
+
+    mock_repo.save.assert_called_once_with(order)
+    mock_events.publish.assert_called_once()
+```
+
+---
+
+## Практические задания
+
+1. **Refactor**: возьмите монолитный скрипт и разделите на слои
+2. **DDD**: смоделируйте домен "Интернет-магазин" (Customer, Order, Product, Cart)
+3. **DI**: внедрите dependency-injector в FastAPI проект
+4. **Events**: реализуйте Event Sourcing для Order
+5. **Hexagonal**: добавьте второй адаптер (CLI + REST API) к одному Use Case
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Бизнес-логика в репозитории | Репозиторий — только CRUD |
+| Entity знает о БД | Entity — чистый Python, нет импортов SQLAlchemy |
+| Use Case делает валидацию полей | Валидация в Entity / Value Object / Pydantic DTO |
+| Циклические импорты между слоями | Зависимости только внутрь (domain → application → infra) |
+| Анемичная модель (только данные) | Богатая модель: поведение в Entity |
+
+---
+
+## Полезные ресурсы
+- **Clean Architecture** — Robert Martin (Uncle Bob)
+- **Domain-Driven Design** — Eric Evans
+- **Architecture Patterns with Python** — Harry Percival, Bob Gregory (бесплатно онлайн)
+- **Dependency Injection in Python** — https://python-dependency-injector.ets-labs.org/
+- **DDD в Python** — https://github.com/cosmicpython/code

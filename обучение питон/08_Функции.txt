@@ -1,0 +1,351 @@
+# Урок 1.8: Функции — объявление, параметры, возврат, область видимости
+
+## Цели урока
+- Писать функции с def
+- Работать с параметрами (позиционные, именованные, *args, **kwargs)
+- Понимать return и None
+- Знать области видимости (LEGB)
+- Использовать docstrings и аннотации типов
+
+---
+
+## 1. Базовое объявление
+
+```python
+def greet(name):
+    """Приветствует пользователя."""
+    print(f"Привет, {name}!")
+
+greet("Анна")  # Привет, Анна!
+```
+
+### Возврат значения — return
+```python
+def add(a, b):
+    return a + b
+
+result = add(3, 5)  # 8
+print(add(3, 5))    # 8
+
+# Неявный возврат None
+def no_return():
+    print("Работаю...")
+
+x = no_return()  # печатает "Работаю...", x = None
+```
+
+### Несколько return
+```python
+def divide(a, b):
+    if b == 0:
+        return None  # ранний выход
+    return a / b
+
+def get_coords():
+    return 10, 20  # возвращает кортеж (10, 20)
+
+x, y = get_coords()  # распаковка
+```
+
+---
+
+## 2. Параметры функции
+
+### Позиционные и именованные
+```python
+def greet(name, greeting="Привет"):
+    print(f"{greeting}, {name}!")
+
+greet("Анна")                    # Привет, Анна!
+greet("Анна", "Здравствуй")      # Здравствуй, Анна!
+greet(name="Борис")              # Привет, Борис!
+greet(greeting="Хай", name="Вит") # Хай, Вит!
+
+# Позиционно-именованные (Python 3.8+)
+def func(a, b, /, c, d, *, e, f):
+    pass
+# a, b — только позиционные
+# c, d — позиционные или именованные
+# e, f — только именованные
+```
+
+### *args — переменное число позиционных аргументов
+```python
+def sum_all(*args):
+    total = 0
+    for n in args:
+        total += n
+    return total
+
+sum_all(1, 2, 3)        # 6
+sum_all(*[1, 2, 3])     # 6 (распаковка списка)
+sum_all()               # 0
+```
+
+### **kwargs — переменное число именованных аргументов
+```python
+def print_info(**kwargs):
+    for key, value in kwargs.items():
+        print(f"{key}: {value}")
+
+print_info(name="Анна", age=25, city="Москва")
+# name: Анна
+# age: 25
+# city: Москва
+
+# Комбинация
+def flexible(a, b, *args, **kwargs):
+    print(f"a={a}, b={b}, args={args}, kwargs={kwargs}")
+
+flexible(1, 2, 3, 4, x=10, y=20)
+# a=1, b=2, args=(3, 4), kwargs={'x': 10, 'y': 20}
+```
+
+### Значения по умолчанию — ЛОВУШКА с изменяемыми объектами!
+```python
+# ОПАСНО: список создаётся ОДИН РАЗ при определении функции
+def bad_append(item, lst=[]):
+    lst.append(item)
+    return lst
+
+print(bad_append(1))  # [1]
+print(bad_append(2))  # [1, 2] — список общий!
+
+# ПРАВИЛЬНО: None как дефолт
+def good_append(item, lst=None):
+    if lst is None:
+        lst = []
+    lst.append(item)
+    return lst
+
+print(good_append(1))  # [1]
+print(good_append(2))  # [2]
+```
+
+---
+
+## 3. Аннотации типов (Python 3.5+)
+
+```python
+def greet(name: str) -> str:
+    return f"Привет, {name}!"
+
+def process(items: list[int]) -> dict[str, int]:
+    return {str(x): x for x in items}
+
+# Сложные типы
+from typing import Optional, Union, Callable
+
+def find(user_id: int) -> Optional[str]:  # str | None
+    ...
+
+def handle(data: Union[int, str]) -> None:  # int | str
+    ...
+
+# Callable
+def apply(func: Callable[[int], int], value: int) -> int:
+    return func(value)
+```
+
+---
+
+## 4. Область видимости (LEGB Rule)
+
+```python
+# L — Local (локальная) — внутри функции
+# E — Enclosing (внешняя) — в замыканиях
+# G — Global (глобальная) — модуль
+# B — Built-in (встроенная) — print, len, etc.
+
+x = "global"
+
+def outer():
+    x = "enclosing"
+
+    def inner():
+        x = "local"
+        print(x)  # local
+
+    inner()
+    print(x)  # enclosing
+
+outer()
+print(x)  # global
+```
+
+### global и nonlocal
+```python
+counter = 0
+
+def increment():
+    global counter
+    counter += 1
+
+increment()
+print(counter)  # 1
+
+# nonlocal — для enclosing scope
+def make_counter():
+    count = 0
+    def increment():
+        nonlocal count
+        count += 1
+        return count
+    return increment
+
+c = make_counter()
+print(c())  # 1
+print(c())  # 2
+```
+
+---
+
+## 5. Docstrings и help()
+
+```python
+def calculate_area(radius: float) -> float:
+    """Вычисляет площадь круга.
+
+    Args:
+        radius: Радиус круга (должен быть >= 0)
+
+    Returns:
+        Площадь круга
+
+    Raises:
+        ValueError: если radius < 0
+
+    Example:
+        >>> calculate_area(2)
+        12.56637...
+    """
+    if radius < 0:
+        raise ValueError("Радиус не может быть отрицательным")
+    return 3.14159 * radius ** 2
+
+help(calculate_area)
+print(calculate_area.__doc__)
+```
+
+---
+
+## 6. Лямбда-функции (lambda)
+
+```python
+# Анонимная функция одного выражения
+square = lambda x: x ** 2
+square(5)  # 25
+
+# С ключевыми аргументами
+add = lambda x, y=10: x + y
+add(5)      # 15
+add(5, 3)   # 8
+
+# Основное применение — как аргумент высшего порядка
+numbers = [1, 2, 3, 4, 5]
+list(map(lambda x: x * 2, numbers))  # [2, 4, 6, 8, 10]
+list(filter(lambda x: x % 2 == 0, numbers))  # [2, 4]
+sorted([("a", 3), ("b", 1)], key=lambda pair: pair[1])  # [('b', 1), ('a', 3)]
+```
+
+---
+
+## 7. Рекурсия
+
+```python
+def factorial(n: int) -> int:
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+
+factorial(5)  # 120
+
+# Хвостовая рекурсия (Python НЕ оптимизирует!)
+def fact_tail(n, acc=1):
+    if n <= 1:
+        return acc
+    return fact_tail(n - 1, acc * n)
+
+# Ограничение глубины
+import sys
+sys.getrecursionlimit()  # 1000 по умолчанию
+sys.setrecursionlimit(2000)  # увеличить (осторожно!)
+```
+
+---
+
+## 8. Функции как объекты (First-class citizens)
+
+```python
+def greet(name):
+    return f"Привет, {name}!"
+
+# Присваивание
+say_hi = greet
+say_hi("Анна")  # Привет, Анна!
+
+# Передача в функцию
+def apply_twice(func, value):
+    return func(func(value))
+
+apply_twice(lambda x: x + 1, 5)  # 7
+
+# Возврат из функции
+def make_multiplier(n):
+    def multiplier(x):
+        return x * n
+    return multiplier
+
+double = make_multiplier(2)
+triple = make_multiplier(3)
+double(5)  # 10
+triple(5)  # 15
+```
+
+---
+
+## 9. Type hints для функций высшего порядка
+
+```python
+from typing import Callable, TypeVar
+
+T = TypeVar('T')
+U = TypeVar('U')
+
+def map_func(func: Callable[[T], U], items: list[T]) -> list[U]:
+    return [func(x) for x in items]
+
+# Использование
+result = map_func(str, [1, 2, 3])  # list[str] = ['1', '2', '3']
+```
+
+---
+
+## Практические задания
+
+1. **Калькулятор**: функция `calc(a, b, op)` где op в "+-*/", возвращает результат или None при ошибке
+2. **Факториал**: итеративная и рекурсивная версии, замерьте время
+3. **Валидатор**: функция, принимающая строку и возвращающая bool (email, телефон, дата)
+4. **Декоратор времени**: функция-обёртка, печатающая время выполнения другой функции
+5. **Частичное применение**: `partial(func, *args, **kwargs)` из functools
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `def f(lst=[]):` | `def f(lst=None): if lst is None: lst = []` |
+| Забыли `return` | Функция вернёт `None` |
+| `global` где не нужно | Используйте возврат значений |
+| `lambda` с несколькими выражениями | Обычная `def` |
+| Изменение аргумента-списка внутри | Создайте копию или верните новый |
+
+---
+
+## Полезные ресурсы
+- **Python.org Tutorial: Functions** — https://docs.python.org/3/tutorial/controlflow.html#defining-functions
+- **Real Python: Defining Your Own Python Function** — https://realpython.com/defining-your-own-python-function/
+- **Real Python: *args and **kwargs** — https://realpython.com/python-kwargs-and-args/
+- **Real Python: Python Scope & LEGB** — https://realpython.com/python-scope-legb-rule/
+- **PEP 484 (Type Hints)** — https://peps.python.org/pep-0484/

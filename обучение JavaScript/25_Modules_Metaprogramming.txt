@@ -1,0 +1,611 @@
+# Урок 25: Modules & Metaprogramming — Cycles, Dynamic Import, Resolution, Reflection, Library Design
+
+## 🎯 Цели урока
+- Глубоко понять ES Modules: Module Records, Linking, Evaluation phases
+- Освоить циклические зависимости и стратегии их разрешения
+- Изучить Dynamic Import (`import()`), `import.meta`, Top-level await
+- Разобрать Module Resolution алгоритмы (Node.js, браузер, bundlers)
+- Понять Reflection API: `import.meta.resolve`, `import.meta.env`, Source Maps
+- Научиться проектировать библиотеки: exports map, conditional exports, subpath exports
+
+---
+
+## 1. ES Modules Deep Dive (ECMA-262 Clause 15, HTML Spec)
+
+### 1.1 Module Record — внутренняя структура
+```javascript
+// Module Record = {
+  [[Realm]]: Realm Record,
+  [[Environment]]: Module Environment Record,  // лексическое окружение модуля
+  [[Namespace]]: Module Namespace Object,      // результат import * as ns
+  [[HostDefined]]: any,                        // для host-specific данных (source map, url)
+  [[Status]]: "uninstantiated" | "instantiating" | "instantiated" | "evaluated" | "errored",
+  [[DFSIndex]]: number,                        // для циклических зависимостей (DFS order)
+  [[DFSAncestorIndex]]: number,
+  [[RequestedModules]]: List<ModuleRequest>,   // { [[ImportName]], [[LocalName]] }
+  [[ImportEntries]]: List<ImportEntry>,        // { [[ModuleRequest]], [[ImportName]], [[LocalName]] }
+  [[LocalExportEntries]]: List<ExportEntry>,   // { [[ExportName]], [[LocalName]] }
+  [[IndirectExportEntries]]: List<ExportEntry>,// re-exports: export { x } from 'y'
+  [[StarExportEntries]]: List<StarExportEntry> // export * from 'y'
+}
+
+// Фазы жизненного цикла модуля:
+// 1. Construction (Parsing) → Module Record создан, статус uninstantiated
+// 2. Instantiation (Linking)  → резолвим импорты, создаём bindings, заполняем Environment Record
+// 3. Evaluation               → выполняем код модуля, инициализируем bindings
+```
+
+### 1.2 Module Environment Record (Spec 8.1.1.3)
+```javascript
+// Module Environment Record = Declarative Environment Record + {
+//   [[OuterEnv]]: null (модули не имеют внешнего окружения!)
+// }
+
+// Особенности:
+// - Все импорты — immutable bindings (ReadOnly, но live — видят изменения экспортера)
+// - Экспорты — тоже bindings, не значения
+// - TDZ для неинициализированных импортов/экспортов
+// - Лексическая изоляция: модуль не видит глобальные var/function declarations
+```
+
+### 1.3 Linking & Evaluation (Spec 15.2.1)
+```javascript
+// InnerModuleInstantiation(moduleRecord):
+// 1. Для каждого requested module: рекурсивно инстанцируем
+// 2. Для каждого import entry: резолвим binding из экспортера
+// 3. Для каждого local export: создаём binding в Environment Record
+// 4. Для каждого indirect export: связываем с исходным binding
+// 5. Для star exports: собираем все экспорты из исходного модуля
+// 6. Status = "instantiated"
+
+// EvaluateModule(moduleRecord):
+// 1. Если status = "evaluated" → вернуть normal completion
+// 2. Если status = "instantiating" → циклическая зависимость! (см. ниже)
+// 3. Status = "evaluating"
+// 4. Выполняем ModuleBody в Module Environment Record
+// 5. Status = "evaluated"
+```
+
+---
+
+## 2. Циклические зависимости (Circular Dependencies)
+
+### 2.1 Как это работает в ES Modules
+```javascript
+// a.mjs
+import { bValue } from './b.mjs';
+export const aValue = 'a';
+console.log('a evaluating, bValue:', bValue); // undefined на первом проходе!
+
+// b.mjs
+import { aValue } from './a.mjs';
+export const bValue = 'b';
+console.log('b evaluating, aValue:', aValue); // 'a' — a уже проинициализирован
+```
+
+**Порядок выполнения (DFS):**
+1. Parse `a.mjs` → Module Record A (uninstantiated)
+2. Instantiate A → запрашивает B → Parse `b.mjs` → Module Record B
+3. Instantiate B → запрашивает A → **A уже instantiating!** (DFSAncestorIndex < DFSIndex)
+4. **Linking B**: импорт `aValue` создаёт binding на A's Environment Record (пока uninitialized)
+5. Evaluate B → `bValue = 'b'` инициализируется, `console.log(aValue)` → TDZ error? **НЕТ!**
+   - Live binding: binding существует, но значение появится позже
+   - В spec: `GetBindingValue` для импорта возвращает значение из источника
+6. Evaluate A → `aValue = 'a'` инициализируется, `console.log(bValue)` → `'b'`
+
+### 2.2 Паттерны разрешения циклов
+```javascript
+// ❌ Плохо: циклическая зависимость на уровне значений
+// a.mjs
+import { computeB } from './b.mjs';
+export const resultA = computeB() + 1; // computeB вызывается до инициализации B!
+
+// b.mjs
+import { resultA } from './a.mjs';
+export function computeB() { return resultA * 2; } // resultA = undefined!
+
+// ✅ Хорошо: циклическая зависимость только на уровне типов/функций
+// a.mjs
+import { computeB } from './b.mjs';
+export function computeA() { return computeB() + 1; } // отложенный вызов
+
+// b.mjs
+import { computeA } from './a.mjs';
+export function computeB() { return computeA() * 2; } // отложенный вызов
+
+// ✅ Лучше: вынести общую логику в третий модуль
+// shared.mjs
+export const SHARED_CONST = 42;
+
+// a.mjs
+import { SHARED_CONST } from './shared.mjs';
+
+// b.mjs
+import { SHARED_CONST } from './shared.mjs';
+```
+
+### 2.3 Dynamic Import для разрыва циклов
+```javascript
+// a.mjs
+export async function getB() {
+  const { computeB } = await import('./b.mjs'); // lazy, после полной инициализации A
+  return computeB();
+}
+
+// b.mjs
+import { getA } from './a.mjs'; // OK: импорт функции, не вызова
+export function computeB() {
+  return (await getA()) * 2; // работает, если getA не вызывает computeB синхронно
+}
+```
+
+---
+
+## 3. Dynamic Import (`import()`) и Top-level Await
+
+### 3.1 `import()` — Expression, не Statement
+```javascript
+// import(specifier) → Promise<ModuleNamespaceObject>
+
+// Use cases:
+const module = await import('./lazy.mjs'); // code splitting
+const locale = await import(`./locales/${userLang}.mjs`); // dynamic path
+
+// Conditional loading:
+let renderer;
+if (isWebGL) {
+  renderer = await import('./webgl-renderer.mjs');
+} else {
+  renderer = await import('./canvas-renderer.mjs');
+}
+
+// import() в non-async контексте:
+button.onclick = () => import('./heavy.mjs').then(m => m.init());
+```
+
+### 3.2 `import.meta` — Метаданные текущего модуля
+```javascript
+// import.meta = {
+  // url: string,           // полный URL модуля (file://, https://)
+  // resolve(specifier): Promise<string>, // резолв относительного пути (Stage 3)
+  // environment?: object,  // Node.js: import.meta.env (Vite), браузер: нет
+  // [Symbol.toStringTag]: "Module"
+}
+
+// Примеры:
+console.log(import.meta.url); // file:///C:/project/src/main.mjs
+
+// Резолв пути относительно текущего модуля:
+const workerUrl = new URL('./worker.js', import.meta.url).href;
+const configUrl = import.meta.resolve('./config.json'); // Stage 3, нужен флаг
+
+// Проверка: это основной модуль?
+const isMain = import.meta.url === import.meta.resolve('./main.mjs'); // не совсем, см. ниже
+// В Node.js: import.meta.main (Node 20.6+)
+// В браузере: нет прямого аналога, проверяют через import.meta.url === location.href
+```
+
+### 3.3 Top-level Await (ES2022)
+```javascript
+// Доступно ТОЛЬКО в модулях (type="module" или .mjs)
+// Блокирует выполнение ПАРЕНТСКОГО модуля до разрешения
+
+// database.mjs
+const connection = await connectToDB(); // await на верхнем уровне
+export const db = connection;
+
+// app.mjs
+import { db } from './database.mjs'; // ждёт пока database.mjs не завершит await
+console.log('DB ready');
+
+// Важно: top-level await НЕ блокирует sibling модули!
+// a.mjs: await sleep(1000)
+// b.mjs: await sleep(100)
+// main.mjs: import './a.mjs'; import './b.mjs' → b выполнится раньше a
+
+// Паттерн: "await в модуле — это часть API, документация должна это отражать"
+```
+
+---
+
+## 4. Module Resolution (Резолвинг модулей)
+
+### 4.1 Браузерный резолвинг (HTML Spec)
+```javascript
+// 1. Bare specifier (import 'lodash') → ОШИБКА в браузере (кроме importmap)
+// 2. Relative (./foo, ../bar) → резолв относительно import.meta.url
+// 3. Absolute (/foo, https://cdn/foo) → как есть
+
+// Import Maps (Chrome 89+, Firefox 108+) — решение bare specifiers:
+<script type="importmap">
+{
+  "imports": {
+    "lodash": "https://cdn.jsdelivr.net/npm/lodash@4.17.21/+esm",
+    "react": "https://esm.sh/react@18",
+    "react/": "https://esm.sh/react@18/",
+    "./utils/": "./src/utils/"
+  },
+  "scopes": {
+    "/admin/": {
+      "lodash": "https://cdn.jsdelivr.net/npm/lodash@3.10.1/+esm" // версия для админки
+    }
+  }
+}
+</script>
+
+// Теперь работает:
+import _ from 'lodash';
+import { useState } from 'react';
+```
+
+### 4.2 Node.js Resolution (CommonJS + ESM)
+```javascript
+// package.json определяет режим:
+{ "type": "module" }        // .js = ESM, .cjs = CommonJS
+{ "type": "commonjs" }      // .js = CommonJS, .mjs = ESM (default)
+
+// Node.js ESM Resolution Algorithm (spec: nodejs.org/api/esm.html#resolution-algorithm):
+// 1. Если specifier начинается с ./, ../, /, file:// → file URL resolution
+// 2. Если specifier = "bare" (lodash, @scope/pkg):
+//    a. Проверяем "imports" в package.json (self-references)
+//    b. Ищем в node_modules (по алгоритму require.resolve)
+//    c. Проверяем "exports" в package.json целевого пакета
+
+// package.json "exports" (Conditional Exports):
+{
+  "name": "my-lib",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",      // ESM import
+      "require": "./dist/index.cjs",     // CommonJS require
+      "types": "./dist/index.d.ts",      // TypeScript
+      "default": "./dist/index.cjs"      // fallback
+    },
+    "./features/*": {
+      "import": "./dist/features/*.mjs",
+      "require": "./dist/features/*.cjs"
+    },
+    "./package.json": "./package.json"   // доступ к package.json
+  }
+}
+
+// Subpath imports (self-references):
+{
+  "imports": {
+    "#internal/*": "./src/internal/*.mjs",
+    "#config": "./config.mjs"
+  }
+}
+// В коде: import { helper } from '#internal/utils';
+```
+
+### 4.3 Bundlers Resolution (Webpack, Vite, Rollup, esbuild)
+```javascript
+// Bundlers расширяют резолвинг:
+// - Aliases: @/ → src/, ~lodash → node_modules/lodash
+// - Extensions: import './foo' → ./foo.js, ./foo.ts, ./foo.vue, ./foo/index.js
+// - Non-JS assets: import './style.css', import './image.png' (как URL)
+// - JSON: import data from './data.json' (assert { type: 'json' } в Node 17+)
+// - WASM: import wasm from './module.wasm' (WebAssembly.instantiateStreaming)
+
+// Vite пример (vite.config.js):
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@': '/src',
+      '~': '/node_modules'
+    }
+  }
+});
+
+// TypeScript paths (tsconfig.json) — только для типов, не для runtime!
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/*"] }
+  }
+}
+```
+
+---
+
+## 5. Reflection & Advanced Module Features
+
+### 5.1 `import.meta.resolve()` (Stage 3)
+```javascript
+// Резолвит specifier относительно текущего модуля, возвращает URL
+// Полезно для: загрузки workers, WASM, assets без hardcoded путей
+
+// main.mjs
+const workerUrl = await import.meta.resolve('./worker.mjs');
+const worker = new Worker(workerUrl, { type: 'module' });
+
+// Для ассетов:
+const imageUrl = await import.meta.resolve('./icon.png');
+// В браузере: можно использовать в fetch, <img src>
+// В Node.js: file:// URL, нужен file:// протокол
+
+// Важно: import.meta.resolve() асинхронный (Promise)!
+```
+
+### 5.2 Import Attributes / Assertions (ES2024 / Stage 3)
+```javascript
+// import assertions (deprecated название, теперь import attributes):
+import jsonData from './data.json' with { type: 'json' };
+// или новый синтаксис (ES2024):
+import jsonData from './data.json' assert { type: 'json' };
+
+// JSON modules (Node.js 17+, браузеры с флагом):
+import config from './config.json' assert { type: 'json' };
+// config — уже распарсенный объект, не строка
+
+// CSS modules (Vite, webpack):
+import styles from './button.css' assert { type: 'css' };
+// styles = { button: 'button_hash', primary: 'primary_hash' }
+
+// WASM:
+import wasmModule from './math.wasm' assert { type: 'webassembly' };
+const instance = await WebAssembly.instantiate(wasmModule);
+```
+
+### 5.3 Source Maps & Debugging
+```javascript
+// import.meta.url позволяет генерировать source maps вручную
+// Для библиотек: включить "sourceMap": true в tsconfig / bundler config
+
+// module.exports = {
+//   devtool: 'source-map', // webpack
+//   // или в package.json exports:
+//   "exports": {
+//     ".": {
+//       "import": "./dist/index.mjs",
+//       "types": "./dist/index.d.ts"
+//     },
+//     "./package.json": "./package.json"
+//   }
+// }
+
+// Stack traces в Node.js:
+Error.prepareStackTrace = (error, structuredStackTrace) => {
+  // Можно переписать stack trace используя import.meta.url модулей
+  return structuredStackTrace.map(frame => ({
+    file: frame.getFileName(),
+    line: frame.getLineNumber(),
+    column: frame.getColumnNumber(),
+    function: frame.getFunctionName()
+  }));
+};
+```
+
+---
+
+## 6. Library Design: Exports, Versioning, Interop
+
+### 6.1 Package Exports Design (Modern Best Practices)
+```javascript
+// package.json — полный пример production-ready библиотеки
+{
+  "name": "my-awesome-lib",
+  "version": "2.0.0",
+  "type": "module",
+  "main": "./dist/index.cjs",           // legacy CommonJS
+  "module": "./dist/index.mjs",         // legacy bundlers (ESM)
+  "types": "./dist/index.d.ts",         // TypeScript types
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.cjs"
+    },
+    "./features/*": {
+      "types": "./dist/features/*.d.ts",
+      "import": "./dist/features/*.mjs",
+      "require": "./dist/features/*.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "imports": {
+    "#internal/*": "./src/internal/*.mjs"
+  },
+  "sideEffects": false,  // Для tree-shaking (webpack, rollup)
+  "engines": { "node": ">=18" }
+}
+```
+
+### 6.2 Dual Package Hazard (CommonJS + ESM)
+```javascript
+// Проблема: если пакет выдаёт и CJS, и ESM, пользователь может получить ДВЕ копии
+// import { createStore } from 'my-lib'      // ESM версия
+// const { createStore } = require('my-lib') // CJS версия — ДРУГОЙ экземпляр!
+
+// Решения:
+// 1. Только ESM ("type": "module", без "main"/"require" в exports)
+// 2. Единый источник: сгенерировать CJS из ESM (не наоборот)
+// 3. Избегать внутреннего состояния в модуле (stateless API)
+// 4. Если состояние нужно — использовать глобальный символ/WeakMap:
+const STATE = Symbol.for('my-lib.state');
+globalThis[STATE] ??= { instances: new Set() };
+```
+
+### 6.3 Versioning & Compatibility
+```javascript
+// SemVer для модулей:
+// - MAJOR: breaking changes в exports (удаление, изменение сигнатур)
+// - MINOR: новые exports, новые опциональные параметры
+// - PATCH: багфиксы, внутренние изменения
+
+// Deprecation pattern:
+export function oldApi() {
+  console.warn('[my-lib] oldApi() deprecated since v2.0, use newApi()');
+  return newApi();
+}
+
+// Re-export для совместимости:
+export { newApi as oldApi } from './new-api.mjs'; // alias с предупреждением в JSDoc
+
+// Feature detection вместо version checking:
+export const features = {
+  streaming: true,
+  asyncIterator: typeof Symbol.asyncIterator === 'symbol'
+};
+```
+
+---
+
+## 7. Advanced Patterns: Module Federation, Plugin Systems
+
+### 7.1 Module Federation (Webpack 5+, Vite плагины)
+```javascript
+// vite.config.js — host application
+import federation from '@originjs/vite-plugin-federation';
+
+export default defineConfig({
+  plugins: [
+    federation({
+      name: 'host-app',
+      remotes: {
+        'remote-ui': 'http://localhost:5001/assets/remoteEntry.js',
+        'analytics': 'http://localhost:5002/assets/remoteEntry.js'
+      },
+      shared: ['react', 'react-dom', 'lodash'] // дедупликация
+    })
+  ]
+});
+
+// Использование:
+const { Button } = await import('remote-ui/Button');
+const { track } = await import('analytics');
+```
+
+### 7.2 Plugin Architecture с Dynamic Import
+```javascript
+// core.mjs — ядро приложения
+export class PluginRegistry {
+  #plugins = new Map();
+
+  async loadPlugin(name, specifier) {
+    const module = await import(specifier);
+    const plugin = module.default || module;
+    this.#plugins.set(name, plugin);
+    return plugin;
+  }
+
+  async initAll(context) {
+    for (const [name, plugin] of this.#plugins) {
+      if (plugin.init) await plugin.init(context);
+    }
+  }
+}
+
+// plugin-analytics.mjs
+export default {
+  name: 'analytics',
+  async init({ eventBus }) {
+    eventBus.on('user-action', data => sendToAnalytics(data));
+  }
+};
+
+// main.mjs
+const registry = new PluginRegistry();
+await registry.loadPlugin('analytics', './plugins/analytics.mjs');
+await registry.loadPlugin('custom', '/user/plugins/custom.mjs'); // пользовательский плагин
+await registry.initAll({ eventBus });
+```
+
+---
+
+## 8. Browser vs Node.js: Module Differences
+
+| Feature | Браузер | Node.js |
+|---------|---------|---------|
+| **Bare specifiers** | Import Maps только | node_modules + package.json exports |
+| **Dynamic import** | Полная поддержка | Полная поддержка |
+| **Top-level await** | Полная поддержка | Полная поддержка (в .mjs / "type": "module") |
+| **import.meta.url** | URL модуля | file:// URL |
+| **import.meta.resolve** | Stage 3, флаг | Stage 3, флаг (Node 20+) |
+| **import.meta.main** | Нет | Node 20.6+ |
+| **JSON modules** | assert { type: 'json' } | assert { type: 'json' } (17+) |
+| **WASM modules** | assert { type: 'webassembly' } | Экспериментально |
+| **HTTPS imports** | Нативно | Только через загрузчик (--experimental-https-module) |
+| **Node builtins** | Нет | `node:fs`, `node:path` (с протоколом node:) |
+
+---
+
+## 9. Упражнения
+
+### Упражнение 1: Циклические зависимости
+```javascript
+// Создайте 3 модуля с циклической зависимостью:
+// a.mjs → b.mjs → c.mjs → a.mjs
+// Используйте функции (не значения) для разрыва цикла
+// Проверьте порядок инициализации через console.log
+```
+
+### Упражнение 2: Dynamic Import + Import Maps
+```javascript
+// Настройте Import Map для загрузки lodash с CDN
+// Напишите функцию loadLocale(lang), которая динамически импортирует ./locales/{lang}.mjs
+// Обработайте ошибку: если locale не найден, fallback на 'en'
+```
+
+### Упражнение 3: Package Exports Design
+```javascript
+// Создайте package.json для библиотеки с:
+// - Основной точкой входа (./index.mjs, ./index.cjs)
+// - Subpath exports: ./utils/*, ./components/*
+// - TypeScript types
+// - Internal imports (#internal/*)
+// Протестируйте: npm pack && в другом проекте npm install ./my-lib.tgz
+```
+
+### Упражнение 4: Plugin System
+```javascript
+// Реализуйте PluginRegistry с:
+// - loadPlugin(name, url) — dynamic import
+// - unloadPlugin(name) — cleanup (если плагин имеет dispose())
+// - getPlugin(name) — доступ к API плагина
+// Плагины: { init(ctx), dispose?, api: { ... } }
+```
+
+---
+
+## 10. Дополнительные ресурсы
+
+- **ECMA-262 Modules**: https://tc39.es/ecma262/#sec-modules
+- **HTML Spec Modules**: https://html.spec.whatwg.org/multipage/webappapis.html#integration-with-the-javascript-module-system
+- **Node.js ESM Docs**: https://nodejs.org/api/esm.html
+- **Import Maps**: https://github.com/WICG/import-maps
+- **Package Exports Guide**: https://nodejs.org/api/packages.html#package-entry-points
+- **"ES Modules: A cartoon deep-dive"** — Lin Clark (hacks.mozilla.org)
+- **"JavaScript Modules"** — Jake Archibald (v8.dev/blog)
+
+---
+
+## 11. Контрольные вопросы
+
+1. В чём разница между Instantiation и Evaluation фазами модуля?
+2. Почему `import { x } from './a'` видит изменение `x` в модуле `a` (live binding)?
+3. Что происходит при циклической зависимости, если модуль А использует значение из Б при инициализации?
+4. Как `import.meta.resolve()` отличается от `new URL('./foo', import.meta.url)`?
+5. Зачем нужны `imports` в package.json если есть `exports`?
+6. Что такое "Dual Package Hazard" и как его избежать?
+7. В чём разница между `assert { type: 'json' }` и `with { type: 'json' }`?
+
+---
+
+## 📝 Саммари
+
+| Концепция | Ключевой момент |
+|-----------|-----------------|
+| **Module Record** | Статическая структура: imports, exports, status, environment |
+| **Linking vs Evaluation** | Linking = связывание bindings (статическое), Evaluation = выполнение кода |
+| **Circular Dependencies** | Работают через live bindings; избегайте чтения значений при инициализации |
+| **Dynamic Import** | `import()` возвращает Promise, работает везде, позволяет code splitting |
+| **import.meta** | url, resolve(), environment — метаданные текущего модуля |
+| **Resolution** | Браузер: Import Maps; Node.js: package.json exports/imports; Bundlers: aliases |
+| **Library Design** | Conditional exports, sideEffects: false, избегайте dual package hazard |
+
+---
+
+*Следующий урок: 26 — Browser Platform: rendering pipeline, layout/paint/compositing, Web Components, Service Workers, security model*

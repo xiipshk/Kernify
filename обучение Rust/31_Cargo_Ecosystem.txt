@@ -1,0 +1,797 @@
+# Урок 31: Cargo Ecosystem (Экосистема Cargo)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Настраивать Cargo workspaces для монолитических репозиториев
+- Использовать features для условной компиляции и optional dependencies
+- Настраивать cross-compilation: `rustup target add`, `.cargo/config.toml`
+- Публиковать крейты на crates.io: версионирование, `cargo publish`, `cargo yank`
+- Работать с Cargo.toml: dependencies, dev-dependencies, build-dependencies, patch, replace
+- Использовать cargo plugins: `cargo-expand`, `cargo-audit`, `cargo-outdated`, `cargo-deny`
+- Настраивать профили сборки: release, dev, bench, test, custom profiles
+- Работать с приватными реестрами и альтернативными registry sources
+- Использовать `cargo-make`, `just`, `xtask` для автоматизации задач
+
+---
+
+## 1. Cargo Workspaces
+
+### Базовая настройка workspace
+```toml
+# Cargo.toml (корень workspace)
+[workspace]
+resolver = "2"  # Рекомендуется для новых проектов
+members = [
+    "core",
+    "cli",
+    "web-api",
+    "shared-utils",
+]
+exclude = ["old-crate"]  # Исключить из workspace
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+```
+
+```toml
+# core/Cargo.toml
+[package]
+name = "myapp-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+```
+
+### Виртуальный манифест vs package
+```toml
+# Виртуальный манифест (только workspace, нет [package])
+[workspace]
+members = ["crate-a", "crate-b"]
+
+# Обычный package с workspace
+[package]
+name = "my-crate"
+version = "0.1.0"
+
+[workspace]
+members = ["sub-crate"]
+```
+
+### Dependency resolution в workspace
+```toml
+# Все крейты используют ОДНУ версию serde
+# Cargo.lock общий для всего workspace
+# resolver = "2" — более строгий, избегает diamond dependencies
+```
+
+### `cargo metadata` для инструментов
+```bash
+cargo metadata --format-version=1 | jq '.packages[] | {name, version, dependencies}'
+```
+
+---
+
+## 2. Features (Фичи)
+
+### Базовые features
+```toml
+[features]
+default = ["std", "serde"]
+std = []
+serde = ["dep:serde"]
+async = ["dep:tokio", "std"]
+full = ["std", "serde", "async"]
+
+# Optional dependencies
+[dependencies]
+serde = { version = "1.0", optional = true, features = ["derive"] }
+tokio = { version = "1.0", optional = true, features = ["full"] }
+```
+
+### Использование features в коде
+```rust
+// cfg для условной компиляции
+#[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize};
+
+#[cfg(feature = "async")]
+mod async_api {
+    use tokio::net::TcpStream;
+    // ...
+}
+
+// Компиляция только при включённой фиче
+#[cfg(feature = "full")]
+pub fn full_functionality() {}
+```
+
+### Feature unity / additive features
+```toml
+# Фичи аддитивны: включение нескольких = объединение зависимостей
+# НЕЛЬЗЯ использовать features для mutually exclusive вариантов
+# Для этого используйте отдельные крейты или cfg
+
+# Плохо:
+# features = ["backend-postgres", "backend-mysql"]  # конфликт!
+
+# Хорошо:
+# Отдельные крейты: myapp-postgres, myapp-mysql
+# Или: feature = "backend" + cfg(backend = "postgres")
+```
+
+### `dep:` синтаксис (Rust 1.60+)
+```toml
+[features]
+# Включает optional dependency "serde"
+serde = ["dep:serde"]
+
+# Включает optional dependency И её features
+serde_json = ["dep:serde", "dep:serde_json"]
+```
+
+### `weak` dependencies (Rust 1.73+)
+```toml
+[dependencies]
+# Слабая зависимость: не тянет автоматически, но доступна через feature
+some_crate = { version = "1.0", optional = true, weak = true }
+
+[features]
+# Если включить "some_crate" — подтянется
+# Если НЕ включить — но другой крейт в workspace требует — подтянется
+```
+
+### `required-features` для документации
+```toml
+[package]
+# Документация собирается с этими features
+documentation = ["docs-rs"]
+```
+
+---
+
+## 3. Cross-Compilation (Кросс-компиляция)
+
+### Добавление таргетов
+```bash
+# Список доступных таргетов
+rustup target list
+
+# Добавление таргетов
+rustup target add x86_64-unknown-linux-musl      # статический Linux
+rustup target add aarch64-unknown-linux-gnu      # ARM64 Linux
+rustup target add armv7-unknown-linux-gnueabihf  # ARM32 Linux
+rustup target add wasm32-unknown-unknown         # WebAssembly
+rustup target add x86_64-pc-windows-gnu          # Windows (MinGW)
+rustup target add thumbv7em-none-eabihf          # Cortex-M (embedded)
+```
+
+### `.cargo/config.toml` для кросс-компиляции
+```toml
+# .cargo/config.toml
+[build]
+# Цель по умолчанию
+target = "x86_64-unknown-linux-musl"
+
+[target.x86_64-unknown-linux-musl]
+linker = "x86_64-linux-musl-gcc"
+runner = "qemu-x86_64"  # для запуска тестов
+
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+runner = "qemu-aarch64"
+
+[target.wasm32-unknown-unknown]
+linker = "wasm-ld"
+rustflags = ["-C", "link-arg=-s"]  # strip
+
+[target.thumbv7em-none-eabihf]
+runner = "probe-rs run --chip STM32F407VG"
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+    "-C", "opt-level=z",
+]
+```
+
+### Кросс-компиляция с `cross` (Docker-based)
+```bash
+cargo install cross
+
+# Сборка для Linux musl из macOS/Windows
+cross build --target x86_64-unknown-linux-musl --release
+
+# cross автоматически использует Docker образы с тулчейнами
+```
+
+### `zig cc` как универсальный линкер (Rust 1.70+)
+```toml
+# .cargo/config.toml
+[target.x86_64-unknown-linux-musl]
+linker = "zig cc"
+rustflags = ["-C", "linker=zig cc"]
+
+[target.aarch64-linux-android]
+linker = "zig cc"
+```
+
+### Проверка таргета в коде
+```rust
+#[cfg(target_os = "linux")]
+fn linux_only() {}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_only() {}
+
+#[cfg(all(target_os = "windows", target_env = "gnu"))]
+fn mingw_only() {}
+
+// В build.rs
+fn main() {
+    let target = std::env::var("TARGET").unwrap();
+    if target.contains("musl") {
+        println!("cargo:rustc-cfg=musl_target");
+    }
+}
+```
+
+---
+
+## 4. Профили сборки (Profiles)
+
+### Стандартные профили
+```toml
+# Cargo.toml
+[profile.dev]
+opt-level = 0
+debug = true
+overflow-checks = true
+lto = false
+panic = "unwind"
+split-debuginfo = "unpacked"  # macOS/Windows
+
+[profile.release]
+opt-level = 3
+debug = false
+overflow-checks = false
+lto = "thin"  # или "fat" / "off"
+panic = "abort"
+codegen-units = 1
+strip = true  # strip symbols
+```
+
+### Кастомные профили (Rust 1.57+)
+```toml
+[profile.ci]
+inherits = "release"
+debug = true  # с debug info для профилирования
+overflow-checks = true
+
+[profile.bench]
+inherits = "release"
+debug = true
+
+[profile.test]
+inherits = "dev"
+opt-level = 1  # быстрее тесты
+
+[profile.release-lto]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+```
+
+### Использование профилей
+```bash
+cargo build --profile ci
+cargo test --profile test
+cargo bench --profile bench
+
+# Переопределение параметров
+cargo build --release -Z build-std=std,panic_abort
+```
+
+### Per-package profile overrides
+```toml
+[profile.release.package."*"]
+opt-level = 3
+
+[profile.release.package."heavy-crate"]
+opt-level = "s"  # optimize for size
+lto = "fat"
+
+[profile.release.package."fast-crate"]
+opt-level = 3
+```
+
+---
+
+## 5. Публикация на crates.io
+
+### Подготовка к публикации
+```toml
+# Cargo.toml
+[package]
+name = "my-awesome-crate"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <email@example.com>"]
+description = "Short description (max 1 line)"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/user/repo"
+homepage = "https://docs.rs/my-awesome-crate"
+documentation = "https://docs.rs/my-awesome-crate"
+keywords = ["async", "web", "http"]
+categories = ["web-programming", "asynchronous"]
+exclude = [
+    "**/tests/fixtures/**",
+    "**/*.md",
+    ".github/**",
+    "benches/**",
+]
+```
+
+### Версионирование (SemVer)
+```toml
+# Правила:
+# 0.y.z — initial development, breaking changes allowed
+# 1.0.0 — stable API
+# MAJOR — breaking changes
+# MINOR — new features, backward compatible
+# PATCH — bug fixes, backward compatible
+
+# Pre-release versions
+version = "1.0.0-alpha.1"
+version = "1.0.0-beta.2"
+version = "1.0.0-rc.1"
+```
+
+### Публикация
+```bash
+# Проверка перед публикацией
+cargo package --list          # что войдёт в пакет
+cargo package                 # создаёт .crate в target/package/
+cargo publish --dry-run       # симуляция
+
+# Публикация
+cargo login                   # токен с crates.io
+cargo publish
+
+# Публикация конкретного крейта в workspace
+cargo publish -p my-crate
+```
+
+### `cargo yank` — отзыв версии
+```bash
+# Отзыв (не удаление!) версии
+cargo yank --vers 1.0.1
+
+# Восстановление
+cargo yank --vers 1.0.1 --undo
+
+# Yanked версии не скачиваются по умолчанию
+# Но можно принудительно: cargo update -p crate@1.0.1
+```
+
+### `cargo owner` — управление владельцами
+```bash
+cargo owner --add github:org:team
+cargo owner --remove user
+cargo owner --list
+```
+
+---
+
+## 6. Приватные реестры и альтернативные источники
+
+### Настройка альтернативного registry
+```toml
+# .cargo/config.toml
+[registries]
+my-private = { index = "https://git.example.com/crates-index" }
+# или git:
+# my-private = { index = "git+https://git.example.com/crates-index.git" }
+
+[source.crates-io]
+replace-with = "my-private"  # полностью заменить crates.io
+```
+
+### Использование приватного реестра
+```toml
+# Cargo.toml
+[dependencies]
+my-private-crate = { version = "1.0", registry = "my-private" }
+```
+
+### Авторизация для приватных реестров
+```bash
+# Token-based
+cargo login --registry=my-private
+
+# Git SSH
+# Настройте SSH ключи для git@example.com
+```
+
+### `cargo-vendor` — vendoring зависимостей
+```bash
+cargo install cargo-vendor
+cargo vendor --manifest-path=Cargo.toml
+# Создаёт vendor/ со всеми зависимостями
+
+# .cargo/config.toml для использования vendor
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
+```
+
+---
+
+## 7. Cargo Plugins и инструменты
+
+### Полезные плагины
+```bash
+# Анализ кода
+cargo install cargo-expand       # раскрыть макросы
+cargo install cargo-asm          # показать ассемблер
+cargo install cargo-llvm-lines   # LLVM IR lines
+
+# Безопасность
+cargo install cargo-audit        # проверка уязвимостей (RustSec)
+cargo install cargo-deny         # лицензии, бани, advisories
+
+# Обновления
+cargo install cargo-outdated     # показать устаревшие зависимости
+cargo install cargo-upgrades     # интерактивное обновление
+
+# Размер бинарника
+cargo install cargo-bloat        # что занимает место
+cargo install cargo-size         # размер секций
+
+# Документация
+cargo install cargo-doc2dash     # docset для Dash/Zeal
+```
+
+### `cargo-deny` конфигурация
+```toml
+# deny.toml
+[advisories]
+# vulnerability = "deny"
+# unmaintained = "warn"
+# yanked = "warn"
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause"]
+deny = ["GPL-3.0-only", "AGPL-3.0"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+```
+
+### `cargo-make` для задач сборки
+```toml
+# Makefile.toml
+[tasks.build-all]
+command = "cargo"
+args = ["build", "--workspace", "--release"]
+
+[tasks.test-all]
+command = "cargo"
+args = ["test", "--workspace", "--all-features"]
+
+[tasks.clippy]
+command = "cargo"
+args = ["clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]
+
+[tasks.fmt]
+command = "cargo"
+args = ["fmt", "--all", "--check"]
+
+[tasks.ci]
+dependencies = ["fmt", "clippy", "test-all"]
+```
+
+### `xtask` паттерн (встроенные задачи)
+```rust
+// xtask/src/main.rs
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Генерация кода
+    Codegen,
+    /// Релиз: обновление версии, тег, публикация
+    Release { version: String },
+    /// Бенчмарки с сохранением результатов
+    Bench { save: bool },
+}
+
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Codegen => codegen()?,
+        Command::Release { version } => release(version)?,
+        Command::Bench { save } => bench(save)?,
+    }
+    Ok(())
+}
+```
+
+```bash
+# Использование
+cargo xtask codegen
+cargo xtask release --version 1.2.0
+```
+
+---
+
+## 8. Build Scripts (`build.rs`)
+
+### Базовый `build.rs`
+```rust
+// build.rs
+fn main() {
+    // Пересборка при изменении файлов
+    println!("cargo:rerun-if-changed=src/bindings.h");
+    println!("cargo:rerun-if-changed=build.rs");
+
+    // Генерация кода
+    generate_bindings();
+
+    // Компиляция C кода
+    cc::Build::new()
+        .file("src/native.c")
+        .compile("native");
+
+    // Передача путей линкеру
+    println!("cargo:rustc-link-search=native={}", out_dir());
+    println!("cargo:rustc-link-lib=static=native");
+
+    // cfg флаги
+    println!("cargo:rustc-cfg=feature=\"my_feature\"");
+
+    // Переменные окружения для рантайма
+    println!("cargo:rustc-env=MY_ENV=value");
+}
+
+fn generate_bindings() {
+    let bindings = bindgen::Builder::default()
+        .header("src/bindings.h")
+        .generate()
+        .expect("Unable to generate bindings");
+
+    let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    bindings.write_to_file(out_path.join("bindings.rs")).unwrap();
+}
+```
+
+### Использование `OUT_DIR`
+```rust
+// В коде крейта
+include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+```
+
+### `cc` крейт для C/C++ компиляции
+```toml
+# Cargo.toml
+[build-dependencies]
+cc = "1.0"
+bindgen = "0.69"
+```
+
+---
+
+## 9. Dependency Management (Управление зависимостями)
+
+### `patch` — локальные исправления
+```toml
+# Cargo.toml (в workspace root)
+[patch.crates-io]
+# Использовать локальную версию вместо crates.io
+broken-crate = { path = "../fixed-broken-crate" }
+
+# Или git с конкретным коммитом
+another-crate = { git = "https://github.com/user/repo", rev = "abc123" }
+```
+
+### `replace` — замена зависимостей (устарело, используйте patch)
+```toml
+[replace]
+"old-crate:1.0.0" = { path = "../new-crate" }
+```
+
+### Версионирование в workspace
+```toml
+# Cargo.toml (workspace root)
+[workspace.package]
+version = "0.1.0"  # общая версия для всех members
+
+[workspace.dependencies]
+# Централизованные версии
+serde = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+```
+
+### `cargo update` стратегии
+```bash
+# Обновить все до последних совместимых
+cargo update
+
+# Обновить конкретный крейт
+cargo update -p serde
+
+# Обновить до latest (игнорируя SemVer)
+cargo update -p serde --precise 2.0.0
+
+# Агрессивное обновление (разрешает breaking changes)
+cargo update --aggressive
+```
+
+---
+
+## 10. Практические упражнения
+
+### Упражнение 1: Настройка workspace с фичами
+```toml
+# Cargo.toml (root)
+[workspace]
+resolver = "2"
+members = ["core", "cli", "web", "macros"]
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+clap = { version = "4.0", features = ["derive", "env"] }
+
+# core/Cargo.toml
+[package]
+name = "myapp-core"
+version = { workspace = true }
+
+[dependencies]
+serde = { workspace = true }
+thiserror = "1.0"
+
+[features]
+default = ["std"]
+std = []
+async = ["dep:tokio"]
+```
+
+### Упражнение 2: Cross-compilation для embedded
+```toml
+# .cargo/config.toml
+[target.thumbv7em-none-eabihf]
+runner = "probe-rs run --chip STM32F407VG"
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+    "-C", "opt-level=z",
+    "-C", "panic=abort",
+]
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+# .cargo/config.toml (для CI)
+[target.x86_64-unknown-linux-musl]
+linker = "zig cc"
+rustflags = ["-C", "target-feature=+crt-static"]
+```
+
+### Упражнение 3: Автоматизация релиза с xtask
+```rust
+// xtask/src/release.rs
+use anyhow::Result;
+use std::process::Command;
+
+pub fn release(version: &str) -> Result<()> {
+    // 1. Обновить версии во всех Cargo.toml
+    update_versions(version)?;
+
+    // 2. Запустить тесты
+    Command::new("cargo").args(["test", "--workspace"]).status()?;
+
+    // 3. Собрать релиз
+    Command::new("cargo").args(["build", "--workspace", "--release"]).status()?;
+
+    // 4. Создать git tag
+    Command::new("git").args(["tag", "-a", &format!("v{}", version), "-m", &format!("Release {}", version)]).status()?;
+
+    // 5. Push
+    Command::new("git").args(["push", "--tags"]).status()?;
+
+    // 6. Публикация (по порядку зависимостей)
+    publish_order()?.iter().for_each(|crate_name| {
+        Command::new("cargo").args(["publish", "-p", crate_name]).status().ok();
+    });
+
+    Ok(())
+}
+```
+
+---
+
+## 11. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `failed to select version` | Конфликт версий в workspace | `resolver = "2"`, единые версии в `[workspace.dependencies]` |
+| `feature not found` | Опечатка в имени фичи | Проверьте `[features]` в Cargo.toml зависимости |
+| `linker not found` | Нет кросс-линкера | Установите toolchain: `x86_64-linux-musl-gcc`, `zig cc` |
+| `crate not found` | Приватный крейт без авторизации | `cargo login --registry=name` |
+| `yanked version` | Зависимость отозвана | `cargo update -p crate@version` или обновите зависимость |
+| `multiple versions` | Diamond dependency | `cargo deny check bans`, `patch` section |
+| `build script failed` | Ошибка в build.rs | `cargo build -v` для деталей, проверьте `OUT_DIR` |
+
+---
+
+## 12. Шпаргалка: Cargo Commands
+
+| Категория | Команда | Описание |
+|-----------|---------|----------|
+| **Сборка** | `cargo build [--release] [--profile name]` | Сборка |
+| | `cargo check` | Только type-check |
+| | `cargo clean` | Очистка target/ |
+| **Тестирование** | `cargo test [--lib] [--bins] [--all-targets]` | Запуск тестов |
+| | `cargo bench` | Бенчмарки |
+| **Зависимости** | `cargo add serde@1.0 -F derive` | Добавление зависимости |
+| | `cargo update [-p name] [--precise ver]` | Обновление |
+| | `cargo tree [-i crate] [-d]` | Дерево зависимостей |
+| | `cargo metadata` | JSON метаданные |
+| **Публикация** | `cargo publish [--dry-run] [-p name]` | Публикация |
+| | `cargo yank --vers X.Y.Z` | Отзыв версии |
+| | `cargo owner --add user` | Добавление владельца |
+| **Анализ** | `cargo expand` | Раскрытие макросов |
+| | `cargo audit` | Проверка уязвимостей |
+| | `cargo deny check` | Политики (лицензии, баны) |
+| | `cargo outdated` | Устаревшие зависимости |
+| | `cargo bloat` | Анализ размера бинарника |
+
+---
+
+## 13. Полезные ресурсы
+
+- **Cargo Book**: https://doc.rust-lang.org/cargo/
+- **Cargo Reference**: https://doc.rust-lang.org/cargo/reference/
+- **SemVer**: https://semver.org/
+- **crates.io**: https://crates.io/
+- **docs.rs**: https://docs.rs/ (автодокументация)
+- **RustSec Advisory DB**: https://rustsec.org/
+- **cargo-deny**: https://github.com/EmbarkStudios/cargo-deny
+- **cross**: https://github.com/cross-rs/cross
+- **zig cc**: https://github.com/rust-lang/rust/issues/98349
+- **xtask pattern**: https://github.com/matklad/cargo-xtask
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- **Workspaces**: виртуальные манифесты, общий Cargo.lock, `resolver = "2"`, `workspace.dependencies`
+- **Features**: optional dependencies, `dep:` синтаксис, аддитивность, `weak` deps, условная компиляция `cfg`
+- **Cross-compilation**: `rustup target add`, `.cargo/config.toml`, `zig cc`, `cross`, embedded targets
+- **Profiles**: dev, release, bench, test, custom profiles, per-package overrides, LTO, strip
+- **Publishing**: SemVer, `cargo package`, `cargo publish`, `cargo yank`, `cargo owner`, `exclude`
+- **Private registries**: альтернативные sources, `replace-with`, `cargo-vendor`, авторизация
+- **Plugins**: `cargo-expand`, `cargo-audit`, `cargo-deny`, `cargo-outdated`, `cargo-bloat`
+- **Build scripts**: `build.rs`, `cc` крейт, `bindgen`, `OUT_DIR`, `rerun-if-changed`
+- **Automation**: `cargo-make`, `xtask` паттерн, CI интеграция
+
+---
+
+**Следующий урок:** Performance & Reliability (`32_Performance_Reliability.txt`)

@@ -1,0 +1,388 @@
+# Урок 1.9: Файлы и ошибки — чтение/запись, пути, try/except/finally
+
+## Цели урока
+- Работать с файлами: открытие, чтение, запись, закрытие
+- Использовать контекстные менеджеры (with)
+- Работать с путями (pathlib)
+- Обрабатывать исключения: try/except/else/finally
+- Создавать свои исключения
+
+---
+
+## 1. Работа с файлами — основы
+
+### Открытие файла
+```python
+# Режимы:
+# 'r'  — чтение (по умолчанию)
+# 'w'  — запись (создаёт новый/очищает существующий)
+# 'a'  — дозапись (в конец)
+# 'x'  — эксклюзивное создание (ошибка, если существует)
+# 'b'  — бинарный режим ('rb', 'wb')
+# 't'  — текстовый (по умолчанию)
+# '+'  — чтение и запись ('r+', 'w+')
+
+f = open("file.txt", "r", encoding="utf-8")
+content = f.read()
+f.close()  # ОБЯЗАТЕЛЬНО закрывать!
+```
+
+### Контекстный менеджер with (РЕКОМЕНДУЕТСЯ)
+```python
+# Автоматически закрывает файл, даже при ошибке
+with open("file.txt", "r", encoding="utf-8") as f:
+    content = f.read()
+# файл закрыт здесь
+```
+
+---
+
+## 2. Чтение файлов
+
+```python
+with open("data.txt", "r", encoding="utf-8") as f:
+    # Весь файл в строку
+    all_text = f.read()
+
+    # Построчно (итератор)
+    f.seek(0)  # вернуться в начало
+    for line in f:
+        print(line.rstrip())  # rstrip убирает \n
+
+    # Все строки в список
+    f.seek(0)
+    lines = f.readlines()  # ['строка1\n', 'строка2\n', ...]
+
+    # Удалить переносы строк
+    lines = [line.rstrip('\n') for line in f]
+```
+
+### Большие файлы — по чанкам
+```python
+CHUNK_SIZE = 8192
+with open("big_file.log", "r") as f:
+    while chunk := f.read(CHUNK_SIZE):
+        process(chunk)
+```
+
+---
+
+## 3. Запись в файлы
+
+```python
+# Запись строки
+with open("output.txt", "w", encoding="utf-8") as f:
+    f.write("Первая строка\n")
+    f.write("Вторая строка\n")
+
+# Запись нескольких строк
+lines = ["один\n", "два\n", "три\n"]
+with open("output.txt", "w", encoding="utf-8") as f:
+    f.writelines(lines)  # не добавляет \n автоматически!
+
+# print в файл
+with open("log.txt", "a", encoding="utf-8") as f:
+    print("Событие:", "запуск", file=f)
+    print(*[1, 2, 3], sep=", ", file=f)
+```
+
+---
+
+## 4. Бинарные файлы
+
+```python
+# Запись байтов
+data = b"Hello\x00World"
+with open("binary.dat", "wb") as f:
+    f.write(data)
+
+# Чтение байтов
+with open("binary.dat", "rb") as f:
+    data = f.read()
+
+# Копирование файла
+with open("source.jpg", "rb") as src, open("dest.jpg", "wb") as dst:
+    dst.write(src.read())
+```
+
+---
+
+## 5. Модуль pathlib (Python 3.4+) — современная работа с путями
+
+```python
+from pathlib import Path
+
+# Пути
+p = Path("folder/subfolder/file.txt")
+p = Path.home() / "Documents" / "file.txt"  # / — объединение
+p = Path.cwd() / "data" / "input.csv"
+
+# Свойства
+p.name        # "file.txt"
+p.stem        # "file" (без расширения)
+p.suffix      # ".txt"
+p.parent      # папка, содержащая файл
+p.parents     # все родители
+p.absolute()  # абсолютный путь
+
+# Проверки
+p.exists()
+p.is_file()
+p.is_dir()
+
+# Создание/удаление
+p.parent.mkdir(parents=True, exist_ok=True)  # создать папки
+p.touch()           # создать пустой файл
+p.unlink()          # удалить файл
+p.unlink(missing_ok=True)  # без ошибки, если нет
+
+# Чтение/запись (упрощённо)
+text = p.read_text(encoding="utf-8")
+p.write_text("Новый текст", encoding="utf-8")
+bytes_data = p.read_bytes()
+p.write_bytes(b"data")
+
+# Перебор файлов
+for file in Path(".").glob("*.py"):
+    print(file)
+for file in Path(".").rglob("*.txt"):  # рекурсивно
+    print(file)
+```
+
+---
+
+## 6. Исключения — try/except/else/finally
+
+### Базовый синтаксис
+```python
+try:
+    x = int(input("Число: "))
+    result = 10 / x
+except ValueError:
+    print("Это не число!")
+except ZeroDivisionError:
+    print("Нельзя делить на ноль!")
+except (TypeError, KeyError) as e:
+    print(f"Другая ошибка: {e}")
+else:
+    print(f"Результат: {result}")  # если НЕ было исключения
+finally:
+    print("Завершение")  # ВСЕГДА выполняется
+```
+
+### Иерархия исключений
+```
+BaseException
+ ├── KeyboardInterrupt
+ ├── SystemExit
+ └── Exception
+      ├── ValueError
+      ├── TypeError
+      ├── KeyError
+      ├── IndexError
+      ├── FileNotFoundError
+      ├── PermissionError
+      ├── OSError
+      ├── RuntimeError
+      └── ...
+```
+
+### Ловим конкретные исключения (НЕ bare except!)
+```python
+# ПЛОХО
+try:
+    ...
+except:
+    pass  # перехватывает ВСЁ, включая KeyboardInterrupt!
+
+# ХОРОШО
+try:
+    ...
+except Exception as e:
+    logger.error(e)
+    raise  # пробрасываем дальше
+```
+
+---
+
+## 7. Вызов исключений — raise
+
+```python
+def withdraw(balance, amount):
+    if amount > balance:
+        raise ValueError("Недостаточно средств")
+    if amount <= 0:
+        raise ValueError("Сумма должна быть положительной")
+    return balance - amount
+
+# raise from — цепочка исключений (Python 3+)
+try:
+    process(data)
+except ParseError as e:
+    raise ValueError("Неверный формат данных") from e
+```
+
+---
+
+## 8. Пользовательские исключения
+
+```python
+class AppError(Exception):
+    """Базовое исключение приложения."""
+    pass
+
+class ValidationError(AppError):
+    """Ошибка валидации данных."""
+    def __init__(self, field, message):
+        self.field = field
+        self.message = message
+        super().__init__(f"{field}: {message}")
+
+class NotFoundError(AppError):
+    """Ресурс не найден."""
+    pass
+
+# Использование
+def get_user(user_id):
+    user = db.find(user_id)
+    if not user:
+        raise NotFoundError(f"User {user_id} not found")
+    return user
+
+try:
+    user = get_user(999)
+except NotFoundError:
+    print("Пользователь не найден")
+except ValidationError as e:
+    print(f"Ошибка в поле {e.field}: {e.message}")
+```
+
+---
+
+## 9. Контекстные менеджеры (with) — создание своих
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def timer(name):
+    import time
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - start
+        print(f"{name}: {elapsed:.3f} сек")
+
+with timer("загрузка"):
+    data = load_big_data()
+
+# Класс-контекстный менеджер
+class DatabaseTransaction:
+    def __enter__(self):
+        self.conn = connect()
+        return self.conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            self.conn.rollback()
+        else:
+            self.conn.commit()
+        self.conn.close()
+
+with DatabaseTransaction() as db:
+    db.execute("INSERT ...")
+```
+
+---
+
+## 10. Практические паттерны
+
+### Безопасное чтение конфига
+```python
+import json
+from pathlib import Path
+
+def load_config(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}  # дефолт
+    except json.JSONDecodeError as e:
+        raise ValidationError("config", f"Неверный JSON: {e}")
+```
+
+### Атомарная запись (через временный файл)
+```python
+import tempfile
+import shutil
+
+def atomic_write(path: Path, data: str):
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        dir=path.parent,
+        delete=False,
+        encoding="utf-8"
+    ) as tmp:
+        tmp.write(data)
+        tmp_path = Path(tmp.name)
+    tmp_path.replace(path)  # атомарная замена
+```
+
+### Retry с backoff
+```python
+import time
+from functools import wraps
+
+def retry(times=3, delay=1, backoff=2):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            attempt = 0
+            while True:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    attempt += 1
+                    if attempt >= times:
+                        raise
+                    time.sleep(delay)
+                    delay *= backoff
+        return wrapper
+    return decorator
+
+@retry(times=3, delay=1)
+def unreliable_api_call():
+    ...
+```
+
+---
+
+## Практические задания
+
+1. **Логгер**: класс, пишущий сообщения в файл с таймстампом и уровнем (INFO/ERROR)
+2. **Копирование файла**: с прогресс-баром (tqdm) для больших файлов
+3. **Конфиг**: чтение JSON/YAML с валидацией схемы
+4. **Бэкап**: скрипт, архивирующий папку в zip с датой в имени
+5. **Парсер логов**: извлечь все ERROR строки из файла логов
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `open()` без `with` и без `close()` | Всегда `with open(...) as f:` |
+| `except:` (bare) | `except Exception:` или конкретные |
+| `raise "ошибка"` | `raise ValueError("ошибка")` |
+| Пути строкой + `\` | `Path("folder") / "file.txt"` |
+| `f.read()` на огромном файле | Читать по строкам или чанкам |
+
+---
+
+## Полезные ресурсы
+- **Python.org Tutorial: Errors and Exceptions** — https://docs.python.org/3/tutorial/errors.html
+- **Real Python: Working with Files** — https://realpython.com/read-write-files-python/
+- **Real Python: Python Exceptions** — https://realpython.com/python-exceptions/
+- **pathlib docs** — https://docs.python.org/3/library/pathlib.html
+- **contextlib docs** — https://docs.python.org/3/library/contextlib.html

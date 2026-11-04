@@ -1,0 +1,567 @@
+# Урок 18: Доступность — focus, контраст, масштабирование текста, клавиатурное взаимодействие
+
+## Цели урока
+- Понять принципы доступности (a11y) и почему они важны для CSS
+- Научиться создавать чёткие стили фокуса для клавиатурной навигации
+- Обеспечить достаточный контраст цветов по WCAG AA/AAA
+- Сделать текст масштабируемым (до 200% и более) без поломки вёрстки
+- Организовать полноценное клавиатурное взаимодействие (Tab-порядок, skip-links, ловушки фокуса)
+
+---
+
+## 1. Почему доступность — это CSS-задача
+
+Доступность не только про HTML (alt, ARIA, семантические теги). CSS отвечает за то, как пользователь **видит** и **управляет** интерфейсом:
+- contraste readability
+- видимость фокуса
+- масштабирование текста
+- поддержка reduced motion
+- цвет не как единственный носитель информации
+
+### WCAG — уровни соответствия
+| Уровень | Значение | Для кого обязателен |
+|---------|----------|---------------------|
+| A | Минимальный | Базовый доступ |
+| AA | Средний | Госсайты, коммерческие проекты (рекомендуется всем) |
+| AAA | Высший | Специализированные ресурсы |
+
+Ключевые критерии для CSS:
+- 1.4.3 Contrast (Minimum) — AA: 4.5:1 для обычного текста, 3:1 для крупного (18px+ или 14px+ bold)
+- 1.4.4 Resize text — до 200% без потери контента и функционала
+- 1.4.10 Reflow — контент не теряется при увеличении (нет горизонтальной прокрутки на 320px)
+- 2.4.7 Focus Visible — видимый индикатор фокуса
+- 2.1.1 Keyboard — весь функционал доступен с клавиатуры
+
+---
+
+## 2. Focus-стили — делаем фокус заметным
+
+### Базовый сброс фокуса (не делайте outline: none без замены!)
+```css
+/* ПЛОХО — убирает фокус для клавиатуры */
+button:focus { outline: none; }
+
+/* ХОРОШО — видимый фокус для клавиатуры, аккуратный для мыши */
+:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+```
+
+### Индикатор фокуса на интерактивных элементах
+```css
+.btn {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.btn:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+  border-color: #2563eb;
+}
+
+/* Высокий контраст для фокуса (свой вариант, не стандартный браузерный) */
+.btn--primary:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px #2563eb;
+}
+
+/* Focus-visible within — контейнер подсвечивается, когда внутри фокус */
+.search-form:focus-within {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.3);
+}
+```
+
+### Принудительные цвета (forced-colors / Windows High Contrast)
+```css
+@media (forced-colors: active) {
+  .btn {
+    /* Canvas и CanvasText — цвета системы */
+    background: Canvas;
+    color: CanvasText;
+    border: 1px solid CanvasText;
+  }
+
+  .btn:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+```
+
+---
+
+## 3. Контраст цветов — проверяем и выбираем
+
+### Соотношения контраста (WCAG)
+- Обычный текст (< 18px или < 14px bold): **4.5:1** (AA), **7:1** (AAA)
+- Крупный текст (≥ 18px или ≥ 14px bold): **3:1** (AA), **4.5:1** (AAA)
+- UI-компоненты и графические объекты: **3:1** (AA)
+
+### Пример палитры с проверкой контраста
+```css
+:root {
+  /* Фон и текст — достаточно контрастны (около 11:1) */
+  --color-bg: oklch(0.98 0.001 285);
+  --color-text: oklch(0.21 0.006 285);
+
+  /* Текст на светлом фоне — проходит AA для обычного текста */
+  --color-muted: oklch(0.55 0.01 285);
+
+  /* Брендовый синий на белом — проверь контраст (~4.5:1+) */
+  --color-primary: oklch(0.62 0.22 264);
+
+  /* Белый текст на синем — должен быть ≥ 4.5:1 */
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* Опасно: светло-серый текст на белом (контраст ~2:1 — не проходит) */
+.bad-muted {
+  color: #bbb; /* НЕ ДЕЛАТЬ — недостаточный контраст */
+}
+
+/* Хорошо: тёмно-серый (контраст ~7:1) */
+.good-muted {
+  color: #6b7280;
+}
+
+/* Кнопка с текстом: проверь contraste фона и текста */
+.btn--primary {
+  background: var(--color-primary);
+  color: #ffffff; /* белый на синем — обычно ≥ 4.5:1 */
+}
+```
+
+### Как проверить контраст
+1. **DevTools**: Инспектор → цвет в палитре → значок контраста (показывает отношение)
+2. **WebAIM Contrast Checker**: https://webaim.org/resources/contrastchecker/
+3. **Contrast Ratio**: https://contrast-ratio.com/
+4. **Lighthouse** (Chrome DevTools) → Accessibility audit
+
+---
+
+## 4. Масштабирование текста — до 200% без поломок
+
+### Единицы измерения — rem, не px
+```css
+/* ПЛОХО — не масштабируется с настройками браузера */
+html { font-size: 16px; }
+h1 { font-size: 32px; }
+p { font-size: 14px; }
+
+/* ХОРОШО — базовый размер наследуется от настроек браузера */
+html { font-size: 100%; /* 16px по умолчанию, уважает настройки пользователя */ }
+
+h1 { font-size: 2rem; }   /* 32px при 16px базовом, но масштабируется */
+p { font-size: 0.875rem; } /* 14px при 16px базовом */
+```
+
+### Fluid Typography с clamp() и пределом
+```css
+:root {
+  --fs-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
+  --fs-sm: clamp(0.875rem, 0.8rem + 0.375vw, 1rem);
+  --fs-base: clamp(1rem, 0.9rem + 0.5vw, 1.125rem);
+  --fs-lg: clamp(1.125rem, 1rem + 0.625vw, 1.25rem);
+  --fs-xl: clamp(1.25rem, 1.1rem + 0.75vw, 1.5rem);
+  --fs-2xl: clamp(1.5rem, 1.25rem + 1.25vw, 2rem);
+  --fs-3xl: clamp(2rem, 1.5rem + 2.5vw, 3rem);
+}
+
+h1 { font-size: var(--fs-3xl); line-height: 1.1; }
+p { font-size: var(--fs-base); line-height: 1.6; }
+```
+
+### Предельные значения — шрифт не должен стать слишком мелким
+```css
+.small-print {
+  /* Не меньше 0.75rem (12px) даже на маленьких экранах */
+  font-size: clamp(0.75rem, 2.5vw, 0.875rem);
+}
+```
+
+### Контейнеры и отступы — тоже масштабируются
+```css
+.card {
+  padding: clamp(1rem, 2vw, 1.5rem);
+  gap: clamp(0.5rem, 1vw, 1rem);
+}
+
+.section {
+  padding-block: clamp(2rem, 5vw, 4rem);
+}
+```
+
+### Проверка масштабирования
+1. В браузере: Настройки → Размер шрифта → очень крупный (или Ctrl/Cmd + `+` до 200%)
+2. Убедись: нет обрезки текста, нет горизонтальной прокрутки, элементы не наезжают друг на друга
+3. `min-height` на кнопках и полях ввода — текст не «выезжает» за границы
+
+```css
+.btn {
+  min-height: 44px; /* Минимальная площадь касания + место для крупного текста */
+  padding: 0.75rem 1.5rem;
+}
+```
+
+---
+
+## 5. Клавиатурное взаимодействие
+
+### Порядок фокуса (Tab-порядок)
+- По умолчанию follows DOM order
+- Не используй `tabindex` positif — это ломает предсказуемость
+- `tabindex="0"` — элемент в естественном порядке (для кастомных виджетов)
+- `tabindex="-1"` — 프로그램ный фокус (модалки, skip-links), не в порядке Tab
+
+```html
+<!-- Хорошо: естественный порядок -->
+<nav>
+  <a href="#home">Главная</a>
+  <a href="#about">О нас</a>
+  <a href="#contact">Контакты</a>
+</nav>
+
+<!-- Плохо: tabindex positif нарушает порядок -->
+<a href="#" tabindex="1">Первый</a>
+<a href="#" tabindex="2">Второй</a>
+```
+
+### Skip-links — пропуск повторяющихся блоков
+```html
+<a href="#main-content" class="skip-link">Перейти к основному контенту</a>
+
+<header>...</header>
+<nav>...</nav>
+<main id="main-content" tabindex="-1">
+  <!-- основной контент -->
+</main>
+```
+
+```css
+.skip-link {
+  position: absolute;
+  top: -1000px;
+  left: 0;
+  background: #2563eb;
+  color: white;
+  padding: 0.75rem 1.5rem;
+  z-index: 1000;
+  transition: top 0.2s;
+}
+
+.skip-link:focus {
+  top: 0; /* появляется при фокусе через Tab */
+}
+```
+
+### Ловушка фокуса (Focus Trap) для модалок
+Когда модалка открыта, фокус не должен «утекать» за её пределы.
+
+```css
+/* Модалка — фокус ограничивается внутри */
+[role="dialog"] {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  background: white;
+  padding: 2rem;
+  border-radius: 0.5rem;
+  max-width: 500px;
+  width: 90%;
+  outline: none;
+}
+
+/* Элемент внутри модалки получает фокус при открытии (через JS) */
+.modal-content:focus-visible {
+  outline: none; /* фокус на первом интерактивном элементе внутри */
+}
+```
+
+```javascript
+// При открытии модалки — переместить фокус внутрь
+function openModal(modal) {
+  modal.showModal(); // или classList.add('open')
+  const firstFocusable = modal.querySelector('button, [href], input, select, textarea');
+  if (firstFocusable) firstFocusable.focus();
+}
+
+// При закрытии — вернуть фокус на кнопку, которая открыла модалку
+function closeModal(modal, triggerButton) {
+  modal.close();
+  triggerButton?.focus();
+}
+```
+
+### Активный элемент — визуальное состояние
+```css
+/* Кнопка в нажатом состоянии */
+.btn:active {
+  transform: scale(0.98);
+}
+
+/* Текущая страница в навигации */
+.nav__link--active {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/* Селекты и поля ввода — фокус с высоким контрастом */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+  border-color: #2563eb;
+}
+```
+
+---
+
+## 6. Цвет не единственный носитель информации
+
+```css
+/* ПЛОХО — только цвет говорит об ошибке */
+.input-error {
+  border-color: red; /* Дальтоник может не заметить */
+}
+
+/* ХОРОШО — цвет + иконка + текст + иконка в HTML */
+.input-error {
+  border-color: #dc2626;
+  background-color: color-mix(in oklch, #dc2626, white 92%);
+}
+
+.input-error::after {
+  content: "⚠"; /* или иконка SVG */
+  color: #dc2626;
+  font-size: 0.75em;
+  margin-inline-start: 0.5rem;
+}
+```
+
+```html
+<!-- Сообщение об ошибке текстом, а не только цветом -->
+<div class="field">
+  <label for="email">Email</label>
+  <input type="email" id="email" aria-invalid="true" aria-describedby="email-error">
+  <span id="email-error" class="error-text" role="alert">
+    Введите корректный адрес электронной почты
+  </span>
+</div>
+```
+
+---
+
+## 7. Reduced motion иその他
+
+```css
+/* Уважаем настройку "Уменьшить анимацию" */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Конкретный элемент */
+.slider {
+  transition: transform 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slider {
+    transition: none;
+  }
+}
+```
+
+### Forced colors (High Contrast Mode)
+```css
+@media (forced-colors: active) {
+  .card {
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+
+  .btn {
+    border: 1px solid CanvasText;
+    color: CanvasText;
+  }
+
+  .btn:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+```
+
+---
+
+## 8. Комплексный пример: доступная кнопка и поле ввода
+
+```html
+<form class="form" novalidate>
+  <div class="form__field">
+    <label for="email" class="form__label">Email</label>
+    <input
+      type="email"
+      id="email"
+      class="form__input"
+      placeholder="name@example.com"
+      aria-required="true"
+      aria-invalid="false"
+    >
+    <span id="email-hint" class="form__hint">Мы не передадим ваш email третьим лицам</span>
+  </div>
+
+  <button type="submit" class="btn btn--primary">Отправить</button>
+</form>
+```
+
+```css
+.form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-block-end: 1.5rem;
+}
+
+.form__label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: oklch(0.21 0.006 285);
+}
+
+.form__input {
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  border: 1px solid oklch(0.88 0.006 285);
+  border-radius: 0.5rem;
+  background: white;
+  color: oklch(0.21 0.006 285);
+  min-height: 44px;
+}
+
+.form__input:focus-visible {
+  outline: 3px solid oklch(0.62 0.22 264);
+  outline-offset: 2px;
+  border-color: oklch(0.62 0.22 264);
+}
+
+.form__input[aria-invalid="true"] {
+  border-color: oklch(0.65 0.22 20);
+  background-color: color-mix(in oklch, oklch(0.65 0.22 20), white 95%);
+}
+
+.form__hint {
+  font-size: 0.75rem;
+  color: oklch(0.55 0.01 285);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  min-height: 44px;
+  transition: background 0.2s;
+}
+
+.btn--primary {
+  background: oklch(0.62 0.22 264);
+  color: white;
+}
+
+.btn--primary:hover {
+  background: oklch(0.55 0.22 264);
+}
+
+.btn--primary:focus-visible {
+  outline: 3px solid oklch(0.62 0.22 264);
+  outline-offset: 2px;
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+/* Disabled state — чётко визуально */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+```
+
+---
+
+## 9. Чек-лист доступности (Definition of Done)
+
+| Критерий | Как проверить |
+|----------|---------------|
+| Видимый фокус на всех интерактивных элементах | Tab по странице, обводка видна |
+| Контраст текста ≥ 4.5:1 (AA) | DevTools色 picker / WebAIM |
+| Конtrast UI-элементов ≥ 3:1 | Поля ввода, кнопки, границы |
+| Текст масштабируется до 200% | Ctrl/Cmd + `+`, нет обрезки и горизонтальной прокрутки |
+| Нет `outline: none` без замены | Поиск в коде |
+| Цвет не единственный носитель информации | Иконки + текст + цвет |
+| Логический порядок Tab | Запустить Tab, проверить последовательность |
+| Skip-link для длинных страниц | Первый фокус — «Перейти к контенту» |
+| Минимальная площадь касания 44×44px | Кнопки, поля ввода |
+| prefers-reduced-motion respected | Включить в настройках ОС, анимации отключены |
+
+---
+
+## 10. Полезные ресурсы
+
+- [WCAG 2.1 — Understanding Contrast](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html)
+- [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/)
+- [MDN: :focus-visible](https://developer.mozilla.org/en-US/docs/Web/CSS/:focus-visible)
+- [W3C: Focus-visible polyfill](https://github.com/WICG/focus-visible)
+- [A11Y Project](https://a11yproject.com/)
+- [Inclusive Components — Focus Styles](https://inclusive-components.design/focus-styles/)
+- [Web Accessibility Evaluation Tool (WAVE)](https://wave.webaim.org/)
+- [Lighthouse Accessibility audit](https://developer.chrome.com/docs/lighthouse/accessibility/)
+
+---
+
+## 11. Ключевые выводы
+
+1. **Доступность — это CSS не меньше, чем HTML**: контраст, фокус, масштабирование текста — всё в CSS
+2. **`:focus-visible`** показывает обводку только для клавиатуры, `:focus:not(:focus-visible)` скрывает для мыши
+3. **Контраст ≥ 4.5:1** для обычного текста (AA), проверяй в DevTools или WebAIM
+4. **Используй `rem`, а не `px`**, и `clamp()` для гибкого, масштабируемого текста
+5. **Минимальная площадь касания 44×44px** — кнопки и поля ввода должны быть достаточно крупными
+6. **Цвет не единственный носитель информации** — добавляй иконки и текст к состояниям
+7. **Логический Tab-порядок** — не используй позитивный tabindex, следуй порядку DOM
+8. **Уважай `prefers-reduced-motion`** и `forced-colors` — настройки пользователя приоритетнее
+
+*Следующий урок: 19_Debug_Compatibility.txt — Отладка и совместимость: DevTools, вычисленные стили, прогрессивное улучшение*

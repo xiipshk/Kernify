@@ -1,0 +1,602 @@
+# Урок 20: Архитектура CSS — BEM/альтернативы, стили компонентов, дизайн-токены, сокращение конфликтов
+
+## Цели урока
+- Понять методологию БЭМ (Block, Element, Modifier) и её альтернативы
+- Научиться писать стили компонентов с низкой специфичностью
+- Использовать дизайн-токены (CSS-переменные) для консистентности
+- Сокращать конфликты стилей через каскадные слои, инкапсуляцию иネ임спейсинг
+- Создать поддерживаемую архитектуру CSS для middle/large проекта
+
+---
+
+## 1. Проблема неструктурированного CSS
+
+Без архитектуры CSS быстро превращается в «сп ripetizione»:
+- Селекторы `.red`, `.big-text`, `.margin-top` — не описывают намерение
+- `!important` и ID-селекторы для переопределения
+- Стили размазаны по многим файлам, сложно найти, что менять
+- Изменение одного элемента ломает другой (side effects)
+- Сложно onboard'ить новых разработчиков
+
+### Пример плохого CSS
+```css
+/* Нет 명확ной структуры */
+.red { color: red; }
+.big { font-size: 20px; }
+#header .nav .item { color: blue; } /* высокая специфичность */
+.container .card h2 { margin: 0; }  /* зависит от DOM-структуры */
+.btn { background: red !important; } /* антипаттерн */
+```
+
+---
+
+## 2. БЭМ (Block, Element, Modifier)
+
+### Основные сущности
+- **Block (Блок)** — независимый компонент: `.card`, `.btn`, `.nav`, `.modal`
+- **Element (Элемент)** — часть блока, не используется отдельно: `.card__title`, `.btn__icon`
+- **Modifier (Модификатор)** — состояние или вариант: `.btn--primary`, `.card--featured`
+
+### Конвенция именования
+```
+block__element--modifier
+```
+
+### Пример: карточка товара
+```html
+<article class="card card--featured">
+  <div class="card__header">
+    <img class="card__image" src="photo.jpg" alt="">
+    <h3 class="card__title">Название товара</h3>
+    <span class="card__badge card__badge--new">Новинка</span>
+  </div>
+  <div class="card__body">
+    <p class="card__text">Описание товара...</p>
+    <div class="card__price">299 ₽</div>
+  </div>
+  <div class="card__footer">
+    <button class="card__button btn btn--primary">Купить</button>
+  </div>
+</article>
+```
+
+```css
+/* Block */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem;
+  border: 1px solid oklch(0.88 0.006 285);
+  border-radius: 1rem;
+  background: white;
+}
+
+/* Block modifier */
+.card--featured {
+  border-color: oklch(0.62 0.22 264);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.1);
+}
+
+/* Elements */
+.card__header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.card__image {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 0.5rem;
+}
+
+.card__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0;
+  color: oklch(0.21 0.006 285);
+}
+
+.card__badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: oklch(0.8 0.15 60);
+  color: white;
+}
+
+.card__badge--new {
+  background: oklch(0.65 0.22 20);
+}
+
+.card__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.card__text {
+  font-size: 0.875rem;
+  color: oklch(0.55 0.01 285);
+  line-height: 1.5;
+}
+
+.card__price {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: oklch(0.21 0.006 285);
+  margin-top: auto;
+}
+
+.card__footer {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+
+.card__button {
+  flex: 1;
+}
+```
+
+### Правила БЭМ
+1. Элемент всегда принадлежит блоку: `.card__title`never outside `.card`
+2. Модификатор не используется без блока: `.btn--primary` всегда с `.btn`
+3. Не вкладывай элементы в элементы через селекторы: `.card__title .card__text` — антипаттерн
+4. Не смешивай БЭМ с теговыми селекторами: `.card h2` — не БЭМ
+5. Один элемент может иметь несколько модификаторов: `.btn.btn--primary.btn--large` (но лучше `.btn--primary.btn--large`)
+
+### Антипаттерны БЭМ
+```css
+/* Плохо: селектор зависит от структуры DOM */
+.card h2 { margin: 0; }
+
+/* Плохо: элемент вне контекста блока */
+.card__title { } /* ок, но не .page .card__title h2 */
+
+/* Плохо: модификатор без блока */
+--primary { } /* не существует */
+
+/* Плохо: глубокая вложенность селекторов */
+.card .body .title { } /* hautes специфичность, хрупко */
+```
+
+---
+
+## 3. Альтернативы БЭМ
+
+### SMACSS (Scalable and Modular Architecture for CSS)
+Категории правил:
+- **Base** — reset, typography, links, forms
+- **Layout** — grid, container, header, footer
+- **Module** — компоненты (аналог блоков БЭМ)
+- **State** — `.is-active`, `.is-hidden`, `.is-loading`
+- **Theme** — цвета, темы
+
+```css
+/* State классы (префикс is-/has-) */
+.is-active { background: blue; }
+.is-hidden { display: none; }
+.is-loading { opacity: 0.5; }
+.has-error { border-color: red; }
+```
+
+### OOCSS (Object-Oriented CSS)
+Разделение структуры и оформления, переиспользование классов.
+```css
+/* Структура */
+.media { display: flex; gap: 1rem; }
+.media__img { flex-shrink: 0; }
+.media__body { flex: 1; }
+
+/* Оформление (модули) */
+.btn { padding: 0.5rem 1rem; border-radius: 4px; }
+.btn--primary { background: blue; color: white; }
+.btn--danger { background: red; color: white; }
+```
+
+### ITCSS (Inverted Triangle CSS)
+Слои от общих к конкретным:
+1. Settings — переменные, настройки
+2. Tools — миксины, функции
+3. Generic — reset, box-sizing
+4. Elements — теговые стили
+5. Objects — паттерны оформления (media object)
+6. Components — конкретные UI-компоненты
+7. Trumps — утилиты, !important (только здесь)
+
+### Atomic CSS / Функциональные CSS (Tailwind-like)
+Один класс — одно свойство.
+```html
+<div class="flex items-center justify-between p-4 bg-white border rounded-lg">
+  <h2 class="text-lg font-semibold text-gray-900">Заголовок</h2>
+  <button class="px-3 py-2 bg-blue-600 text-white rounded">Кнопка</button>
+</div>
+```
+
+---
+
+## 4. Дизайн-токены (CSS-переменные)
+
+### Что такое токены
+Единственный источник истины для значений: цвета, отступы, размеры шрифтов, радиусы, тени, transition.
+
+### Структура токенов: Primitive → Semantic → Component
+```css
+:root {
+  /* === PRIMITIVE (базовые значения, без семантики) === */
+  --color-blue-50: oklch(0.97 0.01 264);
+  --color-blue-100: oklch(0.93 0.03 264);
+  --color-blue-500: oklch(0.62 0.22 264);
+  --color-blue-600: oklch(0.55 0.22 264);
+  --color-blue-900: oklch(0.21 0.05 264);
+
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.875rem;
+  --fs-base: 1rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.25rem;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 1rem;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+
+  /* === SEMANTIC (назначение в интерфейсе) === */
+  --color-primary: var(--color-blue-600);
+  --color-primary-hover: var(--color-blue-500);
+  --color-bg: var(--color-blue-50);
+  --color-text: var(--color-blue-900);
+  --color-muted: oklch(0.55 0.01 285);
+  --color-border: oklch(0.88 0.006 285);
+
+  --space-section: var(--space-xl);
+  --space-component: var(--space-md);
+
+  /* === COMPONENT (специфичные для компонента) === */
+  --card-padding: var(--space-lg);
+  --card-radius: var(--radius-lg);
+  --card-border: 1px solid var(--color-border);
+  --btn-primary-bg: var(--color-primary);
+  --btn-primary-text: white;
+}
+
+/* Dark mode через медиа-запрос или класс */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: oklch(0.21 0.006 285);
+    --color-text: oklch(0.98 0.001 285);
+    --color-border: oklch(0.28 0.006 285);
+    --color-muted: oklch(0.55 0.01 285);
+  }
+}
+
+/* Или через класс темы */
+[data-theme="dark"] {
+  --color-bg: oklch(0.21 0.006 285);
+  --color-text: oklch(0.98 0.001 285);
+}
+```
+
+### Использование токенов в компонентах
+```css
+.btn {
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  border: none;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn:hover {
+  background: var(--color-primary-hover);
+}
+
+.card {
+  padding: var(--card-padding);
+  border-radius: var(--card-radius);
+  border: var(--card-border);
+  background: var(--color-bg);
+}
+```
+
+### Преимущества токенов
+1. **Единое изменение** — поменял `--color-primary`, обновилось везде
+2. **Темы** — dark mode через переопределение переменных
+3. **Консистентность** — все отступы и цвета из одного набора
+4. **Контракт с дизайном** — токены соответствуют Figma-стилям
+
+---
+
+## 5. Каскадные слои (@layer) — управление приоритетом
+
+### Порядок слоёв (позже = приоритетнее)
+```css
+@layer reset, tokens, base, layout, components, utilities, overrides;
+
+/* Слои в порядке возрастания приоритета:
+   reset < tokens < base < layout < components < utilities < overrides */
+```
+
+### Пример архитектуры со слоями
+```css
+/* 1. Reset — сброс браузерных стилей */
+@layer reset {
+  *, *::before, *::after { box-sizing: border-box; }
+  * { margin: 0; padding: 0; }
+  img, picture, video, canvas, svg { display: block; max-width: 100%; }
+  input, button, textarea, select { font: inherit; }
+  a { color: inherit; text-decoration: none; }
+  ul, ol { list-style: none; }
+}
+
+/* 2. Tokens — дизайн-токены */
+@layer tokens {
+  :root {
+    --color-primary: oklch(0.62 0.22 264);
+    --color-text: oklch(0.21 0.006 285);
+    --space-md: 1rem;
+    /* ... */
+  }
+}
+
+/* 3. Base — базовые стили элементов */
+@layer base {
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: var(--fs-base);
+    color: var(--color-text);
+    line-height: 1.6;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+/* 4. Layout — обёртки, контейнеры, сетки */
+@layer layout {
+  .container {
+    max-inline-size: 1200px;
+    margin-inline: auto;
+    padding-inline: var(--space-md);
+  }
+
+  .section {
+    padding-block: var(--space-xl);
+  }
+}
+
+/* 5. Components — БЭМ-компоненты */
+@layer components {
+  .btn { /* ... */ }
+  .card { /* ... */ }
+  .nav { /* ... */ }
+}
+
+/* 6. Utilities — утилиты с высоким приоритетом */
+@layer utilities {
+  .text-center { text-align: center; }
+  .flex { display: flex; }
+  .sr-only { position: absolute; width: 1px; height: 1px; ... }
+}
+
+/* 7. Overrides — страничные переопределения (самый высокий приоритет в слоях) */
+@layer overrides {
+  .homepage .hero { background: var(--color-primary); }
+}
+```
+
+### Специфичность внутри и между слоями
+- Стили в более позднем слое выигрывают у ранних, независимо от специфичности селектора
+- Внутри слоя действуют обычные правила специфичности
+- `!important` внутри слоя — ещё выше приоритет (но используй осторожно)
+
+```css
+@layer base, components;
+
+@layer base {
+  .btn { color: red; }     /* 0,1,0,0 в base */
+}
+
+@layer components {
+  .btn { color: blue; }    /* 0,1,0,0 в components — выигрывает из-за слоя, а не специфичности */
+}
+```
+
+---
+
+## 6. Сокращение конфликтов стилей
+
+### Инкапсуляция компонентов
+1. **БЭМ** — уникальные имена блоков, нет конфликтов имён
+2. **@layer** — контроль порядка применения
+3. **@scope** — ограничение области действия селектора
+
+### @scope — область действия стилей
+```css
+/* Стили применяются только внутри .card, не утекают наружу */
+@scope (.card) to (.card__body) {
+  h2 { color: oklch(0.21 0.006 285); } /* только h2 внутри .card__body */
+  p { font-size: 0.875rem; }
+}
+
+/* Верхняя граница (.card) — откуда начинается область */
+/* Нижняя граница (.card__body) — где заканчивается */
+```
+
+### Имена с префиксами (нэймспейсинг)
+```css
+/* Префиксы помогают понять назначение класса */
+.c-btn { }           /* компонент */
+.c-card { }          /* компонент */
+.u-text-center { }   /* утилита */
+.l-container { }     /* layout */
+.is-active { }       /* состояние */
+.has-error { }       /* состояние */
+.t-text-primary { }  /* тема/токен */
+```
+
+### CSS Modules (локальные классы)
+Сборщики (Vite, Webpack) автоматически генерируют уникальные имена классов:
+```css
+/* Card.module.css */
+.card {
+  background: white;
+}
+
+/* В JS импортируются уникальные имена */
+import styles from './Card.module.css';
+// styles.card === 'card__hash123'
+```
+
+### Стилевые конфликты с библиотеками
+Если подключаешь чужую библиотеку (UI-kit), изолируй её стили:
+```css
+@scope (.my-app) to (.external-ui) {
+  /* Мои стили не влияют на библиотеку */
+}
+
+.external-ui {
+  all: initial; /* сброс всех наследуемых свойств для границы */
+}
+```
+
+---
+
+## 7. Комплексный пример: архитектура кнопки
+
+```html
+<!-- button.html -->
+<button class="c-btn c-btn--primary c-btn--lg is-loading" type="button">
+  <span class="c-btn__label">Отправить</span>
+  <svg class="c-btn__icon" aria-hidden="true">...</svg>
+</button>
+```
+
+```css
+@layer components;
+
+@layer components {
+  /* Block */
+  .c-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, transform 0.1s;
+    min-height: 44px;
+    white-space: nowrap;
+  }
+
+  /* Element */
+  .c-btn__label {
+    font-weight: inherit;
+  }
+
+  .c-btn__icon {
+    width: 1em;
+    height: 1em;
+    display: block;
+  }
+
+  /* Modifiers */
+  .c-btn--primary {
+    background: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+  }
+
+  .c-btn--primary:hover {
+    background: var(--color-primary-hover);
+  }
+
+  .c-btn--primary:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .c-btn--lg {
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--fs-base);
+  }
+
+  /* State */
+  .c-btn.is-loading {
+    opacity: 0.7;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  .c-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+```
+
+---
+
+## 8. Чек-лист архитектуры (Definition of Done)
+
+| Критерий | Как проверить |
+|----------|---------------|
+| БЭМ именование (block__element--modifier) | Поиск в коде, нет теговых селекторов внутри блоков |
+| Нет `!important` (кроме utilities) | Поиск `!important` |
+| Нет ID-селекторов для стилей | Поиск `#` в CSS |
+| Дизайн-токены для всех цветов/отступов | Все значения из `--var()` |
+| Каскадные слои в правильном порядке | `@layer` в начале файла |
+| Низкая специфичность (max 0,2,0,0) | Специфичность калькулятор |
+| Компоненты инкапсулированы | Нет утечки стилей между блоками |
+| Темы через переменные | `--color-bg` переопределяется для dark mode |
+
+---
+
+## 9. Полезные ресурсы
+
+- [БЭМ — официальная документация](https://ru.bem.info/)
+- [ITCSS — Harry Roberts](https://www.xfive.co/blog/itcss-scalable-maintainable-css-architecture/)
+- [SMACSS](https://smacss.com/)
+- [MDN: CSS Cascade Layers](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_cascade_layers)
+- [MDN: CSS Scoping](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_scoping)
+- [CSS Modules (Vite/Webpack)](https://vitejs.dev/guide/features.html#css-modules)
+- [Design Tokens — W3C Community Group](https://design-tokens.github.io/community-group/)
+
+---
+
+## 10. Ключевые выводы
+
+1. **БЭМ** — standard для именования, снижает конфликты и делает код понятным
+2. **Дизайн-токены** — единственный источник истины, упрощают темы и поддержку
+3. **@layer** — управление приоритетом без `!important` и избыточной специфичности
+4. **Низкая специфичность** — блоки и элементы с одним классом (max 0,1,0,0 или 0,2,0,0)
+5. **Инкапсуляция** — компоненты не должны влиять на соседние (БЭМ + @scope)
+6. **Префиксы классов** (c-, u-, l-, is-, has-) — читаемость кода
+7. **Альтернативы** — SMACSS, OOCSS, ITCSS, Atomic CSS — выбирай под размер команды и проекта
+8. **CSS Modules** — автоматическая изоляция классов при сборке
+
+*Следующий урок: 21_Project_Component_System.txt — Проект: адаптивная система компонентов с анимацией и проверкой доступности*

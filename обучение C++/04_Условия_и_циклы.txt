@@ -1,0 +1,281 @@
+# Урок 1.4: Условия и циклы — if, switch, while, do while, for, break, continue
+
+## Цели урока
+- Писать условные конструкции if/else
+- Использовать switch с инициализатором (C++17)
+- Работать с циклами while, do-while, for, range-based for
+- Управлять потоком: break, continue, return
+
+---
+
+## 1. Условные операторы
+
+### if / else
+```cpp
+int x = 42;
+
+if (x > 0) {
+    std::cout << "Positive\n";
+} else if (x < 0) {
+    std::cout << "Negative\n";
+} else {
+    std::cout << "Zero\n";
+}
+```
+
+### if с инициализатором (C++17)
+```cpp
+// Область видимости переменной только в if/else блоках
+if (auto it = map.find(key); it != map.end()) {
+    std::cout << "Found: " << it->second << '\n';
+} else {
+    std::cout << "Not found\n";
+}
+// it недоступен здесь
+```
+
+### constexpr if (C++17) — compile-time branching
+```cpp
+template<typename T>
+void print_type(T value) {
+    if constexpr (std::is_integral_v<T>) {
+        std::cout << "Integral: " << value << '\n';
+    } else if constexpr (std::is_floating_point_v<T>) {
+        std::cout << "Float: " << value << '\n';
+    } else {
+        std::cout << "Other\n";
+    }
+}
+// Неиспользуемые ветки отбрасываются на этапе компиляции
+```
+
+---
+
+## 2. Switch
+
+```cpp
+enum class Color { Red, Green, Blue };
+
+void process(Color c) {
+    switch (c) {
+        case Color::Red:
+            std::cout << "Red\n";
+            break;  // без break — fallthrough!
+        case Color::Green:
+            std::cout << "Green\n";
+            break;
+        case Color::Blue:
+            std::cout << "Blue\n";
+            break;
+        default:
+            std::cout << "Unknown\n";
+    }
+}
+```
+
+### Switch с инициализатором (C++17)
+```cpp
+switch (auto status = get_status(); status) {
+    case Status::Ok:
+        // ...
+        break;
+    case Status::Error:
+        // ...
+        break;
+}
+// status недоступен снаружи
+```
+
+### [[fallthrough]] атрибут (C++17)
+```cpp
+switch (x) {
+    case 1:
+        do_something();
+        [[fallthrough]];  // намеренный fallthrough, подавляет warning
+    case 2:
+        do_other();
+        break;
+}
+```
+
+---
+
+## 3. Цикл while
+
+```cpp
+int i = 0;
+while (i < 10) {
+    std::cout << i << ' ';
+    ++i;
+}
+// 0 1 2 3 4 5 6 7 8 9
+```
+
+### Бесконечный цикл
+```cpp
+while (true) {
+    auto input = get_input();
+    if (input == "quit") break;
+    process(input);
+}
+```
+
+---
+
+## 4. Цикл do-while
+
+```cpp
+// Тело выполняется ХОТЯ БЫ ОДИН РАЗ
+std::string input;
+do {
+    std::cout << "Enter command: ";
+    std::cin >> input;
+    process(input);
+} while (input != "exit");
+```
+
+---
+
+## 5. Цикл for
+
+### Классический for
+```cpp
+for (int i = 0; i < 10; ++i) {
+    std::cout << i << ' ';
+}
+
+// Множественные переменные
+for (int i = 0, j = 10; i < j; ++i, --j) {
+    // ...
+}
+
+// Область видимости i ограничена циклом (C++11)
+```
+
+### Range-based for (C++11) — ПРЕДПОЧТИТЕЛЬНЫЙ
+```cpp
+std::vector<int> v = {1, 2, 3, 4, 5};
+
+// По значению (копия)
+for (int x : v) {
+    std::cout << x << ' ';
+}
+
+// По ссылке (модификация)
+for (int& x : v) {
+    x *= 2;
+}
+
+// По const ссылке (чтение без копии)
+for (const auto& x : v) {
+    std::cout << x << ' ';
+}
+
+// С инициализатором (C++20)
+for (auto vec = get_vector(); const auto& x : vec) {
+    // vec живёт только в цикле
+}
+```
+
+### Работает с любым range (имеющим begin/end)
+```cpp
+int arr[] = {1, 2, 3};
+for (int x : arr) { ... }
+
+std::map<int, std::string> m;
+for (const auto& [key, value] : m) {  // structured bindings (C++17)
+    std::cout << key << ": " << value << '\n';
+}
+```
+
+---
+
+## 6. Управление циклом
+
+### break — выход из цикла
+```cpp
+for (int i = 0; i < 100; ++i) {
+    if (found(i)) {
+        std::cout << "Found at " << i << '\n';
+        break;  // выходит только из этого цикла
+    }
+}
+```
+
+### continue — пропуск итерации
+```cpp
+for (int i = 0; i < 10; ++i) {
+    if (i % 2 == 0) continue;  // пропускаем чётные
+    std::cout << i << ' ';  // 1 3 5 7 9
+}
+```
+
+### Вложенные циклы — break выходит только из внутреннего
+```cpp
+outer: for (int i = 0; i < 10; ++i) {  // label для goto (редко)
+    for (int j = 0; j < 10; ++j) {
+        if (condition) break outer;  // выход из обоих (через label)
+    }
+}
+// Лучше: вынести во функцию и использовать return
+```
+
+---
+
+## 7. Практические паттерны
+
+### Поиск с break
+```cpp
+auto it = std::find(v.begin(), v.end(), value);
+if (it != v.end()) {
+    // найдено
+}
+```
+
+### Итерация с индексом
+```cpp
+// C++20: ranges
+for (auto [i, x] : std::views::enumerate(v)) { ... }
+
+// До C++20
+for (size_t i = 0; i < v.size(); ++i) { ... }
+```
+
+### Цикл с условием в середине
+```cpp
+while (true) {
+    auto data = read_chunk();
+    if (!data) break;  // конец данных
+    process(data);
+}
+```
+
+---
+
+## Практические задания
+
+1. **FizzBuzz**: 1..100, кратные 3 → "Fizz", 5 → "Buzz", 3 и 5 → "FizzBuzz"
+2. **Простые числа**: Выведите все простые числа до 100 (вложенный цикл)
+3. **Меню**: do-while меню: 1) Add 2) List 3) Exit
+4. **Коллац**: Введите n, пока n != 1: чётное → /2, нечётное → *3+1
+5. **Range-based**: Дан vector<string>, выведите длину каждой строки
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `for (int i = 0; i <= 10; ++i)` для 10 элементов | `i < 10` (0..9) |
+| `if (x = 5)` вместо `==` | `if (x == 5)` или `if (auto v = x; v == 5)` |
+| Забыли `break` в switch | Всегда добавляйте `break` или `[[fallthrough]]` |
+| Модификация контейнера в range-based for | Используйте `for (auto& x : v)` для модификации, или итераторы |
+| `for (auto x : v)` копирует элементы | `for (const auto& x : v)` для чтения, `for (auto& x : v)` для записи |
+
+---
+
+## Полезные ресурсы
+
+- **cppreference: Statements** — https://en.cppreference.com/w/cpp/language/statements
+- **C++ Core Guidelines: ES.70** — prefer range-for over indexed for
+- **C++ Core Guidelines: ES.71** — prefer for-statement over while-statement when there is an obvious loop variable

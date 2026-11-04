@@ -1,0 +1,350 @@
+# Урок 14: Продвинутое ООП — виртуальные функции, композиция, уничтожение
+
+## Цели урока
+- Глубоко понять виртуальные функции и таблицу виртуальных функций (vtable)
+- Освоить абстрактные классы и интерфейсы
+- Применить композицию вместо наследования там, где уместно
+- Обеспечить корректное уничтожение объектов через виртуальные деструкторы
+- Избежать типичных ошибок: object slicing, утечки при исключениях в конструкторах
+
+---
+
+## Теория
+
+### Виртуальные функции и vtable
+
+```cpp
+#include <iostream>
+#include <string>
+
+class Animal {
+    std::string name_;
+public:
+    explicit Animal(std::string n) : name_(std::move(n)) {}
+    virtual ~Animal() = default; // ВАЖНО: виртуальный деструктор!
+
+    virtual void speak() const { std::cout << name_ << ": ...\n"; }
+    virtual std::string type() const { return "Animal"; }
+
+    // Невиртуальная функция — статический диспетчинг
+    void nonVirtual() const { std::cout << "Non-virtual\n"; }
+};
+
+class Dog : public Animal {
+public:
+    using Animal::Animal;
+    void speak() const override { std::cout << name_ << ": Woof!\n"; }
+    std::string type() const override { return "Dog"; }
+};
+
+class Cat : public Animal {
+public:
+    using Animal::Animal;
+    void speak() const override { std::cout << name_ << ": Meow!\n"; }
+    std::string type() const override { return "Cat"; }
+};
+
+void virtualDemo() {
+    Dog dog("Buddy");
+    Cat cat("Whiskers");
+
+    Animal* animals[] = {&dog, &cat};
+    for (auto* a : animals) {
+        a->speak();        // Динамический диспетчинг через vtable
+        std::cout << a->type() << '\n';
+    }
+
+    // Object slicing — ПРОБЛЕМА!
+    Animal sliced = dog;   // Копируется только Animal часть!
+    sliced.speak();        // Выведет "Buddy: ..." (Animal::speak)
+}
+```
+
+### Как работает vtable (упрощённо)
+
+```
+Animal vtable:
+  [0] -> Animal::speak()
+  [1] -> Animal::type()
+  [2] -> Animal::~Animal()
+
+Dog vtable:
+  [0] -> Dog::speak()
+  [1] -> Dog::type()
+  [2] -> Dog::~Dog()
+
+Объект Dog в памяти:
+  [vptr] -> Dog vtable
+  [Animal::name_]
+  [Dog::...] (нет доп. полей)
+```
+
+### Абстрактные классы и интерфейсы
+
+```cpp
+#include <memory>
+#include <vector>
+
+// Чистый виртуальный = 0 делает класс абстрактным
+class Drawable {
+public:
+    virtual ~Drawable() = default;
+    virtual void draw() const = 0;        // Чисто виртуальная
+    virtual double area() const = 0;      // Чисто виртуальная
+    // Может иметь обычные методы
+    void printInfo() const { std::cout << "Area: " << area() << '\n'; }
+};
+
+class Circle : public Drawable {
+    double r_;
+public:
+    explicit Circle(double r) : r_(r) {}
+    void draw() const override { std::cout << "Drawing circle r=" << r_ << '\n'; }
+    double area() const override { return 3.14159 * r_ * r_; }
+};
+
+class Rectangle : public Drawable {
+    double w_, h_;
+public:
+    Rectangle(double w, double h) : w_(w), h_(h) {}
+    void draw() const override { std::cout << "Drawing rect " << w_ << "x" << h_ << '\n'; }
+    double area() const override { return w_ * h_; }
+};
+
+void interfaceDemo() {
+    std::vector<std::unique_ptr<Drawable>> shapes;
+    shapes.push_back(std::make_unique<Circle>(5));
+    shapes.push_back(std::make_unique<Rectangle>(3, 4));
+
+    for (const auto& s : shapes) {
+        s->draw();
+        s->printInfo(); // Невиртуальный вызов виртуального area()
+    }
+}
+```
+
+### Композиция вместо наследования (Composition over Inheritance)
+
+```cpp
+#include <memory>
+#include <string>
+#include <iostream>
+
+// Интерфейсы поведений
+class FlyBehavior {
+public:
+    virtual ~FlyBehavior() = default;
+    virtual void fly() const = 0;
+};
+
+class FlyWithWings : public FlyBehavior {
+public:
+    void fly() const override { std::cout << "Flapping wings!\n"; }
+};
+
+class FlyNoWay : public FlyBehavior {
+public:
+    void fly() const override { std::cout << "I can't fly\n"; }
+};
+
+class QuackBehavior {
+public:
+    virtual ~QuackBehavior() = default;
+    virtual void quack() const = 0;
+};
+
+class Quack : public QuackBehavior {
+public:
+    void quack() const override { std::cout << "Quack!\n"; }
+};
+
+class Squeak : public QuackBehavior {
+public:
+    void quack() const override { std::cout << "Squeak!\n"; }
+};
+
+// Duck использует композицию — делегирует поведение
+class Duck {
+    std::unique_ptr<FlyBehavior> flyBehavior_;
+    std::unique_ptr<QuackBehavior> quackBehavior_;
+    std::string name_;
+public:
+    Duck(std::string n, std::unique_ptr<FlyBehavior> fb, std::unique_ptr<QuackBehavior> qb)
+        : name_(std::move(n)), flyBehavior_(std::move(fb)), quackBehavior_(std::move(qb)) {}
+
+    void performFly() const { flyBehavior_->fly(); }
+    void performQuack() const { quackBehavior_->quack(); }
+    void swim() const { std::cout << name_ << " swimming\n"; }
+
+    // Можно менять поведение во время выполнения!
+    void setFlyBehavior(std::unique_ptr<FlyBehavior> fb) {
+        flyBehavior_ = std::move(fb);
+    }
+};
+
+void compositionDemo() {
+    Duck mallard("Mallard", std::make_unique<FlyWithWings>(), std::make_unique<Quack>());
+    Duck rubber("Rubber", std::make_unique<FlyNoWay>(), std::make_unique<Squeak>());
+
+    mallard.performFly();   // Flapping wings!
+    rubber.performFly();    // I can't fly
+
+    rubber.setFlyBehavior(std::make_unique<FlyWithWings>());
+    rubber.performFly();    // Теперь летает!
+}
+```
+
+### Правильное уничтожение — виртуальные деструкторы
+
+```cpp
+#include <iostream>
+#include <memory>
+
+class Base {
+public:
+    Base() { std::cout << "Base::Base()\n"; }
+    // БЕЗ virtual ~Base() — UB при delete через Base*!
+    virtual ~Base() { std::cout << "Base::~Base()\n"; }
+};
+
+class Derived : public Base {
+    int* data_;
+public:
+    Derived() : data_(new int[100]) { std::cout << "Derived::Derived()\n"; }
+    ~Derived() override { delete[] data_; std::cout << "Derived::~Derived()\n"; }
+};
+
+void destructionDemo() {
+    Base* ptr = new Derived();
+    delete ptr; // С virtual: Base::~Base() -> Derived::~Derived()
+                // Без virtual: ТОЛЬКО Base::~Base() -> утечка data_!
+}
+
+// Правило: если класс имеет хотя бы одну виртуальную функцию,
+// деструктор ДОЛЖЕН быть виртуальным (или =default виртуальным)
+```
+
+### Final и override (C++11)
+
+```cpp
+class Base {
+public:
+    virtual void foo() {}
+    virtual void bar() {}
+    virtual ~Base() = default;
+};
+
+class Derived : public Base {
+public:
+    void foo() override final {} // Нельзя переопределить дальше
+    void bar() override {}       // Можно переопределить
+    // void foo() {} // Ошибка: final
+};
+
+class MoreDerived : public Derived {
+public:
+    // void foo() override {} // Ошибка: final в Derived
+    void bar() override {}     // OK
+};
+```
+
+### Множественное наследование и виртуальное наследование
+
+```cpp
+#include <iostream>
+
+struct A { int a = 1; virtual ~A() = default; };
+struct B { int b = 2; virtual ~B() = default; };
+
+// Обычное множественное наследование
+struct C : A, B { int c = 3; };
+
+// Виртуальное наследование — решает "ромб"
+struct Base { int x = 0; virtual ~Base() = default; };
+struct Left : virtual Base { int l = 1; };
+struct Right : virtual Base { int r = 2; };
+struct Diamond : Left, Right { int d = 3; }; // Один Base подобъект!
+
+void miDemo() {
+    C c;
+    std::cout << sizeof(c) << '\n'; // sizeof(A) + sizeof(B) + sizeof(int) + vptrs
+
+    Diamond d;
+    d.x = 42; // Недвусмысленно — один Base
+    std::cout << d.x << '\n';
+}
+```
+
+### CRTP (Curiously Recurring Template Pattern) — статический полиморфизм
+
+```cpp
+#include <iostream>
+
+// Базовый класс знает о Derived через шаблон
+template<typename Derived>
+class Counter {
+    int count_ = 0;
+public:
+    void increment() { static_cast<Derived*>(this)->doIncrement(); }
+    int count() const { return count_; }
+protected:
+    void add(int n) { count_ += n; }
+};
+
+class MyCounter : public Counter<MyCounter> {
+    friend class Counter<MyCounter>;
+    void doIncrement() { this->add(1); } // Доступ к protected базы
+};
+
+void crtpDemo() {
+    MyCounter c;
+    c.increment();
+    c.increment();
+    std::cout << c.count(); // 2 — никакого vtable, всё инлайн!
+}
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Иерархия фигур с клонированием
+Создайте абстрактный класс `Shape` с:
+- Виртуальным деструктором
+- Чисто виртуальными `area()`, `perimeter()`, `clone()` (возвращает `unique_ptr<Shape>`)
+- Реализуйте `Circle`, `Rectangle`, `Triangle`
+- Напишите функцию `totalArea(vector<unique_ptr<Shape>>&)`
+- Добавьте `ShapeFactory` создающую фигуры по строке ("circle 5", "rect 3 4")
+
+### Задание 2: Стратегия сортировки (Strategy pattern)
+Создайте интерфейс `SortStrategy` с `sort(vector<int>&)`. Реализуйте `BubbleSort`, `QuickSort`, `StdSort`. Класс `Sorter` хранит `unique_ptr<SortStrategy>` и делегирует сортировку. Покажите смену стратегии во время выполнения.
+
+### Задание 3: Наблюдатель (Observer pattern)
+Реализуйте `Subject` (методы `attach`, `detach`, `notify`) и `Observer` (виртуальный `update`). Создайте `WeatherStation` (Subject) и `Display` (Observer). Демонстрируйте подписку нескольких дисплеев.
+
+### Задание 4: Виртуальный деструктор — поиск утечки
+Дан код без виртуального деструктора. Исправьте, добавьте `valgrind`/`ASan` проверку. Покажите разницу в выводе деструкторов.
+
+### Задание 5: CRTP для сравнения
+Создайте `EqualityComparable<Derived>` с `operator==` и `operator!=`, использующий CRTP. Derived должен реализовать только `equal(const Derived&) const`. Протестируйте с `Point{x,y}` и `Person{name,age}`.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| Утечка при `delete basePtr` | Нет `virtual ~Base()` | Всегда `virtual ~Base() = default` если есть виртуальные функции |
+| Object slicing | Передача по значению `Base b = derived` | Передавайте по указателю/ссылке: `Base&`, `unique_ptr<Base>` |
+| Вызов виртуальной в конструкторе/деструкторе | vptr ещё не переключен / уже сброшен | Не вызывайте виртуальные функции в ctor/dtor (или используйте NVI pattern) |
+| `override` отсутствует | Опечатка в сигнатуре — новая виртуальная функция | Всегда пишите `override` — компилятор проверит |
+| Множественное наследование без виртуальной базы | "Ромб" — две копии базового подобъекта | `virtual` наследование для базы |
+
+---
+
+## Ресурсы
+- [cppreference: Virtual functions](https://en.cppreference.com/w/cpp/language/virtual)
+- [C++ Core Guidelines: C.120-C.130](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#ch-classes-and-class-hierarchies)
+- **Книга:** Meyers "Effective C++", Items 30-37
+- **Pattern:** GoF "Design Patterns" — Strategy, Observer, Composite
+- **CppCon:** "Virtual Functions and Vtables" (James McNellis)

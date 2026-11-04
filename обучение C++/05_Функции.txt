@@ -1,0 +1,330 @@
+# Урок 1.5: Функции — declaration/definition, параметры, return, overloads, scope
+
+## Цели урока
+- Объявлять и определять функции
+- Работать с параметрами (по значению, ссылке, указателю)
+- Использовать возвращаемые значения
+- Создавать перегруженные функции
+- Понимать области видимости и linkage
+
+---
+
+## 1. Объявление и определение
+
+### Разделение (header + source)
+```cpp
+// math.h — объявление (interface)
+#ifndef MATH_H
+#define MATH_H
+
+int add(int a, int b);        // объявление
+double multiply(double x, double y);
+
+#endif
+
+// math.cpp — определение (implementation)
+#include "math.h"
+
+int add(int a, int b) {
+    return a + b;
+}
+
+double multiply(double x, double y) {
+    return x * y;
+}
+
+// main.cpp
+#include "math.h"
+#include <iostream>
+
+int main() {
+    std::cout << add(2, 3) << '\n';        // 5
+    std::cout << multiply(2.5, 4.0) << '\n'; // 10
+}
+```
+
+### Inline функции (в заголовочном файле)
+```cpp
+// utils.h
+inline int square(int x) { return x * x; }  // подсказка компилятору
+
+// или constexpr (C++11) — гарантированно inline
+constexpr int cube(int x) { return x * x * x; }
+```
+
+---
+
+## 2. Параметры
+
+### По значению (копия)
+```cpp
+void modify(int x) {
+    x = 20;  // меняет копию
+}
+
+int main() {
+    int a = 10;
+    modify(a);
+    std::cout << a;  // 10 (не изменилось)
+}
+```
+
+### По ссылке (lvalue reference) — для модификации
+```cpp
+void modify(int& x) {
+    x = 20;  // меняет оригинал
+}
+
+int main() {
+    int a = 10;
+    modify(a);
+    std::cout << a;  // 20
+}
+```
+
+### По const ссылке — для чтения больших объектов
+```cpp
+void print(const std::string& s) {  // без копирования
+    std::cout << s << '\n';
+}
+
+void print(const std::vector<int>& v) {
+    for (int x : v) std::cout << x << ' ';
+}
+```
+
+### По rvalue reference (C++11) — для move semantics
+```cpp
+void take_ownership(std::string&& s) {
+    std::cout << "Taking: " << s << '\n';
+    // s можно переместить
+}
+
+int main() {
+    take_ownership("temporary");        // rvalue
+    std::string s = "hello";
+    take_ownership(std::move(s));       // явное приведение к rvalue
+}
+```
+
+### Указатели — опциональные/nullable параметры
+```cpp
+void process(int* ptr) {
+    if (ptr) *ptr = 42;
+}
+
+int main() {
+    int x = 0;
+    process(&x);    // OK
+    process(nullptr); // OK, ничего не делает
+}
+```
+
+### Параметры по умолчанию
+```cpp
+void connect(std::string host, int port = 80, bool ssl = false) {
+    // ...
+}
+
+connect("example.com");           // port=80, ssl=false
+connect("example.com", 443);      // port=443, ssl=false
+connect("example.com", 443, true); // все явно
+```
+
+---
+
+## 3. Возвращаемые значения
+
+### Обычный возврат
+```cpp
+int add(int a, int b) {
+    return a + b;
+}
+
+// Неявный возврат void
+void print_hello() {
+    std::cout << "Hello\n";
+    // return; не нужен
+}
+```
+
+### Возврат по ссылке
+```cpp
+int& get_element(std::vector<int>& v, size_t i) {
+    return v[i];  // возвращает ссылку на элемент
+}
+
+int main() {
+    std::vector<int> v = {1, 2, 3};
+    get_element(v, 1) = 20;  // v[1] = 20
+}
+```
+
+### Структурированные привязки (C++17) — возврат нескольких значений
+```cpp
+#include <tuple>
+
+std::pair<int, int> divide(int a, int b) {
+    return {a / b, a % b};
+}
+
+auto [quotient, remainder] = divide(17, 5);  // 3, 2
+```
+
+### std::optional (C++17) — отсутствие значения
+```cpp
+#include <optional>
+
+std::optional<int> find(const std::vector<int>& v, int x) {
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (v[i] == x) return i;
+    }
+    return std::nullopt;  // не найдено
+}
+
+int main() {
+    if (auto idx = find(v, 42); idx) {
+        std::cout << "Found at " << *idx << '\n';
+    } else {
+        std::cout << "Not found\n";
+    }
+}
+```
+
+---
+
+## 4. Перегрузка функций (overloading)
+
+```cpp
+void print(int x) { std::cout << "int: " << x << '\n'; }
+void print(double x) { std::cout << "double: " << x << '\n'; }
+void print(const std::string& s) { std::cout << "string: " << s << '\n'; }
+
+// Шаблоны также участвуют в перегрузке
+template<typename T>
+void print(T x) { std::cout << "template: " << x << '\n'; }
+
+int main() {
+    print(42);          // void print(int)
+    print(3.14);        // void print(double)
+    print("hello");     // void print(const std::string&)
+    print(42L);         // template (long)
+}
+```
+
+### Правила разрешения перегрузки
+1. **Exact match** (точное совпадение типов)
+2. **Promotion** (int → long, float → double)
+3. **Conversion** (int → double, derived* → base*)
+4. **User-defined conversion** (конструкторы, операторы приведения)
+5. **Ellipsis** (`...`)
+
+---
+
+## 5. Области видимости и linkage
+
+### Блочная область видимости
+```cpp
+void func() {
+    int x = 1;      // видна в func
+    {
+        int y = 2;  // видна только в этом блоке
+        x = y;      // OK
+    }
+    // y недоступна
+}
+```
+
+### Глобальная область видимости
+```cpp
+// file1.cpp
+int global = 10;           // external linkage (видно везде)
+static int file_local = 5; // internal linkage (только в этом TU)
+const int CONST_VAL = 42;  // internal linkage по умолчанию (C++)
+
+// file2.cpp
+extern int global;         // объявление external linkage
+// file_local недоступен
+```
+
+### Anonymous namespace (современная замена static)
+```cpp
+// utils.cpp
+namespace {
+    int helper() { return 42; }  // internal linkage
+}
+// helper недоступен из других TU
+```
+
+### Inline переменные (C++17) — определение в header
+```cpp
+// config.h
+inline const std::string VERSION = "1.0.0";  // одно определение на всю программу
+```
+
+---
+
+## 6. Лямбда-функции (C++11)
+
+```cpp
+auto add = [](int a, int b) { return a + b; };
+add(2, 3);  // 5
+
+// Захват переменных
+int x = 10;
+auto add_x = [x](int a) { return a + x; };      // по значению
+auto add_x_ref = [&x](int a) { return a + x; }; // по ссылке
+auto add_all = [=](int a) { return a + x; };    // все по значению
+auto add_all_ref = [&](int a) { return a + x; };// все по ссылке
+
+// Mutable лямбда (может менять захваченные по значению)
+auto counter = [count = 0]() mutable { return ++count; };
+
+// Generic lambda (C++14) / template lambda (C++20)
+auto print = [](auto x) { std::cout << x << '\n'; };
+```
+
+---
+
+## 7. Атрибуты функций
+
+```cpp
+[[nodiscard]] int compute() { return 42; }  // warning если игнорировать возврат
+
+[[noreturn]] void abort() { throw std::runtime_error("abort"); }
+
+[[deprecated("Use new_api()")]] void old_api() {}
+
+constexpr int factorial(int n) { return n <= 1 ? 1 : n * factorial(n - 1); }
+```
+
+---
+
+## Практические задания
+
+1. **Перегрузка**: Напишите 3 перегрузки `max` для int, double, std::string
+2. **Параметры**: Функция `swap` по ссылке, `print` по const ссылке, `take` по rvalue ссылке
+3. **Возврат**: Функция, возвращающая `std::pair<int, int>` (min, max) из вектора
+4. **Optional**: Функция `safe_divide(a, b)` → `std::optional<double>`
+5. **Лямбда**: Используйте лямбду с `std::sort` для сортировки по убыванию
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Возврат ссылки на локальную переменную | Возвращайте по значению или ссылку на объект с большим временем жизни |
+| `void f(int& x)` для чтения | `void f(const int& x)` |
+| Забыли `inline` в header для не-template функций | `inline` или `static` или перенесите в .cpp |
+| Перегрузка по возвращаемому типу | НЕЛЬЗЯ: перегрузка только по параметрам |
+
+---
+
+## Полезные ресурсы
+
+- **cppreference: Functions** — https://en.cppreference.com/w/cpp/language/functions
+- **C++ Core Guidelines: F.1** — "Package meaningful operations as carefully named functions"
+- **C++ Core Guidelines: F.15** — "Prefer simple and conventional ways of passing information"
+- **C++ Core Guidelines: F.16** — "For 'in' parameters, pass by const reference"
+- **C++ Core Guidelines: F.17** — "For 'in-out' parameters, pass by reference"

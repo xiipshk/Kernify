@@ -1,0 +1,1175 @@
+# Урок 21: Проект — адаптивная система компонентов с анимацией и проверкой доступности
+
+## Цели проекта
+- Построить полную систему компонентов: кнопка, карточка, модалка, навигация, фильтр
+- Сделать всё адаптивным (mobile-first, 320px – 1920px+)
+- Добавить анимации (appear, hover, модалка) с уважением `prefers-reduced-motion`
+- Обеспечить доступность: WCAG AA контраст, `:focus-visible`, keyboard navigation, skip-link, ARIA
+- Применить архитектуру из уроков 20: БЭМ, токены, @layer, design tokens
+- Написать чек-лист качества и провести само-аудит
+
+---
+
+## 1. Техническое задание
+
+### Компоненты системы
+| Компонент | Состояния | Требования |
+|-----------|-----------|------------|
+| Кнопка (`.c-btn`) | default, hover, focus-visible, active, disabled, loading | Адаптивный размер, контраст, фокус |
+| Карточка (`.c-card`) | default, hover, featured | Изображение, заголовок, текст, цена, кнопка |
+| Модалка (`.c-modal`) | closed, open, closing | Focus trap, ESC закрывает, backdrop |
+| Навигация (`.c-nav`) | default, scrolled, mobile | Skip-link, клавиатура, логика折�ения |
+| Фильтр (`.c-filter`) | default, active, selected | Чекбоксы, радио, селект, доступность |
+
+### Глобальные требования
+| Критерий | Значение |
+|----------|----------|
+| Адаптивность | 320px – 1920px+, mobile-first |
+| Типографика | Fluid `clamp()`, 6 шагов, rem |
+| Цвета | OKLCH, dark mode, контраст ≥ 4.5:1 (AA) |
+| Layout | Flexbox (1D), Grid (2D) |
+| Контейнеры | Container Queries для карточек |
+| Изображения | object-fit: cover, aspect-ratio, lazy loading |
+| Доступность | WCAG AA, :focus-visible, prefers-reduced-motion, ARIA |
+| Анимации | Уважение reduced motion, will-change, GPU-ускорение |
+| Архитектура | БЭМ, токены, @layer, низкая специфичность |
+
+---
+
+## 2. Архитектура файлов
+
+```
+project/
+├── index.html
+├── css/
+│   ├── reset.css          @layer reset
+│   ├── tokens.css         @layer tokens (дизайн-токены)
+│   ├── base.css           @layer base (типографика, фокус)
+│   ├── layout.css         @layer layout (контейнер, секции)
+│   ├── components/
+│   │   ├── btn.css        @layer components
+│   │   ├── card.css       @layer components
+│   │   ├── modal.css      @layer components
+│   │   ├── nav.css        @layer components
+│   │   └── filter.css     @layer components
+│   ├── utilities.css      @layer utilities
+│   └── overrides.css      @layer overrides
+└── js/
+    └── app.js             (модалка, навигация, фильтр)
+```
+
+### Подключение стилей (в правильном порядке слоёв)
+```html
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components/btn.css">
+<link rel="stylesheet" href="css/components/card.css">
+<link rel="stylesheet" href="css/components/modal.css">
+<link rel="stylesheet" href="css/components/nav.css">
+<link rel="stylesheet" href="css/components/filter.css">
+<link rel="stylesheet" href="css/utilities.css">
+<link rel="stylesheet" href="css/overrides.css">
+```
+
+Или одним файлом с `@layer`:
+```css
+/* main.css */
+@layer reset, tokens, base, layout, components, utilities, overrides;
+
+@layer reset { @import url('css/reset.css'); }
+@layer tokens { @import url('css/tokens.css'); }
+/* и т.д. */
+```
+
+---
+
+## 3. Дизайн-токены (tokens.css)
+
+```css
+@layer tokens {
+  :root {
+    /* Primitive — OKLCH */
+    --color-slate-50: oklch(0.98 0.001 285);
+    --color-slate-100: oklch(0.96 0.003 285);
+    --color-slate-900: oklch(0.21 0.006 285);
+    --color-slate-950: oklch(0.13 0.006 285);
+
+    --color-blue-500: oklch(0.62 0.22 264);
+    --color-blue-600: oklch(0.55 0.22 264);
+    --color-blue-700: oklch(0.48 0.22 264);
+
+    --color-green-500: oklch(0.75 0.18 150);
+    --color-red-500: oklch(0.65 0.22 20);
+
+    /* Semantic */
+    --color-primary: var(--color-blue-600);
+    --color-primary-hover: var(--color-blue-500);
+    --color-primary-active: var(--color-blue-700);
+    --color-bg: var(--color-slate-50);
+    --color-bg-inverted: var(--color-slate-950);
+    --color-text: var(--color-slate-900);
+    --color-text-inverted: var(--color-slate-50);
+    --color-muted: oklch(0.55 0.01 285);
+    --color-border: oklch(0.88 0.006 285);
+    --color-success: var(--color-green-500);
+    --color-error: var(--color-red-500);
+
+    /* Spacing */
+    --space-xs: 0.25rem;
+    --space-sm: 0.5rem;
+    --space-md: 1rem;
+    --space-lg: 1.5rem;
+    --space-xl: 2rem;
+    --space-2xl: 3rem;
+
+    /* Typography */
+    --fs-xs: 0.75rem;
+    --fs-sm: 0.875rem;
+    --fs-base: 1rem;
+    --fs-lg: 1.125rem;
+    --fs-xl: 1.25rem;
+    --fs-2xl: 1.5rem;
+    --fs-3xl: 2rem;
+
+    line-height-tight: 1.1;
+    line-height-base: 1.6;
+
+    /* Radius */
+    --radius-sm: 0.25rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 1rem;
+    --radius-full: 9999px;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+
+    /* Transitions */
+    --duration-fast: 150ms;
+    --duration-base: 250ms;
+    --duration-slow: 350ms;
+    --ease-base: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Dark mode */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg: var(--color-slate-950);
+      --color-text: var(--color-slate-50);
+      --color-border: oklch(0.28 0.006 285);
+      --color-muted: oklch(0.55 0.01 285);
+    }
+  }
+
+  /* Класс темы (альтернатива медиа-запросу) */
+  [data-theme="dark"] {
+    --color-bg: var(--color-slate-950);
+    --color-text: var(--color-slate-50);
+    --color-border: oklch(0.28 0.006 285);
+    --color-muted: oklch(0.55 0.01 285);
+  }
+}
+```
+
+---
+
+## 4. Сброс и базовые стили (reset.css + base.css)
+
+```css
+@layer reset {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+  }
+
+  img, picture, video, canvas, svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+
+  input, button, textarea, select {
+    font: inherit;
+    color: inherit;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  ul, ol {
+    list-style: none;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    font-size: 100%;
+  }
+}
+
+@layer base {
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  body {
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    font-size: var(--fs-base);
+    line-height: var(--line-height-base);
+    color: var(--color-text);
+    background: var(--color-bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: 700;
+    line-height: var(--line-height-tight);
+    color: var(--color-text);
+  }
+
+  h1 { font-size: var(--fs-3xl); }
+  h2 { font-size: var(--fs-2xl); }
+  h3 { font-size: var(--fs-xl); }
+  h4 { font-size: var(--fs-lg); }
+  p {
+    margin-block-end: var(--space-md);
+    color: var(--color-muted);
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background: var(--color-primary);
+    color: var(--color-text-inverted);
+  }
+}
+```
+
+---
+
+## 5. Layout (layout.css)
+
+```css
+@layer layout {
+  .container {
+    width: 100%;
+    max-inline-size: 1200px;
+    margin-inline: auto;
+    padding-inline: var(--space-md);
+  }
+
+  .section {
+    padding-block: var(--space-2xl);
+  }
+
+  .section--sm {
+    padding-block: var(--space-xl);
+  }
+
+  .grid {
+    display: grid;
+    gap: var(--space-lg);
+  }
+
+  .grid--2 {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+
+  .grid--3 {
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  }
+
+  .flex {
+    display: flex;
+    gap: var(--space-md);
+  }
+
+  .flex--col {
+    flex-direction: column;
+  }
+
+  .skip-link {
+    position: absolute;
+    top: -1000px;
+    left: 0;
+    background: var(--color-primary);
+    color: var(--color-text-inverted);
+    padding: var(--space-sm) var(--space-md);
+    z-index: 10000;
+    transition: top var(--duration-base) var(--ease-base);
+    border-radius: var(--radius-md);
+    font-weight: 600;
+  }
+
+  .skip-link:focus {
+    top: var(--space-sm);
+    left: var(--space-sm);
+  }
+}
+```
+
+---
+
+## 6. Компонент: Кнопка (btn.css)
+
+```css
+@layer components {
+  .c-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition:
+      background var(--duration-base) var(--ease-base),
+      border-color var(--duration-base) var(--ease-base),
+      transform var(--duration-fast) var(--ease-base);
+    min-height: 44px;
+    white-space: nowrap;
+    line-height: 1;
+  }
+
+  .c-btn__label {
+    font-weight: inherit;
+  }
+
+  .c-btn__icon {
+    width: 1em;
+    height: 1em;
+    display: block;
+    flex-shrink: 0;
+  }
+
+  /* Variants */
+  .c-btn--primary {
+    background: var(--color-primary);
+    color: var(--color-text-inverted);
+    border-color: var(--color-primary);
+  }
+
+  .c-btn--primary:hover {
+    background: var(--color-primary-hover);
+  }
+
+  .c-btn--primary:active {
+    background: var(--color-primary-active);
+    transform: scale(0.98);
+  }
+
+  .c-btn--primary:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .c-btn--secondary {
+    background: transparent;
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  .c-btn--secondary:hover {
+    background: var(--color-primary);
+    color: var(--color-text-inverted);
+  }
+
+  .c-btn--ghost {
+    background: transparent;
+    color: var(--color-text);
+    border-color: transparent;
+  }
+
+  .c-btn--ghost:hover {
+    background: var(--color-border);
+  }
+
+  /* Sizes */
+  .c-btn--sm {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--fs-xs);
+    min-height: 36px;
+  }
+
+  .c-btn--lg {
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--fs-base);
+    min-height: 52px;
+  }
+
+  /* States */
+  .c-btn:disabled,
+  .c-btn.is-disabled,
+  .c-btn.is-loading {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+    transform: none !important;
+  }
+
+  /* Loading spinner */
+  .c-btn--loading .c-btn__spinner {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+}
+```
+
+---
+
+## 7. Компонент: Карточка (card.css)
+
+```css
+@layer components {
+  .c-card {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding: var(--space-lg);
+    border: var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-bg);
+    transition:
+      box-shadow var(--duration-base) var(--ease-base),
+      border-color var(--duration-base) var(--ease-base),
+      transform var(--duration-fast) var(--ease-base);
+    will-change: transform;
+  }
+
+  .c-card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+    border-color: var(--color-primary);
+  }
+
+  .c-card:focus-within {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-lg);
+  }
+
+  .c-card--featured {
+    border: 2px solid var(--color-primary);
+    background: color-mix(in oklch, var(--color-primary), white 95%);
+  }
+
+  .c-card__media {
+    aspect-ratio: 16 / 9;
+    width: 100%;
+    background: var(--color-slate-100);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .c-card__img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+  }
+
+  .c-card__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    flex: 1;
+  }
+
+  .c-card__title {
+    font-size: var(--fs-lg);
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0;
+    line-height: 1.3;
+  }
+
+  .c-card__text {
+    font-size: var(--fs-sm);
+    color: var(--color-muted);
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  .c-card__price {
+    font-size: var(--fs-xl);
+    font-weight: 700;
+    color: var(--color-text);
+    margin-top: auto;
+  }
+
+  .c-card__footer {
+    display: flex;
+    gap: var(--space-sm);
+    margin-top: auto;
+  }
+
+  /* Container Query — адаптация карточки под контейнер */
+  @container (max-width: 320px) {
+    .c-card {
+      padding: var(--space-md);
+    }
+
+    .c-card__title {
+      font-size: var(--fs-base);
+    }
+  }
+}
+```
+
+---
+
+## 8. Компонент: Модалка (modal.css)
+
+```css
+@layer components {
+  /* Overlay */
+  .c-modal__overlay {
+    position: fixed;
+    inset: 0;
+    background: rgb(0 0 0 / 0.5);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-md);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-base) var(--ease-base);
+  }
+
+  .c-modal__overlay.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Modal content */
+  .c-modal {
+    position: relative;
+    background: var(--color-bg);
+    border-radius: var(--radius-lg);
+    padding: var(--space-xl);
+    max-width: 560px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    transform: scale(0.95) translateY(20px);
+    opacity: 0;
+    transition:
+      transform var(--duration-slow) var(--ease-base),
+      opacity var(--duration-slow) var(--ease-base);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .c-modal__overlay.is-open .c-modal {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+
+  .c-modal__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-lg);
+  }
+
+  .c-modal__title {
+    font-size: var(--fs-xl);
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0;
+  }
+
+  .c-modal__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    color: var(--color-muted);
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .c-modal__close:hover {
+    background: var(--color-border);
+    color: var(--color-text);
+  }
+
+  .c-modal__close:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .c-modal__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  /* ESC закрывает — обрабатывается в JS */
+  .c-modal[hidden] {
+    display: none;
+  }
+
+  /* Prevent body scroll when modal open */
+  body.modal-open {
+    overflow: hidden;
+    padding-right: var(--scrollbar-width, 0);
+  }
+}
+```
+
+---
+
+## 9. Компонент: Навигация (nav.css)
+
+```css
+@layer components {
+  .c-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .c-nav__inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    height: 64px;
+  }
+
+  .c-nav__logo {
+    font-size: var(--fs-lg);
+    font-weight: 800;
+    color: var(--color-text);
+  }
+
+  .c-nav__list {
+    display: flex;
+    gap: var(--space-lg);
+    align-items: center;
+  }
+
+  .c-nav__link {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--color-muted);
+    padding: var(--space-xs) 0;
+    border-bottom: 2px solid transparent;
+    transition: color 0.2s, border-color 0.2s;
+  }
+
+  .c-nav__link:hover {
+    color: var(--color-primary);
+  }
+
+  .c-nav__link:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 4px;
+    border-radius: 2px;
+  }
+
+  .c-nav__link--active {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+    font-weight: 600;
+  }
+
+  /* Mobile menu toggle */
+  .c-nav__menu-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    color: var(--color-text);
+  }
+
+  .c-nav__menu-toggle:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  /* Mobile: hide nav, show toggle */
+  @media (max-width: 767px) {
+    .c-nav__list {
+      position: fixed;
+      inset: 64px 0 0 0;
+      flex-direction: column;
+      background: var(--color-bg);
+      border-bottom: 1px solid var(--color-border);
+      padding: var(--space-lg);
+      gap: var(--space-md);
+      transform: translateX(-100%);
+      transition: transform var(--duration-base) var(--ease-base);
+    }
+
+    .c-nav__list.is-open {
+      transform: translateX(0);
+    }
+
+    .c-nav__menu-toggle {
+      display: flex;
+    }
+  }
+
+  /* Skip-link для навигации */
+  .c-skip-link {
+    position: absolute;
+    top: -1000px;
+    left: 0;
+    background: var(--color-primary);
+    color: var(--color-text-inverted);
+    padding: var(--space-sm) var(--space-md);
+    z-index: 10000;
+    transition: top var(--duration-base) var(--ease-base);
+  }
+
+  .c-skip-link:focus {
+    top: 0;
+    left: 0;
+  }
+}
+```
+
+---
+
+## 10. Компонент: Фильтр (filter.css)
+
+```css
+@layer components {
+  .c-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: center;
+    padding: var(--space-md);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+  }
+
+  .c-filter__label {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--color-text);
+    white-space: nowrap;
+  }
+
+  .c-filter__group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .c-filter__checkbox {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--color-primary);
+    cursor: pointer;
+  }
+
+  .c-filter__checkbox:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  .c-filter__select {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--fs-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text);
+    cursor: pointer;
+    min-height: 36px;
+  }
+
+  .c-filter__select:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+    border-color: var(--color-primary);
+  }
+
+  .c-filter__button {
+    font-size: var(--fs-sm);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--color-primary);
+    color: var(--color-text-inverted);
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    min-height: 36px;
+  }
+
+  .c-filter__button:hover {
+    background: var(--color-primary-hover);
+  }
+
+  .c-filter__button:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  /* Mobile: stack vertically */
+  @media (max-width: 639px) {
+    .c-filter {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .c-filter__group {
+      width: 100%;
+    }
+
+    .c-filter__select {
+      width: 100%;
+    }
+
+    .c-filter__button {
+      width: 100%;
+    }
+  }
+}
+```
+
+---
+
+## 11. JavaScript — модалка, навигация, фокус
+
+```javascript
+// app.js — минимальная интерактивность для доступности
+
+// --- Модалка ---
+const modalOverlay = document.querySelector('.c-modal__overlay');
+const modalOpenBtns = document.querySelectorAll('[data-open-modal]');
+const modalCloseBtn = document.querySelector('.c-modal__close');
+
+function openModal() {
+  modalOverlay.classList.add('is-open');
+  document.body.classList.add('modal-open');
+  // Переместить фокус внутрь модалки
+  const firstFocusable = modalOverlay.querySelector(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  );
+  if (firstFocusable) firstFocusable.focus();
+}
+
+function closeModal() {
+  modalOverlay.classList.remove('is-open');
+  document.body.classList.remove('modal-open');
+  // Вернуть фокус на кнопку открытия
+  const trigger = document.querySelector('[data-open-modal].aria-expanded="true"');
+  if (trigger) trigger.focus();
+}
+
+modalOpenBtns.forEach(btn => {
+  btn.addEventListener('click', openModal);
+  btn.setAttribute('aria-expanded', 'false');
+  btn.addEventListener('click', () => btn.setAttribute('aria-expanded', 'true'));
+});
+
+modalCloseBtn.addEventListener('click', closeModal);
+
+modalOverlay.addEventListener('click', (e) => {
+  if (e.target === modalOverlay) closeModal();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && modalOverlay.classList.contains('is-open')) {
+    closeModal();
+  }
+});
+
+// --- Мобильная навигация ---
+const menuToggle = document.querySelector('.c-nav__menu-toggle');
+const navList = document.querySelector('.c-nav__list');
+
+menuToggle.addEventListener('click', () => {
+  const isOpen = navList.classList.toggle('is-open');
+  menuToggle.setAttribute('aria-expanded', isOpen);
+});
+
+// Закрыть мобильное меню при клике на ссылку
+document.querySelectorAll('.c-nav__link').forEach(link => {
+  link.addEventListener('click', () => {
+    navList.classList.remove('is-open');
+    menuToggle.setAttribute('aria-expanded', 'false');
+  });
+});
+
+// --- Фильтр ---
+const filterBtn = document.querySelector('.c-filter__button');
+filterBtn.addEventListener('click', () => {
+  // Пример: применить фильтр, anunciar screen reader
+  const resultCount = document.querySelector('.c-filter__result');
+  if (resultCount) {
+    resultCount.setAttribute('aria-live', 'polite');
+    resultCount.textContent = 'Результаты обновлены';
+  }
+});
+```
+
+---
+
+## 12. HTML — страница с компонентами
+
+```html
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Система компонентов — CSS Course</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+
+  <!-- Skip link -->
+  <a href="#main-content" class="c-skip-link">Перейти к основному контенту</a>
+
+  <header class="c-nav" role="banner">
+    <div class="container c-nav__inner">
+      <a href="#" class="c-nav__logo" aria-label="Главная">Logo</a>
+
+      <button class="c-nav__menu-toggle" aria-label="Меню" aria-expanded="false" aria-controls="mobile-nav">☰</button>
+
+      <nav class="c-nav__list" id="mobile-nav" role="navigation" aria-label="Основная навигация">
+        <a href="#" class="c-nav__link c-nav__link--active">Главная</a>
+        <a href="#features" class="c-nav__link">Компоненты</a>
+        <a href="#about" class="c-nav__link">О нас</a>
+        <a href="#contact" class="c-nav__link">Контакты</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-content" tabindex="-1">
+
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="container">
+        <header class="text-center" style="margin-bottom: var(--space-2xl);">
+          <h2 id="features-title" class="h2">Компоненты системы</h2>
+          <p>Адаптивные, доступные, анимированные UI-компоненты.</p>
+        </header>
+
+        <div class="grid grid--3">
+
+          <!-- Карточка 1 -->
+          <article class="c-card">
+            <div class="c-card__media">
+              <img src="photo1.jpg" alt="Компонент кнопки" class="c-card__img" loading="lazy" width="400" height="225">
+            </div>
+            <div class="c-card__body">
+              <h3 class="c-card__title">Кнопка</h3>
+              <p class="c-card__text">Адаптивная кнопка с состояниями hover, focus, disabled, loading.</p>
+              <div class="c-card__price">Бесплатно</div>
+            </div>
+            <div class="c-card__footer">
+              <button class="c-btn c-btn--primary c-btn--sm">Изучить</button>
+            </div>
+          </article>
+
+          <!-- Карточка 2 -->
+          <article class="c-card c-card--featured">
+            <div class="c-card__media">
+              <img src="photo2.jpg" alt="Карточка товара" class="c-card__img" loading="lazy" width="400" height="225">
+            </div>
+            <div class="c-card__body">
+              <h3 class="c-card__title">Карточка товара</h3>
+              <p class="c-card__text">Карточка с изображением, ценой и действиями. Работает в контейнерах.</p>
+              <div class="c-card__price">299 ₽</div>
+            </div>
+            <div class="c-card__footer">
+              <button class="c-btn c-btn--primary c-btn--sm">В корзину</button>
+            </div>
+          </article>
+
+          <!-- Карточка 3 -->
+          <article class="c-card">
+            <div class="c-card__media">
+              <img src="photo3.jpg" alt="Модальное окно" class="c-card__img" loading="lazy" width="400" height="225">
+            </div>
+            <div class="c-card__body">
+              <h3 class="c-card__title">Модалка</h3>
+              <p class="c-card__text">Доступное модальное окно с focus trap, ESC и возвратом фокуса.</p>
+              <div class="c-card__price">Бесплатно</div>
+            </div>
+            <div class="c-card__footer">
+              <button class="c-btn c-btn--secondary c-btn--sm" data-open-modal>Открыть</button>
+            </div>
+          </article>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- Фильтр -->
+    <section class="section section--sm" aria-labelledby="filter-title">
+      <div class="container">
+        <form class="c-filter" aria-labelledby="filter-title">
+          <h2 id="filter-title" class="sr-only">Фильтр компонентов</h2>
+          <label class="c-filter__label">Категория:</label>
+          <div class="c-filter__group">
+            <input type="checkbox" id="filter-all" class="c-filter__checkbox" checked>
+            <label for="filter-all" class="c-filter__label">Все</label>
+          </div>
+          <div class="c-filter__group">
+            <input type="checkbox" id="filter-btn" class="c-filter__checkbox">
+            <label for="filter-btn" class="c-filter__label">Кнопки</label>
+          </div>
+          <div class="c-filter__group">
+            <input type="checkbox" id="filter-card" class="c-filter__checkbox">
+            <label for="filter-card" class="c-filter__label">Карточки</label>
+          </div>
+          <select class="c-filter__select">
+            <option>Сортировка</option>
+            <option>По имени</option>
+            <option>По дате</option>
+          </select>
+          <button type="button" class="c-filter__button">Применить</button>
+          <span class="c-filter__result" aria-live="polite"></span>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Модалка -->
+  <div class="c-modal__overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="c-modal">
+      <header class="c-modal__header">
+        <h2 id="modal-title" class="c-modal__title">Подписка на новости</h2>
+        <button class="c-modal__close" aria-label="Закрыть">✕</button>
+      </header>
+      <div class="c-modal__body">
+        <p>Получайте свежие уроки по CSS и доступности на почту.</p>
+        <div class="c-filter__group" style="margin-top: var(--space-md);">
+          <label class="c-filter__label">Email</label>
+          <input type="email" class="c-filter__select" placeholder="name@example.com">
+        </div>
+      </div>
+      <div style="margin-top: var(--space-lg); display: flex; gap: var(--space-sm);">
+        <button class="c-btn c-btn--secondary" type="button">Отмена</button>
+        <button class="c-btn c-btn--primary" type="button">Подписаться</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
+```
+
+---
+
+## 13. Чек-лист качества (Definition of Done)
+
+| Категория | Критерий | Статус |
+|-----------|----------|--------|
+| HTML | Семантические теги (header, main, section, nav, article, button) | ☐ |
+| HTML | ARIA label/aria-labelledby/aria-expanded где нужно | ☐ |
+| HTML | Alt-тексты для изображений (пустые для декоративных) | ☐ |
+| HTML | `loading="lazy"` + `width`/`height` на img | ☐ |
+| CSS | БЭМ именование (block__element--modifier) | ☐ |
+| CSS | Дизайн-токены для цветов, отступов, шрифтов | ☐ |
+| CSS | `@layer` в правильном порядке | ☐ |
+| CSS | Нет `!important` (кроме utilities) | ☐ |
+| CSS | Нет ID-селекторов для стилей | ☐ |
+| CSS | Fluid typography `clamp()` / `rem` | ☐ |
+| CSS | `prefers-reduced-motion` respected | ☐ |
+| CSS | `prefers-color-scheme` dark mode | ☐ |
+| Доступность | Контраст ≥ 4.5:1 обычный текст, 3:1 крупный | ☐ |
+| Доступность | `:focus-visible` на всех интерактивных элементах | ☐ |
+| Доступность | Логический Tab-порядок (DOM order) | ☐ |
+| Доступность | Skip-link виден при фокусе | ☐ |
+| Доступность | Модалка: focus trap, ESC закрывает, возврат фокуса | ☐ |
+| Доступность | Минимальная площадь касания 44×44px | ☐ |
+| Анимации | Плавные появления/исчезновения модалки | ☐ |
+| Анимации | `prefers-reduced-motion` отключает анимацию | ☐ |
+| Адаптивность | Mobile-first, 320px – 1920px+ | ☐ |
+| Адаптивность | Container Queries для карточек | ☐ |
+| Производительность | will-change только для анимируемых, GPU-свойства | ☐ |
+
+---
+
+## 14. Само-аудит (что проверить в браузере)
+
+1. **Контраст**: открой DevTools → Инспектор → выбери текст → проверь отношение контраста в палитре цветов (≥ 4.5:1)
+2. **Фокус**: пройдись Tab по всей странице — каждый интерактивный элемент должен иметь чёткую обводку (`:focus-visible`)
+3. **Мышь**: кликни на кнопку — обводки быть не должно (`:focus:not(:focus-visible)`)
+4. **Масштаб**: Ctrl/Cmd + `+` до 200% — текст увеличивается, нет обрезки и горизонтальной прокрутки
+5. **Модалка**: открой через Tab + Enter, попробуй сфокусироваться за пределами модалки (не должно получиться), нажми ESC — модалка закрывается, фокус возвращается на кнопку
+6. **Reduced motion**: включи в настройках ОС «Уменьшить движение» — анимации модалки отключаются
+7. **Темы**: переключи ОС в тёмную тему — цвета адаптируются (dark mode)
+8. **Мобильный**: открой DevTools Device Toolbar (iPhone SE, 375px) — меню скрыто, карточки в одну колонку
+
+---
+
+## 15. Полезные ресурсы
+
+- [WCAG 2.1 AA Checklist](https://www.w3.org/WAI/WCAG21/quickref/)
+- [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/)
+- [MDN: ARIA](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA)
+- [Inclusive Components](https://inclusive-components.design/)
+- [BEM — bem.info](https://ru.bem.info/)
+- [CSS Cascade Layers — MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_cascade_layers)
+- [Container Queries — MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_container_queries)
+
+---
+
+## 16. Ключевые выводы
+
+1. **Архитектура важнее кода** — БЭМ, токены, @layer дают масштабируемость и предсказуемость
+2. **Доступность не опциональна** — фокус, контраст, клавиатура, ARIA — база любого компонента
+3. **Mobile-first + контейнерные запросы** — компоненты адаптируются к контейнеру, не только к экрану
+4. **Анимации с уважением пользователя** — `prefers-reduced-motion` обязательно
+5. **Тёмная тема через токены** — одна переменная, весь интерфейс перекрашивается
+6. **Само-аудит перед сдачей** — проверяй контраст, фокус, масштаб, модалку, тёмную тему в реальном браузере
+
+*Следующий урок: 22_Cascade_Model.txt — Модель каскада: источники/приоритеты, слои, специфичность, наследование, сокращения, @scope*

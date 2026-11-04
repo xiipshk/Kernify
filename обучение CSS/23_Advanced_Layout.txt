@@ -1,0 +1,597 @@
+# Урок 23: Продвинутая вёрстка — grid track sizing, subgrid, flex sizing, intrinsic sizing, containing blocks
+
+## Цели урока
+- Изучить продвинутое размещение треков Grid (fr, minmax, repeat, auto-fit/auto-fill)
+- Освоить CSS Subgrid для выравнивания вложенных сеток
+- Понять Flexbox sizing: flex-grow, flex-shrink, flex-basis, auto/margin авто
+- Изучить intrinsic sizing (max-content, min-content, fit-content)
+- Понять containing blocks и их влияние на позиционирование и проценты
+
+---
+
+## 1. Grid track sizing — размещение треков сетки
+
+### Единицы размещения треков
+```css
+.grid {
+  display: grid;
+
+  /* fr — доля свободного места */
+  grid-template-columns: 1fr 2fr 1fr;
+
+  /* minmax — минимум и максимум */
+  grid-template-columns: repeat(3, minmax(200px, 1fr));
+
+  /* repeat с автоподбором */
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+
+  /* Ключевые слова intrinsic sizing */
+  grid-template-columns: max-content min-content fit-content(200px);
+
+  /* Смешивание */
+  grid-template-columns: 200px 1fr minmax(100px, auto);
+}
+```
+
+### auto-fill vs auto-fit
+```css
+/* auto-fill — создаёт пустые треки, если места достаточно */
+.auto-fill {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* Пустые треки занимают место, сетка не сжимается до нуля */
+}
+
+/* auto-fit — сжимает пустые треки, элементы растягиваются */
+.auto-fit {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  /* При малом экране — один столбец, пустые треки исчезают */
+}
+```
+
+### Именованные линии_grid
+```css
+.grid {
+  display: grid;
+  grid-template-columns:
+    [start] 1fr [middle] 1fr [end];
+  grid-template-rows:
+    [row-start] auto [row-middle] 1fr [row-end];
+}
+
+.item {
+  grid-column: start / end;
+  grid-row: row-start / row-end;
+}
+```
+
+### Именованные области (grid-template-areas)
+```css
+.layout {
+  display: grid;
+  grid-template-areas:
+    "header  header  header"
+    "sidebar main    main"
+    "footer  footer  footer";
+  grid-template-columns: 200px 1fr;
+  grid-template-rows: auto 1fr auto;
+  gap: 1rem;
+  min-height: 100vh;
+}
+
+.header { grid-area: header; }
+.sidebar { grid-area: sidebar; }
+.main { grid-area: main; }
+.footer { grid-area: footer; }
+```
+
+### grid-auto-flow и плотная упаковка
+```css
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+
+  /* row (по умолчанию) — заполнять по строкам */
+  /* column — заполнять по столбцам */
+  /* dense — заполнять пробелы (может менять порядок!) */
+  grid-auto-flow: row dense;
+}
+```
+
+### Смещение и перекрытие
+```css
+.item {
+  grid-column: 2 / 4;
+  grid-row: 1 / 3;
+  /* Может перекрывать другие элементы */
+  z-index: 1;
+}
+```
+
+---
+
+## 2. CSS Subgrid — вложенные сетки с общими треками
+
+### Проблема вложенных сеток
+До subgrid вложенная сетка не знала о треках родителя. Приходилось дублировать значения или использовать фиксированные размеры.
+
+### Решение: subgrid
+```css
+.parent {
+  display: grid;
+  grid-template-columns: 200px 1fr 200px;
+  grid-template-rows: auto 1fr auto;
+  gap: 1rem;
+}
+
+.child {
+  display: grid;
+  /* Наследует треки от родителя по обеим осям */
+  display: subgrid;
+  grid-column: 1 / 4;   /* Занимает все три колонки родителя */
+  grid-row: 2 / 3;      /* Вторая строка родителя */
+
+  /* Теперь дочерние элементы .child выравниваются по трекам родителя */
+  grid-template-columns: subgrid;
+  grid-template-rows: subgrid;
+}
+```
+
+```html
+<div class="parent">
+  <div class="child">
+    <div class="sub-item">Элемент A</div>
+    <div class="sub-item">Элемент B</div>
+    <div class="sub-item">Элемент C</div>
+  </div>
+</div>
+```
+
+```css
+.parent {
+  display: grid;
+  grid-template-columns: 1fr 200px 1fr;
+  gap: 1rem;
+}
+
+.child {
+  display: subgrid;
+  grid-column: 1 / 4;
+  grid-template-columns: subgrid;  /* те же 3 колонки, что у родителя */
+}
+
+.sub-item {
+  grid-column: 2;  /* попадает в среднюю колонку (200px) */
+}
+```
+
+### Subgrid только по одной оси
+```css
+.child {
+  display: subgrid;
+  grid-template-columns: subgrid;   /* только колонки от родителя */
+  grid-template-rows: auto;         /* строки свои */
+}
+```
+
+### Поддержка subgrid
+Chrome 117+, Firefox 71+, Safari 16.4+. Для старых браузеров — фолбэк через обычный grid с дублированием значений.
+
+---
+
+## 3. Flexbox sizing — гибкие элементы
+
+### Три свойства flex
+```css
+.item {
+  flex-grow: 1;       /* Как расти относительно других */
+  flex-shrink: 1;     /* Как сжиматься */
+  flex-basis: auto;   /* Начальный размер до распределения места */
+}
+
+/* Шортхэнд */
+.item {
+  flex: 1 1 auto;      /* grow shrink basis */
+  flex: 1 1 200px;     /* начинаем с 200px */
+  flex: 0 0 100px;     /* фиксированный 100px, не растём, не сжимаемся */
+  flex: 1 0 0;         /* растягиваемся, не сжимаемся, начинаем с 0 */
+  flex: none;          /* эквивалент 0 0 auto */
+  flex: auto;          /* эквивалент 1 1 auto */
+  flex: initial;       /* эквивалент 0 1 auto */
+}
+```
+
+### flex: 1 — заполнить всё доступное место
+```css
+.sidebar {
+  width: 250px;        /* фиксированная ширина */
+}
+
+.main {
+  flex: 1;             /* забирает всё оставшееся место */
+}
+
+.layout {
+  display: flex;
+}
+```
+
+### Авто-отступы в flexbox (распределение между элементами)
+```css
+.nav {
+  display: flex;
+  align-items: center;
+}
+
+.nav__logo {
+  margin-right: auto;  /* Отталкивает следующие элементы вправо */
+}
+
+.nav__links {
+  display: flex;
+  gap: 1rem;
+}
+```
+
+### min-width: 0 — важный нюанс flex items
+По умолчанию flex items имеют `min-width: auto`, что может мешать сжатию.
+
+```css
+.card {
+  flex: 1;
+  min-width: 0;        /* Разрешить сжатию ниже размера контента */
+  overflow: hidden;
+}
+
+.card__text {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+```
+
+### gap в flexbox
+```css
+.flex-container {
+  display: flex;
+  gap: 1rem;           /* Работает в современных браузерах */
+  flex-wrap: wrap;
+}
+```
+
+---
+
+## 4. Intrinsic sizing — контентно-зависимые размеры
+
+### Ключевые значения
+```css
+.item {
+  width: max-content;   /* Ширина контента без переносов (максимальная) */
+  width: min-content;   /* Минимальная ширина без переносов (минимальная) */
+  width: fit-content(); /* По контенту, но ограниченныйmax (fit-content(200px)) */
+}
+```
+
+### max-content — текст не переносится
+```css
+.bad {
+  width: max-content;   /* Может вылезти за границы контейнера! */
+  border: 1px solid red;
+}
+```
+
+### fit-content() — компромисс
+```css
+.good {
+  width: fit-content(200px); /* По контенту, но не более 200px */
+  max-width: 100%;           /* Не вылезаем за контейнер */
+}
+```
+
+### Интринсик размеры в Grid
+```css
+.grid {
+  display: grid;
+  grid-template-columns: max-content 1fr min-content;
+  /* Первый столбец — по контенту, второй — свободное место, третий — минимальный по контенту */
+}
+```
+
+### Интринсик в Flexbox
+```css
+.flex {
+  display: flex;
+}
+
+.item {
+  width: fit-content;  /* Ширина по контенту */
+}
+```
+
+---
+
+## 5. Containing blocks — блоки контекста
+
+### Что такое containing block
+Блок, относительно которого вычисляются размеры и позиция элемента. От него зависят:
+- Процентные ширины/высоты
+- Абсолютное позиционирование (`position: absolute/fixed`)
+- transform-origin
+- border-radius (в процентах)
+
+### Создание containing block
+
+```css
+/* 1. Viewport — для position: fixed */
+.fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%; /* 100% от viewport */
+}
+
+/* 2. Ближайший позиционированный предок (не static) — для position: absolute */
+.relative-parent {
+  position: relative;  /* Создаёт containing block для абсолютных потомков */
+  width: 400px;
+  height: 300px;
+}
+
+.absolute-child {
+  position: absolute;
+  top: 10%;
+  left: 10%;
+  width: 50%;   /* 50% от containing block (400px = 200px) */
+  height: 50%;  /* 50% от containing block (300px = 150px) */
+}
+
+/* 3. padding box — для position: absolute с padding у родителя */
+.padded-parent {
+  position: relative;
+  padding: 20px;
+}
+
+.abs-child {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* 0,0 считается от padding box (внутри padding) */
+}
+
+/* 4. transform/filter/perspective — тоже создают containing block */
+.transformed-parent {
+  transform: translateZ(0);  /* Создаёт новый containing block */
+  position: relative;
+}
+```
+
+### Процентная высота — содержащий блок должен иметь явную высоту
+```css
+/* Плохо: высота в процентах не работает без высоты родителя */
+.child {
+  height: 50%;  /* Не работает, если у родителя нет высоты */
+}
+
+/* Хорошо: родитель с высотой */
+.parent {
+  height: 400px;
+  position: relative;
+}
+
+.child {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 50%;  /* 200px */
+  width: 100%;
+}
+```
+
+### containing block и процентные padding/margin
+```css
+.box {
+  width: 200px;
+  padding-top: 50%;  /* 50% от ШИРИНЫ containing block (100px), не от высоты! */
+  /* Создаёт соотношение сторон 2:1 */
+}
+```
+
+---
+
+## 6. Комплексный пример: дашборд с Grid + Subgrid + Flex
+
+```html
+<div class="dashboard">
+  <aside class="dashboard__sidebar">
+    <nav class="nav">...</nav>
+  </aside>
+
+  <main class="dashboard__main">
+    <header class="dashboard__header">...</header>
+
+    <div class="dashboard__grid">
+      <section class="card stats-card">
+        <div class="card__header">
+          <h3>Статистика</h3>
+        </div>
+        <div class="card__body">
+          <div class="stats-grid">
+            <div class="stat">1 234</div>
+            <div class="stat">567</div>
+            <div class="stat">890</div>
+            <div class="stat">123</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card chart-card">
+        <!-- График -->
+      </section>
+
+      <section class="card table-card">
+        <!-- Таблица -->
+      </section>
+    </div>
+  </main>
+</div>
+```
+
+```css
+.dashboard {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "sidebar header"
+    "sidebar main";
+  gap: 1.5rem;
+  padding: 1.5rem;
+  min-height: 100vh;
+}
+
+.dashboard__sidebar {
+  grid-area: sidebar;
+  position: sticky;
+  top: 1.5rem;
+  align-self: start;
+}
+
+.dashboard__header {
+  grid-area: header;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dashboard__main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.dashboard__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  flex: 1;
+}
+
+/* Карточка с subgrid */
+.card {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 1rem;
+  border: 1px solid oklch(0.88 0.006 285);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  background: white;
+}
+
+/* Вложенная сетка статистики — subgrid для выравнивания по карточке */
+.stats-grid {
+  display: subgrid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  grid-template-rows: subgrid;
+
+  /* stats-grid наследует треки от .card (1fr) и выравнивает 4 stat по ним */
+}
+
+.stat {
+  grid-column: span 1;  /* Каждый stat занимает свою колонку из родительской сетки */
+  padding: 1rem;
+  background: oklch(0.97 0.01 264);
+  border-radius: 0.5rem;
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+/* Responsive */
+@media (max-width: 767px) {
+  .dashboard {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "header"
+      "sidebar"
+      "main";
+  }
+
+  .dashboard__sidebar {
+    position: static;
+    order: -1;
+  }
+}
+```
+
+---
+
+## 7. Таблица поддержки (2024)
+
+| Фича | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| Grid (basic) | 57+ | 52+ | 10.1+ | 16+ |
+| subgrid | 117+ | 71+ | 16.4+ | 117+ |
+| gap в flexbox | 84+ | 63+ | 14.1+ | 84+ |
+| fit-content() | 83+ | 69+ | 15+ | 83+ |
+| min-width: 0 (flex) | Все | Все | Все | Все |
+
+---
+
+## 8. Практическое задание
+
+### Задача 1: Галерея с auto-fit и minmax
+Создай галерею карточек, которая:
+- На больших экранах — 4 колонки
+- На средних — 3 колонки
+- На маленьких — 2 колонки, затем 1
+- Используй `repeat(auto-fit, minmax(250px, 1fr))` без медиа-запросов
+- Карточки с `object-fit: cover` и `aspect-ratio: 4 / 3`
+
+### Задача 2: Subgrid для выравнивания
+Создай карточку с заголовком, контентом и действиями. Вложенная сетка статистики (4 показателя) должна использовать `display: subgrid`, чтобы все показатели выравнивались по общим колонкам родительской карточки.
+
+### Задача 3: Flex sizing
+Создай строку навигации:
+- Логотип слева (фиксированный размер)
+- Ссылки посередине (гибкие, растягиваются)
+- Кнопка справа (фиксированный размер)
+- Используй `margin-right: auto` на логотипе и `flex: 1` на контейнере ссылок
+
+### Задача 4: Intrinsic sizing
+Экспериментируй с `max-content`, `min-content`, `fit-content()`:
+- Элемент с `width: max-content` — должен вылезти за контейнер
+- Элемент с `width: fit-content(200px)` — ограничен 200px
+- Добавь `max-width: 100%` чтобы не вылезать за границы
+
+### Задача 5: Containing block
+Создай абсолютно позиционированный элемент внутри относительного контейнера с padding. Проверь, что процентные `top/left` считаются от padding box. Добавь `transform: translateZ(0)` к родителю и проверь изменение containing block.
+
+---
+
+## 9. Полезные ресурсы
+
+- [MDN: CSS Grid Layout](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_grid_layout)
+- [MDN: Subgrid](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_grid_layout/Subgrid)
+- [MDN: Flexbox](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_flexible_box_layout)
+- [MDN: Intrinsic sizing](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_intrinsic_and_extrinsic_sizing)
+- [MDN: Containing block](https://developer.mozilla.org/en-US/docs/Web/CSS/Containing_block)
+- [A Complete Guide to Grid (CSS-Tricks)](https://css-tricks.com/snippets/css/complete-guide-grid/)
+- [A Complete Guide to Flexbox (CSS-Tricks)](https://css-tricks.com/snippets/css/a-guide-to-flexbox/)
+
+---
+
+## 10. Ключевые выводы
+
+1. **Grid track sizing** — `fr`, `minmax()`, `repeat(auto-fit/auto-fill, minmax())` — основа адаптивных сеток без медиа-запросов
+2. **auto-fit vs auto-fill** — auto-fit сжимает пустые треки, auto-fill сохраняет их
+3. **Subgrid** — вложенная сетка наследует треки родителя, идеально для выравнивания компонентов
+4. **Flex sizing** — `flex: grow shrink basis`, `min-width: 0` для корректного сжатия, `margin: auto` для распределения
+5. **Intrinsic sizing** — `max-content`, `min-content`, `fit-content()` для размеров по контенту
+6. **Containing block** — от него зависят проценты и абсолютное позиционирование; `position: relative`, `transform`, `filter` создают новые containing blocks
+7. **Процентная высота** не работает без явной высоты родителя (кроме flex/gridItems)
+8. **padding в процентах** считается от ширины containing block
+
+*Следующий урок: 24_Container_Systems.txt — Контейнерные системы: container queries/units, fluid layouts, компонентные брейкпоинты*

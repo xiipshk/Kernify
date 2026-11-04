@@ -1,0 +1,419 @@
+# Урок 3.1: Advanced Type System — Generic Constraints, Variance, Nullable Reference Types, Pattern Matching, Records
+
+## Цели урока
+- Освоить generic constraints: where T : class, struct, new(), notnull, unmanaged, default
+- Понимать ковариантность (out) и контравариантность (in) в интерфейсах и делегатах
+- Работать с Nullable Reference Types (NRT) и аннотациями ? / !
+- Применять продвинутый pattern matching: property patterns, tuple patterns, relational patterns
+- Использовать records, record structs, with-expressions, positional records
+
+---
+
+## 1. Generic Constraints — Ограничения обобщений
+
+### Базовые ограничения (C# 2.0+)
+```csharp
+// Reference type constraint
+class Repository<T> where T : class { }
+
+// Value type constraint (except nullable)
+struct Point<T> where T : struct { }
+
+// Parameterless constructor
+class Factory<T> where T : new() { }
+
+// Базовый класс
+class Animal { }
+class Dog : Animal { }
+class Shelter<T> where T : Animal { }
+
+// Интерфейс
+interface ISerializable { }
+class Data<T> where T : ISerializable { }
+
+// Несколько ограничений
+class Complex<T> where T : class, ISerializable, new() { }
+```
+
+### Новые ограничения (C# 7.0+)
+```csharp
+// notnull — тип не может быть nullable (C# 8.0)
+class NotNullExample<T> where T : notnull { }
+
+// unmanaged — unmanaged type (C# 7.3)
+unsafe class UnmanagedExample<T> where T : unmanaged { }
+
+// default — default(T) constraint (C# 9.0)
+class DefaultExample<T> where T : default { }
+
+// Enum constraint (C# 7.3)
+class EnumExample<T> where T : Enum { }
+
+// Delegate constraint (C# 7.3)
+class DelegateExample<T> where T : Delegate { }
+```
+
+### Комбинированные примеры
+```csharp
+// Generic math (C# 11 / .NET 7)
+interface INumber<T> where T : INumber<T> { }
+
+T Add<T>(T a, T b) where T : INumber<T> => a + b;
+
+// Минимальные ограничения для математических операций
+T Sum<T>(IEnumerable<T> values) where T : IAdditionOperators<T, T, T>, IAdditiveIdentity<T, T>
+{
+    T sum = T.AdditiveIdentity;
+    foreach (var v in values) sum += v;
+    return sum;
+}
+```
+
+---
+
+## 2. Variance — Ковариантность и Контравариантность
+
+### Ковариантность (out) — "производный → базовый"
+```csharp
+// IEnumerable<out T> — можно присвоить IEnumerable<Dog> в IEnumerable<Animal>
+IEnumerable<Dog> dogs = new List<Dog>();
+IEnumerable<Animal> animals = dogs; // OK: out T
+
+// Func<out TResult> — возвращаемый тип
+Func<Dog> getDog = () => new Dog();
+Func<Animal> getAnimal = getDog; // OK
+```
+
+### Контравариантность (in) — "базовый → производный"
+```csharp
+// IComparer<in T> — можно присвоить IComparer<Animal> в IComparer<Dog>
+IComparer<Animal> animalComparer = Comparer<Animal>.Default;
+IComparer<Dog> dogComparer = animalComparer; // OK: in T
+
+// Action<in T> — параметр
+Action<Animal> actOnAnimal = a => Console.WriteLine(a);
+Action<Dog> actOnDog = actOnAnimal; // OK
+```
+
+### Invariant (не ковариантен, не контравариантен)
+```csharp
+// IList<T> — invariant (и in, и out)
+// List<Dog> нельзя присвоить в IList<Animal>
+// Потому что IList<T> имеет и Add(T), и T this[int]
+```
+
+### Собственные variant интерфейсы
+```csharp
+// Ковариантный интерфейс (только чтение)
+interface IReadOnlyRepository<out T>
+{
+    T GetById(int id);
+    IEnumerable<T> GetAll();
+}
+
+// Контравариантный интерфейс (только запись)
+interface IWriteOnlyRepository<in T>
+{
+    void Add(T item);
+    void Remove(T item);
+}
+
+// Invariant (и чтение, и запись)
+interface IRepository<T> : IReadOnlyRepository<T>, IWriteOnlyRepository<T> { }
+```
+
+---
+
+## 3. Nullable Reference Types (NRT)
+
+### Включение NRT
+```csharp
+// В .csproj:
+<Nullable>enable</Nullable>
+// Или в файле:
+#nullable enable
+```
+
+### Аннотации
+```csharp
+string? nullableString = null;    // Может быть null
+string nonNullString = "hello";   // Не может быть null (предупреждение если null)
+
+string? maybeNull = GetString();
+if (maybeNull is not null)
+{
+    Console.WriteLine(maybeNull.Length); // OK: компилятор знает что не null
+}
+
+// Null-forgiving operator (!) — "я знаю что не null"
+string definitelyNotNull = maybeNull!;
+```
+
+### Generic и NRT
+```csharp
+// T? — nullable T (и для reference, и для value types)
+void Process<T>(T? value) where T : struct { }     // Nullable<T>
+void Process<T>(T? value) where T : class { }      // T или null
+void Process<T>(T? value) where T : notnull { }    // T (не null!)
+
+// NotNull attribute для возвращаемых значений
+[return: NotNull]
+string GetNonNull() => "value";
+
+// NotNullWhen для условных проверок
+bool TryGetValue(string key, [NotNullWhen(true)] out string? value);
+```
+
+### Attributes для NRT
+```csharp
+using System.Diagnostics.CodeAnalysis;
+
+class Example
+{
+    // Параметр не null когда метод возвращает true
+    bool TryParse(string input, [NotNullWhen(true)] out int? result)
+    {
+        return int.TryParse(input, out var r) && (result = r) >= 0;
+    }
+
+    // Не возвращает null
+    [return: NotNull]
+    string GetRequiredString() => "required";
+
+    // Может вернуть null
+    [return: MaybeNull]
+    string? GetOptionalString(bool condition) => condition ? "value" : null;
+
+    // Элемент не null после инициализации
+    [MemberNotNull(nameof(_initializedField))]
+    void Initialize() => _initializedField = "init";
+
+    string _initializedField = null!; // поле инициализируется позже
+}
+```
+
+---
+
+## 4. Pattern Matching — Продвинутые паттерны
+
+### Property Patterns (C# 8.0+)
+```csharp
+record Person(string Name, int Age, Address Address);
+record Address(string City, string Country);
+
+var person = new Person("Анна", 30, new Address("Москва", "Россия"));
+
+// Property pattern
+if (person is { Age: >= 18, Address.Country: "Россия" })
+{
+    Console.WriteLine("Совершеннолетний житель РФ");
+}
+
+// В switch expression
+string category = person switch
+{
+    { Age: < 18 } => "Ребёнок",
+    { Age: >= 65 } => "Пенсионер",
+    { Address.City: "Москва" } => "Москвич",
+    _ => "Взрослый"
+};
+```
+
+### Tuple Patterns (C# 8.0+)
+```csharp
+(int x, int y) point = (3, 4);
+
+string quadrant = point switch
+{
+    (0, 0) => "Начало координат",
+    (> 0, > 0) => "I четверть",
+    (< 0, > 0) => "II четверть",
+    (< 0, < 0) => "III четверть",
+    (> 0, < 0) => "IV четверть",
+    (0, _) => "На оси Y",
+    (_, 0) => "На оси X",
+};
+```
+
+### Relational Patterns (C# 9.0+)
+```csharp
+int score = 85;
+
+string grade = score switch
+{
+    >= 90 => "A",
+    >= 80 => "B",
+    >= 70 => "C",
+    >= 60 => "D",
+    _ => "F"
+};
+
+// Комбинация с property pattern
+var result = person switch
+{
+    { Age: >= 18 and <= 65 } => "Работоспособный",
+    { Age: < 18 } => "Несовершеннолетний",
+    { Age: > 65 } => "Пенсионер",
+    _ => "Неизвестно"
+};
+```
+
+### List Patterns (C# 11+)
+```csharp
+int[] numbers = [1, 2, 3, 4, 5];
+
+string description = numbers switch
+{
+    [] => "Пустой",
+    [0] => "Только ноль",
+    [1, 2, ..] => "Начинается с 1, 2",
+    [.., 0] => "Заканчивается на 0",
+    [_, _, var rest] => $"Первые два: {rest.Length} осталось",
+    _ => "Другое"
+};
+```
+
+### Type Patterns с when
+```csharp
+object obj = "hello";
+
+string result = obj switch
+{
+    string s when s.Length > 5 => $"Длинная строка: {s}",
+    string s => $"Короткая строка: {s}",
+    int i when i > 0 => $"Положительное число: {i}",
+    int i => $"Число: {i}",
+    null => "Null",
+    _ => "Неизвестный тип"
+};
+```
+
+---
+
+## 5. Records — Reference и Value типы
+
+### Record class (reference type)
+```csharp
+// Positional record
+public record Person(string FirstName, string LastName, int Age)
+{
+    // Можно добавлять методы, свойства
+    public string FullName => $"{FirstName} {LastName}";
+
+    // Валидация в конструкторе
+    public Person
+    {
+        if (Age < 0) throw new ArgumentException("Age cannot be negative");
+    }
+}
+
+// Непозиционный record
+public record Configuration
+{
+    public string ConnectionString { get; init; } = "";
+    public int Timeout { get; init; } = 30;
+}
+
+// With-expression — immutable update
+var person1 = new Person("Иван", "Иванов", 25);
+var person2 = person1 with { Age = 26 }; // Новый объект
+var person3 = person1 with { FirstName = "Пётр", LastName = "Петров" };
+
+// Value equality (по значениям, не по ссылке)
+Console.WriteLine(person1 == person2); // False (Age отличается)
+Console.WriteLine(person1.Equals(person2)); // False
+
+// Deconstruction
+var (first, last, age) = person1;
+```
+
+### Record struct (value type, C# 10+)
+```csharp
+public readonly record struct Point(int X, int Y)
+{
+    public double DistanceFromOrigin => Math.Sqrt(X * X + Y * Y);
+
+    // Можно переопределить Equals/GetHashCode
+}
+
+// With-expression работает так же
+var p1 = new Point(3, 4);
+var p2 = p1 with { X = 5 }; // Point { X = 5, Y = 4 }
+
+// Struct records можно сделать readonly
+public readonly record struct ImmutablePoint(int X, int Y);
+```
+
+### Records vs Classes
+```csharp
+// Class — reference equality
+class ClassPerson { public string Name { get; set; } }
+var c1 = new ClassPerson { Name = "A" };
+var c2 = new ClassPerson { Name = "A" };
+Console.WriteLine(c1 == c2); // False (reference equality)
+
+// Record — value equality
+record RecordPerson(string Name);
+var r1 = new RecordPerson("A");
+var r2 = new RecordPerson("A");
+Console.WriteLine(r1 == r2); // True (value equality)
+
+// Record struct — value type, value equality
+record struct StructPerson(string Name);
+var s1 = new StructPerson("A");
+var s2 = new StructPerson("A");
+Console.WriteLine(s1 == s2); // True
+```
+
+### Records и наследование
+```csharp
+public abstract record Animal(string Name);
+public record Dog(string Name, string Breed) : Animal(Name);
+public record Cat(string Name, bool IsIndoor) : Animal(Name);
+
+// Pattern matching с records
+string Describe(Animal animal) => animal switch
+{
+    Dog { Breed: "Labrador" } d => $"Лабрадор {d.Name}",
+    Dog d => $"Собака {d.Name} ({d.Breed})",
+    Cat c => $"Кот {c.Name} ({(c.IsIndoor ? "домашний" : "уличный")})",
+    _ => "Неизвестное животное"
+};
+```
+
+---
+
+## 6. Практические задания
+
+1. **Generic Repository с constraints**: Реализуйте `IRepository<T>` с ограничениями `where T : class, IEntity, new()` где `IEntity` имеет `Id` и `CreatedAt`
+
+2. **Variant интерфейсы**: Создайте ковариантный `IReadOnlyCollection<out T>` и контравариантный `IComparer<in T>`, продемонстрируйте их использование
+
+3. **NRT Migration**: Возьмите существующий класс с nullable полями, включите `#nullable enable`, исправьте все предупреждения используя `?`, `!`, атрибуты `[NotNull]`, `[MaybeNull]`
+
+4. **Pattern Matching Parser**: Напишите парсер командной строки используя tuple patterns и property patterns для разных типов команд
+
+5. **Immutable DTO с Records**: Создайте иерархию DTO для API (Request/Response) используя records, positional и non-positional, с with-expressions для обновлений
+
+---
+
+## 7. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `where T : class?` | `where T : class` (class уже подразумевает reference type) |
+| Забывают `notnull` для value types в generic | Используйте `where T : notnull` когда нужно гарантировать non-null |
+| Нарушают variance: добавляют `in` в ковариантный интерфейс | `out` только для выходных позиций (return), `in` только для входных (params) |
+| Используют `!` без необходимости | `!` только когда компилятор не может доказать non-null, но вы гарантируете |
+| Records наследуют от class | Records могут наследовать ТОЛЬКО от records |
+
+---
+
+## 8. Полезные ресурсы
+
+- **C# Language Reference: Generics** — https://learn.microsoft.com/dotnet/csharp/fundamentals/types/generics
+- **C# Language Reference: Variance** — https://learn.microsoft.com/dotnet/csharp/programming-guide/concepts/covariance-contravariance
+- **Nullable Reference Types** — https://learn.microsoft.com/dotnet/csharp/nullable-references
+- **Pattern Matching** — https://learn.microsoft.com/dotnet/csharp/pattern-matching
+- **Records** — https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/record
+- **Generic Math** — https://learn.microsoft.com/dotnet/standard/generics/math

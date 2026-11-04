@@ -1,0 +1,473 @@
+# Урок 8: Классы и объекты — поля, свойства, конструкторы, методы, инкапсуляция, основы наследования
+
+**Целевая версия:** C# 12 / .NET 8
+
+---
+
+## 1. Что такое класс и объект
+
+**Класс** — это шаблон (чертеж), описывающий структуру и поведение.
+**Объект** (экземпляр) — конкретная переменная, созданная на основе класса.
+
+```csharp
+// Определение класса
+class Person
+{
+    // Поля (данные)
+    public string Name;
+    public int Age;
+
+    // Метод (поведение)
+    public void Introduce()
+    {
+        Console.WriteLine($"Привет, я {Name}, мне {Age} лет");
+    }
+}
+
+// Использование
+Person person1 = new Person();  // создание объекта (экземпляра)
+person1.Name = "Анна";
+person1.Age = 25;
+person1.Introduce();  // Привет, я Анна, мне 25 лет
+
+Person person2 = new Person();
+person2.Name = "Борис";
+person2.Age = 30;
+person2.Introduce();  // Привет, я Борис, мне 30 лет
+```
+
+---
+
+## 2. Поля (Fields)
+
+Поля — переменные внутри класса. Лучше делать их `private` и использовать свойства.
+
+```csharp
+class BankAccount
+{
+    // Публичные поля — НЕ РЕКОМЕНДУЕТСЯ (нарушает инкапсуляцию)
+    public string OwnerName;
+    public decimal Balance;  // опасно: можно записать отрицательное значение
+
+    // Приватные поля — правильно
+    private string _accountNumber;
+    private decimal _balance;
+
+    // Публичный доступ через свойства (см. ниже)
+}
+```
+
+---
+
+## 3. Свойства (Properties) — управляемый доступ к данным
+
+Свойства выглядят как поля, но позволяют добавить логику при чтении/записи.
+
+```csharp
+class BankAccount
+{
+    // Авто-свойство (C# 3+) — компилятор создаёт скрытое поле сам
+    public string OwnerName { get; set; }
+
+    // Свойство с логикой валидации
+    private decimal _balance;
+    public decimal Balance
+    {
+        get => _balance;
+        set
+        {
+            if (value < 0)
+                throw new ArgumentException("Баланс не может быть отрицательным");
+            _balance = value;
+        }
+    }
+
+    // Read-only свойство (только get) — можно задать только в конструкторе
+    public string AccountNumber { get; }
+
+    // Вычисляемое свойство (нет скрытого поля)
+    public bool IsActive => Balance > 0;
+
+    // Init-only свойство (C# 9+) — можно задать при инициализации объекта
+    public DateTime CreatedAt { get; init; }
+}
+```
+
+### Синтаксис свойств
+
+```csharp
+// Полный синтаксис
+private int _age;
+public int Age
+{
+    get { return _age; }
+    set { _age = value; }
+}
+
+// Авто-свойство (кратко)
+public int Age { get; set; }
+
+// Read-only (только чтение снаружи)
+public int Age { get; private set; }
+
+// Init-only (C# 9) — можно задать только в инициализаторе объекта
+public int Age { get; init; }
+
+// Expression-bodied (C# 6+) — для простых свойств
+public bool IsAdult => Age >= 18;
+```
+
+---
+
+## 4. Конструкторы
+
+Специальные методы для инициализации объекта при создании (`new`).
+
+```csharp
+class Person
+{
+    public string Name { get; set; }
+    public int Age { get; set; }
+    public string Id { get; }  // read-only
+
+    // Конструктор по умолчанию (неявный, если не задан ни один другой)
+    public Person() { }
+
+    // Конструктор с параметрами
+    public Person(string name, int age)
+    {
+        Name = name;
+        Age = age;
+        Id = Guid.NewGuid().ToString();  // генерация ID
+    }
+
+    // Перегрузка конструкторов
+    public Person(string name) : this(name, 0)  // вызов другого конструктора
+    {
+    }
+
+    // Конструктор с инициализацией read-only свойств
+    public Person(string name, int age, string id)
+    {
+        Name = name;
+        Age = age;
+        Id = id;  // можно присвоить read-only свойство в конструкторе
+    }
+}
+
+// Использование
+var p1 = new Person();                    // пустой
+var p2 = new Person("Анна", 25);          // с параметрами
+var p3 = new Person("Борис") { Age = 30 }; // конструктор + инициализатор объектов
+var p4 = new Person { Name = "Виктор", Age = 20 }; // только инициализатор (нужен пустой конструктор)
+```
+
+---
+
+## 5. Методы
+
+Функции внутри класса. Могут быть `static` (принадлежат классу) или instance (принадлежат объекту).
+
+```csharp
+class Calculator
+{
+    // Instance-метод — нужен объект
+    public int Add(int a, int b) => a + b;
+
+    // Static-метод — вызывается через класс: Calculator.Multiply(2, 3)
+    public static int Multiply(int a, int b) => a * b;
+
+    // Метод с ref/out параметрами
+    public void Swap(ref int a, ref int b)
+    {
+        int temp = a; a = b; b = temp;
+    }
+
+    // out — обязательно присвоить значение перед выходом
+    public bool TryDivide(int a, int b, out int result)
+    {
+        if (b == 0) { result = 0; return false; }
+        result = a / b;
+        return true;
+    }
+
+    // params — переменное число аргументов
+    public int Sum(params int[] numbers)
+    {
+        int sum = 0;
+        foreach (int n in numbers) sum += n;
+        return sum;
+    }
+
+    // Expression-bodied метод (C# 6+)
+    public int Square(int x) => x * x;
+}
+```
+
+---
+
+## 6. Инкапсуляция — сокрытие деталей реализации
+
+Модификаторы доступа:
+
+| Модификатор | Видимость |
+|-------------|-----------|
+| `public` | Отовсюду |
+| `private` | Только внутри класса (по умолчанию) |
+| `protected` | Внутри класса и наследников |
+| `internal` | Внутри текущей сборки (assembly) |
+| `protected internal` | protected ИЛИ internal |
+| `private protected` | protected И internal (C# 7.2+) |
+
+```csharp
+class Employee
+{
+    // Публичный контракт — что видно снаружи
+    public string Name { get; set; }
+    public decimal Salary { get; private set; }  // сеттер приватный!
+
+    // Приватная реализация — скрыта снаружи
+    private decimal _bonus;
+    private const decimal MaxBonusPercent = 0.2m;
+
+    // Публичный метод с бизнес-логикой
+    public void AddBonus(decimal percent)
+    {
+        if (percent < 0 || percent > MaxBonusPercent)
+            throw new ArgumentOutOfRangeException(nameof(percent));
+
+        _bonus = Salary * percent;
+    }
+
+    // Приватный вспомогательный метод
+    private decimal CalculateTotal() => Salary + _bonus;
+
+    // Публичный метод доступа к результату
+    public decimal GetTotalCompensation() => CalculateTotal();
+}
+```
+
+---
+
+## 7. Наследование — базовые принципы
+
+Класс может наследовать от одного базового класса (`:`).
+
+```csharp
+// Базовый класс
+class Animal
+{
+    public string Name { get; set; }
+
+    public Animal(string name)
+    {
+        Name = name;
+    }
+
+    // virtual — можно переопределить в наследнике
+    public virtual void MakeSound()
+    {
+        Console.WriteLine("Животное издаёт звук");
+    }
+
+    // Не виртуальный — нельзя переопределить, можно скрыть (new)
+    public void Sleep()
+    {
+        Console.WriteLine($"{Name} спит");
+    }
+}
+
+// Наследник
+class Dog : Animal
+{
+    public string Breed { get; set; }
+
+    // Конструктор наследника вызывает базовый через base()
+    public Dog(string name, string breed) : base(name)
+    {
+        Breed = breed;
+    }
+
+    // override — переопределение виртуального метода
+    public override void MakeSound()
+    {
+        Console.WriteLine($"{Name} лает: Гав-гав!");
+    }
+
+    // Новый метод, специфичный для собаки
+    public void Fetch()
+    {
+        Console.WriteLine($"{Name} приносит палку");
+    }
+}
+
+// Наследник с hiding (скрытием) вместо override
+class Cat : Animal
+{
+    public Cat(string name) : base(name) { }
+
+    // new — скрывает базовый метод (не полиморфизм!)
+    public new void MakeSound()
+    {
+        Console.WriteLine($"{Name} мяукает: Мяу!");
+    }
+}
+
+// Использование
+Animal dog = new Dog("Бобик", "Овчарка");
+Animal cat = new Cat("Мурка");
+
+dog.MakeSound();  // Бобик лает: Гав-гав! (полиморфизм работает)
+cat.MakeSound();  // Мурка мяукает: Мяу! (тоже работает, т.к. виртуальный)
+
+cat.Sleep();      // Мурка спит (вызов базового метода)
+```
+
+### sealed — запрет наследования
+
+```csharp
+sealed class FinalClass { }  // нельзя наследовать
+
+class Base
+{
+    public virtual void Method() { }
+
+    // Можно запретить дальнейшее переопределение
+    public virtual void AnotherMethod() { }
+}
+
+class Derived : Base
+{
+    public override sealed void AnotherMethod() { }  // sealed на override
+}
+
+// class MoreDerived : Derived { public override void AnotherMethod() { } } // ОШИБКА!
+```
+
+---
+
+## 8. Абстрактные классы и методы
+
+`abstract` — нельзя создать экземпляр, только наследовать. Абстрактные методы ОБЯЗАТЕЛЬНЫ к реализации.
+
+```csharp
+abstract class Shape
+{
+    public abstract double GetArea();  // нет тела — наследник ДОЛЖЕН реализовать
+
+    public virtual double GetPerimeter() => 0;  // может иметь реализацию по умолчанию
+
+    public void PrintInfo()  // обычный метод
+    {
+        Console.WriteLine($"Площадь: {GetArea()}, Периметр: {GetPerimeter()}");
+    }
+}
+
+class Circle : Shape
+{
+    public double Radius { get; set; }
+
+    public Circle(double radius) => Radius = radius;
+
+    public override double GetArea() => Math.PI * Radius * Radius;
+
+    public override double GetPerimeter() => 2 * Math.PI * Radius;
+}
+
+class Rectangle : Shape
+{
+    public double Width { get; set; }
+    public double Height { get; set; }
+
+    public Rectangle(double w, double h) { Width = w; Height = h; }
+
+    public override double GetArea() => Width * Height;
+    public override double GetPerimeter() => 2 * (Width + Height);
+}
+```
+
+---
+
+## 9. this, base, nameof
+
+```csharp
+class Demo
+{
+    private int _value;
+
+    public Demo(int value)
+    {
+        _value = value;  // или this._value = value;
+    }
+
+    public void SetValue(int value)
+    {
+        this._value = value;  // this — ссылка на текущий объект
+    }
+
+    public void Print()
+    {
+        Console.WriteLine(nameof(_value));  // "_value" — имя как строка (refactoring-safe)
+        Console.WriteLine(nameof(SetValue)); // "SetValue"
+    }
+}
+```
+
+---
+
+## 10. Рекомендации по стилю
+
+- Поля: `private` + `_camelCase` (`_balance`)
+- Свойства/методы/классы: `PascalCase` (`Balance`, `CalculateTotal`)
+- Константы: `PascalCase` (`MaxBonusPercent`)
+- Используйте авто-свойства там, где не нужна логика
+- Делайте сеттеры `private`/`init`, если значение не должно меняться снаружи
+- `readonly` поля только для значений, задаваемых в конструкторе
+
+---
+
+## 11. Домашнее задание
+
+1. Создайте класс `Book` с свойствами: Title, Author, Pages, ISBN (read-only). Добавьте конструктор и метод `PrintInfo()`
+2. Создайте класс `Rectangle` с Width, Height. Добавьте свойство `Area` (вычисляемое), метод `Scale(double factor)`
+3. Создайте базовый класс `Vehicle` (Speed, Move()), наследники `Car` (NumberOfDoors), `Bike` (HasBasket). Переопределите `Move()`
+4. Создайте класс `Temperature` с приватным полем `_celsius`. Свойство `Celsius` (get/set с валидацией: не ниже -273.15), свойство `Fahrenheit` (get/set, конвертирует). Метод `ToString()` → "25°C = 77°F"
+5. *Создайте иерархию:* `Employee` (Name, BaseSalary, GetSalary()), `Manager` (BonusPercent, переопределяет GetSalary()), `Developer` (OvertimeHours, переопределяет GetSalary()). Проверьте полиморфизм через `List<Employee>`
+
+---
+
+## 12. Краткая шпаргалка
+
+```
+class ClassName {
+    // Поле
+    private int _field;
+
+    // Авто-свойство
+    public int Prop { get; set; }
+
+    // Свойство с логикой
+    public int Prop2 { get => _field; set => _field = value; }
+
+    // Read-only свойство
+    public int Id { get; }
+
+    // Конструктор
+    public ClassName(int id) { Id = id; }
+
+    // Метод
+    public void Do() { }
+
+    // Виртуальный метод
+    public virtual void VirtualMethod() { }
+}
+
+// Наследование
+class Child : Parent {
+    public Child() : base() { }
+    public override void VirtualMethod() { }
+}
+
+// Инкапсуляция
+public int Prop { get; private set; }  // чтение везде, запись только в классе
+```

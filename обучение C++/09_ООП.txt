@@ -1,0 +1,280 @@
+# Урок 9: Объектно-ориентированное программирование
+
+## Цели урока
+- Изучить классы: поля, методы, конструкторы, деструктор
+- Понять инкапсуляцию: public, private, protected, друзья
+- Освоить наследование: базовые/производные классы, virtual, override, final
+- Научиться работать с полиморфизмом: виртуальные функции, абстрактные классы
+- Разобраться с Rule of Five, копированием и перемещением
+
+---
+
+## Теория
+
+### Класс — пользовательский тип
+```cpp
+#include <string>
+#include <iostream>
+
+class Person {
+    // Поля (члены-данные)
+    std::string name_;
+    int age_;
+    static int count_; // статическое поле — общее для всех объектов
+
+public:
+    // Конструкторы
+    Person() : name_("Unknown"), age_(0) { ++count_; }           // default
+    Person(const std::string& n, int a) : name_(n), age_(a) { ++count_; } // параметризованный
+
+    // Деструктор
+    ~Person() { --count_; std::cout << name_ << " destroyed\n"; }
+
+    // Методы (члены-функции)
+    void print() const {           // const — не меняет объект
+        std::cout << name_ << ", " << age_ << " лет\n";
+    }
+
+    // Геттеры/сеттеры
+    const std::string& name() const { return name_; }
+    void set_name(const std::string& n) { name_ = n; }
+    int age() const { return age_; }
+    void set_age(int a) { if (a >= 0) age_ = a; }
+
+    // Статический метод — не имеет this
+    static int count() { return count_; }
+};
+
+// Определение статического поля (в .cpp файле)
+int Person::count_ = 0;
+```
+
+### Инициализация полей — список инициализации
+```cpp
+class Point {
+    int x_, y_;
+public:
+    // ПРАВИЛЬНО: список инициализации (прямая инициализация)
+    Point(int x, int y) : x_(x), y_(y) {}
+
+    // ПЛОХО: присваивание в теле (сначала default init, потом assign)
+    // Point(int x, int y) { x_ = x; y_ = y; }
+
+    // Для const, reference, базовых классов — ТОЛЬКО список инициализации
+    const int id_;
+    Point(int id, int x, int y) : id_(id), x_(x), y_(y) {}
+};
+```
+
+### Инкапсуляция — управление доступом
+```cpp
+class BankAccount {
+    double balance_ = 0;        // private по умолчанию для class
+    int pin_;                   // private
+
+protected:                      // доступно в наследниках
+    std::string account_type_;
+
+public:
+    BankAccount(int pin) : pin_(pin) {}
+
+    // Интерфейс (public API)
+    bool deposit(double amount) {
+        if (amount > 0) { balance_ += amount; return true; }
+        return false;
+    }
+    bool withdraw(double amount, int pin) {
+        if (pin == pin_ && amount > 0 && amount <= balance_) {
+            balance_ -= amount; return true;
+        }
+        return false;
+    }
+    double balance(int pin) const { return pin == pin_ ? balance_ : -1; }
+};
+
+// struct — по умолчанию public (для POD/простых агрегатов)
+struct Point { int x, y; }; // всё public
+```
+
+### Друзья (friend) — нарушение инкапсуляции (редко нужно)
+```cpp
+class Matrix {
+    double data[4][4];
+    friend std::ostream& operator<<(std::ostream&, const Matrix&); // внешняя функция
+    friend class MatrixSolver; // целый класс
+};
+```
+
+### Наследование
+```cpp
+class Animal {
+protected:
+    std::string name_;
+public:
+    Animal(const std::string& n) : name_(n) {}
+    virtual ~Animal() = default; // ВИРТУАЛЬНЫЙ деструктор — ОБЯЗАТЕЛЬНО для базового класса!
+
+    virtual void speak() const { std::cout << name_ << " makes a sound\n"; }
+    virtual void move() const = 0; // чисто виртуальная — Animal абстрактный
+};
+
+class Dog : public Animal { // public inheritance = "is-a"
+    std::string breed_;
+public:
+    Dog(const std::string& n, const std::string& b) : Animal(n), breed_(b) {}
+
+    // override — проверка, что переопределяем виртуальную функцию (C++11)
+    void speak() const override { std::cout << name_ << " barks: Woof!\n"; }
+    void move() const override { std::cout << name_ << " runs\n"; }
+
+    void fetch() const { std::cout << name_ << " fetches ball\n"; }
+};
+
+class Cat : public Animal {
+public:
+    Cat(const std::string& n) : Animal(n) {}
+    void speak() const override { std::cout << name_ << " meows: Meow!\n"; }
+    void move() const override { std::cout << name_ << " walks silently\n"; }
+};
+
+// Использование полиморфизма
+void make_speak(const Animal& a) { a.speak(); } // dynamic dispatch
+
+int main() {
+    Dog dog("Buddy", "Labrador");
+    Cat cat("Whiskers");
+
+    Animal* animals[] = {&dog, &cat};
+    for (auto* a : animals) a->speak(); // вызывает Dog::speak, Cat::speak
+
+    // Object slicing — ОПАСНО!
+    // Animal a = dog; // копируется только Animal часть!
+    // Используйте указатели/ссылки для полиморфизма
+}
+```
+
+### Виртуальные функции и таблица виртуальных функций (vtable)
+```
+Animal object: [vptr] -> Animal vtable [speak, move]
+Dog object:    [vptr] -> Dog vtable    [speak, move, fetch]
+```
+При вызове через указатель/ссылку: `ptr->vptr->vtable[offset]()`
+
+### Множественное наследование и ромбовидная проблема
+```cpp
+class A { public: virtual ~A() = default; int x; };
+class B : virtual public A {}; // virtual inheritance — один подобъект A
+class C : virtual public A {};
+class D : public B, public C {}; // D имеет ОДИН A
+```
+
+### Rule of Five (Правило пяти)
+```cpp
+class Resource {
+    int* data_;
+    size_t size_;
+public:
+    // 1. Конструктор
+    Resource(size_t n) : size_(n), data_(new int[n]) {}
+
+    // 2. Деструктор
+    ~Resource() { delete[] data_; }
+
+    // 3. Конструктор копирования
+    Resource(const Resource& other) : size_(other.size_), data_(new int[other.size_]) {
+        std::copy(other.data_, other.data_ + size_, data_);
+    }
+
+    // 4. Оператор присваивания копированием
+    Resource& operator=(const Resource& other) {
+        if (this != &other) {
+            delete[] data_;
+            size_ = other.size_;
+            data_ = new int[size_];
+            std::copy(other.data_, other.data_ + size_, data_);
+        }
+        return *this;
+    }
+
+    // 5. Move конструктор (C++11)
+    Resource(Resource&& other) noexcept : data_(other.data_), size_(other.size_) {
+        other.data_ = nullptr; other.size_ = 0;
+    }
+
+    // 6. Move присваивание (C++11)
+    Resource& operator=(Resource&& other) noexcept {
+        if (this != &other) {
+            delete[] data_;
+            data_ = other.data_; size_ = other.size_;
+            other.data_ = nullptr; other.size_ = 0;
+        }
+        return *this;
+    }
+};
+
+// Rule of Zero: если используете RAII типы (vector, unique_ptr, string) —
+// не пишите ничего, компилятор сгенерирует правильные версии автоматически!
+class ModernResource {
+    std::vector<int> data_; // само управляет памятью
+    // Не нужно объявлять ~ModernResource, copy, move — всё работает!
+};
+```
+
+### final и override
+```cpp
+class Base {
+public:
+    virtual void foo() {}
+    virtual void bar() final {} // нельзя переопределять дальше
+};
+
+class Derived : public Base {
+public:
+    void foo() override {} // OK
+    // void bar() override {} // ОШИБКА: final в базе
+};
+
+class FinalClass final {}; // нельзя наследоваться
+// class Bad : public FinalClass {}; // ОШИБКА
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Иерархия фигур
+Создайте абстрактный `Shape` с виртуальными `area()`, `perimeter()`. Реализуйте `Circle`, `Rectangle`, `Triangle`. В `main` создайте `std::vector<std::unique_ptr<Shape>>`, добавьте разные фигуры, выведите сумму площадей.
+
+### Задание 2: Полиморфный контейнер
+Сделайте `std::vector<std::shared_ptr<Animal>>` с собаками, котами. Добавьте `Bird` (летает). Вызовите `speak()` и `move()` для всех.
+
+### Задание 3: Rule of Five вручную
+Реализуйте `String` класс (обёртка над `char*`) с полным набором 5 специальных функций. Протестируйте копирование и move.
+
+### Задание 4: Инкапсуляция
+Создайте класс `Date` с полями `day, month, year` (private). Конструктор проверяет валидность. Добавьте методы `add_days(int)`, `operator<<` для вывода. Сделайте так, чтобы невалидную дату создать нельзя.
+
+### Задание 5: Статические члены
+Добавьте в `Person` статический счетчик созданных объектов. Сделайте `static Person create_anonymous()` — фабричный метод.
+
+### Задание 6: Виртуальный деструктор
+Создайте базовый `Base` без виртуального деструктора и производный `Derived` с полем `std::vector<int>`. Удалите через `Base*`. Наблюдайте утечку (valgrind/asan). Добавьте `virtual ~Base()` — утечка исчезнет.
+
+---
+
+## Типичные ошибки новичка
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| Нет виртуального деструктора в базовом классе | Утечка ресурсов производного | Всегда `virtual ~Base() = default;` если есть виртуальные функции |
+| Object slicing при передаче по значению | Копируется только базовая часть | Передавайте полиморфные объекты по указателю/ссылке |
+| Вызов виртуальной функции в конструкторе/деструкторе | Полиморфизм не работает (vptr ещё не готов/уже сброшен) | Не вызывайте виртуальные функции в ctor/dtor |
+| Нарушение Rule of Five | Дважды free, утечки, UB | Используйте Rule of Zero: `vector`, `unique_ptr`, `string` вместо ручного управления |
+| `private` наследование вместо композиции | Сложность, недоступность базового | По умолчанию используйте композицию (`has-a`), наследование — только `is-a` |
+
+---
+
+## Ресурсы
+- cppreference: [Classes](https://en.cppreference.com/w/cpp/language/classes), [Inheritance](https://en.cppreference.com/w/cpp/language/derived_class), [Virtual](https://en.cppreference.com/w/cpp/language/virtual)
+- C++ Core Guidelines: [C. Classes](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c-classes-and-class-hierarchies)
+- [Rule of Zero](https://en.cppreference.com/w/cpp/language/rule_of_three) — предпочитайте RAII типам

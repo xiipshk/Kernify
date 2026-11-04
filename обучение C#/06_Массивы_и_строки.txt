@@ -1,0 +1,276 @@
+# Урок 6: Массивы и строки
+
+**Целевая версия:** C# 12 / .NET 8
+
+---
+
+## 1. Массивы (Arrays)
+
+### Одномерные массивы
+
+```csharp
+// Объявление и инициализация
+int[] numbers = new int[5];           // {0, 0, 0, 0, 0}
+int[] numbers2 = new int[] { 1, 2, 3 };
+int[] numbers3 = { 1, 2, 3 };         // краткая форма
+var numbers4 = new[] { 1, 2, 3 };     // var + type inference
+
+// Доступ по индексу (0-based)
+numbers[0] = 10;
+Console.WriteLine(numbers[0]);  // 10
+
+// Length — длина (свойство, не метод!)
+Console.WriteLine(numbers.Length);  // 5
+```
+
+### Многомерные массивы
+
+```csharp
+// Прямоугольный (rectangular) — все строки одинаковой длины
+int[,] matrix = new int[3, 4];        // 3 строки, 4 столбца
+int[,] matrix2 = { {1, 2}, {3, 4}, {5, 6} };
+
+matrix[0, 0] = 10;
+Console.WriteLine(matrix[2, 1]);  // 4-елемент (3-я строка, 2-й столбец)
+Console.WriteLine(matrix.GetLength(0));  // строки: 3
+Console.WriteLine(matrix.GetLength(1));  // столбцы: 4
+```
+
+### Зубчатые массивы (jagged arrays) — массив массивов
+
+```csharp
+int[][] jagged = new int[3][];
+jagged[0] = new int[] { 1, 2 };
+jagged[1] = new int[] { 3, 4, 5, 6 };
+jagged[2] = new int[] { 7 };
+
+jagged[1][2] = 99;  // доступ: строка 1, элемент 2
+```
+
+---
+
+## 2. Итерация по массивам
+
+```csharp
+int[] arr = { 1, 2, 3, 4, 5 };
+
+// for с индексом
+for (int i = 0; i < arr.Length; i++)
+    Console.WriteLine($"[{i}] = {arr[i]}");
+
+// foreach (только чтение)
+foreach (int n in arr)
+    Console.WriteLine(n);
+
+// for each с индексом (C# 7+ через кортежи) — не нативно, но можно так:
+foreach (var (value, index) in arr.Select((v, i) => (v, i)))
+    Console.WriteLine($"{index}: {value}");
+// Требует: using System.Linq;
+```
+
+---
+
+## 3. Полезные методы Array / LINQ
+
+```csharp
+using System.Linq;
+
+int[] arr = { 5, 2, 9, 1, 7 };
+
+Array.Sort(arr);        // {1, 2, 5, 7, 9} — сортирует НА МЕСТЕ
+Array.Reverse(arr);     // {9, 7, 5, 2, 1}
+Array.IndexOf(arr, 5);  // 2 (индекс)
+Array.Exists(arr, x => x > 8);  // true
+Array.Find(arr, x => x % 2 == 0);  // 2 (первый чётный)
+Array.FindAll(arr, x => x > 5);  // {9, 7} — новый массив
+
+// LINQ (не меняет оригинал)
+var sorted = arr.OrderBy(x => x);        // IEnumerable<int>
+var filtered = arr.Where(x => x > 3);    // {5, 9, 7}
+var sum = arr.Sum();                     // 24
+var avg = arr.Average();                 // 4.8
+```
+
+---
+
+## 4. Копирование массивов
+
+```csharp
+int[] source = { 1, 2, 3, 4, 5 };
+int[] dest = new int[5];
+
+Array.Copy(source, dest, 5);           // копия всего
+Array.Copy(source, 1, dest, 0, 3);     // source[1..3] → dest[0..2]
+
+int[] clone = (int[])source.Clone();   // поверхностная копия
+int[] copy = source.ToArray();         // через LINQ
+int[] slice = source[1..4].ToArray();  // Range (C# 8+): {2, 3, 4}
+```
+
+---
+
+## 5. Строки (string) — неизменяемые!
+
+```csharp
+string s1 = "Hello";
+string s2 = "World";
+
+// Конкатенация
+string s3 = s1 + " " + s2;        // "Hello World"
+string s4 = string.Concat(s1, " ", s2);
+string s5 = $"{s1} {s2}";         // интерполяция (лучший вариант)
+
+// Форматирование
+string fmt = string.Format("{0} {1}", s1, s2);
+string fmt2 = $"Имя: {"Алекс"}, Возраст: {25}";
+
+// Сравнение
+s1 == s2              // false (ссылочное сравнение работает для строк)
+s1.Equals(s2)         // false
+s1.Equals("hello", StringComparison.OrdinalIgnoreCase)  // true
+string.Compare(s1, s2, StringComparison.Ordinal);  // -1/0/1
+```
+
+---
+
+## 6. Основные методы строки
+
+```csharp
+string text = "  Hello World  ";
+
+text.Length              // 14
+text.Trim()              // "Hello World"
+text.TrimStart()         // "Hello World  "
+text.TrimEnd()           // "  Hello World"
+text.ToUpper()           // "  HELLO WORLD  "
+text.ToLower()           // "  hello world  "
+text.Contains("World")   // true
+text.StartsWith("He")    // false (есть пробелы!)
+text.EndsWith("ld")      // true
+text.IndexOf("o")        // 4
+text.LastIndexOf("o")    // 7
+text.Substring(6)        // "World  "
+text.Substring(6, 5)     // "World"
+text.Replace("l", "L")   // "HeLLo WorLd"
+text.Split(' ')          // ["", "", "Hello", "World", "", ""]  — с пустыми!
+text.Split(new[] {' '}, StringSplitOptions.RemoveEmptyEntries)  // ["Hello", "World"]
+```
+
+---
+
+## 7. StringBuilder — изменяемая строка
+
+```csharp
+using System.Text;
+
+var sb = new StringBuilder();
+sb.Append("Hello");
+sb.Append(" ");
+sb.AppendLine("World");
+sb.AppendFormat("Number: {0}", 42);
+
+string result = sb.ToString();
+// "Hello World\nNumber: 42"
+
+// Предварительное выделение ёмкости
+var sb2 = new StringBuilder(1000);  // избегает реаллокаций
+```
+
+**Когда использовать:** конкатенация в цикле, большие строки, частые изменения.
+
+---
+
+## 8. Интерполяция строк (подробнее)
+
+```csharp
+int x = 10, y = 20;
+string s = $"{x} + {y} = {x + y}";  // "10 + 20 = 30"
+
+// Форматирование
+$"Цена: {1234.5:C}";        // "Цена: 1 234,50 ₽" (зависит от культуры)
+$"Дата: {DateTime.Now:d}";  // короткая дата
+$"Hex: {255:X}";            // "FF"
+$"Fixed: {3.14159:F2}";     // "3.14"
+
+// Выравнивание
+$"|{"Left",-10}|{"Right",10}|";  // |Left      |     Right|
+
+// Экранирование { }
+$"{{Скобки}} и {x}";  // "{Скобки} и 10"
+```
+
+---
+
+## 9. Span<T> и Memory<T> — работа без аллокаций (C# 7.2+)
+
+```csharp
+string text = "Hello World";
+
+// ReadOnlySpan<char> — срез строки БЕЗ копирования
+ReadOnlySpan<char> word = text.AsSpan(0, 5);  // "Hello"
+
+// Поиск в Span
+int idx = text.AsSpan().IndexOf("World");  // 6
+
+// Парсинг без Substring
+if (int.TryParse(text.AsSpan(6), out int num)) { }
+
+// string.Create (C# 9+) — создание строки через Span
+string created = string.Create(10, "seed", (span, seed) =>
+{
+    for (int i = 0; i < span.Length; i++)
+        span[i] = (char)('a' + (seed[0] + i) % 26);
+});
+```
+
+---
+
+## 10. Работа с кодировками
+
+```csharp
+using System.Text;
+
+string original = "Привет";
+byte[] bytes = Encoding.UTF8.GetBytes(original);   // байты UTF-8
+string restored = Encoding.UTF8.GetString(bytes);  // обратно
+
+// Другие кодировки
+Encoding.GetEncoding("windows-1251");  // кириллица legacy
+Encoding.Unicode;                      // UTF-16 (внутренняя .NET)
+Encoding.ASCII;                        // только ASCII
+```
+
+---
+
+## 11. Домашнее задание
+
+1. Создайте массив 10 случайных чисел, найдите мин/макс/среднее (без LINQ и с LINQ)
+2. Переверните массив на месте (без создания нового)
+3. Удалите дубликаты из массива (верните новый массив уникальных значений)
+4. Напишите метод `bool IsPalindrome(string s)` — игнорируйте пробелы и регистр
+5. Подсчитайте количество слов в строке (разделители: пробел, таб, знаки препинания)
+6. Реализуйте шифр Цезаря: сдвиг каждого символа на N позиций
+7. Объедините массив строк в одну через `string.Join` и через `StringBuilder` — замерьте время
+
+---
+
+## 12. Краткая шпаргалка
+
+```
+int[] a = {1,2,3};        // массив
+a.Length                  // длина
+Array.Sort(a)             // сортировка на месте
+a[1..4]                   // Range (копия среза)
+
+string s = "text";
+s.Trim()                  // обрезка
+s.Split(',')              // разделение
+s.Replace("a","b")        // замена
+s.Substring(i, len)       // подстрока (копия!)
+$"{x:F2}"                 // форматирование
+
+StringBuilder sb = new();
+sb.Append(...).ToString() // эффективная сборка
+
+Span: text.AsSpan(i, len) // без копий
+```

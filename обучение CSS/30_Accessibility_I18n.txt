@@ -1,0 +1,984 @@
+# Урок 30: Доступность и интернационализация — контраст, focus, reduced motion, RTL, логические свойства, зум текста
+
+## Цели урока
+- Понять WCAG 2.1/2.2 требования к цветовому контрасту (4.5:1 обычный текст, 3:1 крупный текст)
+- Научиться стилизовать фокус клавиатуры (:focus-visible, focus-visible, skip-links)
+- Применять prefers-reduced-motion для анимаций и микро-взаимодействий
+- Создавать RTL-интерфейсы с логическими свойствами (margin-inline-start, padding-block-end)
+- Поддерживать зум текста (200%+) без сломанной вёрстки
+- Создавать доступные формы, модалки, навигацию с ARIA и семантическим HTML
+
+---
+
+## 1. WCAG контраст цветов
+
+### Требования WCAG 2.1 AA
+| Элемент | Минимальный контраст | Уровень |
+|---------|---------------------|---------|
+| Обычный текст (< 18pt или < 14pt жирный) | 4.5:1 | AA |
+| Крупный текст (≥ 18pt или ≥ 14pt жирный) | 3:1 | AA |
+| Графика, элементы интерфейса | 3:1 | AA |
+| Обычный текст (AAA) | 7:1 | AAA |
+| Крупный текст (AAA) | 4.5:1 | AAA |
+
+### Как проверить контраст
+```css
+/* Хорошо — темный текст на светлом фоне */
+.good-text {
+  color: oklch(0.21 0.006 285);   /* тёмно-серый */
+  background: oklch(0.98 0.001 285); /* светло-серый фон */
+  /* Контраст ~13:1 — проходит AA и AAA */
+}
+
+/* Плохо — светло-серый на белом */
+.bad-text {
+  color: oklch(0.70 0.01 285);    /* слишком светло-серый */
+  background: white;
+  /* Контраст ~1.5:1 — не проходит даже A */
+}
+
+/* Погранично */
+.borderline {
+  color: oklch(0.45 0.01 285);    /* средне-серый */
+  background: white;
+  /* Контраст ~5.5:1 — проходит AA для обычного текста */
+}
+```
+
+### Инструменты проверки контраста
+- **DevTools**: Элементы → Styles → цвет → иконка контраста (показывает соотношение)
+- **WebAIM Contrast Checker**: https://webaim.org/resources/contrastchecker/
+- **Stark** — плагин для Figma/Sketch/Adobe XD
+- **Colour Contrast Analyser** — десктоп приложение
+- **Lighthouse** — аудит доступности (доступность → цветовой контраст)
+
+### Не цвет единственный носитель информации
+```html
+<!-- Плохо — только цвет показывает ошибку -->
+<span style="color: red;">Поле заполнено неверно</span>
+
+<!-- Хорошо — цвет + иконка + текст -->
+<div class="alert alert--error" role="alert">
+  <svg class="alert__icon" aria-hidden="true">...</svg>
+  <span class="alert__text">Поле заполнено неверно</span>
+</div>
+```
+
+```css
+.alert--error {
+  border-left: 4px solid var(--color-error);
+  background: color-mix(in oklch, var(--color-error), white 92%);
+  color: var(--color-text);
+}
+
+.alert__icon {
+  /* Иконка ошибки — дополнительный индикатор */
+}
+```
+
+---
+
+## 2. Фокус клавиатуры и :focus-visible
+
+### :focus vs :focus-visible
+```css
+/* Плохо — убирает outline для всех, включая клавиатуру */
+input:focus {
+  outline: none;
+}
+
+/* Хорошо — показывает outline только при навигации клавиатурой */
+input:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* При фокусе мышкой — незаметный, при клавиатуре — заметный */
+input:focus:not(:focus-visible) {
+  outline: none;
+}
+```
+
+### Кастомный фокус-стиль
+```css
+.btn {
+  /* Базовые стили */
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  border: 2px solid transparent;
+}
+
+/* Фокус для клавиатуры */
+.btn:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-primary), white 50%);
+}
+
+/* Фокус внутри компонента */
+.c-card:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary), white 40%);
+}
+```
+
+### Skip-link (перейти к контенту)
+```html
+<a href="#main-content" class="skip-link">Перейти к основному содержимому</a>
+
+<header>...</header>
+<main id="main-content">...</main>
+```
+
+```css
+.skip-link {
+  position: absolute;
+  top: -100px;  /* Скрыто за пределами экрана */
+  left: 0;
+  background: var(--color-primary);
+  color: white;
+  padding: var(--space-sm) var(--space-md);
+  z-index: 1000;
+  text-decoration: none;
+  border-radius: 0 0 var(--radius-md) 0;
+  transition: top 0.2s;
+}
+
+.skip-link:focus {
+  top: 0;  /* Появляется при фокусе клавиатурой */
+}
+```
+
+### Фокус-ловушка (focus trap) для модалок
+```html
+<!-- Модалка с фокус-ловушкой -->
+<div class="c-modal is-open" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <button class="c-modal__close" aria-label="Закрыть">×</button>
+  <h2 id="modal-title">Заголовок модалки</h2>
+  <p>Содержимое модалки...</p>
+  <div class="c-modal__actions">
+    <button class="c-btn c-btn--primary">Сохранить</button>
+    <button class="c-btn c-btn--secondary">Отмена</button>
+  </div>
+</div>
+```
+
+```javascript
+// app.js — фокус-ловушка для модалки
+function trapFocus(element) {
+  const focusableElements = element.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  );
+  const firstElement = focusableElements[0];
+  const lastElement = focusableElements[focusableElements.length - 1];
+
+  element.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+
+    if (e.shiftKey) {
+      // Shift+Tab — переход назад
+      if (document.activeElement === firstElement) {
+        e.preventDefault();
+        lastElement.focus();
+      }
+    } else {
+      // Tab — переход вперёд
+      if (document.activeElement === lastElement) {
+        e.preventDefault();
+        firstElement.focus();
+      }
+    }
+  });
+
+  // ESC закрывает модалку
+  element.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeModal(element);
+    }
+  });
+}
+
+function openModal(modal) {
+  modal.classList.add('is-open');
+  modal.setAttribute('aria-modal', 'true');
+  document.body.style.overflow = 'hidden';
+
+  // Переместить фокус в модалку
+  const firstFocusable = modal.querySelector('button, [href], input, select, textarea');
+  if (firstFocusable) firstFocusable.focus();
+
+  trapFocus(modal);
+}
+
+function closeModal(modal) {
+  modal.classList.remove('is-open');
+  modal.setAttribute('aria-modal', 'false');
+  document.body.style.overflow = '';
+
+  // Вернуть фокус на элемент, который открыл модалку
+  const trigger = document.querySelector('[aria-controls="' + modal.id + '"]');
+  if (trigger) trigger.focus();
+}
+```
+
+---
+
+## 3. prefers-reduced-motion
+
+### Медиа-запрос для уменьшения движения
+```css
+/* Базовые анимации */
+.btn {
+  transition: transform 0.2s, background 0.2s;
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+}
+
+/* Для пользователей с preferring reduced motion — убираем анимации */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Конкретные компоненты — более точный контроль */
+@media (prefers-reduced-motion: reduce) {
+  .carousel {
+    animation: none;
+    transition: none;
+  }
+
+  .modal {
+    transform: none;
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .loading-spinner {
+    animation: none;
+  }
+}
+```
+
+### JavaScript проверка prefers-reduced-motion
+```javascript
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+if (prefersReducedMotion.matches) {
+  // Отключить JS-анимации, карусели, параллакс
+  disableAnimations();
+}
+
+prefersReducedMotion.addEventListener('change', (e) => {
+  if (e.matches) {
+    disableAnimations();
+  } else {
+    enableAnimations();
+  }
+});
+```
+
+### Что уменьшать при reduced motion
+| Элемент | Базовый вариант | При reduced motion |
+|---------|-----------------|-------------------|
+| Появление элементов | fade-in + slide-up | просто появление |
+| Карусель | автопрокрутка | статичные слайды, кнопки навигации |
+| Модалка | скольжение появления | мгновенное появление |
+| Кнопка ховер | сдвиг вверх | только смена цвета |
+| Загрузка | спиннер анимация | статичный индикатор |
+| Прокрутка | smooth scroll | мгновенный переход |
+
+---
+
+## 4. RTL/LTR и логические свойства
+
+### Направление текста
+```html
+<!-- LTR (по умолчанию) -->
+<html lang="ru" dir="ltr">
+
+<!-- RTL (арабский, иврит) -->
+<html lang="ar" dir="rtl">
+```
+
+### Логические свойства — замена физических
+| Физическое (LTR) | Логическое | RTL эквивалент |
+|------------------|------------|----------------|
+| `margin-left` | `margin-inline-start` | `margin-right` в RTL |
+| `margin-right` | `margin-inline-end` | `margin-left` в RTL |
+| `padding-left` | `padding-inline-start` | `padding-right` в RTL |
+| `padding-right` | `padding-inline-end` | `padding-left` в RTL |
+| `text-align: left` | `text-align: start` | `right` в RTL |
+| `text-align: right` | `text-align: end` | `left` в RTL |
+| `border-left` | `border-inline-start` | `border-right` в RTL |
+| `float: left` | `float: inline-start` | `right` в RTL |
+| `top` | `inset-block-start` | без изменений |
+| `bottom` | `inset-block-end` | без изменений |
+
+### Пример — карточка с логическими свойствами
+```css
+.c-card {
+  /* Вместо padding-left/right */
+  padding-inline-start: var(--space-md);
+  padding-inline-end: var(--space-md);
+  padding-block-start: var(--space-lg);
+  padding-block-end: var(--space-lg);
+
+  /* Вместо margin-left/right */
+  margin-inline-start: auto;
+
+  /* Вместо border-left */
+  border-inline-start: 4px solid var(--color-primary);
+
+  /* Вместо text-align */
+  text-align: start;
+
+  direction: ltr;  /* или rtl, или inherit */
+}
+```
+
+### Пример — навигация с RTL support
+```html
+<nav class="c-nav" dir="ltr">
+  <ul class="c-nav__list">
+    <li class="c-nav__item"><a href="#" class="c-nav__link">Главная</a></li>
+    <li class="c-nav__item"><a href="#" class="c-nav__link">О нас</a></li>
+    <li class="c-nav__item"><a href="#" class="c-nav__link">Контакты</a></li>
+  </ul>
+</nav>
+```
+
+```css
+.c-nav__list {
+  display: flex;
+  gap: var(--space-md);
+  padding-inline-start: 0;  /* Вместо padding-left: 0 */
+  list-style: none;
+}
+
+.c-nav__link {
+  padding-inline-start: var(--space-sm);  /* Вместо padding-left */
+  padding-inline-end: var(--space-sm);    /* Вместо padding-right */
+}
+
+.c-nav__link::before {
+  content: '';
+  margin-inline-end: var(--space-xs);  /* Вместо margin-right */
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  background: var(--color-primary);
+  border-radius: 50%;
+}
+
+/* RTL вариант — через [dir="rtl"] */
+[dir="rtl"] .c-nav__link::before {
+  margin-inline-end: 0;
+  margin-inline-start: var(--space-xs);
+}
+```
+
+### Writing modes
+```css
+/* Горизонтальный текст (по умолчанию) */
+.writing-mode-horizontal {
+  writing-mode: horizontal-tb;
+}
+
+/* Вертикальный текст, справа налево (японский традиционный) */
+.writing-mode-vertical-rl {
+  writing-mode: vertical-rl;
+}
+
+/* Вертикальный текст, слева направо */
+.writing-mode-vertical-lr {
+  writing-mode: vertical-lr;
+}
+```
+
+---
+
+## 5. Зум текста (200%+)
+
+### Требование WCAG 1.4.4
+Текст должен масштабироваться до 200% без потери contenта и функциональности.
+
+### Не блокировать зум
+```html
+<!-- Плохо — блокирует зум на мобильных -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+<!-- Хорошо — разрешает зум -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+```
+
+### Единицы измерения для зума
+```css
+/* Плохо — фиксированные пиксели не масштабируются хорошо */
+.bad-text {
+  font-size: 16px;
+  line-height: 24px;
+  padding: 20px;
+}
+
+/* Хорошо — rem, em, % масштабируются с настройками браузера */
+.good-text {
+  font-size: 1rem;           /* = 16px по умолчанию, масштабируется */
+  line-height: 1.6;          /* без единиц — пропорционально */
+  padding: 1rem;             /* масштабируется с текстом */
+  max-width: 60ch;           /* символы — оптимальная длина строки */
+}
+```
+
+### Контейнеры для зума
+```css
+.c-card {
+  /* Мини- и максимальные размеры позволяют контейнеру расти с текстом */
+  min-width: 200px;
+  max-width: 100%;
+  width: 100%;
+
+  /* padding в rem — масштабируется */
+  padding: 1.5rem;
+
+  /* overflow — не скрывает текст при увеличении */
+  overflow: visible;
+}
+```
+
+### Изображения и зум
+```css
+img {
+  max-width: 100%;
+  height: auto;
+  /* Изображение не выйдет за границы контейнера при зуме */
+}
+```
+
+---
+
+## 6. Доступные формы
+
+### Семантический HTML + ARIA
+```html
+<form class="c-form" novalidate>
+  <fieldset class="c-form__fieldset">
+    <legend class="c-form__legend">Личные данные</legend>
+
+    <div class="c-form__field">
+      <label for="name" class="c-form__label">Имя</label>
+      <input
+        type="text"
+        id="name"
+        name="name"
+        class="c-form__input"
+        required
+        aria-required="true"
+        aria-describedby="name-hint"
+      >
+      <span id="name-hint" class="c-form__hint">Введите ваше полное имя</span>
+    </div>
+
+    <div class="c-form__field">
+      <label for="email" class="c-form__label">Email</label>
+      <input
+        type="email"
+        id="email"
+        name="email"
+        class="c-form__input"
+        required
+        aria-invalid="false"
+      >
+      <span id="email-error" class="c-form__error" role="alert" aria-live="polite"></span>
+    </div>
+
+    <div class="c-form__field">
+      <label class="c-form__label">Пол</label>
+      <div class="c-form__radiogroup" role="radiogroup" aria-label="Пол">
+        <label class="c-form__radio">
+          <input type="radio" name="gender" value="male">
+          Мужской
+        </label>
+        <label class="c-form__radio">
+          <input type="radio" name="gender" value="female">
+          Женский
+        </label>
+      </div>
+    </div>
+  </fieldset>
+
+  <button type="submit" class="c-btn c-btn--primary">Отправить</button>
+</form>
+```
+
+### Стили формы с фокусом и валидацией
+```css
+.c-form__label {
+  display: block;
+  margin-block-end: var(--space-xs);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.c-form__input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--fs-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+
+  /* Фокус — заметный для клавиатуры */
+  &:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+    border-color: var(--color-primary);
+  }
+
+  /* Состояние ошибки */
+  &[aria-invalid="true"] {
+    border-color: var(--color-error);
+  }
+
+  &[aria-invalid="true"]:focus-visible {
+    outline-color: var(--color-error);
+  }
+}
+
+.c-form__hint {
+  font-size: var(--fs-xs);
+  color: var(--color-muted);
+  margin-block-start: var(--space-xs);
+}
+
+.c-form__error {
+  font-size: var(--fs-xs);
+  color: var(--color-error);
+  margin-block-start: var(--space-xs);
+}
+
+.c-form__radio {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-end: var(--space-md);
+  cursor: pointer;
+}
+
+.c-form__radio input {
+  margin-inline-end: var(--space-xs);
+}
+```
+
+### Валидация через :has() (урок 25)
+```css
+/* Показываем ошибку когда инпут невалидный и не в фокусе */
+.c-form__field:has(input:invalid:not(:focus-visible)) .c-form__error {
+  display: block;
+}
+
+/* Зеленая граница когда валидно */
+.c-form__field:has(input:valid) .c-form__input {
+  border-color: var(--color-success);
+}
+```
+
+---
+
+## 7. Доступная навигация
+
+### Семантическая навигация
+```html
+<nav class="c-nav" aria-label="Основная навигация">
+  <ul class="c-nav__list">
+    <li class="c-nav__item">
+      <a href="#" class="c-nav__link" aria-current="page">Главная</a>
+    </li>
+    <li class="c-nav__item">
+      <a href="#" class="c-nav__link">Каталог</a>
+    </li>
+    <li class="c-nav__item">
+      <a href="#" class="c-nav__link">О нас</a>
+    </li>
+    <li class="c-nav__item">
+      <a href="#" class="c-nav__link">Контакты</a>
+    </li>
+  </ul>
+</nav>
+```
+
+### Hamburget menu с ARIA
+```html
+<button
+  class="c-nav__toggle"
+  aria-expanded="false"
+  aria-controls="nav-menu"
+  aria-label="Открыть навигацию"
+>
+  <span class="c-nav__toggle-icon" aria-hidden="true"></span>
+</button>
+
+<nav id="nav-menu" class="c-nav__menu" hidden>
+  <ul class="c-nav__list">...</ul>
+</nav>
+```
+
+```javascript
+const toggle = document.querySelector('.c-nav__toggle');
+const menu = document.querySelector('#nav-menu');
+
+toggle.addEventListener('click', () => {
+  const expanded = toggle.getAttribute('aria-expanded') === 'true';
+  toggle.setAttribute('aria-expanded', !expanded);
+  menu.hidden = !menu.hidden;
+
+  if (!expanded) {
+    // Переместить фокус в первое место навигации
+    const firstLink = menu.querySelector('a');
+    if (firstLink) firstLink.focus();
+  }
+});
+
+// Закрытие по ESC
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !menu.hidden) {
+    toggle.setAttribute('aria-expanded', 'false');
+    menu.hidden = true;
+    toggle.focus();
+  }
+});
+```
+
+---
+
+## 8. Чек-лист доступности (a11y)
+
+| Критерий | Как проверить | Инструмент |
+|----------|---------------|------------|
+| Контраст текста ≥ 4.5:1 (обычный), ≥ 3:1 (крупный) | DevTools цвет → контраст | DevTools / WebAIM |
+| Конtrast графики ≥ 3:1 | Проверка иконок, границ | DevTools |
+| Цвет не единственный носитель информации | Иконки + текст + цвет | Код review |
+| :focus-visible стили на всех интерактивных элементах | Tab по странице | Ручное тестирование |
+| Outline не удалён глобально | Поиск `outline: none` | Код review |
+| Skip-link при загрузке страницы | Tab с первой клавиши | Ручное тестирование |
+| Фокус-ловушка в модалках | Tab внутри модалки не уходит | Ручное тестирование |
+| ESC закрывает модалки | Нажатие ESC | Ручное тестирование |
+| prefers-reduced-motion respected | Отключить анимации в ОС | Ручное тестирование |
+| RTL поддерживает логические свойства | [dir="rtl"] тестирование | Ручное тестирование |
+| Зум 200% не ломает вёрстку | Ctrl/+ в браузере | Ручное тестирование |
+| Формы имеют label / aria-label | Проверка полей | DevTools Accessibility |
+| ARIA-live для динамических ошибок | Обновление ошибок без перезагрузки | Ручное тестирование |
+| alt текст на изображениях | Проверка img | DevTools / axe |
+| Семантический HTML (nav, main, header, footer) | Структура страницы | Код review |
+
+---
+
+## 9. Чек-лист интернационализации (i18n)
+
+| Критерий | Как проверить |
+|----------|---------------|
+| `lang` атрибут на `<html>` | `<html lang="ru">` |
+| `dir` атрибут для RTL языков | `<html dir="rtl">` |
+| Логические свойства вместо физических | `margin-inline-start` вместо `margin-left` |
+| Текст не вшит в CSS | kein `content: 'Русский текст'` в CSS |
+| flex-direction: row-reverse не используется для RTL | Логические свойства обращают порядок |
+| Шрифты поддерживают кириллицу/арабскую вёрстку | font-family с fallback |
+| Форматы дат/чисел локализованы | Intl API в JS |
+| Медиа-запросы для writing modes | `writing-mode: vertical-rl` при 필요 |
+
+---
+
+## 10. Комплексный пример: доступная карточка товара с RTL
+
+```html
+<!DOCTYPE html>
+<html lang="ru" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Доступный интерфейс</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Skip link -->
+  <a href="#main" class="skip-link">Перейти к основному содержимому</a>
+
+  <header class="c-header">
+    <nav class="c-nav" aria-label="Основная навигация">
+      <ul class="c-nav__list">
+        <li class="c-nav__item"><a href="#" class="c-nav__link" aria-current="page">Главная</a></li>
+        <li class="c-nav__item"><a href="#" class="c-nav__link">Каталог</a></li>
+        <li class="c-nav__item"><a href="#" class="c-nav__link">Контакты</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="main" class="c-main">
+    <article class="c-card">
+      <div class="c-card__media">
+        <img src="product.jpg" alt="Смартфон с камерой" class="c-card__img">
+        <span class="c-card__badge">Новинка</span>
+      </div>
+      <div class="c-card__body">
+        <h2 class="c-card__title">Смартфон XYZ</h2>
+        <p class="c-card__text">Описание товара с характеристиками...</p>
+        <div class="c-card__price">29 990 ₽</div>
+      </div>
+      <footer class="c-card__footer">
+        <button class="c-btn c-btn--primary c-btn--lg">В корзину</button>
+      </footer>
+    </article>
+  </main>
+</body>
+</html>
+```
+
+```css
+/* styles.css — доступные стили */
+@layer base, components;
+
+@layer base {
+  :root {
+    --color-bg: oklch(0.98 0.001 285);
+    --color-text: oklch(0.21 0.006 285);
+    --color-primary: oklch(0.62 0.22 264);
+    --color-border: oklch(0.88 0.006 285);
+    --space-xs: 0.25rem;
+    --space-sm: 0.5rem;
+    --space-md: 1rem;
+    --space-lg: 1.5rem;
+    --radius-md: 0.5rem;
+    --fs-base: 1rem;
+    --fs-lg: 1.25rem;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: var(--fs-base);
+    line-height: 1.6;
+    color: var(--color-text);
+    background: var(--color-bg);
+    margin: 0;
+  }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* RTL через data-атрибут */
+  [dir="rtl"] {
+    /* Логические свойства автоматически отзеркалятся */
+  }
+}
+
+@layer components {
+  .skip-link {
+    position: absolute;
+    top: -100px;
+    left: 0;
+    background: var(--color-primary);
+    color: white;
+    padding: var(--space-sm) var(--space-md);
+    z-index: 1000;
+    text-decoration: none;
+    border-radius: 0 0 var(--radius-md) 0;
+  }
+
+  .skip-link:focus {
+    top: 0;
+  }
+
+  .c-nav__list {
+    display: flex;
+    gap: var(--space-md);
+    padding-inline-start: 0;
+    margin: 0;
+    list-style: none;
+  }
+
+  .c-nav__link {
+    padding-inline-start: var(--space-sm);
+    padding-inline-end: var(--space-sm);
+    padding-block: 0.5rem;
+    color: var(--color-text);
+    text-decoration: none;
+    border-radius: var(--radius-md);
+    transition: background 0.2s;
+  }
+
+  .c-nav__link:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+    background: color-mix(in oklch, var(--color-primary), white 90%);
+  }
+
+  .c-nav__link[aria-current="page"] {
+    font-weight: 600;
+    background: var(--color-primary);
+    color: white;
+  }
+
+  .c-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding: var(--space-lg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: white;
+    max-width: 400px;
+    margin: var(--space-md);
+  }
+
+  .c-card__media {
+    aspect-ratio: 16 / 9;
+    width: 100%;
+    background: oklch(0.97 0.001 285);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .c-card__img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .c-card__badge {
+    position: absolute;
+    inset-block-start: var(--space-xs);
+    inset-inline-start: var(--space-xs);
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: var(--radius-md);
+    background: var(--color-primary);
+    color: white;
+  }
+
+  .c-card__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    flex: 1;
+  }
+
+  .c-card__title {
+    font-size: var(--fs-lg);
+    font-weight: 600;
+    margin: 0;
+    color: var(--color-text);
+  }
+
+  .c-card__text {
+    font-size: var(--fs-base);
+    color: oklch(0.45 0.01 285);
+    margin: 0;
+  }
+
+  .c-card__price {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin-top: auto;
+  }
+
+  .c-card__footer {
+    display: flex;
+    gap: var(--space-sm);
+    margin-top: auto;
+  }
+
+  .c-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--fs-base);
+    font-weight: 600;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    min-height: 44px;
+    transition: background 0.2s, transform 0.1s;
+  }
+
+  .c-btn--primary {
+    background: var(--color-primary);
+    color: white;
+  }
+
+  .c-btn--primary:hover {
+    background: oklch(0.55 0.22 264);
+  }
+
+  .c-btn--primary:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-primary), white 50%);
+  }
+
+  .c-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+```
+
+---
+
+## 11. Полезные ресурсы
+
+- [WCAG 2.1 — ВС Consortium](https://www.w3.org/WAI/WCAG21/quickref/)
+- [WCAG 2.2 — ВС Consortium](https://www.w3.org/WAI/WCAG22/quickref/)
+- [MDN: :focus-visible](https://developer.mozilla.org/en-US/docs/Web/CSS/:focus-visible)
+- [MDN: CSS logical properties](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_logical_properties_and_values)
+- [MDN: prefers-reduced-motion](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion)
+- [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/)
+- [axe-core — автоматизированное тестирование доступности](https://www.deque.com/axe/)
+- [Lighthouse — аудит доступности](https://developer.chrome.com/docs/lighthouse/accessibility/)
+- [Inclusive Components — 헤дрон](https://inclusive-components.design/)
+- [A11y Project](https://www.a11yproject.com/)
+- [W3C ARIA Authoring Practices](https://www.w3.org/WAI/ARIA/apg/)
+
+---
+
+## 12. Ключевые выводы
+
+1. **Контраст WCAG AA** — 4.5:1 обычный текст, 3:1 крупный текст, 3:1 графика/интерфейс
+2. **Цвет не единственный носитель** — добавляйте иконки, текст, узоры к информации
+3. **:focus-visible** —outline только для навигации клавиатурой, не удаляйте outline глобально
+4. **Skip-link** — кнопка "Перейти к содержимому" в начале страницы
+5. **prefers-reduced-motion** — отключайте анимации для пользователей сvestibular расстройствами
+6. **Логические свойства** — margin-inline-start, padding-inline-end, inset-*, text-align: start/end
+7. **RTL** — [dir="rtl"] автоматически зеркалит логические свойства
+8. **Зум 200%** — rem, em, ch единицы, запрет maximum-scale=1.0, контейнеры с min/max
+9. **Фокус-ловушка** — Tab внутри модалки не выходит за границы, ESC закрывает
+10. **ARIA-live** — динамические сообщения об ошибках объявляются скринридерам
+
+*Следующий урок: 31_Tools.txt — Инструменты: PostCSS, препроцессоры, CSS Modules, CSS-in-JS, линтинг, визуальная регрессия*

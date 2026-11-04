@@ -1,0 +1,498 @@
+# Урок 19: Отладка и совместимость — DevTools, вычисленные стили, прогрессивное улучшение
+
+## Цели урока
+- Освоить Chrome/Firefox DevTools для отладки CSS (Elements, Computed, Styles, Layout, Animations)
+- Понять, как читать вычисленные стили (getComputedStyle, Computed вкладка)
+- Научиться отлаживать каскад, специфичность и наследование
+- Применять прогрессивное улучшение с @supports и feature queries
+- Обеспечить кроссбраузерную совместимость с фолбэками
+
+---
+
+## 1. DevTools — панель Elements и Styles
+
+### Инспектор элементов (Elements)
+- **Ctrl+Shift+C** (Cmd+Shift+C на Mac) — выбрать элемент на странице
+- Панель **Styles** — все правила, применяемые к элементу, с приоритетами
+- Панель **Computed** — итоговые значения после каскада, наследования и медиа-запросов
+- Переключение псевдоклассов `:hover`, `:focus`, `:active`, `:visited` — стрелка `:hov` рядом с селектором
+
+### Редактирование стилей вживую
+```css
+/* В DevTools можно править прямо в панели Styles — изменения мгновенны, но не сохраняются */
+.card {
+  background: #2563eb;      /* измени на оранжевый — увидишь сразу */
+  padding: 2rem;            /* попробуй другие значения */
+}
+```
+
+### Панель Layout
+- Визуализация Grid (иконка grid рядом с `display: grid`)
+- Визуализация Flexbox (иконка flex)
+- Показ gap, track sizes, выравнивания
+
+### Панель Animations
+- Все запущенные анимации и transition
+- Контроль скорости (slow motion), перемотка, пауза
+- Badge GPU — анимация на compositing потоке
+
+### Панель Rendering
+- Эмуляция `prefers-color-scheme` (light/dark)
+- Эмуляция `prefers-reduced-motion`
+- Эмуляция `forced-colors`
+- Локальные шрифты, отрисовка边框
+
+---
+
+## 2. Вычисленные стили (Computed Styles)
+
+### Вкладка Computed в DevTools
+Показывает итоговое значение каждого свойства после применения:
+- Каскада (порядок правил)
+- Специфичности (вес селектора)
+- Наследования (от родителя)
+- `!important`
+- Встроенных стилей (`style=""`)
+
+```css
+/* Пример: какой цвет у элемента? */
+.card__title {
+  color: #111827;       /* своё правило */
+}
+.card {
+  color: #6b7280;       /* наследование от родителя, если кард не переопределяет */
+}
+```
+
+В Computed вкладке увидишь итоговый цвет и來源 (какой файл, какая строка).
+
+### getComputedStyle в JavaScript
+```javascript
+const card = document.querySelector('.card');
+
+// Все вычисленные стили (только для чтения)
+const computed = getComputedStyle(card);
+
+console.log(computed.color);           // rgb(17, 24, 39)
+console.log(computed.fontSize);        // 16px
+console.log(computed.display);         // flex
+console.log(computed.marginTop);       // 16px (или 0)
+
+// Прочитать конкретное свойство
+getComputedStyle(card)['background-color'];
+```
+
+### Разница: Styles vs Computed
+| Styles | Computed |
+|--------|----------|
+| Исходные правила из CSS | Итоговые значения после каскада |
+| Можно редактировать | Только для чтения |
+| Показывает source файл и строку | Показывает итоговое значение (px, rgb и т.д.) |
+| Включает неиспользуемые переопределения | Только то, что реально применяется |
+
+---
+
+## 3. Отладка каскада и специфичности
+
+### Специфичность — вес селектора
+Рассчитывается как quatre числа (A, B, C, D):
+- **A**: ID селекторы (`#header`) — 1,0,0,0
+- **B**: Классы, атрибуты, псевдоклассы (`.btn`, `[type="text"]`, `:hover`) — 0,1,0,0
+- **C**: Элементы (теги) и псевдоэлементы (`div`, `::before`) — 0,0,1,0
+- **D**: Универсальный (`*`) и комбинаторы — 0,0,0,1
+
+### Калькулятор специфичности
+```css
+/* 0,1,0,0 — один класс */
+.btn { color: red; }
+
+/* 0,2,0,0 — два класса */
+.btn.primary { color: blue; } /* выигрывает у .btn */
+
+/* 0,0,1,0 — один тег */
+div { color: green; }
+
+/* 0,1,1,0 — класс + тег */
+.btn div { color: orange; } /* выигрывает у .btn */
+
+/* 1,0,0,0 — ID */
+#header { color: purple; } /* выигрывает у любого количества классов */
+
+/* 1,0,0,0 + !important — побеждает всё (кроме пользовательского !important) */
+.btn { color: red !important; }
+```
+
+### Отладка специфичности в DevTools
+- В панели Styles перечеркнутые стили — проиграли более специфичному селектору
+- Наведи на перечеркнутый элемент — увидишь, кто выиграл
+- Вкладка Computed показывает итоговое значение и его источник
+
+```css
+/* Пример отладки */
+.card {
+  color: red;      /* 0,1,0,0 */
+}
+
+.card.primary {
+  color: blue;     /* 0,2,0,0 — выигрывает */
+}
+
+#featured .card {
+  color: green;    /* 1,1,0,0 — выигрывает у обоих выше */
+}
+```
+
+### !important — крайняя мера
+```css
+/* Плохо: !important трудно переопределить */
+.btn { background: red !important; }
+
+/* Хорошо: увеличь специфичность селектора */
+.card .btn { background: red; }  /* 0,2,0,0 против 0,1,0,0 */
+```
+
+---
+
+## 4. Box Model и Layout отладка
+
+### Вкладка Box Model в DevTools
+Показывает: content, padding, border, margin для элемента.
+
+```css
+.card {
+  width: 300px;
+  padding: 1rem;
+  border: 2px solid #000;
+  margin: 1rem;
+  box-sizing: border-box;  /* padding и border включаются в width */
+}
+```
+
+- **content-box** (по умолчанию): width = только содержимое, padding/border добавляются сверх
+- **border-box**: width включает padding и border (рекомендуется глобально)
+
+```css
+/* Глобальный сброс — рекомендуется */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+```
+
+### Layout Thrashing (forced reflow)
+Чтение и чередование чтения/записи layout-свойств заставляет браузер пересчитывать геометрию много раз.
+
+```javascript
+// ПЛОХО — Layout Thrashing
+for (let i = 0; i < items.length; i++) {
+  items[i].style.width = items[i].offsetWidth + 'px'; // чтение + запись в цикле
+}
+
+// ХОРОШО — сначала читаем все, потом записываем
+const widths = items.map(item => item.offsetWidth);
+items.forEach((item, i) => {
+  item.style.width = widths[i] + 'px';
+});
+```
+
+---
+
+## 5. Прогрессивное улучшение и @supports
+
+### @supports — проверка поддержки свойства
+```css
+/* Базовый стиль — работает везде */
+.card {
+  display: flex;
+  gap: 1rem;
+}
+
+/* Улучшение — только если браузер поддерживает subgrid */
+@supports (display: subgrid) {
+  .card {
+    display: subgrid;
+    grid-column: span 3;
+  }
+}
+
+/* Проверка нескольких условий */
+@supports (display: grid) and (gap: 1rem) {
+  .gallery {
+    display: grid;
+    gap: 1rem;
+  }
+}
+
+/* Проверка отрицания — НЕ поддерживается */
+@supports not (display: masonry) {
+  .gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+}
+```
+
+### Feature queries для цветовых функций
+```css
+/* Fallback для старых браузеров */
+.btn {
+  background: #2563eb;
+}
+
+/* Современный вариант с OKLCH */
+@supports (color: oklch(0 0 0)) {
+  .btn {
+    background: oklch(0.62 0.22 264);
+  }
+}
+
+/* color-mix */
+.card {
+  border: 1px solid #e5e7eb;
+}
+
+@supports (background: color-mix(in oklch, #000, #fff)) {
+  .card {
+    border-color: color-mix(in oklch, #e5e7eb, black 10%);
+  }
+}
+```
+
+### Прогрессивное улучшение — пример с Grid
+```css
+/* Mobile-first, базовый layout — Flexbox, работает везде */
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.card {
+  flex: 1 1 250px;
+  min-width: 200px;
+}
+
+/* Улучшение — Grid для современных браузеров */
+@supports (display: grid) {
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  }
+
+  .card {
+    flex: none;  /* сбрасываем flex-стиль */
+  }
+}
+```
+
+### @supports с селекторами (селекторные queries)
+```css
+/* Проверка поддержки :has() */
+@supports selector(:has(*)) {
+  .card:has(img) {
+    padding: 0;  /* если есть изображение — убираем внутренние отступы */
+  }
+}
+```
+
+---
+
+## 6. Кроссбраузерная совместимость — фолбэки и префиксы
+
+### Вендорные префиксы (исторически, сейчас редко нужны)
+```css
+/* Сегодня большинство свойств не требуют префиксов */
+.card {
+  border-radius: 8px;           /* без -webkit- */
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  transition: all 0.2s ease;    /* без -webkit- */
+}
+
+/* Если нужно поддерживать очень старые браузеры */
+.card {
+  -webkit-border-radius: 8px;
+  -moz-border-radius: 8px;
+  border-radius: 8px;
+}
+```
+
+### Фолбэки для цветов и единиц
+```css
+/* CSS-переменные — фолбэк */
+.btn {
+  background: #2563eb;                    /* старые браузеры */
+  background: var(--color-primary);       /* современные */
+}
+
+/* clamp() — фолбэк фиксированным размером */
+h1 {
+  font-size: 2rem;                        /* старые браузеры */
+  font-size: clamp(1.5rem, 5vw, 3rem);    /* современные */
+}
+
+/* aspect-ratio — фолбэк с padding-хаком */
+.media {
+  aspect-ratio: 16 / 9;                   /* современные */
+  /* Для старых — обёртка с padding-bottom: 56.25% + абсолютное позиционирование */
+}
+```
+
+### Can I Use — основной ресурс
+https://caniuse.com/ — проверяй поддержку свойств перед использованием в продакшене.
+
+### Полифилы и препроцессоры
+- **PostCSS** + `autoprefixer` — автоматически добавляет вендорные префиксы
+- **postcss-preset-env** — позволяет использовать новые свойства с авто-фолбэками
+
+---
+
+## 7. Отладка специфичных проблем
+
+### Элемент не получает стиль — возможные причины
+1. Селектор не совпадает (опечатка в классе)
+2. Более специфичный селектор переопределяет (проверь перечёркивание в DevTools)
+3. `!important` в другом правиле
+4. CSS не подгружается (проверь Network → styles.css, статус 200)
+5. Медиа-запрос не срабатывает (проверь размер экрана)
+6. Селектор внутри `@layer` или `@scope` с низким приоритетом
+
+### Стили не применяются к псевдоэлементам
+```css
+/* ::before и ::after требуют content */
+.card::before {
+  content: "";    /* без этого псевдоэлемент не отобразится */
+  display: block;
+  width: 10px;
+  height: 10px;
+  background: red;
+}
+```
+
+### z-index не работает
+```css
+/* z-index работает только на позиционированных элементах */
+.card {
+  position: relative;  /* или absolute, fixed, sticky */
+  z-index: 10;
+}
+```
+
+### Конфликт каскадных слоев (@layer)
+```css
+@layer reset, base, components;
+
+@layer reset {
+  * { margin: 0; padding: 0; }
+}
+
+@layer components {
+  .btn { background: blue; }  /* переопределяет reset, так как componentes позже */
+}
+```
+
+---
+
+## 8. Комплексный пример: отладка карточки
+
+```html
+<div class="card debug-card">
+  <img src="photo.jpg" alt="Фото" class="card__img">
+  <div class="card__body">
+    <h3 class="card__title">Заголовок карточки</h3>
+    <p class="card__text">Описание содержимого карточки.</p>
+    <button class="btn">Подробнее</button>
+  </div>
+</div>
+```
+
+```css
+.card {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem;
+  border: 1px solid oklch(0.88 0.006 285);
+  border-radius: 1rem;
+  background: white;
+}
+
+.card__img {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  border-radius: 0.75rem;
+}
+
+.card__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.card__text {
+  font-size: 0.875rem;
+  color: oklch(0.55 0.01 285);
+}
+
+.btn {
+  align-self: flex-start;
+  padding: 0.5rem 1rem;
+  background: oklch(0.62 0.22 264);
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+```
+
+### Задачи отладки (практическая часть)
+1. Открой DevTools → Elements → выбери `.card__title`
+2. Посмотри вкладку **Computed** — какой итоговый `font-size` и `color`?
+3. Посмотри вкладку **Styles** — какие правила переопределяют цвет?
+4. Включи `:hover` на кнопке через панель `:hov` — изменился ли цвет?
+5. Проверь `box-sizing` — `border-box` или `content-box`?
+6. Измени `padding` в Styles — увидел ли ты изменения мгновенно?
+7. Проверь адаптивность — переключи устройство в Device Toolbar (Ctrl+Shift+M)
+
+---
+
+## 9. Чек-лист отладки и совместимости
+
+| Задача | Инструмент |
+|--------|------------|
+| Проверить итоговый стиль элемента | DevTools → Computed |
+| Найти, кто переопределил стиль | DevTools → Styles (перечёркивание) |
+| Проверить box-sizing | DevTools → Computed → box-sizing |
+| Отладить Grid/Flex | DevTools → Layout (иконка grid/flex) |
+| Проверить анимации | DevTools → Animations |
+| Эмулировать dark mode / reduced motion | DevTools → Rendering |
+| Проверить поддержку свойства | Can I Use / @supports |
+| Проверить контраст | DevTools → цвет в палитре |
+| Проверить каскадные слои | DevTools → Styles (@layer) |
+
+---
+
+## 10. Полезные ресурсы
+
+- [Chrome DevTools — CSS overview](https://developer.chrome.com/docs/devtools/css/)
+- [MDN: Using feature queries](https://developer.mozilla.org/en-US/docs/Web/CSS/@supports)
+- [MDN: getComputedStyle](https://developer.mozilla.org/en-US/docs/Web/API/Window/getComputedStyle)
+- [Can I Use](https://caniuse.com/)
+- [CSS Specificity Calculator](https://specificity.keegan.st/)
+- [Webhint](https://webhint.io/) — линтинг доступности и совместимости
+- [BrowserStack](https://www.browserstack.com/) — тестирование на реальных браузерах
+
+---
+
+## 11. Ключевые выводы
+
+1. **DevTools — основной инструмент отладки**: Styles для исходных правил, Computed для итоговых значений, Layout для Grid/Flex, Animations для анимаций
+2. **getComputedStyle** в JS позволяет читать итоговые стили (только для чтения)
+3. **Специфичность** — перечёркнутые стили в DevTools показывают, кто выиграл каскад
+4. **box-sizing: border-box** глобально — избавляет от многих проблем с размерами
+5. **@supports** — безопасный способ использовать новые свойства с фолбэками
+6. **Прогрессивное улучшение** — базовый опыт работает везде, улучшения — для современных браузеров
+7. **Can I Use** — проверяй поддержку перед использованием в продакшене
+8. **Layout thrashing** — разделяй чтение и запись layout-свойств в циклах JS
+
+*Следующий урок: 20_Architecture_CSS.txt — Архитектура CSS: BEM/альтернативы, стили компонентов, дизайн-токены, сокращение конфликтов*

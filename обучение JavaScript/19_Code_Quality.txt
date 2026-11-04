@@ -1,0 +1,581 @@
+# Урок 19: Code Quality — Линтеры, Форматтеры, Тесты, CI/CD, Документация
+
+## 🎯 Цели урока
+- Настроить ESLint + Prettier для единого стиля кода
+- Понять виды тестов: unit, integration, e2e
+- Написать тесты на Vitest + Testing Library
+- Настроить Git Hooks (Husky + lint-staged)
+- Понять основы CI/CD (GitHub Actions)
+- Научиться документировать код (JSDoc, TypeDoc)
+
+---
+
+## 1. ESLint — статический анализ кода
+
+### Установка и базовая настройка
+
+```bash
+npm init -y
+npm install -D eslint @eslint/js globals
+npx eslint --init
+```
+
+### Современный flat config (eslint.config.js, ESLint 9+)
+
+```javascript
+// eslint.config.js
+import js from '@eslint/js';
+import globals from 'globals';
+
+export default [
+  // Игнорируемые файлы
+  { ignores: ['dist/', 'node_modules/', '*.config.js'] },
+
+  // Базовые рекомендации
+  js.configs.recommended,
+
+  // Настройки для браузера + Node.js + ES2022
+  {
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        ...globals.es2022
+      }
+    },
+    rules: {
+      // Строгость
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      'no-undef': 'error',
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
+
+      // Best practices
+      'prefer-const': 'error',
+      'no-var': 'error',
+      'prefer-arrow-callback': 'error',
+      'prefer-template': 'error',
+      'object-shorthand': 'error',
+      'array-callback-return': 'error',
+
+      // Сложность
+      'max-depth': ['warn', 4],
+      'max-lines-per-function': ['warn', 50],
+      'complexity': ['warn', 10],
+
+      // Стиль
+      'quotes': ['error', 'single', { avoidEscape: true }],
+      'semi': ['error', 'always'],
+      'comma-dangle': ['error', 'always-multiline']
+    }
+  },
+
+  // Тестовые файлы — другие globals
+  {
+    files: ['**/*.test.js', '**/*.spec.js'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node, ...globals.jest }
+    }
+  }
+];
+```
+
+### Запуск
+
+```bash
+# Проверка
+npx eslint src/
+
+# Автоисправление
+npx eslint src/ --fix
+
+# В package.json scripts
+"scripts": {
+  "lint": "eslint src/",
+  "lint:fix": "eslint src/ --fix"
+}
+```
+
+---
+
+## 2. Prettier — форматирование
+
+### Установка
+
+```bash
+npm install -D prettier eslint-config-prettier eslint-plugin-prettier
+```
+
+### Конфиг (.prettierrc)
+
+```json
+{
+  "semi": true,
+  "singleQuote": true,
+  "trailingComma": "es5",
+  "printWidth": 100,
+  "tabWidth": 2,
+  "useTabs": false,
+  "bracketSpacing": true,
+  "arrowParens": "avoid",
+  "endOfLine": "lf"
+}
+```
+
+### Игнор (.prettierignore)
+
+```
+dist/
+node_modules/
+*.md
+*.yml
+*.yaml
+package-lock.json
+```
+
+### Интеграция с ESLint (flat config)
+
+```javascript
+// eslint.config.js (добавить в массив)
+import pluginPrettier from 'eslint-plugin-prettier';
+import configPrettier from 'eslint-config-prettier';
+
+export default [
+  // ... предыдущие конфиги
+  {
+    plugins: { prettier: pluginPrettier },
+    rules: {
+      'prettier/prettier': 'error'
+    }
+  },
+  configPrettier // отключает конфликтующие правила
+];
+```
+
+---
+
+## 3. TypeScript + ESLint (если используете TS)
+
+```bash
+npm install -D typescript @typescript-eslint/eslint-plugin @typescript-eslint/parser
+```
+
+```javascript
+// eslint.config.js
+import tseslint from 'typescript-eslint';
+
+export default tseslint.config(
+  { ignores: ['dist/'] },
+  ...tseslint.configs.recommended,
+  {
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }]
+    }
+  }
+);
+```
+
+---
+
+## 4. Тестирование
+
+### Виды тестов
+
+| Тип | Область | Скорость | Инструменты |
+|-----|---------|----------|-------------|
+| **Unit** | Функция/модуль | Очень быстро | Vitest, Jest |
+| **Integration** | Несколько модулей | Быстро | Vitest, Testing Library |
+| **E2E** | Весь пользовательский флоу | Медленно | Playwright, Cypress |
+
+### Vitest — современный тест-раннер
+
+```bash
+npm install -D vitest @testing-library/dom jsdom @vitest/coverage-v8
+```
+
+```javascript
+// vitest.config.js
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    include: ['src/**/*.test.{js,ts}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 70,
+        statements: 80
+      }
+    }
+  }
+});
+```
+
+### Примеры тестов
+
+```javascript
+// utils/math.test.js
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { sum, multiply, asyncDivide } from './math.js';
+
+describe('math utilities', () => {
+  describe('sum', () => {
+    it('adds two numbers', () => {
+      expect(sum(2, 3)).toBe(5);
+    });
+
+    it('handles negative numbers', () => {
+      expect(sum(-1, 1)).toBe(0);
+    });
+
+    it('returns 0 for empty args', () => {
+      expect(sum()).toBe(0);
+    });
+  });
+
+  describe('asyncDivide', () => {
+    it('resolves with result', async () => {
+      const result = await asyncDivide(10, 2);
+      expect(result).toBe(5);
+    });
+
+    it('rejects on division by zero', async () => {
+      await expect(asyncDivide(10, 0)).rejects.toThrow('Division by zero');
+    });
+  });
+});
+
+// Mocking
+vi.mock('./api.js', () => ({
+  fetchUser: vi.fn()
+}));
+
+import { fetchUser } from './api.js';
+
+it('calls api with correct id', async () => {
+  fetchUser.mockResolvedValue({ id: 1, name: 'Alex' });
+  const user = await fetchUser(1);
+  expect(fetchUser).toHaveBeenCalledWith(1);
+  expect(user.name).toBe('Alex');
+});
+```
+
+### Testing Library (DOM компоненты)
+
+```bash
+npm install -D @testing-library/dom @testing-library/user-event
+```
+
+```javascript
+// components/Counter.test.js
+import { render, screen, fireEvent } from '@testing-library/dom';
+import { Counter } from './Counter.js';
+
+it('increments on click', () => {
+  render(<Counter initial={0} />);
+
+  expect(screen.getByText('Count: 0')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /increment/i }));
+
+  expect(screen.getByText('Count: 1')).toBeInTheDocument();
+});
+```
+
+---
+
+## 5. Git Hooks — Husky + lint-staged
+
+### Установка
+
+```bash
+npm install -D husky lint-staged
+npx husky install
+npx husky add .husky/pre-commit "npx lint-staged"
+```
+
+### package.json
+
+```json
+{
+  "lint-staged": {
+    "*.{js,ts,jsx,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,html}": [
+      "prettier --write"
+    ]
+  },
+  "scripts": {
+    "prepare": "husky install"
+  }
+}
+```
+
+### pre-commit хуки
+
+```
+.husky/
+└── pre-commit     → npx lint-staged
+```
+
+Теперь при `git commit`:
+1. Запускается `lint-staged`
+2. Проверяет/исправляет только **staged** файлы
+3. Если есть ошибки — коммит отменяется
+
+---
+
+## 6. CI/CD — GitHub Actions
+
+### Базовый workflow (.github/workflows/ci.yml)
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run tests
+        run: npm run test -- --run
+
+      - name: Build
+        run: npm run build
+
+  # Отдельный джоб для e2e (медленнее)
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      - name: Run Playwright
+        uses: microsoft/playwright-github-action@v1
+      - run: npm run test:e2e
+```
+
+### Статус-бейджи в README
+
+```markdown
+![CI](https://github.com/user/repo/workflows/CI/badge.svg)
+![Coverage](https://img.shields.io/codecov/c/github/user/repo)
+```
+
+---
+
+## 7. Документация — JSDoc + TypeDoc
+
+### JSDoc примеры
+
+```javascript
+/**
+ * Суммирует числа.
+ * @param {...number} numbers - Числа для суммирования
+ * @returns {number} Сумма
+ * @throws {TypeError} Если аргумент не число
+ * @example
+ * sum(1, 2, 3) // 6
+ */
+function sum(...numbers) {
+  return numbers.reduce((a, b) => a + b, 0);
+}
+
+/**
+ * Пользователь системы.
+ * @typedef {Object} User
+ * @property {string} id - UUID
+ * @property {string} name - Имя
+ * @property {string} [email] - Email (опционально)
+ * @property {'admin'|'user'} role - Роль
+ */
+
+/**
+ * Создаёт пользователя.
+ * @param {Omit<User, 'id'>} data - Данные без ID
+ * @returns {User} Новый пользователь
+ */
+function createUser(data) {
+  return { id: crypto.randomUUID(), ...data };
+}
+
+/**
+ * Асинхронно загружает пользователя.
+ * @param {string} id
+ * @returns {Promise<User|null>} Пользователь или null
+ * @async
+ */
+async function loadUser(id) {
+  const res = await fetch(`/api/users/${id}`);
+  return res.ok ? res.json() : null;
+}
+```
+
+### Генерация документации (TypeDoc)
+
+```bash
+npm install -D typedoc
+npx typedoc --out docs src/
+```
+
+```json
+// typedoc.json
+{
+  "entryPoints": ["src/index.ts"],
+  "out": "docs",
+  "theme": "default",
+  "name": "My Library",
+  "readme": "README.md",
+  "excludePrivate": true,
+  "excludeProtected": true
+}
+```
+
+---
+
+## 8. Полный чек-лист качества кода
+
+### Pre-commit (локально)
+- [ ] `npm run lint` — проходит без ошибок
+- [ ] `npm run test` — все тесты зелёные
+- [ ] `npm run build` — сборка успешна
+
+### PR проверки (CI)
+- [ ] Линт проходит
+- [ ] Тесты проходят (coverage > 80%)
+- [ ] Типы валидны (`tsc --noEmit`)
+- [ ] Сборка успешна
+- [ ] E2E тесты проходят (опционально)
+
+### Архитектурные правила
+- [ ] Нет циклических зависимостей (madge, depcruise)
+- [ ] Размер бандла в норме (webpack-bundle-analyzer)
+- [ ] Нет `any` без необходимости
+- [ ] Публичный API задокументирован
+
+### Инструменты для анализа
+
+```bash
+# Анализ зависимостей
+npx madge --circular --extensions js,ts src/
+npx depcruise src/ --output-type dot | dot -T png > graph.png
+
+# Размер бандла
+npm install -D webpack-bundle-analyzer
+# В webpack config: new BundleAnalyzerPlugin()
+
+# Неиспользуемый код
+npx knip  # или unimported
+```
+
+---
+
+## 9. Конфигурация редактора (VS Code)
+
+### .vscode/settings.json
+
+```json
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "eslint.validate": ["javascript", "typescript", "javascriptreact", "typescriptreact"],
+  "typescript.tsdk": "node_modules/typescript/lib"
+}
+```
+
+### .vscode/extensions.json (рекомендуемые расширения)
+
+```json
+{
+  "recommendations": [
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "vitest.explorer",
+    "bradlc.vscode-tailwindcss"
+  ]
+}
+```
+
+---
+
+## 10. Практика
+
+1. **Настройте проект с нуля**: `npm init` → ESLint + Prettier + Vitest + Husky
+2. **Добавьте coverage threshold**: 80% lines, 70% branches
+3. **Напишите unit-тесты** для утилит из уроков 5-9
+4. **Настройте GitHub Actions** для репозитория
+5. **Документируйте** 5 функций JSDoc, сгенерируйте TypeDoc
+6. **Добавьте dependabot** для обновлений зависимостей (`.github/dependabot.yml`)
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Решение |
+|--------|---------|
+| ESLint и Prettier конфликтуют | `eslint-config-prettier` отключает конфликтующие правила |
+| Тесты падают в CI, но проходят локально | Разное окружение — проверьте Node версия, `npm ci` |
+| Husky не работает | `npm run prepare` после клонирования, проверьте `.husky/pre-commit` исполняемый |
+| Coverage низкий, но код работает | Покройте edge cases, не стремитесь к 100% фанатично |
+| Линтер ругается на сгенерированный код | Добавьте в `ignores` или `/* eslint-disable */` |
+
+---
+
+## Контрольные вопросы
+
+1. В чём разница между `eslint:recommended` и `eslint:all`?
+2. Зачем нужен `eslint-config-prettier`?
+3. Что делает `lint-staged` и почему лучше, чем линтить весь проект?
+4. В чём разница между unit, integration, e2e тестами?
+5. Что такое `vi.mock` и когда он нужен?
+6. Зачем нужен `jsdom` environment в Vitest?
+7. Как настроить coverage thresholds?
+
+---
+
+## Дополнительное чтение
+
+- [ESLint Flat Config](https://eslint.org/docs/latest/use/configure/configuration-files-new)
+- [Prettier Options](https://prettier.io/docs/en/options.html)
+- [Vitest Guide](https://vitest.dev/guide/)
+- [Testing Library](https://testing-library.com/docs/)
+- [Husky](https://typicode.github.io/husky/)
+- [GitHub Actions](https://docs.github.com/en/actions)
+- [JSDoc](https://jsdoc.app/)
+- [TypeDoc](https://typedoc.org/)
+- [Conventional Commits](https://www.conventionalcommits.org/) — для авто-генерации changelog

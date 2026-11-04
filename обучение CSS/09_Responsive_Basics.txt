@@ -1,0 +1,547 @@
+# Урок 9: Responsive Basics — Media Queries, Container Queries, Responsive Images, Fluid Layouts
+
+## Цели урока
+- Освоить Media Queries: синтаксис, логические операторы, новые фичи Level 4/5
+- Понять Container Queries — новая парадигма адаптивности
+- Изучить Responsive Images: srcset, sizes, picture, art direction
+- Освоить Fluid Layouts без медиа-запросов: clamp, min/max, flex/grid auto-fit
+- Научиться писать мобильный-первый (mobile-first) CSS
+
+---
+
+## 1. Media Queries — полный синтаксис
+
+### Базовый синтаксис
+```css
+/* В CSS файле */
+@media (max-width: 768px) {
+  .container { padding: 1rem; }
+}
+
+/* В link теге */
+<link rel="stylesheet" media="(max-width: 768px)" href="mobile.css">
+
+/* В @import */
+@import url('mobile.css') (max-width: 768px);
+```
+
+### Медиа-типы
+```css
+@media screen { }           /* Экраны (default) */
+@media print { }            /* Печать */
+@media speech { }           /* Скринридеры */
+@media all { }              /* Все */
+```
+
+### Логические операторы
+```css
+/* AND */
+@media (min-width: 768px) and (max-width: 1024px) { }
+
+/* OR (запятая) */
+@media (max-width: 480px), (min-width: 1200px) { }
+
+/* NOT */
+@media not (hover: hover) { }  /* Устройства без hover */
+
+/* ONLY (для старых браузеров) */
+@media only screen and (max-width: 768px) { }
+```
+
+### Range синтаксис (Level 4) — чище и логичнее
+```css
+/* Старый */
+@media (min-width: 768px) and (max-width: 1024px) { }
+
+/* Новый Range — РЕКОМЕНДУЕМЫЙ */
+@media (768px <= width <= 1024px) { }
+@media (width >= 768px) { }
+@media (width < 768px) { }
+@media (480px <= width < 768px) { }
+```
+
+---
+
+## 2. Media Features — что можно запрашивать
+
+### Viewport размеры
+```css
+@media (width: 800px) { }           /* Точная ширина */
+@media (min-width: 800px) { }       /* Минимум */
+@media (max-width: 800px) { }       /* Максимум */
+@media (height >= 600px) { }        /* Высота */
+@media (aspect-ratio: 16/9) { }     /* Соотношение сторон */
+@media (orientation: portrait) { }  /* portrait / landscape */
+```
+
+### Устройство
+```css
+@media (resolution: 2dppx) { }          /* DPR */
+@media (min-resolution: 192dpi) { }     /* Retina */
+@media (pointer: coarse) { }            /* coarse (тач) / fine (мышь) */
+@media (hover: hover) { }               /* hover доступен / none */
+@media (any-pointer: coarse) { }        /* Любой ввод тач */
+@media (any-hover: hover) { }           /* Любой ввод имеет hover */
+```
+
+### Пользовательские предпочтения (Accessibility)
+```css
+@media (prefers-reduced-motion: reduce) { }
+@media (prefers-contrast: high) { }        /* high / low / no-preference */
+@media (prefers-color-scheme: dark) { }    /* dark / light / no-preference */
+@media (prefers-reduced-transparency: reduce) { }
+@media (forced-colors: active) { }         /* Windows High Contrast */
+@media (inverted-colors: inverted) { }     /* iOS инверсия цветов */
+```
+
+### Скриптинг и взаимодействие
+```css
+@media (scripting: enabled) { }       /* enabled / none / initial-only */
+@media (update: fast) { }             /* fast / slow / none */
+@media (overflow-block: scroll) { }   /* scroll / paged / none */
+```
+
+---
+
+## 3. Mobile-First vs Desktop-First
+
+### Mobile-First (РЕКОМЕНДУЕМЫЙ)
+```css
+/* Базовые стили — для мобильных */
+.container { padding: 1rem; }
+.grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+
+/* Таблет */
+@media (min-width: 640px) {
+  .container { padding: 1.5rem; }
+  .grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Десктоп */
+@media (min-width: 1024px) {
+  .container { padding: 2rem; max-width: 1200px; margin: 0 auto; }
+  .grid { grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+}
+
+/* Большой экран */
+@media (min-width: 1440px) {
+  .grid { grid-template-columns: repeat(4, 1fr); }
+}
+```
+
+### Преимущества Mobile-First
+1. Меньше кода — базовые стили простые
+2. Лучшая производительность на мобильных
+3. Прогрессивное улучшение
+4. Легче поддерживать
+
+### Breakpoints стратегия
+```css
+:root {
+  /* Контентные брейкпоинты, не устройства! */
+  --bp-sm: 480px;   /* Маленькие телефоны */
+  --bp-md: 768px;   /* Планшеты портрет */
+  --bp-lg: 1024px;  /* Планшеты ландшафт / маленькие ноуты */
+  --bp-xl: 1280px;  /* Десктоп */
+  --bp-2xl: 1536px; /* Большие экраны */
+}
+
+/* Использование */
+@media (min-width: 768px) { }  /* Явно */
+@media (min-width: var(--bp-md)) { }  /* Через переменную (не работает в @media!) */
+
+/* Решение: CSS переменные в контейнерных запросах или JS */
+```
+
+---
+
+## 4. Container Queries — адаптивность компонента
+
+### Включение контейнера
+```css
+.card-container {
+  container-type: inline-size;      /* Основной: ширина контейнера */
+  /* container-type: size; */       /* И ширина, и высота (редко) */
+  /* container-type: normal; */     /* Не контейнер */
+}
+
+/* Именованный контейнер */
+.sidebar {
+  container-type: inline-size;
+  container-name: sidebar;
+}
+```
+
+### Запросы к контейнеру
+```css
+/* По умолчанию запрашивает ближайший container-type: inline-size */
+@container (min-width: 400px) {
+  .card { display: flex; gap: 1rem; }
+}
+
+@container (max-width: 399px) {
+  .card { display: block; }
+}
+
+/* Именованный контейнер */
+@container sidebar (min-width: 300px) {
+  .widget { layout: horizontal; }
+}
+
+/* Range синтаксис */
+@container (400px <= width < 600px) { }
+```
+
+### Container Query Units (cq*)
+```css
+.card {
+  /* 1cqw = 1% ширины контейнера */
+  font-size: clamp(1rem, 2.5cqw, 1.5rem);
+  padding: 2cqw;
+  gap: 1cqw;
+  border-radius: 1cqw;
+}
+
+/* Доступные единицы */
+cqw  /* 1% container width */
+cqh  /* 1% container height */
+cqi  /* 1% container inline size */
+cqb  /* 1% container block size */
+cqmin /* min(cqi, cqb) */
+cqmax /* max(cqi, cqb) */
+```
+
+### Практический пример: карточка товара
+```css
+.product-card {
+  container-type: inline-size;
+  display: grid;
+  gap: 1rem;
+  grid-template-areas: "image" "title" "price" "button";
+}
+
+@container (min-width: 350px) {
+  .product-card {
+    grid-template-areas:
+      "image title"
+      "image price"
+      "image button";
+    grid-template-columns: 120px 1fr;
+  }
+}
+
+@container (min-width: 500px) {
+  .product-card {
+    grid-template-areas:
+      "image title price"
+      "image button button";
+    grid-template-columns: 150px 1fr auto;
+  }
+}
+```
+
+---
+
+## 5. Responsive Images — srcset, sizes, picture
+
+### srcset + sizes (для разных DPR и ширины)
+```html
+<img
+  src="image-800w.jpg"
+  srcset="
+    image-400w.jpg   400w,
+    image-800w.jpg   800w,
+    image-1200w.jpg 1200w,
+    image-1600w.jpg 1600w
+  "
+  sizes="
+    (max-width: 480px) 100vw,
+    (max-width: 768px) 50vw,
+    (max-width: 1200px) 33vw,
+    25vw
+  "
+  alt="Описание"
+  loading="lazy"
+  width="800"
+  height="600"
+/>
+```
+
+### Как браузер выбирает:
+1. Смотрит на `sizes` — определяет слот (например, 50vw = 400px на 800px экране)
+2. Умножает на DPR (devicePixelRatio)
+3. Выбирает из `srcset` ближайшее по `w` дескриптору
+
+### Art Direction — picture (разные изображения для разных контекстов)
+```html
+<picture>
+  <!-- Тёмная тема -->
+  <source
+    media="(prefers-color-scheme: dark)"
+    srcset="hero-dark-800w.jpg"
+    type="image/jpeg"
+  >
+  <!-- Широкий экран — горизонтальное фото -->
+  <source
+    media="(min-width: 1024px)"
+    srcset="hero-wide-1200w.jpg 1200w, hero-wide-800w.jpg 800w"
+    sizes="50vw"
+    type="image/jpeg"
+  >
+  <!-- Узкий экран — вертикальное фото -->
+  <source
+    media="(max-width: 1023px)"
+    srcset="hero-tall-800w.jpg 800w, hero-tall-400w.jpg 400w"
+    sizes="100vw"
+    type="image/jpeg"
+  >
+  <!-- Fallback -->
+  <img src="hero-800w.jpg" alt="Hero image" loading="eager">
+</picture>
+```
+
+### Форматы (AVIF, WebP, JPEG)
+```html
+<picture>
+  <source srcset="image.avif" type="image/avif">
+  <source srcset="image.webp" type="image/webp">
+  <img src="image.jpg" alt="...">
+</picture>
+```
+
+### Responsive Images в CSS (background-image)
+```css
+.hero {
+  background-image: image-set(
+    "hero-400w.jpg" 1x,
+    "hero-800w.jpg" 2x,
+    "hero-1200w.jpg" 3x
+  );
+  background-size: cover;
+  background-position: center;
+}
+
+/* С type() для форматов */
+.hero {
+  background-image: image-set(
+    "hero.avif" type("image/avif"),
+    "hero.webp" type("image/webp"),
+    "hero.jpg" 1x
+  );
+}
+```
+
+---
+
+## 6. Fluid Layouts без медиа-запросов
+
+### Fluid Typography (clamp)
+```css
+:root {
+  --fs-fluid: clamp(1rem, 1vw + 0.5rem, 1.5rem);
+  --fs-heading: clamp(2rem, 3vw + 1rem, 4rem);
+}
+
+body { font-size: var(--fs-fluid); }
+h1 { font-size: var(--fs-heading); }
+```
+
+### Fluid Spacing
+```css
+:root {
+  --space-fluid: clamp(1rem, 2vw + 0.5rem, 3rem);
+  --gap-fluid: clamp(0.5rem, 1vw + 0.25rem, 2rem);
+}
+
+.section { padding-block: var(--space-fluid); }
+.grid { gap: var(--gap-fluid); }
+```
+
+### Fluid Grid (auto-fit + minmax)
+```css
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--gap-fluid);
+}
+/* Никаких медиа-запросов! Автоматически адаптируется */
+```
+
+### Fluid Container
+```css
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 3vw, 3rem);
+}
+```
+
+### Aspect Ratio для fluid контейнеров
+```css
+.media {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  height: auto;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+.card-media {
+  aspect-ratio: 4 / 3;
+  width: 100%;
+  object-fit: cover;
+}
+```
+
+---
+
+## 7. Logical Properties в responsive
+
+```css
+.responsive-spacing {
+  /* Вместо margin-left/right — логические */
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 3vw, 3rem);
+  gap: clamp(0.5rem, 1vw, 1.5rem);
+
+  /* Блочные отступы */
+  margin-block: clamp(1rem, 2vw, 2rem);
+  padding-block: clamp(1rem, 2vw, 2rem);
+}
+
+/* Контейнер */
+.container {
+  inline-size: 100%;
+  max-inline-size: 1200px;
+  margin-inline: auto;
+}
+```
+
+---
+
+## 8. Практическое задание
+
+### Задача 1: Media Query Audit
+Дан CSS с 20+ медиа-запросами:
+1. Найди дубликаты и конфликты
+2. Конвертируй в Range синтаксис
+3. Переведи на Mobile-First
+4. Объедини соседние брейкпоинты
+5. Вынеси значения в CSS переменные (где возможно)
+
+### Задача 2: Container Query Migration
+Возьми компонент с медиа-запросами:
+```css
+/* Было */
+@media (min-width: 600px) { .card { display: flex; } }
+@media (min-width: 900px) { .card { grid-template-columns: 1fr 2fr; } }
+```
+Переведи на Container Queries:
+- Сделай `.card-wrapper` контейнером
+- Используй `@container` запросы
+- Добавь `cqw` единицы для fluid типографики внутри
+
+### Задача 3: Responsive Images Implementation
+Для статьи с 10 изображениями:
+1. Подготовь 4 варианта ширины (400, 800, 1200, 1600w)
+2. Напиши `srcset` и `sizes` для каждого
+3. Добавь `picture` для art direction (hero image)
+4. Добавь AVIF/WebP fallback
+5. Настрой `loading="lazy"` для below-the-fold
+6. Проверь в DevTools Network: загружаются ли правильные варианты
+
+### Задача 4: Fluid Layout System
+Создай полную fluid систему без медиа-запросов:
+- Типографика: 6 шагов clamp()
+- Spacing: 5 шагов clamp()
+- Grid: auto-fit minmax для карточек
+- Container: fluid max-width + padding
+- Компоненты: button, input, card — всё fluid
+- Проверь на 320px, 768px, 1024px, 1440px, 1920px
+
+---
+
+## 9. Стратегии тестирования
+
+### DevTools Device Toolbar
+- Chrome DevTools → Toggle Device Toolbar (Ctrl+Shift+M)
+- Редактируй Device Pixel Ratio
+- Симулируй медленный 3G
+- Проверяй `prefers-color-scheme`, `prefers-reduced-motion`
+
+### Responsive Design Mode (Firefox)
+- Ctrl+Shift+M
+- Лучший инспектор Grid/Flex
+- Скриншоты всех брейкпоинтов
+
+### Автоматизация
+```javascript
+// Playwright / Puppeteer скриншоты
+const viewports = [
+  { width: 320, height: 568 },   // Mobile
+  { width: 768, height: 1024 },  // Tablet
+  { width: 1024, height: 768 },  // Tablet landscape
+  { width: 1440, height: 900 },  // Desktop
+  { width: 1920, height: 1080 }, // Large desktop
+];
+
+for (const vp of viewports) {
+  await page.setViewportSize(vp);
+  await page.screenshot({ path: `screenshot-${vp.width}.png` });
+}
+```
+
+---
+
+## 10. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| Desktop-First CSS | Много переопределений, сложно читать | Mobile-First |
+| Брейкпоинты под устройства (iPhone, iPad) | Ломается на новых устройствах | Контентные брейкпоинты |
+| `sizes` не соответствует layout | Браузер качает не тот размер | `sizes` = реальная ширина слота в layout |
+| Нет `width`/`height` на img | CLS (Cumulative Layout Shift) | Всегда указывай `width` `height` |
+| `loading="lazy"` на above-the-fold | LCP ухудшается | `loading="eager"` для LCP изображения |
+| Container Query без `container-type` | Не работает | Обязательно `container-type: inline-size` |
+| `@container` в старых браузерах | Не работает | `@supports (container-type: inline-size)` или polyfill |
+
+---
+
+## 11. Полезные ресурсы
+
+### Спецификации
+- [Media Queries Level 4](https://www.w3.org/TR/mediaqueries-4/)
+- [Media Queries Level 5](https://www.w3.org/TR/mediaqueries-5/)
+- [CSS Container Queries](https://www.w3.org/TR/css-contain-3/)
+- [HTML Responsive Images](https://html.spec.whatwg.org/multipage/embedded-content.html#responsive-images)
+
+### Гайды
+- [MDN: Responsive Design](https://developer.mozilla.org/en-US/docs/Learn/CSS/CSS_layout/Responsive_Design)
+- [web.dev: Container Queries](https://web.dev/container-queries/)
+- [Cloudinary: Responsive Images Guide](https://cloudinary.com/documentation/responsive_images)
+
+### Инструменты
+- [Responsive Image Breakpoints Generator](https://www.responsivebreakpoints.com/)
+- [Squoosh](https://squoosh.app/) — оптимизация изображений
+- [Image Optim](https://imageoptim.com/) — батч оптимизация
+
+---
+
+## 12. Ключевые выводы
+
+1. **Mobile-First** — пиши базовые стили для мобильных, добавляй сложность через `min-width`.
+2. **Range синтаксис** (`768px <= width <= 1024px`) — чище и понятнее.
+3. **Container Queries** — компоненты адаптируются к *своему* контейнеру, не к viewport.
+4. **`srcset` + `sizes`** — браузер сам выбирает оптимальное изображение.
+5. **`picture`** — для art direction (разные кадры/соотношения).
+6. **Fluid Layouts** (`clamp`, `auto-fit`, `minmax`) — уменьшают нужду в медиа-запросах.
+7. **Logical Properties** (`inline`, `block`, `cqw`, `cqh`) — готовит к RTL и вертикальному письму.
+8. **Тестируй на реальных устройствах** — DevTools симуляция не заменяет реальный тач/скролл.
+
+---
+
+*Следующий урок: 10_Проект.txt — Итоговый проект начального уровня: Landing Page с адаптивом, Flexbox, Grid, Fluid типографикой*

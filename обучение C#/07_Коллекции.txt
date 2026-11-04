@@ -1,0 +1,264 @@
+# Урок 7: Коллекции — List<T>, Dictionary<TKey,TValue>, HashSet<T>
+
+**Целевая версия:** C# 12 / .NET 8
+
+---
+
+## 1. Почему нужны коллекции
+
+Массивы имеют фиксированный размер. Коллекции — динамические структуры данных, которые растут и уменьшаются по мере необходимости. Основные преимущества:
+- Автоматическое управление памятью
+- Богатый набор методов (поиск, фильтрация, сортировка)
+- Типобезопасность через generics (`<T>`)
+
+---
+
+## 2. List<T> — динамический массив
+
+Самая популярная коллекция. Похожа на массив, но меняет размер автоматически.
+
+```csharp
+using System.Collections.Generic;
+
+// Создание
+var numbers = new List<int> { 1, 2, 3 };
+var names = new List<string>();
+
+// Добавление
+names.Add("Анна");
+names.Add("Борис");
+names.AddRange(new[] { "Виктор", "Галина" });
+
+// Вставка по индексу
+names.Insert(1, "Андрей");  // в начало
+
+// Доступ по индексу (как в массиве)
+string first = names[0];    // "Анна"
+names[0] = "Алексей";       // замена
+
+// Удаление
+names.Remove("Борис");      // по значению (удалит первое вхождение)
+names.RemoveAt(0);          // по индексу
+names.RemoveAll(n => n.StartsWith("В"));  // по условию (C# 8+)
+
+// Поиск и проверка
+bool hasAlex = names.Contains("Алексей");
+int index = names.IndexOf("Галина");
+string found = names.Find(n => n.Length > 5);       // первый подходящий
+List<string> longNames = names.FindAll(n => n.Length > 5);  // все подходящие
+
+// Свойства
+int count = names.Count;    // количество элементов
+int capacity = numbers.Capacity;  // внутренний буфер (>= Count)
+
+// Очистка
+names.Clear();
+```
+
+### Важные методы List<T>
+
+| Метод | Описание |
+|-------|----------|
+| `Add(T)` | Добавить в конец |
+| `Insert(int, T)` | Вставить по индексу |
+| `Remove(T)` | Удалить первое вхождение |
+| `RemoveAt(int)` | Удалить по индексу |
+| `Find(Predicate<T>)` | Первый элемент по условию |
+| `FindAll(Predicate<T>)` | Все элементы по условию |
+| `Exists(Predicate<T>)` | Есть ли элемент |
+| `ConvertAll<TOutput>(Converter<T,TOutput>)` | Преобразовать в другой List |
+| `Sort()` / `Sort(Comparison<T>)` | Сортировка на месте |
+| `Reverse()` | Развернуть на месте |
+
+---
+
+## 3. Dictionary<TKey, TValue> — словарь (хэш-таблица)
+
+Хранит пары ключ-значение. Поиск по ключу — O(1). Ключи должны быть уникальными.
+
+```csharp
+using System.Collections.Generic;
+
+var phoneBook = new Dictionary<string, string>
+{
+    { "Анна", "+7-999-111-22-33" },
+    { "Борис", "+7-999-444-55-66" }
+};
+
+// Добавление / обновление
+phoneBook["Виктор"] = "+7-999-777-88-99";  // добавит или обновит
+phoneBook.Add("Галина", "+7-999-000-11-22");  // исключение, если ключ есть
+
+// Получение значения
+string annaPhone = phoneBook["Анна"];           // исключение, если нет ключа
+bool found = phoneBook.TryGetValue("Борис", out string borisPhone);  // безопасно
+
+// Проверки
+bool hasKey = phoneBook.ContainsKey("Виктор");
+bool hasValue = phoneBook.ContainsValue("+7-999-111-22-33");
+
+// Удаление
+phoneBook.Remove("Галина");
+
+// Перебор
+foreach (var kvp in phoneBook)
+{
+    Console.WriteLine($"{kvp.Key}: {kvp.Value}");
+}
+
+// Только ключи или только значения
+foreach (string name in phoneBook.Keys) { }
+foreach (string phone in phoneBook.Values) { }
+
+// Словарь с игнорированием регистра ключей
+var caseInsensitive = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+caseInsensitive["KEY"] = "value";
+Console.WriteLine(caseInsensitive["key"]);  // "value"
+```
+
+### Важные свойства и методы Dictionary
+
+| Метод/Свойство | Описание |
+|----------------|----------|
+| `Count` | Количество пар |
+| `Keys` / `Values` | Коллекции ключей/значений |
+| `TryGetValue(key, out value)` | Безопасное получение |
+| `ContainsKey(key)` / `ContainsValue(value)` | Проверки |
+| `Remove(key)` | Удаление по ключу |
+| `Clear()` | Полная очистка |
+
+---
+
+## 4. HashSet<T> — множество уникальных значений
+
+Неупорядоченная коллекция без дубликатов. Операции над множествами (объединение, пересечение).
+
+```csharp
+using System.Collections.Generic;
+
+var set1 = new HashSet<int> { 1, 2, 3, 4, 5 };
+var set2 = new HashSet<int> { 4, 5, 6, 7, 8 };
+
+// Добавление (возвращает false, если элемент уже есть)
+bool added = set1.Add(6);   // true
+added = set1.Add(3);        // false, 3 уже есть
+
+// Операции над множествами (изменяют текущий HashSet!)
+set1.UnionWith(set2);       // {1,2,3,4,5,6,7,8} — объединение
+set1.IntersectWith(set2);   // {4,5} — пересечение
+set1.ExceptWith(set2);      // {1,2,3} — разность (в set1, но не в set2)
+set1.SymmetricExceptWith(set2); // {1,2,3,6,7,8} — симметричная разность
+
+// Проверки
+bool isSubset = set1.IsSubsetOf(set2);      // все элементы set1 есть в set2
+bool isSuperset = set1.IsSupersetOf(set2);  // все элементы set2 есть в set1
+bool overlaps = set1.Overlaps(set2);        // есть хотя бы один общий
+bool equals = set1.SetEquals(set2);         // одинаковые множества
+
+// Обычные операции
+set1.Contains(3);      // true
+set1.Remove(3);        // удалить
+set1.Count;            // количество
+```
+
+### Когда что использовать
+
+| Коллекция | Когда применять |
+|-----------|-----------------|
+| `List<T>` | Упорядоченные данные, доступ по индексу, частые добавления в конец |
+| `Dictionary<TKey,TValue>` | Быстрый поиск по ключу, уникальные ключи |
+| `HashSet<T>` | Уникальные значения, операции над множествами, проверка наличия |
+
+---
+
+## 5. Инициализаторы коллекций (C# 6+)
+
+```csharp
+// List
+var list = new List<int> { 1, 2, 3 };
+
+// Dictionary
+var dict = new Dictionary<string, int>
+{
+    ["один"] = 1,
+    ["два"] = 2,
+    ["три"] = 3
+};
+
+// HashSet
+var set = new HashSet<string> { "a", "b", "c" };
+
+// Вложенные коллекции
+var matrix = new List<List<int>>
+{
+    new List<int> { 1, 2 },
+    new List<int> { 3, 4 }
+};
+```
+
+---
+
+## 6. readonly коллекции (для защиты от изменений)
+
+```csharp
+using System.Collections.ObjectModel;
+
+var list = new List<int> { 1, 2, 3 };
+var readOnly = list.AsReadOnly();  // ReadOnlyCollection<int>
+
+// Или для Dictionary (нет встроенного ReadOnlyDictionary до .NET 4.5, но можно обернуть)
+var dict = new Dictionary<string, int> { ["a"] = 1 };
+var readOnlyDict = new ReadOnlyDictionary<string, int>(dict);
+```
+
+---
+
+## 7. Производительность: Capacity и конструкторы
+
+```csharp
+// Если знаете примерный размер — задайте Capacity, чтобы избежать реаллокаций
+var list = new List<int>(1000);  // внутренний массив сразу на 1000 элементов
+
+// Для Dictionary — задайте начальный capacity
+var dict = new Dictionary<string, string>(500);
+```
+
+---
+
+## 8. Домашнее задание
+
+1. Создайте `List<string>` с 5 именами. Добавьте 2 имени, удалите одно, выведите все через `foreach`
+2. Создайте `Dictionary<string, int>` — товар → цена. Добавьте 4 товара. Найдите цену по названию через `TryGetValue`
+3. Создайте два `HashSet<int>` с числами 1-10 и 5-15. Найдите пересечение, объединение, разность
+4. Напишите программу: пользователь вводит слова до пустой строки. Выведите уникальные слова в алфавитном порядке (подсказка: `HashSet` + `OrderBy` из LINQ)
+5. *Сравните производительность:* добавьте 100,000 элементов в `List<int>` с `new List<int>()` и с `new List<int>(100000)`. Замерьте время через `Stopwatch`
+
+---
+
+## 9. Краткая шпаргалка
+
+```
+List<T>:
+  new List<T>()              // пустой
+  new List<T> { 1, 2, 3 }    // с данными
+  list.Add(x)                // добавить
+  list[i]                    // доступ по индексу
+  list.Count                 // длина
+  list.Remove(x)             // удалить по значению
+  list.Find(predicate)       // поиск
+
+Dictionary<TKey, TValue>:
+  new Dictionary<TKey,TValue>()
+  dict[key] = value          // добавить/обновить
+  dict.TryGetValue(key, out v) // безопасное чтение
+  dict.ContainsKey(key)      // проверка ключа
+  dict.Keys / dict.Values    // коллекции ключей/значений
+
+HashSet<T>:
+  new HashSet<T> { 1, 2, 3 }
+  set.Add(x)                 // добавить (false если есть)
+  set.Contains(x)            // проверка
+  set.UnionWith(other)       // объединение
+  set.IntersectWith(other)   // пересечение
+  set.ExceptWith(other)      // разность
+```

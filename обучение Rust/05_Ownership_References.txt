@@ -1,0 +1,345 @@
+# Урок 5: Владение, заимствование и ссылки
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Понимать концепцию владения (ownership) в Rust
+- Использовать ссылки (`&T`, `&mut T`) для заимствования
+- Применять правила заимствования (borrow checker)
+- Понимать время жизни (lifetimes) на базовом уровне
+- Работать со срезами (slices)
+- Избегать распространённых ошибок с ownership
+
+---
+
+## 1. Концепция владения (Ownership)
+
+### Три правила владения
+1. **Каждое значение имеет владельца** (переменную)
+2. **Только один владелец** одновременно
+3. **Когда владелец выходит из области видимости, значение уничтожается** (drop)
+
+```rust
+fn main() {
+    let s = String::from("hello"); // s владеет строкой
+    // ... работа с s
+} // s выходит из scope -> drop(s) -> память освобождена
+```
+
+### Перемещение (Move Semantics)
+```rust
+fn main() {
+    let s1 = String::from("hello");
+    let s2 = s1; // s1 ПЕРЕМЕЩЁН в s2 (shallow copy + инвалидация s1)
+
+    // println!("{}", s1); // ОШИБКА: value borrowed here after move
+    println!("{}", s2); // OK
+}
+```
+
+**В стеке**: указатель, длина, ёмкость — копируются
+**В куче**: данные — **не копируются**, владение передаётся
+
+### Клонирование (Deep Copy)
+```rust
+fn main() {
+    let s1 = String::from("hello");
+    let s2 = s1.clone(); // Полное копирование данных в куче
+    println!("s1 = {}, s2 = {}", s1, s2); // Оба валидны
+}
+```
+
+### Copy trait — типы, которые копируются неявно
+```rust
+fn main() {
+    let x = 5;
+    let y = x; // i32 реализует Copy — x остаётся валидным
+    println!("x = {}, y = {}", x, y);
+
+    // Все примитивные типы: i32, f64, bool, char, &T, ()
+    // Кортежи/массивы Copy-типов тоже Copy
+}
+```
+
+---
+
+## 2. Ссылки и заимствование (References & Borrowing)
+
+### Неизменяемые ссылки (`&T`)
+```rust
+fn main() {
+    let s1 = String::from("hello");
+    let len = calculate_length(&s1); // Заимствование (&)
+    println!("Длина '{}' = {}", s1, len);
+}
+
+fn calculate_length(s: &String) -> usize {
+    s.len()
+} // s выходит из scope, но НЕ владеет данными -> drop не вызывается
+```
+
+### Изменяемые ссылки (`&mut T`)
+```rust
+fn main() {
+    let mut s = String::from("hello");
+    change(&mut s); // Изменяемое заимствование
+    println!("{}", s); // "hello, world"
+}
+
+fn change(s: &mut String) {
+    s.push_str(", world");
+}
+```
+
+---
+
+## 3. Правила заимствования (Borrow Checker)
+
+В **любой момент времени** выполняется **одно** из:
+- **Ноль или более** неизменяемых ссылок (`&T`) **ИЛИ**
+- **Ровно одна** изменяемая ссылка (`&mut T`)
+
+### Нарушение: мутация через `&`
+```rust
+fn main() {
+    let s = String::from("hello");
+    // let r = &mut s; // ОШИБКА: cannot borrow as mutable
+}
+```
+
+### Нарушение: `&mut` вместе с `&`
+```rust
+fn main() {
+    let mut s = String::from("hello");
+    let r1 = &s;
+    let r2 = &s;
+    // let r3 = &mut s; // ОШИБКА: cannot borrow as mutable
+    println!("{}, {}", r1, r2); // r1, r2 используются здесь
+} // r3 бы конфликтовал с r1, r2
+```
+
+### Нелексические времена жизни (NLL) — современный borrow checker
+```rust
+fn main() {
+    let mut s = String::from("hello");
+    let r1 = &s;
+    let r2 = &s;
+    println!("{} {}", r1, r2); // Последний использование r1, r2
+
+    let r3 = &mut s; // OK! r1, r2 больше не используются
+    r3.push_str(" world");
+}
+```
+
+---
+
+## 4. Висячие ссылки (Dangling References) — предотвращение
+
+```rust
+fn main() {
+    let r = dangle(); // ОШИБКА компиляции!
+}
+
+fn dangle() -> &String {
+    let s = String::from("hello");
+    &s // Возврат ссылки на локальную переменную
+} // s уничтожается здесь -> висячая ссылка
+```
+
+**Компилятор запрещает это!** Правильное решение — вернуть владеющий тип:
+```rust
+fn no_dangle() -> String {
+    let s = String::from("hello");
+    s // Передача владения
+}
+```
+
+---
+
+## 5. Срезы (Slices) — `&[T]`, `&str`
+
+Ссылка на непрерывную последовательность элементов **без владения**:
+```rust
+fn main() {
+    let s = String::from("hello world");
+    let hello = &s[0..5];  // &str — срез строки
+    let world = &s[6..11];
+    println!("{} {}", hello, world);
+}
+```
+
+### Срезы массивов
+```rust
+fn main() {
+    let arr = [1, 2, 3, 4, 5];
+    let slice = &arr[1..3]; // &[2, 3] — тип &[i32]
+    println!("{:?}", slice);
+}
+```
+
+### Функции, принимающие срезы (более общие)
+```rust
+fn first_word(s: &str) -> &str { // Принимает &String, &str, строковый литерал
+    let bytes = s.as_bytes();
+    for (i, &item) in bytes.iter().enumerate() {
+        if item == b' ' {
+            return &s[0..i];
+        }
+    }
+    &s[..]
+}
+```
+
+---
+
+## 6. Время жизни (Lifetimes) — базовое введение
+
+### Каждая ссылка имеет время жизни
+```rust
+fn main() {
+    let r;                // 'a
+    {                     // 'b
+        let x = 5;
+        r = &x;           // 'b не живет достаточно долго для 'a
+    }
+    // println!("{}", r); // ОШИБКА: x dropped here while still borrowed
+}
+```
+
+### Аннотации времени жизни в функциях
+```rust
+// 'a — обобщённое время жизни
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() { x } else { y }
+}
+
+fn main() {
+    let s1 = String::from("long");
+    let s2 = String::from("short");
+    let result = longest(&s1, &s2); // Время жизни = min(s1, s2)
+    println!("Longest: {}", result);
+}
+```
+
+### Правила эллизиса (elision) — когда можно не писать `'a`
+1. Каждому параметру-ссылке присваивается свое время жизни
+2. Если **один** входной параметр — его время жизни присваивается всем выходным
+3. Если есть `&self`/`&mut self` — его время жизни присваивается выходным
+
+---
+
+## 7. Практические упражнения
+
+### Упражнение 1: Move vs Clone
+```rust
+fn main() {
+    let v1 = vec![1, 2, 3];
+    let v2 = v1; // Move
+    // println!("{:?}", v1); // Ошибка
+
+    let v3 = vec![4, 5, 6];
+    let v4 = v3.clone(); // Clone
+    println!("v3: {:?}, v4: {:?}", v3, v4); // Оба работают
+}
+```
+
+### Упражнение 2: Функции с заимствованием
+```rust
+fn append_world(s: &mut String) {
+    s.push_str(" world");
+}
+
+fn to_uppercase(s: &str) -> String {
+    s.to_uppercase()
+}
+
+fn main() {
+    let mut s = String::from("hello");
+    append_world(&mut s);
+    let upper = to_uppercase(&s);
+    println!("{} -> {}", s, upper);
+}
+```
+
+### Упражнение 3: Срезы
+```rust
+fn first_three(arr: &[i32]) -> &[i32] {
+    &arr[0..3.min(arr.len())]
+}
+
+fn main() {
+    let data = [10, 20, 30, 40, 50];
+    let slice = first_three(&data);
+    println!("{:?}", slice); // [10, 20, 30]
+}
+```
+
+### Упражнение 4: Время жизни
+```rust
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() { x } else { y }
+}
+
+fn main() {
+    let string1 = String::from("abcd");
+    let result;
+    {
+        let string2 = String::from("xyz");
+        result = longest(&string1, &string2);
+        println!("Внутри блока: {}", result);
+    }
+    // println!("Снаружи: {}", result); // ОШИБКА: string2 не живет достаточно долго
+}
+```
+
+---
+
+## 8. Типичные ошибки новичков
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `use of moved value` | Значение перемещено | Используйте `&` для заимствования или `.clone()` |
+| `cannot borrow as mutable` | Уже есть `&` ссылка | Завершите использование `&` перед `&mut` |
+| `cannot borrow as immutable` | Уже есть `&mut` ссылка | Завершите использование `&mut` перед `&` |
+| `returns a reference to owned data` | Возврат ссылки на локальную переменную | Верните `String`/`Vec` или измените сигнатуру |
+| `lifetime may not live long enough` | Несовпадение времен жизни | Добавьте аннотации `'a` или измените структуру |
+
+---
+
+## 9. Шпаргалка: Ownership & Borrowing
+
+| Ситуация | Код | Что происходит |
+|----------|-----|----------------|
+| Присваивание не-Copy | `let y = x` | Move: `x` инвалидирован |
+| Присваивание Copy | `let y = x` | Copy: оба валидны |
+| Неизменяемая ссылка | `let r = &x` | Заимствование, `x` читаем |
+| Изменяемая ссылка | `let r = &mut x` | Эксклюзивный доступ, `x` меняем |
+| Передача в функцию | `foo(x)` | Move (если не Copy) |
+| Передача ссылки | `foo(&x)` | Заимствование |
+| Возврат из функции | `return x` | Move владения наружу |
+
+---
+
+## 10. Полезные ресурсы
+
+- **The Book — Ownership**: https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html
+- **The Book — References**: https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html
+- **The Book — Slices**: https://doc.rust-lang.org/book/ch04-03-slices.html
+- **The Book — Lifetimes**: https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- **Ownership**: каждый владелец — один, drop при выходе из scope
+- **Move**: передача владения (shallow copy + инвалидация источника)
+- **Copy**: неявное копирование для простых типов (стек)
+- **Clone**: явное глубокое копирование для кучи
+- **References**: `&T` (shared) и `&mut T` (exclusive)
+- **Borrow rules**: либо много `&`, либо один `&mut`
+- **Slices**: `&[T]`, `&str` — view без владения
+- **Lifetimes**: `'a` — статическая гарантия валидности ссылок
+
+---
+
+**Следующий урок:** Строки и коллекции (`06_Strings_Collections.txt`)

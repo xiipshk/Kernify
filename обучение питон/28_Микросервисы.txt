@@ -1,0 +1,505 @@
+# Урок 3.6: Микросервисы — коммуникация, паттерны, сервис-меш, наблюдаемость
+
+## Цели урока
+- Понимать архитектуру микросервисов vs монолит
+- Выбирать способ коммуникации (sync vs async)
+- Применять паттерны: API Gateway, Circuit Breaker, Saga, CQRS
+- Работать с Service Mesh (Istio/Linkerd)
+- Настраивать распределённую трассировку (OpenTelemetry, Jaeger)
+
+---
+
+## 1. Монолит vs Микросервисы
+
+| Аспект | Монолит | Микросервисы |
+|--------|---------|--------------|
+| Деплой | Один артефакт | Независимые деплои |
+| Масштабирование | Всё сразу | Выборочно |
+| Стек | Один | Полиглот |
+| Команда | Одна | Независимые команды |
+| Сложность | Низкая (в начале) | Высокая (операционная) |
+| Отладка | Простая | Распределённая трассировка |
+
+### Когда НЕ нужны микросервисы
+- Маленькая команда (< 5 человек)
+- Простой домен
+- Нет потребности в независимом масштабировании
+- Нет DevOps зрелости
+
+---
+
+## 2. Коммуникация между сервисами
+
+### Синхронная (Request-Response)
+
+#### REST / HTTP
+```python
+# Клиент
+import httpx
+
+async def get_user(user_id: str) -> dict:
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.get(f"http://user-service/users/{user_id}")
+        resp.raise_for_status()
+        return resp.json()
+```
+
+#### gRPC (высокая производительность, контракты)
+```protobuf
+// user.proto
+syntax = "proto3";
+package user;
+
+service UserService {
+  rpc GetUser(GetUserRequest) returns (User);
+  rpc ListUsers(ListUsersRequest) returns (stream User);
+}
+
+message GetUserRequest { string id = 1; }
+message User { string id = 1; string name = 2; string email = 3; }
+```
+
+```python
+# server
+import grpc
+from user_pb2 import User
+from user_pb2_grpc import UserServiceServicer
+
+class UserServicer(UserServiceServicer):
+    async def GetUser(self, request, context):
+        return User(id=request.id, name="Анна", email="anna@example.com")
+
+# client
+channel = grpc.aio.insecure_channel("user-service:50051")
+stub = UserServiceStub(channel)
+user = await stub.GetUser(GetUserRequest(id="123"))
+```
+
+### Асинхронная (Message-Driven)
+
+#### RabbitMQ / Kafka
+```python
+# Producer (FastAPI + aio-pika)
+import aio_pika
+import json
+
+async def publish_order_created(order: dict):
+    connection = await aio_pika.connect_robust("amqp://guest:guest@rabbitmq/")
+    async with connection:
+        channel = await connection.channel()
+        exchange = await channel.declare_exchange("orders", aio_pika.ExchangeType.TOPIC)
+        await exchange.publish(
+            aio_pika.Message(body=json.dumps(order).encode()),
+            routing_key="order.created"
+        )
+
+# Consumer
+async def consume_orders():
+    connection = await aio_pika.connect_robust("amqp://guest:guest@rabbitmq/")
+    async with connection:
+        channel = await connection.channel()
+        queue = await channel.declare_queue("order_service_orders", durable=True)
+        await queue.bind(exchange, "order.*")
+        async with queue.iterator() as queue_iter:
+            async for message in queue_iter:
+                async with message.process():
+                    order = json.loads(message.body)
+                    await process_order(order)
+```
+
+#### Event Schema (Avro/Protobuf для Kafka)
+```python
+# schema_registry пример
+from confluent_kafka.schema_registry import SchemaRegistryClient
+from confluent_kafka.schema_registry.avro import AvroSerializer
+
+schema_str = """
+{
+  "type": "record",
+  "name": "OrderCreated",
+  "fields": [
+    {"name": "order_id", "type": "string"},
+    {"name": "customer_id", "type": "string"},
+    {"name": "total", "type": "double"}
+  ]
+}
+"""
+```
+
+---
+
+## 3. Паттерны микросервисов
+
+### API Gateway
+```python
+# Kong / Traefik / NGINX / AWS API Gateway
+# Роутинг, аутентификация, rate limiting, трансформация
+
+# Пример на FastAPI как простой gateway
+from fastapi import FastAPI, Request
+import httpx
+
+app = FastAPI()
+SERVICES = {
+    "users": "http://user-service:8000",
+    "orders": "http://order-service:8000",
+    "products": "http://product-service:8000",
+}
+
+@app.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def gateway(service: str, path: str, request: Request):
+    if service not in SERVICES:
+        raise HTTPException(404, "Service not found")
+
+    async with httpx.AsyncClient() as client:
+        url = f"{SERVICES[service]}/{path}"
+        resp = await client.request(
+            request.method, url,
+            headers=dict(request.headers),
+            content=await request.body(),
+            params=request.query_params
+        )
+    return Response(content=resp.content, status_code=resp.status_code, headers=resp.headers)
+```
+
+### Circuit Breaker
+```bash
+pip install pybreaker
+```
+
+```python
+import pybreaker
+
+breaker = pybreaker.CircuitBreaker(
+    fail_max=5,
+    reset_timeout=30,
+    exclude=[httpx.HTTPStatusError]
+)
+
+@breaker
+async def call_user_service(user_id: str):
+    async with httpx.AsyncClient() as client:
+        return await client.get(f"http://user-service/users/{user_id}")
+
+# Использование с fallback
+async def get_user_with_fallback(user_id: str):
+    try:
+        return await call_user_service(user_id)
+    except pybreaker.CircuitBreakerError:
+        return {"id": user_id, "name": "Unknown", "cached": True}
+```
+
+### Saga Pattern (распределённые транзакции)
+
+#### Хореография (события)
+```python
+# Order Service
+async def create_order(order_data):
+    order = Order(**order_data)
+    order.status = "pending"
+    await order.save()
+
+    # Публикуем событие
+    await publish_event("order.created", {"order_id": order.id, "items": order.items})
+
+    # Ждём подтверждений через callback/event
+    return order
+
+# Payment Service — слушает order.created
+async def handle_order_created(event):
+    try:
+        payment = await charge_customer(event["customer_id"], event["total"])
+        await publish_event("payment.completed", {"order_id": event["order_id"]})
+    except PaymentFailed:
+        await publish_event("payment.failed", {"order_id": event["order_id"]})
+
+# Order Service — слушает payment.completed/failed
+async def handle_payment_result(event):
+    order = await Order.get(event["order_id"])
+    if event["type"] == "payment.completed":
+        order.status = "paid"
+    else:
+        order.status = "cancelled"
+        await compensate_inventory(event["order_id"])
+    await order.save()
+```
+
+#### Оркестрация (централизованный координатор)
+```python
+class OrderSaga:
+    def __init__(self):
+        self.steps = [
+            (self.reserve_inventory, self.release_inventory),
+            (self.charge_payment, self.refund_payment),
+            (self.create_shipment, self.cancel_shipment),
+        ]
+
+    async def execute(self, order_data):
+        completed = []
+        try:
+            for forward, _ in self.steps:
+                await forward(order_data)
+                completed.append(forward)
+        except Exception:
+            # Компенсация в обратном порядке
+            for _, backward in reversed(completed):
+                await backward(order_data)
+            raise
+```
+
+### CQRS (Command Query Responsibility Segregation)
+```python
+# Write Model (Commands)
+class OrderCommandHandler:
+    async def handle_create_order(self, cmd: CreateOrderCommand):
+        order = Order.create(cmd.customer_id, cmd.items)
+        await order_repo.save(order)
+        await event_bus.publish(OrderCreated(order.id, ...))
+
+# Read Model (Queries) — отдельная БД/проекция
+class OrderQueryHandler:
+    async def handle_get_order_summary(self, query: GetOrderSummary):
+        # Денормализованное представление из Elasticsearch/Redis
+        return await read_model.get_order_summary(query.order_id)
+
+# Event Handler обновляет Read Model
+async def on_order_created(event: OrderCreated):
+    summary = OrderSummary(
+        order_id=event.order_id,
+        customer_name=event.customer_name,
+        total=event.total,
+        status="pending"
+    )
+    await read_model.save(summary)
+```
+
+---
+
+## 4. Service Mesh (Istio / Linkerd)
+
+### Зачем Service Mesh
+- mTLS между сервисами (автоматически)
+- Traffic management (canary, retry, timeout)
+- Наблюдаемость (метрики, трейсы, логи)
+- Политики авторизации
+
+### Istio пример
+```yaml
+# VirtualService для canary
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: user-service
+spec:
+  hosts: ["user-service"]
+  http:
+    - route:
+        - destination:
+            host: user-service
+            subset: v1
+          weight: 90
+        - destination:
+            host: user-service
+            subset: v2
+          weight: 10
+
+---
+# DestinationRule с mTLS и circuit breaker
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: user-service
+spec:
+  host: user-service
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        h2UpgradePolicy: UPGRADE
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+```
+
+---
+
+## 5. Наблюдаемость (Observability)
+
+### Three Pillars
+1. **Metrics** — Prometheus (RED: Rate, Errors, Duration)
+2. **Logs** — Loki / ELK (структурированные JSON)
+3. **Traces** — OpenTelemetry → Jaeger / Tempo
+
+### OpenTelemetry в Python
+```bash
+pip install opentelemetry-api opentelemetry-sdk \
+    opentelemetry-instrumentation-fastapi \
+    opentelemetry-instrumentation-httpx \
+    opentelemetry-exporter-otlp
+```
+
+```python
+# tracing.py
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+trace.set_tracer_provider(TracerProvider())
+tracer = trace.get_tracer(__name__)
+
+otlp_exporter = OTLPSpanExporter(endpoint="http://jaeger:4317", insecure=True)
+trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(otlp_exporter))
+
+# Автоинструментация
+FastAPIInstrumentor.instrument_app(app)
+HTTPXClientInstrumentor().instrument()
+
+# Ручные спаны
+async def get_user(user_id: str):
+    with tracer.start_as_current_span("get_user") as span:
+        span.set_attribute("user.id", user_id)
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"http://user-service/users/{user_id}")
+        return resp.json()
+```
+
+### Корреляция логов (trace_id)
+```python
+import logging
+from opentelemetry.trace import get_current_span
+
+class TraceIDFilter(logging.Filter):
+    def filter(self, record):
+        span = get_current_span()
+        record.trace_id = f"{span.get_span_context().trace_id:032x}" if span.get_span_context().trace_id else "none"
+        return True
+
+logging.basicConfig(
+    format='{"time": "%(asctime)s", "level": "%(levelname)s", "trace_id": "%(trace_id)s", "msg": "%(message)s"}'
+)
+logger = logging.getLogger()
+logger.addFilter(TraceIDFilter())
+```
+
+---
+
+## 6. Данные в микросервисах
+
+### Database per Service
+- У каждого сервиса своя БД
+- Никаких прямых JOIN между сервисами
+- Данные дублируются (Eventual Consistency)
+
+### Transactional Outbox
+```python
+# Вместо прямой публикации события — пишем в outbox таблицу ТОЙ ЖЕ транзакцией
+async def create_order(order_data):
+    async with session.begin():
+        order = Order(...)
+        session.add(order)
+
+        # Outbox запись в той же транзакции
+        outbox = OutboxEvent(
+            event_type="OrderCreated",
+            payload=json.dumps({"order_id": order.id, ...})
+        )
+        session.add(outbox)
+
+# Отдельный процесс (relay) читает outbox и публикует в брокер
+async def outbox_relay():
+    while True:
+        events = await session.execute(
+            select(OutboxEvent).where(OutboxEvent.published == False).limit(100)
+        )
+        for event in events:
+            await publish_to_broker(event)
+            event.published = True
+        await session.commit()
+        await asyncio.sleep(1)
+```
+
+---
+
+## 7. Тестирование микросервисов
+
+### Contract Testing (Pact)
+```bash
+pip install pact-python
+```
+
+```python
+# Consumer test
+from pact import Consumer, Provider
+
+pact = Consumer("order-service").has_pact_with(Provider("user-service"))
+
+def test_get_user():
+    expected = {"id": "123", "name": "Анна"}
+    (pact
+     .given("user 123 exists")
+     .upon_receiving("a request for user 123")
+     .with_request("GET", "/users/123")
+     .will_respond_with(200, body=expected))
+
+    with pact:
+        resp = httpx.get(f"{pact.uri}/users/123")
+        assert resp.json() == expected
+```
+
+### Testcontainers для интеграционных тестов
+```bash
+pip install testcontainers
+```
+
+```python
+from testcontainers.postgres import PostgresContainer
+from testcontainers.kafka import KafkaContainer
+
+def test_with_real_postgres():
+    with PostgresContainer("postgres:15") as pg:
+        db_url = pg.get_connection_url()
+        # запускаем тесты с реальной БД
+```
+
+---
+
+## Практические задания
+
+1. **Service Template**: создайте шаблон микросервиса (FastAPI + Docker + k8s + CI)
+2. **gRPC**: реализуйте UserService с protobuf, клиент с retry/timeout
+3. **Event-Driven**: Order Service → Kafka → Payment/Inventory/Notification
+4. **Circuit Breaker**: добавьте pybreaker к HTTP клиентам
+5. **Tracing**: внедрите OpenTelemetry, настройте Jaeger
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Распределённый монолит (сильные связи) | Слабая связанность, async коммуникация |
+| Синхронные цепочки вызовов | Event-driven, Saga для длинных процессов |
+| Общая БД между сервисами | Database per Service |
+| Нет contract testing | Pact / схемы в Schema Registry |
+| Игнорируют eventual consistency | Проектируют под eventual consistency |
+| Нет распределённой трассировки | OpenTelemetry везде |
+
+---
+
+## Полезные ресурсы
+- **Microservices Patterns** — Chris Richardson
+- **Building Microservices** — Sam Newman
+- **gRPC Python** — https://grpc.io/docs/languages/python/
+- **OpenTelemetry Python** — https://opentelemetry.io/docs/instrumentation/python/
+- **Istio Docs** — https://istio.io/latest/docs/
+- **Pact** — https://docs.pact.io/
+- **Transactional Outbox** — https://microservices.io/patterns/data/transactional-outbox.html

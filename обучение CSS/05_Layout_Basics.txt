@@ -1,0 +1,465 @@
+# Урок 5: Основы Layout — Display, Flow, Positioning, Stacking Context
+
+## Цели урока
+- Освоить все значения `display`: block, inline, flex, grid, flow-root, contents, none
+- Понять Normal Flow (обычный поток) и как элементы взаимодействуют
+- Изучить Positioning: static, relative, absolute, fixed, sticky
+- Глубоко понять Stacking Context (контекст наложения) и z-index
+- Научиться выбирать правильный инструмент для каждой задачи layout
+
+---
+
+## 1. Display — типы блоков и контексты форматирования
+
+### Блочные и строчные (классика)
+```css
+/* Block-level — занимает всю ширину, перенос строки */
+display: block;           /* div, p, h1-h6, section, article */
+display: list-item;       /* li — добавляет маркер */
+display: table;           /* table */
+
+/* Inline-level — в потоке текста, нет width/height/margin-top/bottom */
+display: inline;          /* span, a, strong, em */
+display: inline-block;    /* как inline снаружи, block внутри */
+display: inline-flex;     /* flex контейнер в строке */
+display: inline-grid;     /* grid контейнер в строке */
+display: inline-table;    /* table в строке */
+```
+
+### Современные значения
+```css
+/* Flexbox контейнер */
+display: flex;            /* Блочный flex */
+display: inline-flex;     /* Строчный flex */
+
+/* Grid контейнер */
+display: grid;            /* Блочный grid */
+display: inline-grid;     /* Строчный grid */
+
+/* Flow-root — создаёт BFC (Block Formatting Context) */
+display: flow-root;       /* Останавливает margin collapse, содержит floats */
+
+/* Contents — элемент исчезает, дети поднимаются наверх */
+display: contents;        /* Полезно для wrapper'ов без бокса */
+
+/* None — полное удаление из layout */
+display: none;            /* Не рендерится, не в accessibility tree */
+```
+
+### Таблица отличий
+| Свойство | block | inline | inline-block | flex/grid |
+|----------|-------|--------|--------------|-----------|
+| width/height | ✅ | ❌ | ✅ | ✅ |
+| margin (all) | ✅ | ❌ (только LR) | ✅ | ✅ |
+| padding (all) | ✅ | ✅ (визуально) | ✅ | ✅ |
+| Перенос строки | Да | Нет | Нет | Да/Нет |
+| Вертикальное выравнивание | Нет | vertical-align | vertical-align | align-items |
+
+---
+
+## 2. Normal Flow — обычный поток документа
+
+### Блочный контекст форматирования (BFC)
+```css
+/* Создаёт новый BFC (любое из): */
+.bfc {
+  display: flow-root;        /* Рекомендуемый современный способ */
+  display: flex;
+  display: grid;
+  overflow: hidden;          /* или auto, scroll */
+  overflow: clip;            /* Новый, не создаёт scrollbars */
+  float: left;               /* или right */
+  position: absolute;        /* или fixed */
+  contain: layout;           /* CSS Containment */
+}
+
+/* Что делает BFC: */
+/* 1. Останавливает margin collapse внутри */
+/* 2. Содержит floats (clearfix не нужен) */
+/* 3. Изолирует детей от внешнего layout */
+```
+
+### Inline Formatting Context (IFC)
+```css
+/* Внутри строчных элементов: */
+/* - line-height определяет высоту строки */
+/* - vertical-align выравнивает по базовой линии */
+/* - white-space контролирует переносы */
+
+.text {
+  line-height: 1.5;        /* Множитель от font-size */
+  vertical-align: baseline; /* middle, top, bottom, text-top, text-bottom */
+  white-space: nowrap;     /* normal, pre, pre-wrap, pre-line */
+}
+```
+
+---
+
+## 3. Positioning — системы координат
+
+### Static (по умолчанию)
+```css
+.static {
+  position: static;  /* В потоке, top/left/z-index игнорируются */
+}
+```
+
+### Relative — сдвиг относительно своего места
+```css
+.relative {
+  position: relative;
+  top: 10px;      /* Сдвиг вниз на 10px */
+  left: 20px;     /* Сдвиг вправо на 20px */
+  /* МЕСТО в потоке ЗАРЕЗЕРВИРОВАНО! */
+  /* z-index работает — создаёт stacking context */
+}
+```
+
+### Absolute — выход из потока, позиционирование относительно nearest positioned ancestor
+```css
+.parent {
+  position: relative;  /* Создаёт containing block */
+}
+
+.child {
+  position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;  /* Растягивает на весь родитель */
+  /* Или */
+  inset: 0;  /* Сокращение для top/right/bottom/left */
+
+  /* Центрирование */
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+
+  /* Логические свойства */
+  inset-block-start: 1rem;
+  inset-inline-end: 1rem;
+}
+```
+
+### Fixed — относительно viewport
+```css
+.fixed {
+  position: fixed;
+  top: 1rem; right: 1rem;
+  /* Не зависит от родителей, кроме transform/filter/perspective */
+}
+
+/* Нюанс: fixed внутри transform создаёт новый containing block */
+.transformed {
+  transform: translateZ(0);  /* Fixed ребёнок будет относительно этого! */
+}
+```
+
+### Sticky — гибрид relative + fixed
+```css
+.sticky {
+  position: sticky;
+  top: 0;           /* Прилипает к верху при скролле */
+  /* Работает только если у родителя есть высота/overflow */
+}
+
+/* Практический пример — липкий заголовок таблицы */
+.table-header th {
+  position: sticky;
+  top: 0;
+  background: white;  /* Нужно, чтобы контент не просвечивал */
+  z-index: 1;
+  box-shadow: 0 2px 4px rgb(0 0 0 / 0.1);
+}
+
+/* Множественные sticky */
+.sidebar {
+  position: sticky;
+  top: 100px;  /* Отступ от верха */
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+```
+
+---
+
+## 4. Stacking Context (Контекст наложения) — z-index на самом деле
+
+### Что создаёт Stacking Context
+```css
+/* Любое из этих свойств создаёт НОВЫЙ stacking context: */
+.context {
+  /* 1. Positioned + z-index (не auto) */
+  position: relative;
+  z-index: 1;
+
+  /* 2. Flex/Grid child с z-index */
+  /* parent: display: flex; child: z-index: 1; */
+
+  /* 3. Opacity < 1 */
+  opacity: 0.99;
+
+  /* 4. Transform/Filter/Perspective/Clip-path (не none) */
+  transform: translateZ(0);
+  filter: blur(1px);
+  perspective: 1000px;
+  clip-path: circle(50%);
+
+  /* 5. Isolation */
+  isolation: isolate;
+
+  /* 6. Will-change */
+  will-change: transform;
+
+  /* 7. Contain */
+  contain: layout paint;
+}
+```
+
+### Порядок наложения (внутри ОДНОГО stacking context, снизу вверх)
+```
+1. Background/border корневого элемента
+2. Дети с z-index < 0 (отрицательные)
+3. Block-level дети в потоке (без positioning)
+4. Float дети
+5. Inline-level дети в потоке
+6. Дети с z-index: 0 / auto (positioned)
+7. Дети с z-index > 0 (положительные)
+```
+
+### Классическая проблема: z-index не работает
+```html
+<div class="parent-a">
+  <div class="child-a" style="z-index: 100;">A: 100</div>
+</div>
+<div class="parent-b">
+  <div class="child-b" style="z-index: 50;">B: 50</div>
+</div>
+```
+
+```css
+.parent-a { z-index: 1; }  /* Создаёт stacking context! */
+.parent-b { z-index: 2; }  /* Создаёт stacking context, ПОВЫШЕ! */
+
+.child-a { z-index: 100; }  /* Внутри context A */
+.child-b { z-index: 50; }   /* Внутри context B — но B выше A! */
+/* Результат: child-b (50) перекрывает child-a (100) */
+```
+
+### Решение: изоляция и плоская структура
+```css
+/* 1. Избегай лишних stacking contexts */
+.no-context {
+  /* Не используй opacity/transform без нужды */
+}
+
+/* 2. isolation: isolate — создаёт context без визуальных изменений */
+.modal-backdrop {
+  isolation: isolate;  /* Защищает внутренние z-index */
+}
+
+/* 3. Порядок в DOM важен при равных z-index */
+<header z-index: 10></header>
+<main z-index: 1></main>  /* Header поверх main */
+<footer z-index: 5></footer>
+```
+
+### Практическая система z-index
+```css
+:root {
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-fixed: 300;
+  --z-modal-backdrop: 400;
+  --z-modal: 500;
+  --z-popover: 600;
+  --z-tooltip: 700;
+  --z-toast: 800;
+}
+
+/* Использование */
+.dropdown { z-index: var(--z-dropdown); }
+.sticky-header { z-index: var(--z-sticky); }
+.modal { z-index: var(--z-modal); }
+.tooltip { z-index: var(--z-tooltip); }
+```
+
+---
+
+## 5. Float и Clear — legacy, но встречается
+
+### Float
+```css
+.float-left {
+  float: left;
+  margin-right: 1rem;
+  /* Текст обтекает справа */
+}
+
+/* Float выпадает из потока, но НЕ создаёт stacking context */
+/* Родитель схлопывается (height: 0) если только floats внутри */
+```
+
+### Clearfix (старый способ)
+```css
+.clearfix::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+/* Современный — flow-root */
+.container {
+  display: flow-root;  /* Содержит floats, останавливает margin collapse */
+}
+```
+
+### Clear
+```css
+.clear-both { clear: both; }
+.clear-left { clear: left; }
+.clear-right { clear: right; }
+/* Используй flow-root на родителе вместо clear на потомке */
+```
+
+---
+
+## 6. Выбор инструмента Layout — Decision Tree
+
+```
+НУЖНО РАСПОЛОЖИТЬ ЭЛЕМЕНТЫ?
+│
+├─ Одномерно (ряд ИЛИ колонка) → FLEXBOX
+│   ├─ Навигация, toolbar, карточки в ряд
+│   ├─ Выравнивание по центру
+│   ├─ Распределение пространства (gap, flex-grow)
+│   └─ Порядок элементов (order)
+│
+├─ Двумерно (ряды И колонки) → GRID
+│   ├─ Сетки, dashboard, галереи
+│   ├─ Перекрывающиеся элементы
+│   ├─ Сложные пропорции (fr, minmax, auto-fit)
+│   └─ Именованные области (grid-template-areas)
+│
+├─ Текст/инлайн контент → Normal Flow + inline/inline-block
+│   ├─ Кнопки в тексте, иконки, бейджи
+│   └─ vertical-align для базовой линии
+│
+├─ Позиционирование относительно контейнера → ABSOLUTE
+│   ├─ Модалки, тултипы, дропдауны
+│   ├─ Бейджи на аватарах
+│   └─ Декоративные элементы (::before/::after)
+│
+├─ Прилипание при скролле → STICKY
+│   ├─ Заголовки таблиц/секций
+│   ├─ Сайдбары
+│   └─ Фиксированные кнопки действия
+│
+└─ Относительно viewport → FIXED
+    ├─ Хэдеры, футеры
+    ├─ Чат-виджеты
+    └─ "Наверх" кнопки
+```
+
+---
+
+## 7. Практическое задание
+
+### Задача 1: Display audit
+Дан HTML:
+```html
+<nav class="nav">
+  <a href="#" class="nav__link">Link 1</a>
+  <a href="#" class="nav__link">Link 2</a>
+  <div class="nav__search">
+    <input type="search" class="search__input">
+    <button class="search__btn">Поиск</button>
+  </div>
+</nav>
+```
+Напиши CSS используя ТОЛЬКО flexbox. Требования:
+- На мобильной: колонка, поиск растянут
+- На десктопе: ряд, ссылки слева, поиск справа
+- Gap между элементами 16px
+- Input занимает всё доступное место
+
+### Задача 2: Positioning практика
+Создай компоненты:
+1. **Tooltip** — absolute, появляется при hover на кнопке, центр сверху
+2. **Modal** — fixed, центрирован, backdrop с isolation
+3. **Sticky sidebar** — sticky top: 100px, max-height calc(100vh - 120px)
+4. **Badge на аватаре** — absolute top: -4px right: -4px
+
+### Задача 3: Stacking Context debugging
+Дано:
+```html
+<div class="header">Header (z-index: 10)</div>
+<div class="sidebar">Sidebar (z-index: 5)</div>
+<div class="modal">Modal (z-index: 100)</div>
+```
+```css
+.header { position: relative; z-index: 10; }
+.sidebar { position: relative; z-index: 5; }
+.modal { position: fixed; z-index: 100; }
+```
+Вопрос: почему модалка может быть ПОД хедером? Как исправить?
+
+### Задача 4: Flow-root vs Clearfix
+Сравни производительность и корректность:
+```css
+/* Вариант 1 */
+.clearfix::after { content: ""; display: table; clear: both; }
+
+/* Вариант 2 */
+.flow-root { display: flow-root; }
+
+/* Вариант 3 */
+.overflow-hidden { overflow: hidden; }
+
+/* Вариант 4 */
+.contain { contain: layout; }
+```
+Протестируй с floats, margin collapse, абсолютным позиционированием внутри.
+
+---
+
+## 8. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| `position: relative` без нужды | Создаёт stacking context, ломает z-index | Только когда нужно для absolute детей |
+| `z-index: 9999` везде | Армия конкретных чисел, не поддерживаемо | CSS переменные `--z-*` система |
+| `fixed` внутри `transform` | Fixed привязывается к transform, не viewport | Выноси fixed из transform контейнеров |
+| `sticky` не работает | У родителя нет высоты или overflow:hidden | Проверь containing block, height на родителе |
+| `display: contents` на интерактивных | Потеря фокуса, доступности | Только на неинтерактивных wrapper'ах |
+| `inline-block` для layout | Пробелы между элементами, vertical-align | Flexbox/Grid |
+| `float` для основного layout | Хрупко, clearfix, не responsive | Flexbox/Grid |
+
+---
+
+## 9. Полезные ресурсы
+
+### Спецификации
+- [CSS Display Level 3](https://www.w3.org/TR/css-display-3/)
+- [CSS Positioned Layout Level 3](https://www.w3.org/TR/css-position-3/)
+- [CSS Stacking Context](https://www.w3.org/TR/css-position-3/#z-index)
+
+### Статьи
+- [MDN: Position](https://developer.mozilla.org/en-US/docs/Web/CSS/position)
+- [Josh Comeau: Stacking Context](https://www.joshwcomeau.com/css/stacking-contexts/)
+- [Philip Walton: What No One Told You About Z-Index](https://philipwalton.com/articles/what-no-one-told-you-about-z-index/)
+
+### Инструменты
+- [Stacking Context Inspector](https://chrome.google.com/webstore/detail/stacking-context-inspecto/) — DevTools extension
+- [CSS Layout Debugger](https://github.com/viatsko/css-layout-debugger)
+
+---
+
+## 10. Ключевые выводы
+
+1. **Display определяет всё** — выбирай flex/grid для layout, inline для текста, flow-root для containment.
+2. **Normal Flow — основа**. Понимай BFC/IFC, margin collapse, containing blocks.
+3. **Position: relative/absolute/fixed/sticky** — разные системы координат. Relative остаёт в потоке, остальные — выходят.
+4. **Stacking Context — ловушка z-index**. Создаётся множеством свойств. Используй `isolation: isolate` и переменные `--z-*`.
+5. **Sticky — подарок для UX**. Работает только с правильным containing block.
+6. **Flexbox = 1D, Grid = 2D**. Не загоняй 2D задачи в flex и наоборот.
+
+---
+
+*Следующий урок: 06_Flexbox.txt — Полный гид по Flexbox: axes, alignment, wrapping, gap, flex-grow/shrink/basis*

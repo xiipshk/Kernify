@@ -1,0 +1,773 @@
+# Урок 20: Async Rust (Асинхронное программирование)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Понимать модель `Future` и `async`/`await`
+- Использовать `tokio` runtime
+- Работать с задачами (`spawn`, `join`, `select`)
+- Использовать примитивы синхронизации: `Mutex`, `RwLock`, `Semaphore`, `Barrier`, `Notify`
+- Работать с каналами: `mpsc`, `oneshot`, `broadcast`, `watch`
+- Понимать `Pin` и `Unpin` для самозареференцирующихся фьючерсов
+- Использовать `async` трейты и `async fn` в трейтах
+- Отменять задачи и работать с таймаутами
+
+---
+
+## 1. Основы: `Future`, `async`/`await`
+
+### Что такое `Future`
+```rust
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+// Фьючерс — это trait с методом poll
+trait Future {
+    type Output;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;
+}
+
+// Poll может быть:
+enum Poll<T> {
+    Ready(T),     // Готово
+    Pending,      // Ещё не готово, пробудите когда будет
+}
+```
+
+### `async`/`await` синтаксис
+```rust
+async fn fetch_data() -> String {
+    // Этот код компилируется в state machine, реализующую Future
+    let data = download().await; // .await ждёт завершения Future
+    process(data).await
+}
+
+// Эквивалентно:
+fn fetch_data() -> impl Future<Output = String> {
+    async move {
+        let data = download().await;
+        process(data).await
+    }
+}
+```
+
+### Запуск фьючерса
+```rust
+#[tokio::main]
+async fn main() {
+    // Просто вызов async fn НЕ запускает её!
+    let future = fetch_data(); // Future<Output = String>
+
+    // Нужно .await чтобы запустить
+    let result = future.await;
+    println!("{}", result);
+}
+```
+
+---
+
+## 2. Tokio Runtime
+
+### Базовый запуск
+```rust
+// #[tokio::main] — макрос, создающий runtime
+#[tokio::main]
+async fn main() {
+    println!("Hello async!");
+}
+
+// Или вручную:
+fn main() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        println!("Hello async!");
+    });
+}
+
+// Multi-threaded runtime (по умолчанию)
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+async fn main() { ... }
+
+// Current-thread runtime
+#[tokio::main(flavor = "current_thread")]
+async fn main() { ... }
+```
+
+### `spawn` — запуск задачи в фоне
+```rust
+#[tokio::main]
+async fn main() {
+    let handle = tokio::spawn(async {
+        // Эта задача выполняется параллельно
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        println!("Background task done");
+        42
+    });
+
+    // Можно делать другое здесь
+    println!("Main continues...");
+
+    // Ждём завершения
+    let result = handle.await.unwrap(); // Result<Output, JoinError>
+    println!("Result: {}", result);
+}
+```
+
+### `join!` — параллельное ожидание нескольких фьючерсов
+```rust
+use tokio::join;
+
+async fn task1() -> i32 {
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    1
+}
+async fn task2() -> i32 {
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    2
+}
+
+#[tokio::main]
+async fn main() {
+    // Выполняются параллельно! Общее время ~200мс, не 300мс
+    let (a, b) = join!(task1(), task2());
+    println!("{} {}", a, b); // 1 2
+}
+```
+
+### `select!` — ожидание первого готового
+```rust
+use tokio::select;
+use tokio::time::{sleep, Duration};
+
+#[tokio::main]
+async fn main() {
+    let mut a = sleep(Duration::from_millis(100));
+    let mut b = sleep(Duration::from_millis(200));
+
+    select! {
+        _ = &mut a => println!("A finished first"),
+        _ = &mut b => println!("B finished first"),
+    }
+}
+```
+
+### `try_join!` — с обработкой ошибок
+```rust
+use tokio::try_join;
+
+async fn fallible() -> Result<i32, &'static str> {
+    Err("error")
+}
+
+#[tokio::main]
+async fn main() {
+    let result: Result<(i32, i32), _> = try_join!(fallible(), fallible());
+    // Err("error") — останавливается на первой ошибке
+}
+```
+
+---
+
+## 3. Таймеры и таймауты
+
+### `sleep`, `interval`
+```rust
+use tokio::time::{sleep, interval, Duration, Instant};
+
+#[tokio::main]
+async fn main() {
+    // Одноразовый таймер
+    sleep(Duration::from_secs(1)).await;
+
+    // Периодический
+    let mut interval = interval(Duration::from_millis(500));
+    for _ in 0..5 {
+        interval.tick().await;
+        println!("Tick at {:?}", Instant::now());
+    }
+}
+```
+
+### `timeout` — ограничение времени выполнения
+```rust
+use tokio::time::timeout;
+
+async fn slow_operation() -> i32 {
+    sleep(Duration::from_secs(10)).await;
+    42
+}
+
+#[tokio::main]
+async fn main() {
+    match timeout(Duration::from_secs(1), slow_operation()).await {
+        Ok(result) => println!("Result: {}", result),
+        Err(_) => println!("Timed out!"),
+    }
+}
+```
+
+---
+
+## 4. Примитивы синхронизации (`tokio::sync`)
+
+### `Mutex` — взаимное исключение (async)
+```rust
+use tokio::sync::Mutex;
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() {
+    let data = Arc::new(Mutex::new(0));
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let data = data.clone();
+        handles.push(tokio::spawn(async move {
+            let mut guard = data.lock().await; // .await, не блокирует поток!
+            *guard += 1;
+        }));
+    }
+
+    for h in handles { h.await.unwrap(); }
+    println!("Final: {}", *data.lock().await); // 10
+}
+```
+
+### `RwLock` — nhiều читатели, один писатель
+```rust
+use tokio::sync::RwLock;
+
+#[tokio::main]
+async fn main() {
+    let data = Arc::new(RwLock::new(vec![1, 2, 3]));
+
+    // Множественные читатели
+    let r1 = data.read().await;
+    let r2 = data.read().await;
+    println!("{:?}, {:?}", *r1, *r2);
+    drop((r1, r2));
+
+    // Один писатель
+    let mut w = data.write().await;
+    w.push(4);
+}
+```
+
+### `Semaphore` — ограничение параллелизма
+```rust
+use tokio::sync::Semaphore;
+
+#[tokio::main]
+async fn main() {
+    let semaphore = Arc::new(Semaphore::new(3)); // Макс 3 одновременно
+    let mut handles = vec![];
+
+    for i in 0..10 {
+        let sem = semaphore.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.unwrap(); // Ждёт если 3 уже занято
+            println!("Task {} running", i);
+            sleep(Duration::from_millis(100)).await;
+            println!("Task {} done", i);
+        }));
+    }
+    for h in handles { h.await.unwrap(); }
+}
+```
+
+### `Notify` — простое уведомление
+```rust
+use tokio::sync::Notify;
+
+#[tokio::main]
+async fn main() {
+    let notify = Arc::new(Notify::new());
+    let notify2 = notify.clone();
+
+    tokio::spawn(async move {
+        sleep(Duration::from_secs(1)).await;
+        notify2.notify_one(); // Пробуждает один waiter
+    });
+
+    notify.notified().await; // Ждёт уведомления
+    println!("Notified!");
+}
+```
+
+### `Barrier` — барьер синхронизации
+```rust
+use tokio::sync::Barrier;
+
+#[tokio::main]
+async fn main() {
+    let barrier = Arc::new(Barrier::new(3));
+    let mut handles = vec![];
+
+    for i in 0..3 {
+        let b = barrier.clone();
+        handles.push(tokio::spawn(async move {
+            println!("Task {} waiting at barrier", i);
+            b.wait().await;
+            println!("Task {} passed barrier", i);
+        }));
+    }
+    for h in handles { h.await.unwrap(); }
+}
+```
+
+---
+
+## 5. Каналы (`tokio::sync`)
+
+### `mpsc` — Multi-Producer Single-Consumer
+```rust
+use tokio::sync::mpsc;
+
+#[tokio::main]
+async fn main() {
+    let (tx, mut rx) = mpsc::channel::<String>(32); // buffer = 32
+
+    // Producer
+    tokio::spawn(async move {
+        for i in 0..10 {
+            tx.send(format!("Message {}", i)).await.unwrap();
+        }
+    });
+
+    // Consumer
+    while let Some(msg) = rx.recv().await {
+        println!("Received: {}", msg);
+    }
+    println!("Channel closed");
+}
+```
+
+### `oneshot` — однократная отправка
+```rust
+use tokio::sync::oneshot;
+
+#[tokio::main]
+async fn main() {
+    let (tx, rx) = oneshot::channel();
+
+    tokio::spawn(async move {
+        sleep(Duration::from_millis(100)).await;
+        tx.send(42).unwrap();
+    });
+
+    let result = rx.await.unwrap();
+    println!("Result: {}", result);
+}
+```
+
+### `broadcast` — один отправитель, много получателей
+```rust
+use tokio::sync::broadcast;
+
+#[tokio::main]
+async fn main() {
+    let (tx, mut rx1) = broadcast::channel(16);
+    let mut rx2 = tx.subscribe();
+
+    tokio::spawn(async move {
+        tx.send("Hello all!").unwrap();
+    });
+
+    println!("rx1: {}", rx1.recv().await.unwrap());
+    println!("rx2: {}", rx2.recv().await.unwrap());
+}
+```
+
+### `watch` — текущее значение + уведомления об изменениях
+```rust
+use tokio::sync::watch;
+
+#[tokio::main]
+async fn main() {
+    let (tx, mut rx) = watch::channel(0);
+
+    tokio::spawn(async move {
+        for i in 1..=5 {
+            tx.send(i).unwrap();
+            sleep(Duration::from_millis(100)).await;
+        }
+    });
+
+    while rx.changed().await.is_ok() {
+        println!("Value: {}", *rx.borrow());
+    }
+}
+```
+
+---
+
+## 6. `Pin` и `Unpin`
+
+### Зачем нужен `Pin`
+```rust
+use std::pin::Pin;
+use std::marker::PhantomPinned;
+
+// Самозареференцирующаяся структура
+struct SelfRef {
+    data: String,
+    ptr: *const String, // Указатель на data
+    _pin: PhantomPinned, // Делает !Unpin
+}
+
+impl SelfRef {
+    fn new() -> Pin<Box<Self>> {
+        let mut boxed = Box::pin(SelfRef {
+            data: String::from("hello"),
+            ptr: std::ptr::null(),
+            _pin: PhantomPinned,
+        });
+        // Безопасно, так как boxed закреплён (pinned)
+        let ptr = &boxed.data as *const String;
+        unsafe { boxed.as_mut().get_unchecked_mut().ptr = ptr; }
+        boxed
+    }
+}
+```
+
+### `Unpin` — маркер "можно двигать"
+```rust
+// Большинство типов: Unpin
+// Фьючерсы от async fn: !Unpin (если имеют локальные переменные через await)
+
+// Проверка
+fn needs_unpin<T: Unpin>() {}
+fn needs_pin<T>() {}
+
+needs_unpin::<i32>();     // OK
+needs_unpin::<String>();  // OK
+// needs_unpin::<async { ... }>(); // Ошибка: !Unpin
+```
+
+### Работа с `Pin<&mut Future>`
+```rust
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+fn poll_future<F: Future>(mut fut: Pin<&mut F>, cx: &mut Context<'_>) -> Poll<F::Output> {
+    fut.as_mut().poll(cx)
+}
+```
+
+---
+
+## 7. Async трейты
+
+### `async fn` в трейтах (Rust 1.75+)
+```rust
+trait Database {
+    async fn get_user(&self, id: u64) -> Result<User, Error>;
+    async fn save_user(&self, user: &User) -> Result<(), Error>;
+}
+
+struct PostgresDb;
+impl Database for PostgresDb {
+    async fn get_user(&self, id: u64) -> Result<User, Error> {
+        // ... SQL запрос
+        Ok(User { id, name: "Alice".into() })
+    }
+    async fn save_user(&self, user: &User) -> Result<(), Error> { Ok(()) }
+}
+
+// Использование
+async fn process(db: &impl Database) {
+    let user = db.get_user(1).await?;
+}
+```
+
+### `async_trait` крейт (для старых версий / dyn)
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+trait Database {
+    async fn get_user(&self, id: u64) -> Result<User, Error>;
+}
+
+// dyn Database требует async_trait
+async fn process(db: &dyn Database) {
+    let user = db.get_user(1).await?;
+}
+```
+
+---
+
+## 8. Отмена задач (Cancellation)
+
+### Drop = отмена
+```rust
+#[tokio::main]
+async fn main() {
+    let handle = tokio::spawn(async {
+        loop {
+            println!("Working...");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+
+    sleep(Duration::from_millis(350)).await;
+    handle.abort(); // Отменяет задачу (drop future)
+    println!("Cancelled");
+}
+```
+
+### `CancellationToken` (patтерн)
+```rust
+use tokio_util::sync::CancellationToken;
+
+#[tokio::main]
+async fn main() {
+    let token = CancellationToken::new();
+    let token2 = token.clone();
+
+    let handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = token2.cancelled() => {
+                    println!("Cancelled!");
+                    break;
+                }
+                _ = sleep(Duration::from_millis(100)) => {
+                    println!("Working...");
+                }
+            }
+        }
+    });
+
+    sleep(Duration::from_millis(350)).await;
+    token.cancel();
+    handle.await.unwrap();
+}
+```
+
+---
+
+## 9. Streams (асинхронные итераторы)
+
+### `Stream` trait
+```rust
+use futures::stream::{Stream, StreamExt};
+use tokio::time::{interval, Duration};
+
+async fn number_stream() -> impl Stream<Item = i32> {
+    let mut interval = interval(Duration::from_millis(100));
+    let mut i = 0;
+    async_stream::stream! {
+        loop {
+            interval.tick().await;
+            yield i;
+            i += 1;
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let mut stream = number_stream().await;
+    while let Some(n) = stream.next().await {
+        if n > 5 { break; }
+        println!("{}", n);
+    }
+}
+```
+
+### Полезные адаптеры
+```rust
+use futures::stream::StreamExt;
+
+stream
+    .filter(|x| *x % 2 == 0)      // Фильтр
+    .map(|x| x * 2)               // Мап
+    .take(10)                     // Первые 10
+    .collect::<Vec<_>>()          // В Vec
+    .await;
+```
+
+---
+
+## 10. Практические упражнения
+
+### Упражнение 1: Пулл воркеров с семафором
+```rust
+use tokio::sync::Semaphore;
+use std::sync::Arc;
+
+async fn worker_pool<T, F, Fut>(items: Vec<T>, concurrency: usize, f: F) -> Vec<Fut::Output>
+where
+    F: Fn(T) -> Fut + Send + Sync + 'static,
+    Fut: Future + Send + 'static,
+    T: Send + 'static,
+    Fut::Output: Send + 'static,
+{
+    let sem = Arc::new(Semaphore::new(concurrency));
+    let mut handles = vec![];
+
+    for item in items {
+        let sem = sem.clone();
+        let f = &f;
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.unwrap();
+            f(item).await
+        }));
+    }
+
+    let mut results = Vec::with_capacity(handles.len());
+    for h in handles {
+        results.push(h.await.unwrap());
+    }
+    results
+}
+```
+
+### Упражнение 2: Graceful shutdown
+```rust
+use tokio::sync::{mpsc, watch};
+use tokio::signal;
+
+struct Server {
+    shutdown_tx: watch::Sender<bool>,
+}
+
+impl Server {
+    fn new() -> Self {
+        let (tx, _) = watch::channel(false);
+        Self { shutdown_tx: tx }
+    }
+
+    async fn run(&self) {
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+
+        tokio::select! {
+            _ = self.accept_loop() => {},
+            _ = shutdown_rx.changed() => {
+                println!("Shutdown signal received");
+            }
+        }
+    }
+
+    async fn accept_loop(&self) {
+        // ... accept connections
+    }
+
+    fn shutdown(&self) {
+        self.shutdown_tx.send(true).ok();
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let server = Server::new();
+    let server_handle = tokio::spawn(server.run());
+
+    // Ждём Ctrl+C
+    signal::ctrl_c().await.unwrap();
+    server.shutdown();
+    server_handle.await.unwrap();
+}
+```
+
+### Упражнение 3: Rate limiter с токенами
+```rust
+use tokio::sync::Mutex;
+use std::time::Instant;
+
+struct TokenBucket {
+    capacity: u32,
+    tokens: Mutex<u32>,
+    refill_rate: u32, // tokens per second
+    last_refill: Mutex<Instant>,
+}
+
+impl TokenBucket {
+    fn new(capacity: u32, refill_rate: u32) -> Self {
+        Self {
+            capacity,
+            tokens: Mutex::new(capacity),
+            refill_rate,
+            last_refill: Mutex::new(Instant::now()),
+        }
+    }
+
+    async fn try_take(&self) -> bool {
+        let mut tokens = self.tokens.lock().await;
+        let mut last = self.last_refill.lock().await;
+
+        let now = Instant::now();
+        let elapsed = now.duration_since(*last).as_secs_f64();
+        let new_tokens = (elapsed * self.refill_rate as f64) as u32;
+
+        *tokens = (*tokens + new_tokens).min(self.capacity);
+        *last = now;
+
+        if *tokens > 0 {
+            *tokens -= 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+```
+
+---
+
+## 11. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `future cannot be sent between threads` | Future не `Send` | Не храните `Rc`/`RefCell` в async fn, используйте `Arc`/`Mutex` |
+| `blocking call in async context` | `std::fs::read`, `sleep` (std) | Используйте `tokio::fs`, `tokio::time::sleep` |
+| `Future not Unpin` | Самореференция или async block | Используйте `Box::pin` или `pin!` |
+| `JoinError::Cancelled` | Задача была отменена | Обрабатывайте `handle.await` как `Result` |
+| `mpsc::Sender` клонируется, но `Receiver` нет | `mpsc` — single consumer | Используйте `broadcast` для множества потребителей |
+
+---
+
+## 12. Шпаргалка: Tokio API
+
+| Модуль | Основные типы |
+|--------|---------------|
+| `tokio::task` | `spawn`, `spawn_blocking`, `yield_now`, `JoinHandle` |
+| `tokio::time` | `sleep`, `interval`, `timeout`, `Instant`, `Duration` |
+| `tokio::sync::mpsc` | `channel`, `Sender`, `Receiver` |
+| `tokio::sync::oneshot` | `channel`, `Sender`, `Receiver` |
+| `tokio::sync::broadcast` | `channel`, `Sender`, `Receiver` |
+| `tokio::sync::watch` | `channel`, `Sender`, `Receiver` |
+| `tokio::sync` | `Mutex`, `RwLock`, `Semaphore`, `Notify`, `Barrier` |
+| `tokio::fs` | `File`, `read`, `write`, `read_dir`, `OpenOptions` |
+| `tokio::io` | `AsyncReadExt`, `AsyncWriteExt`, `AsyncBufReadExt` |
+
+---
+
+## 13. Полезные ресурсы
+
+- **Async Book**: https://rust-lang.github.io/async-book/
+- **Tokio Tutorial**: https://tokio.rs/tokio/tutorial
+- **Tokio API**: https://docs.rs/tokio/
+- **Futures crate**: https://docs.rs/futures/
+- **Pin documentation**: https://doc.rust-lang.org/std/pin/
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- `Future` trait, `async`/`await`, state machines
+- Tokio runtime: `#[tokio::main]`, `spawn`, `join!`, `select!`, `try_join!`
+- Таймеры: `sleep`, `interval`, `timeout`
+- Синхронизация: `Mutex`, `RwLock`, `Semaphore`, `Notify`, `Barrier`
+- Каналы: `mpsc`, `oneshot`, `broadcast`, `watch`
+- `Pin` / `Unpin` для самозареференцирующихся фьючерсов
+- Async трейты: нативные (1.75+) и `async_trait`
+- Отмена задач: `abort()`, `CancellationToken`
+- Streams: `Stream`, `StreamExt`, `async_stream`
+
+---
+
+**Следующий урок:** Concurrency (`21_Concurrency.txt`)

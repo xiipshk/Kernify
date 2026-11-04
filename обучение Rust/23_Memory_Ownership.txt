@@ -1,0 +1,624 @@
+# Урок 23: Продвинутое владение и память (Advanced Memory & Ownership)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Глубоко понимать стек vs куча, выравнивание, размер типов
+- Работать с `ManuallyDrop`, `MaybeUninit`, `NonNull`
+- Использовать `Pin` для самозареференцирующихся структур
+- Понимать `Drop` order, `dropck`, `#[may_dangle]`
+- Работать с кастомными аллокаторами (`GlobalAlloc`, `Allocator` API)
+- Использовать `Box::leak`, `Box::into_raw`, `from_raw`
+- Понимать variance (ковариантность, контрвариантность, инвариантность)
+- Работать с `PhantomData` для variance и dropck
+- Анализировать layout типов (`size_of`, `align_of`, `Layout`)
+
+---
+
+## 1. Стек vs Куча: детали
+
+### Layout типов
+```rust
+use std::mem::{size_of, align_of, Layout};
+
+fn main() {
+    println!("i32: size={}, align={}", size_of::<i32>(), align_of::<i32>());
+    println!("i64: size={}, align={}", size_of::<i64>(), align_of::<i64>());
+    println!("&i32: size={}, align={}", size_of::<&i32>(), align_of::<&i32>());
+    println!("Box<i32>: size={}, align={}", size_of::<Box<i32>>(), align_of::<Box<i32>>());
+    println!("Option<&i32>: size={}", size_of::<Option<&i32>>()); // 8 (null pointer optimization)
+    println!("Option<Box<i32>>: size={}", size_of::<Option<Box<i32>>>()); // 8
+    println!("Vec<i32>: size={}", size_of::<Vec<i32>>()); // 24 (ptr, len, cap)
+}
+```
+
+### Выравнивание и padding
+```rust
+#[repr(C)]
+struct Padded {
+    a: u8,    // offset 0
+    // 7 bytes padding
+    b: u64,   // offset 8
+    // size = 16, align = 8
+}
+
+#[repr(C, packed)]
+struct Packed {
+    a: u8,
+    b: u64,   // offset 1, unaligned!
+    // size = 9, align = 1
+}
+
+#[repr(transparent)]
+struct Transparent(u32); // Точно такое же представление, как u32
+```
+
+### `Layout` для ручного управления памятью
+```rust
+use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
+
+fn allocate_array<T>(count: usize) -> *mut T {
+    let layout = Layout::array::<T>(count).unwrap();
+    let ptr = unsafe { alloc(layout) } as *mut T;
+    if ptr.is_null() { handle_alloc_error(layout); }
+    ptr
+}
+
+fn deallocate_array<T>(ptr: *mut T, count: usize) {
+    let layout = Layout::array::<T>(count).unwrap();
+    unsafe { dealloc(ptr as *mut u8, layout); }
+}
+```
+
+---
+
+## 2. `ManuallyDrop<T>` — ручное управление Drop
+
+### Базовое использование
+```rust
+use std::mem::ManuallyDrop;
+
+struct Resource {
+    name: String,
+}
+
+impl Drop for Resource {
+    fn drop(&mut self) {
+        println!("Dropping {}", self.name);
+    }
+}
+
+fn main() {
+    let mut resource = ManuallyDrop::new(Resource { name: "file".into() });
+    // Drop НЕ вызывается автоматически!
+
+    // Ручной вызов
+    unsafe { ManuallyDrop::drop(&mut resource); }
+    // Можно вызвать дважды? Нет, UB!
+}
+```
+
+### `ManuallyDrop::take` — взять владение
+```rust
+let mut md = ManuallyDrop::new(String::from("hello"));
+let s: String = ManuallyDrop::take(&mut md); // md теперь "пустой", drop не вызовется
+println!("{}", s);
+```
+
+### Вложенные ManuallyDrop
+```rust
+struct Outer {
+    inner: ManuallyDrop<Inner>,
+}
+
+impl Drop for Outer {
+    fn drop(&mut self) {
+        // Сначала drop inner, потом outer
+        unsafe { ManuallyDrop::drop(&mut self.inner); }
+    }
+}
+```
+
+---
+
+## 3. `MaybeUninit<T>` — неинициализированная память
+
+### Проблема: `mem::uninitialized()` deprecated
+```rust
+// СТАРОЕ (UB в современном Rust):
+// let x: i32 = unsafe { std::mem::uninitialized() };
+
+// НОВОЕ:
+use std::mem::MaybeUninit;
+
+let mut x = MaybeUninit::<i32>::uninit();
+unsafe { x.as_mut_ptr().write(42); }
+let x = unsafe { x.assume_init() };
+println!("{}", x); // 42
+```
+
+### Массивы без инициализации
+```rust
+use std::mem::MaybeUninit;
+
+const N: usize = 1000;
+let mut arr: [MaybeUninit<i32>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+
+for i in 0..N {
+    arr[i].write(i as i32);
+}
+
+let initialized: [i32; N] = unsafe { std::mem::transmute(arr) };
+```
+
+### `MaybeUninit` в FFI
+```rust
+use std::mem::MaybeUninit;
+
+extern "C" {
+    fn get_value(out: *mut i32) -> i32;
+}
+
+let mut val = MaybeUninit::<i32>::uninit();
+unsafe { get_value(val.as_mut_ptr()); }
+let val = unsafe { val.assume_init() };
+```
+
+---
+
+## 4. `NonNull<T>` — непустой указатель
+
+### Зачем нужен
+```rust
+use std::ptr::NonNull;
+
+// Option<NonNull<T>> = usize (null pointer optimization)
+// В отличие от *mut T, NonNull<T> ковариатен по T
+// И реализует Send/Sync если T: Send/Sync
+
+struct MyBox<T> {
+    ptr: NonNull<T>,
+}
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> Self {
+        let ptr = Box::into_raw(Box::new(x));
+        MyBox { ptr: NonNull::new(ptr).unwrap() }
+    }
+}
+```
+
+### Ковариантность
+```rust
+// *mut T — инвариативен
+// NonNull<T> — ковариатен (как &T)
+
+fn takes_nonnull<'a>(_: NonNull<&'a str>) {}
+takes_nonnull(NonNull::new(&"hello").unwrap()); // OK, lifetime ковариатен
+```
+
+---
+
+## 5. `Pin<P>` и самозареференцирующиеся структуры
+
+### Проблема: self-referential structs
+```rust
+// НЕБЕЗОПАСНО: при перемещении указатель становится невалидным
+struct BadSelfRef {
+    data: String,
+    ptr: *const String, // Указатель на data
+}
+
+// БЕЗОПАСНО с Pin:
+use std::pin::Pin;
+use std::marker::PhantomPinned;
+
+struct SelfRef {
+    data: String,
+    ptr: *const String,
+    _pin: PhantomPinned, // Делает !Unpin
+}
+
+impl SelfRef {
+    fn new() -> Pin<Box<Self>> {
+        let mut boxed = Box::pin(SelfRef {
+            data: String::from("hello"),
+            ptr: std::ptr::null(),
+            _pin: PhantomPinned,
+        });
+        let ptr = &boxed.data as *const String;
+        // Безопасно: boxed закреплён в памяти
+        unsafe { boxed.as_mut().get_unchecked_mut().ptr = ptr; }
+        boxed
+    }
+
+    fn print(self: Pin<&Self>) {
+        println!("{}", unsafe { &*self.ptr });
+    }
+}
+```
+
+### `Pin` projection (доступ к полям)
+```rust
+use std::pin::Pin;
+
+struct MyStruct {
+    field: i32,
+    _pin: PhantomPinned,
+}
+
+impl MyStruct {
+    fn get_field(self: Pin<&Self>) -> &i32 {
+        // Безопасно: field не содержит указателей на self
+        &self.field
+    }
+
+    // НЕБЕЗОПАСНО: если поле содержит указатель на self
+    // fn get_ptr(self: Pin<&Self>) -> *const i32 { &self.field as *const _ }
+}
+```
+
+---
+
+## 6. Drop Order и `#[may_dangle]`
+
+### Порядок Drop
+```rust
+struct A;
+struct B;
+
+impl Drop for A { fn drop(&mut self) { println!("Drop A"); } }
+impl Drop for B { fn drop(&mut self) { println!("Drop B"); } }
+
+struct Container {
+    a: A,
+    b: B,
+}
+
+fn main() {
+    let _c = Container { a: A, b: B };
+}
+// Вывод:
+// Drop B
+// Drop A
+// Поля дропаются в ОБРАТНОМ порядке объявления!
+```
+
+### `#[may_dangle]` — ослабление dropck
+```rust
+use std::marker::PhantomData;
+
+struct Wrapper<'a, T: 'a> {
+    data: &'a T,
+    // Без may_dangle: T должен жить дольше, чем Wrapper
+    // С may_dangle: компилятор верит, что T не используется в drop
+    _marker: PhantomData<&'a T>,
+}
+
+unsafe impl<#[may_dangle] 'a, T> Drop for Wrapper<'a, T> {
+    fn drop(&mut self) {
+        // Мы гарантируем, что не трогаем self.data здесь!
+        println!("Dropping wrapper");
+    }
+}
+```
+
+---
+
+## 7. Кастомные аллокаторы
+
+### `GlobalAlloc` (stable)
+```rust
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct TrackingAllocator;
+
+static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for TrackingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = System.alloc(layout);
+        if !ptr.is_null() {
+            ALLOCATED.fetch_add(layout.size(), Ordering::Relaxed);
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        System.dealloc(ptr, layout);
+        ALLOCATED.fetch_sub(layout.size(), Ordering::Relaxed);
+    }
+}
+
+#[global_allocator]
+static GLOBAL: TrackingAllocator = TrackingAllocator;
+```
+
+### `Allocator` API (nightly, `allocator_api`)
+```rust
+#![feature(allocator_api)]
+use std::alloc::{Allocator, Global, Layout};
+use std::ptr::NonNull;
+
+struct MyAlloc;
+
+unsafe impl Allocator for MyAlloc {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        Global.allocate(layout)
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        Global.deallocate(ptr, layout)
+    }
+}
+
+let alloc = MyAlloc;
+let vec = Vec::new_in(alloc); // Vec с кастомным аллокатором
+```
+
+---
+
+## 8. Variance (Ковариантность/Контрвариантность/Инвариантность)
+
+### Правила
+| Тип | Variance по T |
+|-----|---------------|
+| `&T`, `&mut T`, `*const T`, `NonNull<T>` | Ковариативен |
+| `Box<T>`, `Vec<T>`, `Option<T>` | Ковариативен |
+| `Cell<T>`, `RefCell<T>`, `Mutex<T>` | Инвариативен |
+| `fn(T) -> U` | Контрвариативен по T, ковариативен по U |
+| `*mut T` | Инвариативен |
+
+### Демонстрация
+```rust
+// Ковариантность: &'long T -> &'short T OK
+fn covariant<'a, 'b: 'a>(x: &'b i32) -> &'a i32 { x }
+
+// Контрвариантность: fn(&'short) -> fn(&'long)
+fn contravariant<'a, 'b: 'a>(f: fn(&'a i32)) -> fn(&'b i32) { f }
+
+// Инвариантность: Cell<&'long> != Cell<&'short>
+use std::cell::Cell;
+fn invariant<'a, 'b>(x: Cell<&'a i32>) -> Cell<&'b i32> { x } // ОШИБКА
+```
+
+### `PhantomData` для контроля variance
+```rust
+use std::marker::PhantomData;
+use std::cell::Cell;
+
+// Инвариативный wrapper
+struct Invariant<T> {
+    _marker: PhantomData<Cell<T>>, // Cell делает инвариантным
+}
+
+// Ковариативный wrapper
+struct Covariant<T> {
+    _marker: PhantomData<fn() -> T>, // fn() -> T ковариативен по T
+}
+
+// Контрвариативный wrapper
+struct Contravariant<T> {
+    _marker: PhantomData<fn(T)>, // fn(T) контрвариативен по T
+}
+```
+
+---
+
+## 9. `Box` низкоуровневые операции
+
+### `into_raw` / `from_raw` / `leak`
+```rust
+let b = Box::new(42);
+let raw = Box::into_raw(b);     // *mut i32, память НЕ освобождена
+let b = unsafe { Box::from_raw(raw) }; // Восстанавливаем Box, память будет освобождена
+
+// leak: возвращает &'static mut, память НИКОГДА не освободится
+let static_ref: &'static mut i32 = Box::leak(Box::new(42));
+*static_ref += 1;
+```
+
+### `Box::new_uninit` / `write`
+```rust
+#![feature(new_uninit)]
+
+let mut boxed = Box::<i32>::new_uninit();
+let boxed = boxed.write(42); // Инициализируем
+assert_eq!(*boxed, 42);
+```
+
+---
+
+## 10. `#[repr(transparent)]` и FFI
+
+### Transparent wrapper
+```rust
+#[repr(transparent)]
+struct MyInt(i32); // Идентично i32 в памяти
+
+// Можно безопасно кастовать
+fn takes_i32(x: i32) {}
+fn takes_myint(x: MyInt) {}
+
+let x = MyInt(42);
+takes_i32(x.0); // OK
+// takes_myint(42); // Error, но можно:
+unsafe { std::mem::transmute::<i32, MyInt>(42) };
+```
+
+### `repr(C)` для FFI
+```rust
+#[repr(C)]
+struct Point {
+    x: f64,
+    y: f64,
+}
+
+// Гейт: соответствует C struct { double x; double y; }
+extern "C" {
+    fn process_point(p: *const Point);
+}
+```
+
+---
+
+## 11. Практические упражнения
+
+### Упражнение 1: Arena аллокатор
+```rust
+use std::alloc::{Layout, alloc, dealloc};
+use std::ptr::NonNull;
+
+struct Arena {
+    ptr: NonNull<u8>,
+    size: usize,
+    offset: usize,
+}
+
+impl Arena {
+    fn new(size: usize) -> Self {
+        let layout = Layout::from_size_align(size, 8).unwrap();
+        let ptr = NonNull::new(unsafe { alloc(layout) }).unwrap();
+        Arena { ptr, size, offset: 0 }
+    }
+
+    fn alloc<T>(&mut self) -> Option<&mut T> {
+        let layout = Layout::new::<T>();
+        let aligned_offset = (self.offset + layout.align() - 1) & !(layout.align() - 1);
+        if aligned_offset + layout.size() > self.size {
+            return None;
+        }
+        let ptr = unsafe { self.ptr.as_ptr().add(aligned_offset) as *mut T };
+        self.offset = aligned_offset + layout.size();
+        Some(unsafe { &mut *ptr })
+    }
+}
+
+impl Drop for Arena {
+    fn drop(&mut self) {
+        let layout = Layout::from_size_align(self.size, 8).unwrap();
+        unsafe { dealloc(self.ptr.as_ptr(), layout); }
+    }
+}
+```
+
+### Упражнение 2: Intrusive linked list
+```rust
+use std::pin::Pin;
+use std::ptr::NonNull;
+
+struct Node<T> {
+    value: T,
+    next: Option<NonNull<Node<T>>>,
+    prev: Option<NonNull<Node<T>>>,
+}
+
+struct LinkedList<T> {
+    head: Option<NonNull<Node<T>>>,
+    tail: Option<NonNull<Node<T>>>,
+}
+
+impl<T> LinkedList<T> {
+    fn push_back(&mut self, mut node: Pin<Box<Node<T>>>) {
+        let ptr = NonNull::from(Pin::into_inner_unchecked(node));
+        unsafe {
+            (*ptr.as_ptr()).prev = self.tail;
+            (*ptr.as_ptr()).next = None;
+        }
+        if let Some(mut tail) = self.tail {
+            unsafe { (*tail.as_ptr()).next = Some(ptr); }
+        } else {
+            self.head = Some(ptr);
+        }
+        self.tail = Some(ptr);
+    }
+}
+```
+
+### Упражнение 3: Type-safe arena с `PhantomData`
+```rust
+use std::marker::PhantomData;
+
+struct TypedArena<T> {
+    arena: Arena,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> TypedArena<T> {
+    fn new(capacity: usize) -> Self {
+        TypedArena {
+            arena: Arena::new(capacity * std::mem::size_of::<T>()),
+            _phantom: PhantomData,
+        }
+    }
+
+    fn alloc(&mut self, value: T) -> &mut T {
+        let slot = self.arena.alloc::<T>().expect("Arena full");
+        *slot = value;
+        slot
+    }
+}
+```
+
+---
+
+## 12. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `use of moved value` после `ManuallyDrop::take` | Значение уже взято | Не используйте после `take` |
+| `double free` | Ручной `drop` + автоматический | Используйте `ManuallyDrop` или `forget` |
+| `misaligned pointer` | `repr(packed)` + ссылка | Используйте `ptr::read_unaligned` |
+| `use after free` | `Box::from_raw` дважды | Восстанавливайте Box только один раз |
+| `variance mismatch` | Ожидается ковариантность, дано инвариантное | Используйте `PhantomData<fn() -> T>` |
+
+---
+
+## 13. Шпаргалка: Memory API
+
+| Тип/Функция | Назначение |
+|-------------|------------|
+| `size_of::<T>()` | Размер в байтах |
+| `align_of::<T>()` | Выравнивание |
+| `Layout::new::<T>()` | Layout для типа |
+| `Layout::array::<T>(n)` | Layout для массива |
+| `ManuallyDrop::new(x)` | Отключить auto-drop |
+| `ManuallyDrop::drop(&mut x)` | Ручной drop |
+| `ManuallyDrop::take(&mut x)` | Взять владение |
+| `MaybeUninit::uninit()` | Неинициализированная память |
+| `MaybeUninit::write(&mut, val)` | Записать значение |
+| `MaybeUninit::assume_init()` | Утвердить инициализацию |
+| `NonNull::new(ptr)` | Безопасная обертка над *mut |
+| `Pin::new(Box::new(x))` | Закрепить в куче |
+| `PhantomData<T>` | Маркер для variance/dropck |
+
+---
+
+## 14. Полезные ресурсы
+
+- **Rustonomicon**: https://doc.rust-lang.org/nomicon/
+- **Memory Layout**: https://doc.rust-lang.org/nomicon/type-layout.html
+- **Pin**: https://doc.rust-lang.org/std/pin/
+- **MaybeUninit**: https://doc.rust-lang.org/std/mem/union.MaybeUninit.html
+- **Allocator API**: https://doc.rust-lang.org/std/alloc/trait.Allocator.html
+- **Variance**: https://doc.rust-lang.org/nomicon/subtyping.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- Layout типов: `size_of`, `align_of`, padding, `repr(C/packed/transparent)`
+- `ManuallyDrop<T>` для ручного управления деструктором
+- `MaybeUninit<T>` для работы с неинициализированной памятью
+- `NonNull<T>` — ковариантный непустой указатель
+- `Pin<P>` для самозареференцирующихся структур и projection
+- Drop order и `#[may_dangle]` для ослабления dropck
+- Кастомные аллокаторы: `GlobalAlloc` (stable) и `Allocator` (nightly)
+- Variance: ковариантность, контрвариантность, инвариантность
+- `PhantomData` для контроля variance и dropck
+- Низкоуровневые `Box` операции: `into_raw`, `from_raw`, `leak`, `new_uninit`
+
+---
+
+**Следующий урок:** Продвинутые трейты (`24_Advanced_Traits.txt`)

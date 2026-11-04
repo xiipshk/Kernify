@@ -1,0 +1,434 @@
+# Урок 2.8: Асинхронность — async/await, event loop, задачи, синхронизация, aiohttp
+
+## Цели урока
+- Понимать event loop, корутины, задачи
+- Писать async/await код
+- Использовать asyncio.gather, wait, as_completed
+- Синхронизировать: Lock, Semaphore, Event, Queue
+- Работать с aiohttp для HTTP запросов
+
+---
+
+## 1. Зачем асинхронность
+
+### Блокирующий vs Неблокирующий
+```python
+import time
+import requests
+
+# Синхронно — последовательно, ждёт каждый запрос
+def sync_fetch(urls):
+    results = []
+    for url in urls:
+        resp = requests.get(url)  # БЛОКИРУЕТ поток!
+        results.append(resp.text)
+    return results
+
+# Асинхронно — параллельно, не блокирует
+import aiohttp
+import asyncio
+
+async def async_fetch(urls):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_one(session, url) for url in urls]
+        return await asyncio.gather(*tasks)
+
+async def fetch_one(session, url):
+    async with session.get(url) as resp:
+        return await resp.text()
+```
+
+---
+
+## 2. Основы async/await
+
+### Корутина (coroutine)
+```python
+async def hello():
+    print("Привет")
+    await asyncio.sleep(1)  # отдаёт управление event loop
+    print("Мир")
+
+# hello() НЕ выполняется, возвращает корутину
+coro = hello()
+type(coro)  # <class 'coroutine'>
+
+# Запуск через event loop
+asyncio.run(hello())
+```
+
+### await — только внутри async функции
+```python
+async def main():
+    await asyncio.sleep(0.1)
+    print("Готово")
+
+# ОШИБКА: await снаружи async функции
+# await asyncio.sleep(0.1)  # SyntaxError
+```
+
+---
+
+## 3. Event Loop — цикл событий
+
+```python
+import asyncio
+
+# Получить текущий loop
+loop = asyncio.get_event_loop()
+
+# Запустить корутину
+loop.run_until_complete(main())
+
+# Python 3.7+ — проще
+asyncio.run(main())
+
+# Создать задачу (Task) — планирует выполнение
+async def main():
+    task = asyncio.create_task(background_work())
+    # background_work запускается параллельно!
+    await do_something_else()
+    await task  # ждём завершения
+
+asyncio.run(main())
+```
+
+---
+
+## 4. Запуск нескольких корутин параллельно
+
+### gather — собрать результаты
+```python
+async def fetch_all(urls):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch(session, url) for url in urls]
+        results = await asyncio.gather(*tasks)
+    return results
+
+# gather с обработкой ошибок
+results = await asyncio.gather(*tasks, return_exceptions=True)
+# results содержит либо результат, либо Exception
+```
+
+### wait — больше контроля
+```python
+done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+# done — завершённые, pending — ещё работающие
+
+# Отмена оставшихся
+for task in pending:
+    task.cancel()
+await asyncio.gather(*pending, return_exceptions=True)
+```
+
+### as_completed — по мере готовности
+```python
+for coro in asyncio.as_completed(tasks):
+    result = await coro
+    print(f"Готово: {result}")
+```
+
+---
+
+## 5. Синхронизация примитивы
+
+### Lock — взаимное исключение
+```python
+lock = asyncio.Lock()
+
+async def safe_increment(counter):
+    async with lock:
+        counter.value += 1
+        await asyncio.sleep(0)  # yield
+```
+
+### Semaphore — ограничение параллелизма
+```python
+# Не более 3 одновременных соединений
+semaphore = asyncio.Semaphore(3)
+
+async def limited_fetch(url):
+    async with semaphore:
+        return await fetch(url)
+```
+
+### Event — сигнал между задачами
+```python
+event = asyncio.Event()
+
+async def waiter():
+    print("Жду...")
+    await event.wait()
+    print("Событие произошло!")
+
+async def setter():
+    await asyncio.sleep(1)
+    event.set()
+
+asyncio.run(asyncio.gather(waiter(), setter()))
+```
+
+### Queue — безопасная передача данных
+```python
+queue = asyncio.Queue(maxsize=10)
+
+async def producer():
+    for i in range(5):
+        await queue.put(i)
+        await asyncio.sleep(0.1)
+    await queue.put(None)  # сигнал завершения
+
+async def consumer():
+    while True:
+        item = await queue.get()
+        if item is None:
+            break
+        print(f"Получено: {item}")
+        queue.task_done()
+
+asyncio.run(asyncio.gather(producer(), consumer()))
+```
+
+---
+
+## 6. Таймауты и отмена
+
+### wait_for — таймаут на одну корутину
+```python
+try:
+    result = await asyncio.wait_for(slow_operation(), timeout=5.0)
+except asyncio.TimeoutError:
+    print("Слишком долго!")
+```
+
+### Timeout контекстный менеджер (Python 3.11+)
+```python
+async with asyncio.timeout(5):
+    await slow_operation()
+```
+
+### Отмена задачи
+```python
+async def long_running():
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        print("Отменено!")
+        raise  # нужно пробросить дальше!
+
+task = asyncio.create_task(long_running())
+await asyncio.sleep(0.5)
+task.cancel()
+try:
+    await task
+except asyncio.CancelledError:
+    pass
+```
+
+---
+
+## 7. Запуск в потоках/процессах
+
+### to_thread — блокирующий код в отдельном потоке (Python 3.9+)
+```python
+import time
+
+def blocking_io():
+    time.sleep(2)
+    return "готово"
+
+async def main():
+    result = await asyncio.to_thread(blocking_io)
+    print(result)
+```
+
+### run_in_executor — для CPU-bound задач
+```python
+import concurrent.futures
+
+def cpu_heavy(n):
+    return sum(i*i for i in range(n))
+
+async def main():
+    loop = asyncio.get_running_loop()
+    # В пуле процессов (для CPU-bound)
+    with concurrent.futures.ProcessPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, cpu_heavy, 10_000_000)
+    print(result)
+```
+
+---
+
+## 8. aiohttp — асинхронный HTTP клиент
+
+### Базовое использование
+```python
+import aiohttp
+import asyncio
+
+async def fetch(session, url):
+    async with session.get(url) as response:
+        return await response.text()
+
+async def main():
+    async with aiohttp.ClientSession() as session:
+        html = await fetch(session, "https://example.com")
+        print(html[:100])
+
+asyncio.run(main())
+```
+
+### POST с JSON
+```python
+async def post_data(session, url, data):
+    async with session.post(url, json=data) as resp:
+        return await resp.json()
+
+async with aiohttp.ClientSession() as session:
+    result = await post_data(session, "https://api.example.com/users",
+                             {"name": "Анна", "age": 25})
+```
+
+### Таймауты и повторные попытки
+```python
+timeout = aiohttp.ClientTimeout(total=30, connect=10)
+connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
+
+async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+    ...
+```
+
+---
+
+## 9. Асинхронные контекстные менеджеры и итераторы
+
+```python
+class AsyncResource:
+    async def __aenter__(self):
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
+async with AsyncResource() as res:
+    await res.do_something()
+
+# Асинхронный итератор
+class AsyncCounter:
+    def __init__(self, limit):
+        self.limit = limit
+        self.current = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.current >= self.limit:
+            raise StopAsyncIteration
+        val = self.current
+        self.current += 1
+        await asyncio.sleep(0.1)
+        return val
+
+async for i in AsyncCounter(3):
+    print(i)
+```
+
+---
+
+## 10. Паттерны и лучшие практики
+
+### Структура приложения
+```python
+async def main():
+    # 1. Инициализация ресурсов
+    async with Database() as db, Cache() as cache:
+        # 2. Запуск фоновых задач
+        background = asyncio.create_task(periodic_cleanup(cache))
+
+        try:
+            # 3. Основной цикл (веб-сервер, бот, и т.д.)
+            await run_server(db, cache)
+        finally:
+            # 4. Корректное завершение
+            background.cancel()
+            await background
+```
+
+### Graceful shutdown
+```python
+import signal
+
+shutdown_event = asyncio.Event()
+
+def signal_handler():
+    shutdown_event.set()
+
+async def main():
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, signal_handler)
+
+    await shutdown_event.wait()
+    print("Завершение...")
+```
+
+---
+
+## 11. Отладка асинхронного кода
+
+```python
+# Включить debug режим event loop
+asyncio.run(main(), debug=True)
+
+# Или
+loop = asyncio.get_event_loop()
+loop.set_debug(True)
+loop.slow_callback_duration = 0.1  # логировать медленные коллбеки > 100ms
+```
+
+### Частые проблемы
+```python
+# ПРОБЛЕМА: забыли await
+async def bad():
+    fetch_data()  # корутина создана, но не запущена!
+
+# ПРАВИЛЬНО
+async def good():
+    await fetch_data()
+    # или
+    asyncio.create_task(fetch_data())
+```
+
+---
+
+## Практические задания
+
+1. **Параллельный загрузчик**: скачайте 100 URL с ограничением 10 одновременных (Semaphore)
+2. **WebSocket клиент**: подключение с переподключением (aiohttp WS)
+3. **Rate limiter**: класс, позволяющий N запросов в секунду (Token Bucket)
+4. **Task pool**: пул воркеров, обрабатывающих очередь задач
+5. **Graceful shutdown**: сервер, корректно завершающийся по SIGTERM
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `await` на не-awaitable | Только на coroutine, Task, Future, Awaitable |
+| Блокирующие вызовы (time.sleep, requests) в async | asyncio.sleep, aiohttp, to_thread |
+| Создание задач без сохранения ссылок | `task = create_task(...)` иначе GC удалит! |
+| Отмена без обработки CancelledError | try/except CancelledError, raise дальше |
+| asyncio.run() внутри уже работающего loop | Используйте create_task или ensure_future |
+
+---
+
+## Полезные ресурсы
+- **Python Docs: asyncio** — https://docs.python.org/3/library/asyncio.html
+- **Real Python: Async IO** — https://realpython.com/async-io-python/
+- **aiohttp docs** — https://docs.aiohttp.org/
+- **AsyncIO Best Practices** — https://github.com/timofurrer/awesome-asyncio
+- **PEP 492 — Coroutines with async and await** — https://peps.python.org/pep-0492/

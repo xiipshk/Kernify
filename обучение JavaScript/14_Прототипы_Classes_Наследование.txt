@@ -1,0 +1,410 @@
+# Урок 14: Прототипы, Classes, Наследование, Getters/Setters
+
+## Цели урока
+- Понимать прототипную модель наследования
+- Работать с `class` синтаксисом (ES2015+) и его особенностями
+- Реализовывать наследование, миксины, композицию
+- Использовать геттеры/сеттеры, приватные поля (#), статические члены
+- Знать `Object.create`, `Reflect`, `Proxy` для метапрограммирования
+
+---
+
+## 1. Прототипная цепочка (Prototype Chain)
+
+### Как это работает
+```javascript
+// Каждый объект имеет скрытое свойство [[Prototype]] (доступно через __proto__ или Object.getPrototypeOf)
+const animal = { eats: true };
+const rabbit = { jumps: true, __proto__: animal };
+
+console.log(rabbit.eats);  // true — найдено в прототипе
+console.log(rabbit.jumps); // true — собственное свойство
+
+// Цепочка: rabbit -> animal -> Object.prototype -> null
+console.log(rabbit.toString); // из Object.prototype
+```
+
+### `Object.create` — чистое прототипное наследование
+```javascript
+const proto = {
+  greet() { console.log(`Привет, я ${this.name}`); }
+};
+
+const user = Object.create(proto);
+user.name = "Анна";
+user.greet(); // "Привет, я Анна"
+
+// Второе аргумент — дескрипторы свойств
+const user2 = Object.create(proto, {
+  name: { value: "Борис", writable: true, enumerable: true, configurable: true }
+});
+```
+
+### Проверка цепочки
+```javascript
+obj instanceof Constructor  // проверяет Constructor.prototype в цепочке
+Object.prototype.isPrototypeOf(obj) // то же самое
+Object.getPrototypeOf(obj) === Constructor.prototype
+```
+
+---
+
+## 2. Class Syntax (ES2015+)
+
+### Базовый класс
+```javascript
+class User {
+  // Поля класса (ES2022)
+  name = "Аноним";
+  #privateField = "скрыто"; // Приватное поле (только внутри класса)
+
+  // Конструктор
+  constructor(name) {
+    this.name = name;
+  }
+
+  // Методы (добавляются в User.prototype)
+  greet() {
+    console.log(`Привет, ${this.name}`);
+  }
+
+  // Геттер / Сеттер
+  get upperName() { return this.name.toUpperCase(); }
+  set upperName(val) { this.name = val.toUpperCase(); }
+
+  // Статический метод (на самом классе)
+  static createGuest() { return new User("Гость"); }
+
+  // Статическое поле
+  static defaultName = "Гость";
+}
+
+const user = new User("Анна");
+user.greet();           // "Привет, Анна"
+console.log(user.upperName); // "АННА"
+user.upperName = "БОРИС";
+console.log(user.name);  // "БОРИС"
+
+const guest = User.createGuest();
+```
+
+### Приватные поля и методы (ES2022)
+```javascript
+class BankAccount {
+  #balance = 0;           // приватное поле
+  #pin;                   // без инициализации
+
+  constructor(pin) { this.#pin = pin; }
+
+  #verifyPin(pin) {       // приватный метод
+    return this.#pin === pin;
+  }
+
+  deposit(amount, pin) {
+    if (!this.#verifyPin(pin)) throw new Error("Неверный PIN");
+    this.#balance += amount;
+  }
+
+  getBalance(pin) {
+    if (!this.#verifyPin(pin)) throw new Error("Неверный PIN");
+    return this.#balance;
+  }
+}
+
+const acc = new BankAccount(1234);
+acc.deposit(100, 1234);
+console.log(acc.getBalance(1234)); // 100
+// acc.#balance — SyntaxError: Private field
+```
+
+---
+
+## 3. Наследование (extends)
+
+### Базовое наследование
+```javascript
+class Animal {
+  constructor(name) { this.name = name; }
+  speak() { console.log(`${this.name} издаёт звук`); }
+}
+
+class Dog extends Animal {
+  constructor(name, breed) {
+    super(name); // ОБЯЗАТЕЛЬНО до this!
+    this.breed = breed;
+  }
+
+  speak() {
+    super.speak(); // вызов родительского метода
+    console.log(`${this.name} лает: Гав!`);
+  }
+}
+
+const dog = new Dog("Рекс", "Овчарка");
+dog.speak();
+// "Рекс издаёт звук"
+// "Рекс лает: Гав!"
+```
+
+### Переопределение конструктора
+```javascript
+class Shape {
+  constructor(color) { this.color = color; }
+}
+
+class Circle extends Shape {
+  constructor(color, radius) {
+    super(color);
+    this.radius = radius;
+  }
+  get area() { return Math.PI * this.radius ** 2; }
+}
+```
+
+### Статические члены наследуются!
+```javascript
+class Base {
+  static species = "Base";
+  static identify() { return this.species; }
+}
+
+class Derived extends Base {
+  static species = "Derived";
+}
+
+console.log(Base.identify());   // "Base"
+console.log(Derived.identify()); // "Derived" — this = Derived
+```
+
+---
+
+## 4. Миксины и композиция (вместо множественного наследования)
+
+### Миксины через фабрики
+```javascript
+const TimestampMixin = (Base) => class extends Base {
+  createdAt = new Date();
+  updatedAt = new Date();
+  updateTimestamp() { this.updatedAt = new Date(); }
+};
+
+const SerializableMixin = (Base) => class extends Base {
+  toJSON() {
+    const { createdAt, updatedAt, ...rest } = this;
+    return { ...rest, createdAt: createdAt.toISOString(), updatedAt: updatedAt.toISOString() };
+  }
+};
+
+class User {
+  constructor(name) { this.name = name; }
+}
+
+const TimestampedUser = TimestampMixin(User);
+const FullUser = SerializableMixin(TimestampedUser);
+
+const u = new FullUser("Анна");
+u.updateTimestamp();
+console.log(u.toJSON());
+```
+
+### Композиция через делегирование
+```javascript
+// instead of class inheritance — объектная композиция
+const canWalk = {
+  walk() { console.log(`${this.name} идёт`); }
+};
+const canSwim = {
+  swim() { console.log(`${this.name} плывёт`); }
+};
+
+function createDuck(name) {
+  return Object.assign(
+    Object.create({ name }),
+    canWalk,
+    canSwim,
+    { quack() { console.log("Кря!"); } }
+  );
+}
+
+const duck = createDuck("Дональд");
+duck.walk();  // "Дональд идёт"
+duck.swim();  // "Дональд плывёт"
+duck.quack(); // "Кря!"
+```
+
+---
+
+## 5. Property Descriptors и Object.defineProperty
+
+### Дескрипторы свойств
+```javascript
+const obj = {};
+
+// data descriptor
+Object.defineProperty(obj, "readonly", {
+  value: 42,
+  writable: false,      // нельзя изменить
+  enumerable: true,     // видно в for...in, Object.keys
+  configurable: false   // нельзя удалить, нельзя изменить дескриптор
+});
+
+// accessor descriptor (getter/setter)
+Object.defineProperty(obj, "double", {
+  get() { return this._value * 2; },
+  set(v) { this._value = v; },
+  enumerable: true,
+  configurable: true
+});
+
+obj._value = 5;
+console.log(obj.double); // 10
+obj.double = 10;
+console.log(obj._value); // 10
+```
+
+### Object.getOwnPropertyDescriptors (ES2017)
+```javascript
+class User {
+  constructor(name) { this.name = name; }
+  get upper() { return this.name.toUpperCase(); }
+}
+
+const desc = Object.getOwnPropertyDescriptors(User.prototype);
+// { constructor: {...}, upper: { get: [Function], set: undefined, enumerable: false, configurable: true } }
+
+// Копирование с дескрипторами (включая геттеры/сеттеры!)
+const clone = Object.defineProperties({}, Object.getOwnPropertyDescriptors(obj));
+```
+
+---
+
+## 6. Reflect и Proxy (Метапрограммирование)
+
+### Reflect API
+```javascript
+const obj = { a: 1, b: 2 };
+
+// Вместо delete obj.a
+Reflect.deleteProperty(obj, "a");
+
+// Вместо "key" in obj
+Reflect.has(obj, "b"); // true
+
+// Вместо obj.key
+Reflect.get(obj, "b"); // 2
+
+// Вместо obj.key = val
+Reflect.set(obj, "c", 3);
+
+// Вызов функции с this и аргументами
+function sum(a, b) { return a + b; }
+Reflect.apply(sum, null, [1, 2]); // 3
+
+// new с массивом аргументов
+class User { constructor(name) { this.name = name; } }
+const user = Reflect.construct(User, ["Анна"]);
+```
+
+### Proxy — перехват операций
+```javascript
+const target = { name: "Анна", age: 25 };
+
+const handler = {
+  get(target, prop, receiver) {
+    console.log(`GET ${prop}`);
+    return Reflect.get(target, prop, receiver);
+  },
+  set(target, prop, value, receiver) {
+    console.log(`SET ${prop} = ${value}`);
+    return Reflect.set(target, prop, value, receiver);
+  },
+  has(target, prop) {
+    console.log(`HAS ${prop}`);
+    return Reflect.has(target, prop);
+  },
+  deleteProperty(target, prop) {
+    console.log(`DELETE ${prop}`);
+    return Reflect.deleteProperty(target, prop);
+  },
+  ownKeys(target) {
+    return Reflect.ownKeys(target).filter(k => !k.startsWith("_"));
+  }
+};
+
+const proxy = new Proxy(target, handler);
+proxy.name;        // GET name → "Анна"
+proxy.age = 26;    // SET age = 26
+"name" in proxy;   // HAS name → true
+delete proxy.age;  // DELETE age
+Object.keys(proxy); // только не _ свойства
+```
+
+### Практический Proxy: валидация, логгирование, реактивность
+```javascript
+// Реактивный объект (упрощённый Vue-style)
+function reactive(obj, onChange) {
+  return new Proxy(obj, {
+    set(target, key, value, receiver) {
+      const old = target[key];
+      const result = Reflect.set(target, key, value, receiver);
+      if (old !== value) onChange(key, value, old);
+      return result;
+    }
+  });
+}
+
+const state = reactive({ count: 0 }, (k, v, o) => console.log(`${k}: ${o} → ${v}`));
+state.count = 1; // "count: 0 → 1"
+```
+
+---
+
+## 7. instanceof и Symbol.hasInstance
+
+### Настройка instanceof
+```javascript
+class MyArray extends Array {
+  static [Symbol.hasInstance](instance) {
+    return Array.isArray(instance) && instance.every(Number.isInteger);
+  }
+}
+
+console.log([1, 2, 3] instanceof MyArray); // true
+console.log([1, "a"] instanceof MyArray);  // false
+```
+
+---
+
+## Практические задания
+
+1. **Class с приватными полями**: Реализуйте `Queue` с приватным массивом `#items`, методами `enqueue`, `dequeue`, `peek`, `size`, `isEmpty`.
+
+2. **Миксин `EventEmitter`**: Добавьте в любой класс методы `on(event, handler)`, `off(event, handler)`, `emit(event, ...args)` через миксин.
+
+3. **Proxy-валидатор**: `createValidated(target, schema)` — прокси, бросающий ошибку при установке невалидного значения (schema = { field: validatorFn }).
+
+4. **Наследование без class**: Реализуйте `inherits(Child, Parent)` на прототипах (как `util.inherits` в Node.js).
+
+5. **Immutable record**: Класс `Record(data)`, где любая попытка изменения бросает ошибку (Proxy + freeze).
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `class Child extends Parent { constructor() {} }` — забыли `super()` | `super()` обязателен перед `this` в derived классах |
+| `super.method()` в стрелочной функции | Не работает — `super` только в обычных методах класса |
+| `#private` доступен снаружи через `obj["#private"]` | Нет, это SyntaxError. Только внутри класса |
+| `Object.assign` копирует геттеры/сеттеры как значения | Используйте `Object.defineProperties` + `getOwnPropertyDescriptors` |
+| `Proxy` не перехватывает `for...in` по умолчанию | Нужен `ownKeys` trap для фильтрации |
+
+---
+
+## Полезные ресурсы
+
+- **ECMAScript 2024: Classes** — https://262.ecma-international.org/14.0/#sec-classes
+- **MDN: Class inheritance** — https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/extends
+- **MDN: Proxy** — https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy
+- **You Don't Know JS: this & Object Prototypes** — Ch. 5-6
+- **ES2022 Class features** — Private fields, static blocks, `class.fields`

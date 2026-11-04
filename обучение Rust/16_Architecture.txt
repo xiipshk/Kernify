@@ -1,0 +1,599 @@
+# Урок 16: Архитектура приложений
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Проектировать модульную архитектуру с разделением ответственности
+- Применять паттерны: Repository, Service, Handler, DTO
+- Использовать Dependency Injection через трейты
+- Работать с конфигурацией и окружением
+- Организовывать обработку ошибок на уровне приложения
+- Структурировать проекты для тестируемости и масштабируемости
+
+---
+
+## 1. Принципы архитектуры в Rust
+
+### Разделение ответственности (Separation of Concerns)
+```
+src/
+├── domain/           # Бизнес-логика, сущности, трейты
+│   ├── models.rs     # Domain entities (User, Order, etc.)
+│   ├── repositories.rs # Repository traits
+│   └── services.rs   # Business logic traits
+├── infrastructure/   # Реализации (DB, HTTP, FS)
+│   ├── database.rs   # SQLx/SeaORM implementations
+│   ├── http_client.rs
+│   └── file_storage.rs
+├── application/      # Use cases, команды, запросы
+│   ├── commands.rs
+│   ├── queries.rs
+│   └── dto.rs
+├── presentation/     # Входные точки (CLI, HTTP, gRPC)
+│   ├── cli.rs
+│   ├── http/
+│   │   ├── routes.rs
+│   │   ├── handlers.rs
+│   │   └── middleware.rs
+│   └── grpc/
+└── config.rs         # Конфигурация
+```
+
+### Dependency Inversion (Инверсия зависимостей)
+```rust
+// Domain layer — определяет контракты (трейты)
+pub trait UserRepository: Send + Sync {
+    fn find_by_id(&self, id: UserId) -> Result<Option<User>, AppError>;
+    fn save(&self, user: &User) -> Result<(), AppError>;
+}
+
+// Application layer — использует трейты
+pub struct UserService<R: UserRepository> {
+    repo: R,
+}
+
+impl<R: UserRepository> UserService<R> {
+    pub fn new(repo: R) -> Self { Self { repo } }
+    pub fn get_user(&self, id: UserId) -> Result<User, AppError> {
+        self.repo.find_by_id(id)?.ok_or(AppError::NotFound)
+    }
+}
+
+// Infrastructure layer — реализует трейты
+pub struct PostgresUserRepository { pool: PgPool }
+
+impl UserRepository for PostgresUserRepository { ... }
+```
+
+---
+
+## 2. Repository Pattern
+
+### Трейт репозитория
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait UserRepository: Send + Sync {
+    async fn find_by_id(&self, id: UserId) -> Result<Option<User>, RepoError>;
+    async fn find_by_email(&self, email: &str) -> Result<Option<User>, RepoError>;
+    async fn save(&self, user: &User) -> Result<(), RepoError>;
+    async fn delete(&self, id: UserId) -> Result<(), RepoError>;
+    async fn list(&self, filter: UserFilter) -> Result<Vec<User>, RepoError>;
+}
+```
+
+### Реализация для SQLx
+```rust
+pub struct SqlxUserRepository {
+    pool: PgPool,
+}
+
+#[async_trait]
+impl UserRepository for SqlxUserRepository {
+    async fn find_by_id(&self, id: UserId) -> Result<Option<User>, RepoError> {
+        let row = sqlx::query_as!(
+            UserRow,
+            "SELECT id, email, name, created_at FROM users WHERE id = $1",
+            id.0
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(User::from))
+    }
+    // ... остальные методы
+}
+```
+
+### In-memory для тестов
+```rust
+pub struct InMemoryUserRepository {
+    users: RwLock<HashMap<UserId, User>>,
+}
+
+#[async_trait]
+impl UserRepository for InMemoryUserRepository {
+    async fn find_by_id(&self, id: UserId) -> Result<Option<User>, RepoError> {
+        Ok(self.users.read().await.get(&id).cloned())
+    }
+    // ... просто работа с HashMap
+}
+```
+
+---
+
+## 3. Service Layer (Бизнес-логика)
+
+### Use Case / Command
+```rust
+#[derive(Debug, Validate)]
+pub struct CreateUserCommand {
+    #[validate(email)]
+    pub email: String,
+    #[validate(length(min = 2))]
+    pub name: String,
+}
+
+pub struct CreateUserUseCase<R: UserRepository> {
+    repo: R,
+    email_sender: EmailSender,
+}
+
+impl<R: UserRepository> CreateUserUseCase<R> {
+    pub async fn execute(&self, cmd: CreateUserCommand) -> Result<User, AppError> {
+        // Валидация
+        cmd.validate()?;
+
+        // Проверка уникальности
+        if self.repo.find_by_email(&cmd.email).await?.is_some() {
+            return Err(AppError::Conflict("Email already exists"));
+        }
+
+        // Создание
+        let user = User::new(cmd.email, cmd.name);
+        self.repo.save(&user).await?;
+        self.email_sender.send_welcome(&user).await?;
+
+        Ok(user)
+    }
+}
+```
+
+### Query (чтение без изменений)
+```rust
+pub struct GetUserQuery<R: UserRepository> {
+    repo: R,
+}
+
+impl<R: UserRepository> GetUserQuery<R> {
+    pub async fn execute(&self, id: UserId) -> Result<UserDto, AppError> {
+        let user = self.repo.find_by_id(id).await?
+            .ok_or(AppError::NotFound)?;
+        Ok(UserDto::from(user))
+    }
+}
+```
+
+---
+
+## 4. DTO (Data Transfer Objects)
+
+### Разделение Domain и DTO
+```rust
+// Domain entity — богатая, с методами
+pub struct User {
+    id: UserId,
+    email: Email,
+    name: String,
+    password_hash: String,
+    created_at: DateTime<Utc>,
+    version: u64, // для optimistic locking
+}
+
+impl User {
+    pub fn new(email: String, name: String) -> Self { ... }
+    pub fn change_email(&mut self, new: Email) -> Result<(), DomainError> { ... }
+    pub fn verify_password(&self, password: &str) -> bool { ... }
+}
+
+// DTO для API — простая, сериализуемая
+#[derive(Serialize, Deserialize)]
+pub struct UserDto {
+    pub id: Uuid,
+    pub email: String,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<User> for UserDto {
+    fn from(user: User) -> Self {
+        Self { id: user.id.0, email: user.email.0, name: user.name, created_at: user.created_at }
+    }
+}
+
+// Request/Response DTO
+#[derive(Deserialize, Validate)]
+pub struct CreateUserRequest {
+    #[validate(email)]
+    pub email: String,
+    #[validate(length(min = 2))]
+    pub name: String,
+    #[validate(length(min = 8))]
+    pub password: String,
+}
+
+#[derive(Serialize)]
+pub struct CreateUserResponse {
+    pub user: UserDto,
+}
+```
+
+---
+
+## 5. Конфигурация
+
+### config.rs
+```rust
+use config::{Config, File, Environment};
+use serde::Deserialize;
+use std::net::SocketAddr;
+
+#[derive(Deserialize, Clone)]
+pub struct AppConfig {
+    pub server: ServerConfig,
+    pub database: DatabaseConfig,
+    pub redis: RedisConfig,
+    pub email: EmailConfig,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct ServerConfig {
+    pub addr: SocketAddr,
+    pub workers: usize,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct DatabaseConfig {
+    pub url: String,
+    pub max_connections: u32,
+    pub min_connections: u32,
+}
+
+impl AppConfig {
+    pub fn load() -> Result<Self, config::ConfigError> {
+        let mut cfg = Config::builder()
+            .add_source(File::with_name("config/default"))
+            .add_source(File::with_name(&format!("config/{}", env::var("APP_ENV").unwrap_or("development".into()))).required(false))
+            .add_source(Environment::with_prefix("APP").separator("__"))
+            .build()?;
+        cfg.try_deserialize()
+    }
+}
+```
+
+### config/default.toml
+```toml
+[server]
+addr = "0.0.0.0:8080"
+workers = 4
+
+[database]
+url = "postgres://localhost/mydb"
+max_connections = 10
+min_connections = 2
+
+[redis]
+url = "redis://localhost:6379"
+
+[email]
+smtp_host = "localhost"
+smtp_port = 1025
+from = "noreply@example.com"
+```
+
+---
+
+## 6. Обработка ошибок приложения
+
+### AppError — единая ошибка
+```rust
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum AppError {
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
+    #[error("Validation failed: {0}")]
+    Validation(String),
+
+    #[error("Unauthorized")]
+    Unauthorized,
+
+    #[error("Forbidden")]
+    Forbidden,
+
+    #[error("Internal error: {0}")]
+    Internal(#[from] anyhow::Error),
+
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+
+    #[error("External service error: {0}")]
+    External(String),
+}
+
+// Преобразование в HTTP ответ
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            AppError::Validation(msg) => (StatusCode::BAD_REQUEST, msg),
+            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".into()),
+            AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden".into()),
+            _ => (StatusCode::INTERNAL_SERVER_ERROR, "Internal error".into()),
+        };
+        (status, Json(ErrorResponse { error: message })).into_response()
+    }
+}
+```
+
+---
+
+## 6. Dependency Injection (DI) контейнер
+
+### Ручной DI (простой и явный)
+```rust
+pub struct AppState {
+    pub user_repo: Arc<dyn UserRepository>,
+    pub order_repo: Arc<dyn OrderRepository>,
+    pub email_sender: Arc<dyn EmailSender>,
+    pub config: AppConfig,
+}
+
+impl AppState {
+    pub async fn new(config: AppConfig) -> Result<Self, AppError> {
+        let pool = PgPool::connect(&config.database.url).await?;
+        let user_repo = Arc::new(SqlxUserRepository::new(pool.clone()));
+        let order_repo = Arc::new(SqlxOrderRepository::new(pool));
+        let email_sender = Arc::new(SmtpEmailSender::new(&config.email));
+
+        Ok(Self { user_repo, order_repo, email_sender, config })
+    }
+}
+```
+
+### Использование в handlers
+```rust
+async fn create_user(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateUserRequest>,
+) -> Result<Json<CreateUserResponse>, AppError> {
+    let use_case = CreateUserUseCase::new(
+        state.user_repo.clone(),
+        state.email_sender.clone(),
+    );
+    let user = use_case.execute(req.into()).await?;
+    Ok(Json(CreateUserResponse { user: user.into() }))
+}
+```
+
+---
+
+## 7. Middleware и Cross-cutting concerns
+
+### Logging middleware
+```rust
+async fn logging_middleware(
+    request: Request,
+    next: Next,
+) -> Response {
+    let start = Instant::now();
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+
+    let response = next.run(request).await;
+
+    let latency = start.elapsed();
+    info!("{} {} - {} - {:?}", method, uri, response.status(), latency);
+    response
+}
+```
+
+### Auth middleware
+```rust
+async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let token = request
+        .headers()
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "));
+
+    let user_id = token
+        .ok_or(AppError::Unauthorized)?
+        .verify(&state.config.jwt_secret)?;
+
+    request.extensions_mut().insert(user_id);
+    Ok(next.run(request).await)
+}
+```
+
+---
+
+## 8. Тестируемость архитектуры
+
+### Unit тесты сервисов (с моками)
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::predicate::*;
+    use mockall::mock;
+
+    mock! {
+        UserRepo {}
+        #[async_trait]
+        impl UserRepository for UserRepo {
+            async fn find_by_email(&self, email: &str) -> Result<Option<User>, RepoError>;
+            async fn save(&self, user: &User) -> Result<(), RepoError>;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_user_duplicate_email() {
+        let mut mock_repo = MockUserRepo::new();
+        mock_repo
+            .expect_find_by_email()
+            .with(eq("test@example.com"))
+            .returning(|_| Ok(Some(User::new(...))));
+
+        let use_case = CreateUserUseCase::new(mock_repo, MockEmailSender::new());
+        let result = use_case.execute(CreateUserCommand { ... }).await;
+
+        assert!(matches!(result, Err(AppError::Conflict(_))));
+    }
+}
+```
+
+### Integration тесты
+```rust
+#[tokio::test]
+async fn test_full_user_flow() {
+    let state = test_app_state().await; // Создаёт testcontainers Postgres
+    let client = TestClient::new(state);
+
+    let resp = client.post("/users", &CreateUserRequest { ... }).await;
+    assert_eq!(resp.status(), 201);
+
+    let user: UserDto = resp.json();
+    let resp = client.get(&format("/users/{}", user.id)).await;
+    assert_eq!(resp.status(), 200);
+}
+```
+
+---
+
+## 9. Миграции и версионирование схемы
+
+### SQLx migrations
+```bash
+sqlx migrate add create_users_table
+```
+
+```sql
+-- migrations/20240115_create_users_table.sql
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    version BIGINT NOT NULL DEFAULT 1
+);
+
+CREATE INDEX idx_users_email ON users(email);
+```
+
+---
+
+## 10. Практические упражнения
+
+### Упражнение 1: Реализовать OrderService
+```rust
+// Domain
+pub struct Order { id: OrderId, user_id: UserId, items: Vec<OrderItem>, status: OrderStatus }
+
+// Repository trait
+#[async_trait]
+pub trait OrderRepository { ... }
+
+// Service
+pub struct OrderService<R: OrderRepository, U: UserRepository> {
+    order_repo: R,
+    user_repo: U,
+}
+
+impl<R, U> OrderService<R, U> {
+    pub async fn place_order(&self, user_id: UserId, items: Vec<OrderItem>) -> Result<Order, AppError> {
+        // 1. Проверить пользователя
+        // 2. Проверить склад (InventoryService)
+        // 3. Создать заказ
+        // 4. Резервировать товары
+        // 5. Отправить уведомление
+    }
+}
+```
+
+### Упражнение 2: Feature Flags
+```rust
+#[derive(Deserialize)]
+pub struct FeatureFlags {
+    pub new_checkout: bool,
+    pub beta_dashboard: bool,
+}
+
+impl FeatureFlags {
+    pub fn is_enabled(&self, feature: &str) -> bool {
+        match feature {
+            "new_checkout" => self.new_checkout,
+            "beta_dashboard" => self.beta_dashboard,
+            _ => false,
+        }
+    }
+}
+
+// В handler
+if state.config.features.is_enabled("new_checkout") {
+    // новый код
+} else {
+    // старый код
+}
+```
+
+---
+
+## 11. Типичные ошибки архитектуры
+
+| Проблема | Признак | Решение |
+|----------|---------|---------|
+| God Object | Один сервис делает всё | Разбить на мелкие Use Cases |
+| Anemic Domain | Сущности — просто данные | Перенести логику в методы Entity |
+| Leaky Abstraction | SQL в Service layer | Repository pattern |
+| Tight Coupling | Конкретные типы в сигнатурах | Использовать трейты (DI) |
+| Untestable | Прямые вызовы DB/HTTP в коде | Моки через трейты |
+| Config sprawl | `std::env::var` по всему коду | Централизованный `Config` |
+
+---
+
+## 12. Полезные ресурсы
+
+- **Clean Architecture в Rust**: https://github.com/lpil/clean-architecture-rust
+- **Domain-Driven Design в Rust**: https://www.lpalmieri.com/posts/rust-domain-driven-design/
+- **Zero-cost abstractions**: https://blog.rust-lang.org/2015/05/11/traits.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- Слоистая архитектура: Domain, Application, Infrastructure, Presentation
+- Repository Pattern — абстракция над хранилищем
+- Service Layer / Use Cases — бизнес-логика
+- DTO — разделение внутренних и внешних моделей
+- Конфигурация через `config` crate + TOML + ENV
+- Единая обработка ошибок `AppError` с `thiserror`
+- Dependency Injection через трейты + `Arc<dyn Trait>`
+- Middleware для cross-cutting concerns (logging, auth)
+- Тестируемость: моки репозиториев, интеграционные тесты
+- Миграции БД через SQLx
+
+---
+
+**Следующий урок:** Умные указатели (`17_Smart_Pointers.txt`)

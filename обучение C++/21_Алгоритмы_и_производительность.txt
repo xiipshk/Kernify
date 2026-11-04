@@ -1,0 +1,559 @@
+# Урок 21: Алгоритмы и производительность — сложность, cache locality, profiling, лишние копии
+
+## Цели урока
+- Понимать алгоритмическую сложность (Big-O) и её влияние на реальную производительность
+- Оптимизировать cache locality: data layout, prefetching, false sharing
+- Использовать профилировщики (perf, VTune, Instruments, Visual Studio Profiler)
+- Избегать лишних копий: move semantics, RVO, NRVO, pass by reference
+- Применять алгоритмы STL эффективно и знать их сложность
+
+---
+
+## Теория
+
+### Алгоритмическая сложность (Big-O)
+
+```cpp
+#include <vector>
+#include <algorithm>
+#include <unordered_map>
+#include <chrono>
+
+// Временная сложность операций STL контейнеров:
+//
+// vector:
+//   доступ по индексу:           O(1)
+//   push_back (amortized):       O(1)
+//   insert/erase в середине:     O(n)
+//   поиск (несортированный):     O(n)
+//   поиск (бинарный, sorted):    O(log n)
+//
+// list/forward_list:
+//   insert/erase (known pos):    O(1)
+//   доступ по индексу:           O(n)
+//   поиск:                       O(n)
+//
+// deque:
+//   доступ по индексу:           O(1)
+//   push_front/back:             O(1) amortized
+//
+// unordered_map/unordered_set:
+//   insert/find/erase (avg):     O(1)
+//   insert/find/erase (worst):   O(n) — коллизии
+//
+// map/set (RB-tree):
+//   insert/find/erase:           O(log n)
+//
+// priority_queue:
+//   push/pop:                    O(log n)
+//   top:                         O(1)
+```
+
+**Правило:** O(n) с малой константой может быть быстрее O(log n) с большой для маленьких n.
+
+```cpp
+// Пример: линейный поиск vs binary_search для маленьких векторов
+void searchComparison() {
+    std::vector<int> v(100);
+    std::iota(v.begin(), v.end(), 0);
+
+    auto linear = [&](int x) {
+        return std::find(v.begin(), v.end(), x) != v.end();
+    };
+    auto binary = [&](int x) {
+        return std::binary_search(v.begin(), v.end(), x);
+    };
+
+    // Для n=100 линейный поиск часто быстрее из-за branch prediction и cache
+}
+```
+
+---
+
+### Cache Locality — ключ к производительности
+
+```cpp
+#include <vector>
+#include <array>
+#include <chrono>
+#include <iostream>
+
+// ПЛОХО: Array of Structures (AoS) — поля объекта разбросаны в памяти
+struct ParticleAoS {
+    float x, y, z;      // 12 bytes
+    float vx, vy, vz;   // 12 bytes
+    float mass;         // 4 bytes
+    int id;             // 4 bytes
+    // sizeof = 32 bytes, но если нужен только x,y,z — читаем лишнее
+};
+
+// ХОРОШО: Structure of Arrays (SoA) — однотипные данные вместе
+struct ParticleSoA {
+    std::vector<float> x, y, z;
+    std::vector<float> vx, vy, vz;
+    std::vector<float> mass;
+    std::vector<int> id;
+    // Обновление позиций: последовательное чтение x,y,z — идеально для prefetcher
+};
+
+void cacheLocalityDemo() {
+    const size_t N = 10'000'000;
+
+    // AoS
+    std::vector<ParticleAoS> aos(N);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    float sum = 0;
+    for (auto& p : aos) sum += p.x + p.y + p.z;
+    auto t2 = std::chrono::high_resolution_clock::now();
+
+    // SoA
+    ParticleSoA soa;
+    soa.x.resize(N); soa.y.resize(N); soa.z.resize(N);
+    auto t3 = std::chrono::high_resolution_clock::now();
+    for (size_t i = 0; i < N; ++i) sum += soa.x[i] + soa.y[i] + soa.z[i];
+    auto t4 = std::chrono::high_resolution_clock::now();
+
+    std::cout << "AoS: " << (t2-t1).count()/1e6 << "ms, SoA: " << (t4-t3).count()/1e6 << "ms\n";
+}
+```
+
+**Cache line = 64 байта (typical x86).** Чтение 1 байта загружает 64 байта.
+
+```cpp
+// False sharing — разные потоки пишут в разные переменные, но на одной cache line
+struct BadCounter {
+    std::atomic<int> a{0};
+    std::atomic<int> b{0};  // Скорее всего на той же cache line!
+};
+
+struct GoodCounter {
+    alignas(64) std::atomic<int> a{0};  // Принудительно разные cache lines
+    alignas(64) std::atomic<int> b{0};
+};
+
+void falseSharingDemo() {
+    BadCounter bad;
+    GoodCounter good;
+
+    auto test = [](auto& c) {
+        std::thread t1([&] { for(int i=0;i<10'000'000;++i) c.a.fetch_add(1); });
+        std::thread t2([&] { for(int i=0;i<10'000'000;++i) c.b.fetch_add(1); });
+        t1.join(); t2.join();
+    };
+    // test(good) будет в разы быстрее test(bad)
+}
+```
+
+**Data layout tips:**
+- Горячие поля вместе, холодные — отдельно
+- `[[no_unique_address]]` (C++20) для пустых базовых классов
+- `bitfield` для флагов — но осторожно с атомарностью
+- `std::vector<T>` лучше чем `std::vector<std::unique_ptr<T>>` (pointer chasing)
+
+---
+
+### Prefetching и branch prediction
+
+```cpp
+#include <x86intrin.h>  // или <intrin.h> для MSVC
+
+void prefetchDemo(const std::vector<int>& v) {
+    // Ручной prefetch (обычно компилятор/CPU справляются сами)
+    for (size_t i = 0; i + 16 < v.size(); ++i) {
+        _mm_prefetch(reinterpret_cast<const char*>(&v[i+16]), _MM_HINT_T0);
+        // работа с v[i]
+    }
+}
+
+// Branch prediction: делайте вероятный путь первым
+void branchPredictionDemo(const std::vector<int>& v) {
+    // ПЛОХО: редкий случай первый
+    for (int x : v) {
+        if (x == 42) { /* rare */ } else { /* common */ }
+    }
+    // ХОРОШО: частый случай первый (или используйте [[likely]]/[[unlikely]] C++20)
+    for (int x : v) {
+        if (x != 42) [[likely]] { /* common */ } else { /* rare */ }
+    }
+}
+
+// Profile-guided optimization (PGO):
+// 1. clang++ -fprofile-generate -O2 main.cpp -o app
+// 2. ./app (typical workload)
+// 3. clang++ -fprofile-use -O2 main.cpp -o app_opt
+```
+
+---
+
+### Профилирование
+
+#### Linux: perf
+
+```bash
+# Компиляция с debug info и frame pointers
+g++ -g -O2 -fno-omit-frame-pointer main.cpp -o app
+
+# Запись профиля (CPU cycles)
+perf record -g ./app
+
+# Анализ
+perf report           # TUI
+perf report --stdio   # Текст
+perf script | ./FlameGraph/flamegraph.pl > flame.svg  # Flame graph
+```
+
+#### Intel VTune (бесплатно для open source)
+
+```bash
+vtune -collect hotspots ./app
+vtune -report hotspots -format html -output-dir report
+```
+
+#### macOS: Instruments
+
+```bash
+# Time Profiler в Instruments.app
+# Или CLI:
+xcrun xctrace record --template "Time Profiler" --launch ./app
+```
+
+#### Windows: Visual Studio Profiler / WPA
+
+```bash
+# VS: Alt+F2 -> Performance Profiler -> CPU Usage
+# WPA (Windows Performance Analyzer) для ETW traces
+```
+
+#### Google Benchmark (микробенчмарки)
+
+```cpp
+#include <benchmark/benchmark.h>
+#include <vector>
+#include <algorithm>
+
+static void BM_VectorPushBack(benchmark::State& state) {
+    for (auto _ : state) {
+        std::vector<int> v;
+        v.reserve(state.range(0));
+        for (int i = 0; i < state.range(0); ++i)
+            v.push_back(i);
+    }
+}
+BENCHMARK(BM_VectorPushBack)->Arg(100)->Arg(1000)->Arg(10000);
+
+static void BM_VectorPushBackReserved(benchmark::State& state) {
+    for (auto _ : state) {
+        std::vector<int> v;
+        v.reserve(state.range(0));
+        for (int i = 0; i < state.range(0); ++i)
+            v.push_back(i);
+    }
+}
+BENCHMARK(BM_VectorPushBackReserved)->Arg(100)->Arg(1000)->Arg(10000);
+
+BENCHMARK_MAIN();
+```
+
+```bash
+# Сборка
+g++ -O3 -std=c++20 bench.cpp -lbenchmark -lpthread -o bench
+./bench --benchmark_out=results.json --benchmark_out_format=json
+```
+
+---
+
+### Избегание лишних копий
+
+#### Pass by value vs reference
+
+```cpp
+#include <string>
+#include <vector>
+
+// ПЛОХО: копирование строки при вызове
+void processBad(std::string s) { std::cout << s; }
+
+// ХОРОШО: const ref для чтения
+void processGoodRead(const std::string& s) { std::cout << s; }
+
+// ХОРОШО: pass by value + move если НУЖНО владение
+void processGoodTake(std::string s) {  // копия или move при вызове
+    storage_ = std::move(s);
+}
+
+// ДЛЯ СКАЛЯРОВ И МАЛЕНЬКИХ ТИПОВ: pass by value
+void processInt(int x) { }  // быстрее чем const int&
+void processPair(std::pair<int,int> p) { }  // 2 int = pass by value
+```
+
+#### RVO / NRVO / Guaranteed copy elision (C++17)
+
+```cpp
+#include <iostream>
+
+struct Heavy {
+    Heavy() { std::cout << "Default\n"; }
+    Heavy(const Heavy&) { std::cout << "Copy\n"; }
+    Heavy(Heavy&&) noexcept { std::cout << "Move\n"; }
+    ~Heavy() { std::cout << "Dtor\n"; }
+};
+
+// C++17: PRVALUE материализуется прямо в целевом объекте — НИКАКОГО копирования/перемещения
+Heavy makeHeavy() {
+    return Heavy();  // Guaranteed copy elision
+}
+
+// NRVO (Named RVO) — оптимизация, НЕ гарантированная
+Heavy makeHeavyNamed() {
+    Heavy h;
+    return h;  // Компилятор МОЖЕТ сконструировать сразу в возвращаемое значение
+}
+
+// Чтобы помочь NRVO: не присваивайте перед return
+Heavy makeHeavyNamedGood(bool flag) {
+    Heavy h;
+    if (flag) h.modify();
+    return h;  // Один путь возврата — лучше шансы на NRVO
+}
+
+// ПЛОХО: несколько return paths убивают NRVO
+Heavy makeHeavyNamedBad(bool flag) {
+    if (flag) {
+        Heavy h1; return h1;
+    } else {
+        Heavy h2; return h2;
+    }
+}
+```
+
+#### Move semantics в STL
+
+```cpp
+#include <vector>
+#include <string>
+#include <algorithm>
+
+void moveInSTL() {
+    std::vector<std::string> v;
+    v.push_back("hello");           // копия из const char*
+    v.emplace_back("world");        // конструирует прямо в векторе
+
+    std::string s = "move me";
+    v.push_back(std::move(s));      // move в вектор
+
+    // Перемещение элементов при реаллокации
+    std::vector<std::string> v2;
+    v2.reserve(1000);  // ВАЖНО: reserve избегает реаллокаций и move
+    for (int i = 0; i < 1000; ++i) v2.emplace_back("item");
+
+    // erase-remove idiom (C++20: std::erase)
+    v2.erase(std::remove_if(v2.begin(), v2.end(),
+                 [](const auto& s) { return s.size() < 5; }), v2.end());
+}
+```
+
+#### Small String Optimization (SSO)
+
+```cpp
+#include <string>
+
+void ssoDemo() {
+    std::string s1 = "short";        // SSO: хранится внутри объекта (обычно до 15-22 chars)
+    std::string s2 = "this is a very long string that exceeds SSO buffer";  // heap allocation
+
+    // sizeof(std::string) обычно 32 байта (libstdc++) или 24 (libc++)
+    // SSO избегает аллокации для коротких строк
+}
+```
+
+---
+
+### Эффективное использование STL алгоритмов
+
+```cpp
+#include <algorithm>
+#include <vector>
+#include <numeric>
+#include <ranges>  // C++20
+
+void stlAlgorithmsDemo() {
+    std::vector<int> v = {3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5};
+
+    // Поиск
+    auto it = std::find(v.begin(), v.end(), 5);           // O(n)
+    auto it2 = std::lower_bound(v.begin(), v.end(), 5);   // O(log n) — ТРЕБУЕТ СОРТИРОВКИ
+
+    // Сортировка
+    std::sort(v.begin(), v.end());                        // O(n log n), introsort
+    std::stable_sort(v.begin(), v.end());                 // O(n log n), сохраняет порядок равных
+    std::partial_sort(v.begin(), v.begin()+3, v.end());   // Первые 3 отсортированы
+    std::nth_element(v.begin(), v.begin()+5, v.end());    // 5-й элемент на своём месте
+
+    // Партиционирование
+    auto mid = std::partition(v.begin(), v.end(), [](int x){ return x % 2 == 0; });
+    // [even...][odd...]
+
+    // Копирование с преобразованием
+    std::vector<int> squares(v.size());
+    std::transform(v.begin(), v.end(), squares.begin(), [](int x){ return x*x; });
+
+    // Редукция
+    int sum = std::accumulate(v.begin(), v.end(), 0);
+    int prod = std::reduce(v.begin(), v.end(), 1, std::multiplies{});  // C++17, может быть параллельным
+
+    // C++20 Ranges — ленивые, композируемые
+    auto even_squares = v
+        | std::views::filter([](int x){ return x % 2 == 0; })
+        | std::views::transform([](int x){ return x*x; });
+    for (int x : even_squares) { /* ... */ }  // Вычисляется по требованию
+}
+```
+
+**Сложность алгоритмов:**
+| Алгоритм | Сложность | Примечание |
+|----------|-----------|------------|
+| `sort` | O(n log n) | Introsort (quick + heap + insertion) |
+| `stable_sort` | O(n log n) | Merge sort, extra memory |
+| `partial_sort` | O(n log k) | Первые k элементов |
+| `nth_element` | O(n) | Quickselect |
+| `binary_search` | O(log n) | Требует sorted |
+| `lower_bound/upper_bound` | O(log n) | |
+| `merge` | O(n) | Требует sorted входы |
+| `inplace_merge` | O(n log n) | |
+| `heap` operations | O(log n) | `make_heap` O(n) |
+
+---
+
+### Оптимизация памяти
+
+```cpp
+// Pool allocator для частых аллокаций одного размера
+template<typename T, size_t BlockSize = 4096>
+class PoolAllocator {
+    struct Block { Block* next; };
+    Block* free_list_ = nullptr;
+    std::vector<std::unique_ptr<char[]>> blocks_;
+
+    void allocate_block() {
+        auto block = std::make_unique<char[]>(BlockSize);
+        char* p = block.get();
+        for (size_t i = 0; i < BlockSize; i += sizeof(T)) {
+            reinterpret_cast<Block*>(p)->next = free_list_;
+            free_list_ = reinterpret_cast<Block*>(p);
+            p += sizeof(T);
+        }
+        blocks_.push_back(std::move(block));
+    }
+public:
+    T* allocate() {
+        if (!free_list_) allocate_block();
+        Block* b = free_list_;
+        free_list_ = b->next;
+        return reinterpret_cast<T*>(b);
+    }
+    void deallocate(T* p) {
+        reinterpret_cast<Block*>(p)->next = free_list_;
+        free_list_ = reinterpret_cast<Block*>(p);
+    }
+};
+
+// Использование с std::vector
+std::vector<int, PoolAllocator<int>> vec;
+// Или для node-based контейнеров
+std::list<int, PoolAllocator<std::list<int>::value_type>> lst;
+```
+
+---
+
+### Профилирование в коде (ручное)
+
+```cpp
+#include <chrono>
+#include <iostream>
+
+class ScopedTimer {
+    std::chrono::high_resolution_clock::time_point start_;
+    const char* name_;
+public:
+    explicit ScopedTimer(const char* name) : start_(std::chrono::high_resolution_clock::now()), name_(name) {}
+    ~ScopedTimer() {
+        auto end = std::chrono::high_resolution_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start_).count();
+        std::cout << name_ << ": " << us << " μs\n";
+    }
+};
+
+#define PROFILE_SCOPE(name) ScopedTimer timer##__LINE__(name)
+
+void manualProfiling() {
+    PROFILE_SCOPE("Total");
+    {
+        PROFILE_SCOPE("Phase 1");
+        // код
+    }
+    {
+        PROFILE_SCOPE("Phase 2");
+        // код
+    }
+}
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Benchmark контейнеров
+Напишите Google Benchmark тесты для сравнения:
+- `std::vector` vs `std::deque` vs `std::list` для: push_back, insert(begin), insert(middle), iteration, find
+- `std::unordered_map` vs `std::map` vs `flat_map` (boost/absl) для insert/find/iterate
+- Проанализируйте результаты, объясните различия через cache locality
+
+### Задание 2: Оптимизация cache-miss кода
+Дан код, обрабатывающий частицы (AoS). Перепишите на SoA.
+Замерьте производительность до/после с `perf stat -e cache-misses,cache-references`.
+
+### Задание 3: Поиск false sharing
+Напишите программу с массивом `std::atomic<int> counters[8]`, где 8 потоков инкрементят свои элементы.
+1. Замерьте время без `alignas`
+2. Добавьте `alignas(64)` к каждому элементу
+3. Сравните производительность, объясните результат
+
+### Задание 4: Профилирование реальной задачи
+Реализуйте простую задачу: парсинг CSV (1M строк), агрегация по колонке, сортировка результатов.
+Используйте `perf record -g` / VTune / VS Profiler. Найдите топ-3 горячих функции.
+Оптимизируйте их (reserve, string_view, избежание копий, algorithm choice).
+Замерьте speedup.
+
+### Задание 5: Move-only типы в контейнерах
+Создайте `MoveOnly` класс (deleted copy, noexcept move).
+Поместите в `std::vector`, `std::deque`, `std::list`.
+Замерьте время `push_back` / `emplace_back` с reserve и без.
+Объясните разницу в количестве перемещений при реаллокации.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| Премьюрая оптимизация | Оптимизируют не bottlenecks | Сначала профилируйте! |
+| `reserve()` забыт | Множественные реаллокации + move | `reserve(n)` если знаете размер |
+| `std::string` копирование | Передача по значению без move | `const&` для чтения, `&&`/`value+move` для владения |
+| `std::endl` в цикле | Флашит буфер каждый раз | `'\n'`, флаш вручную когда нужно |
+| `std::list` для всего | Указатели — cache misses | `vector` по умолчанию, `list` только если нужно O(1) insert в середине с итератором |
+| `shared_ptr` везде | Atomic refcount = cache line ping-pong | `unique_ptr` по умолчанию, `shared_ptr` только при shared ownership |
+| Неиспользование алгоритмов STL | Ручные циклы с ошибками и без оптимизаций | `std::transform`, `accumulate`, `ranges` |
+| Игнорирование alignment | False sharing, неукооперированный доступ | `alignas(64)` для горячих атомарных, `alignas(32/64)` для SIMD |
+
+---
+
+## Ресурсы
+- [cppreference: Algorithm library](https://en.cppreference.com/w/cpp/algorithm)
+- [C++ Core Guidelines: Per](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#per-performance)
+- **Книга:** "Optimized C++" (Kurt Guntheroth)
+- **Книга:** "Efficient C++" (Bulka, Mayhew)
+- **Книга:** "Data-Oriented Design" (Mike Acton)
+- **CppCon:** "Cache-Friendly Data Structures" (Chandler Carruth)
+- **CppCon:** "Performance Tuning for C++" (Fedor Pikus)
+- **Agner Fog:** "Optimizing software in C++" (бесплатная книга/PDF)
+- [Google Benchmark](https://github.com/google/benchmark)

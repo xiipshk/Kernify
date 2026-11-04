@@ -1,0 +1,222 @@
+# Урок 7: Контейнеры STL
+
+## Цели урока
+- Изучить `std::vector` — динамический массив (основной контейнер)
+- Понять `std::pair` — пара значений
+- Освоить основы ассоциативных контейнеров: `std::map`, `std::set`
+- Научиться использовать итераторы и алгоритмы с контейнерами
+- Разобраться с выделением памяти, `reserve`, `shrink_to_fit`
+
+---
+
+## Теория
+
+### std::vector — динамический массив
+```cpp
+#include <vector>
+#include <iostream>
+
+int main() {
+    // Создание
+    std::vector<int> v1;                    // пустой
+    std::vector<int> v2(5);                 // 5 элементов = 0
+    std::vector<int> v3(5, 42);             // 5 элементов = 42
+    std::vector<int> v4 = {1,2,3,4,5};      // список инициализации
+    std::vector v5 = {1,2,3};               // CTAD (C++17)
+
+    // Доступ
+    v4[0] = 10;              // без проверки
+    v4.at(1) = 20;           // с проверкой (out_of_range)
+    v4.front();              // первый
+    v4.back();               // последний
+    v4.data();               // указатель на массив (C API)
+
+    // Размер и ёмкость
+    v4.size();       // 5 — количество элементов
+    v4.capacity();   // >=5 — выделенная память
+    v4.empty();      // false
+    v4.max_size();   // теоретический максимум
+
+    // Изменение размера
+    v4.push_back(6);         // добавить в конец (амортизированное O(1))
+    v4.emplace_back(7);      // конструкция на месте (избегает копирования)
+    v4.pop_back();           // убрать последний
+    v4.insert(v4.begin()+2, 99); // вставить в середину O(n)
+    v4.erase(v4.begin()+2);       // удалить из середины O(n)
+    v4.clear();              // удалить все (capacity не меняется)
+
+    // Резервирование — избегает реаллокаций
+    std::vector<int> v6;
+    v6.reserve(1000);        // выделить память под 1000 элементов
+    for (int i=0; i<1000; ++i) v6.push_back(i); // никаких реаллокаций!
+
+    v6.shrink_to_fit();      // запрос освободить лишнюю память (C++11)
+
+    // Перебор
+    for (int x : v4) std::cout << x << ' ';
+    for (auto& x : v4) x *= 2;
+    for (auto it = v4.begin(); it != v4.end(); ++it) { ... }
+}
+```
+
+### Внутреннее устройство vector
+```
+[ elements ][ unused capacity ]
+ size()       capacity() - size()
+```
+При `push_back` за пределами `capacity`:
+1. Выделяется новая память (обычно ×1.5 или ×2)
+2. Элементы копируются/перемещаются
+3. Старая память освобождается
+→ **Итераторы, указатели, ссылки инвалидируются!**
+
+### std::pair — параheterogeneous значений
+```cpp
+#include <utility>
+#include <string>
+
+std::pair<int, std::string> p1(42, "hello"); // C++11: make_pair
+auto p2 = std::make_pair(3.14, true);        // тип выводится
+auto p3 = std::pair{10, "world"};            // CTAD (C++17)
+
+// Доступ
+p1.first;   // 42
+p1.second;  // "hello"
+
+// Structured bindings (C++17)
+auto [num, str] = p1; // num=42, str="hello"
+
+// Сравнение — лексикографическое
+std::pair<int,int> a{1,2}, b{1,3};
+std::cout << (a < b); // true
+```
+
+### std::map — ассоциативный массив (ключ → значение)
+```cpp
+#include <map>
+#include <string>
+
+int main() {
+    // Ключи уникальны, отсортированы (красно-чёрное дерево, O(log n))
+    std::map<std::string, int> ages;
+    ages["Alice"] = 25;
+    ages["Bob"] = 30;
+    ages.emplace("Charlie", 35); // эффективнее для сложных типов
+
+    // Доступ
+    ages["Alice"];     // 25 (создаёт запись, если нет!)
+    ages.at("Alice");  // 25 (бросает out_of_range, если нет)
+    // ages["Unknown"] = 0; // создаст запись!
+
+    // Поиск
+    auto it = ages.find("Bob");
+    if (it != ages.end()) {
+        std::cout << it->first << ": " << it->second; // "Bob: 30"
+    }
+
+    // Проверка наличия (C++20)
+    if (ages.contains("Alice")) { ... } // true
+
+    // Перебор (отсортирован по ключу)
+    for (const auto& [name, age] : ages) {
+        std::cout << name << " -> " << age << '\n';
+    }
+
+    // Удаление
+    ages.erase("Bob");
+    ages.clear();
+}
+```
+
+### std::set — упорядоченное множество уникальных ключей
+```cpp
+#include <set>
+#include <string>
+
+std::set<int> s = {3, 1, 4, 1, 5}; // {1, 3, 4, 5} — дубликаты удалены, отсортировано
+s.insert(2);    // {1, 2, 3, 4, 5}
+s.erase(3);     // {1, 2, 4, 5}
+s.count(4);     // 1 (есть)
+s.count(99);    // 0 (нет)
+s.contains(4);  // C++20: true
+
+// Перебор в отсортированном порядке
+for (int x : s) std::cout << x << ' '; // 1 2 4 5
+```
+
+### std::unordered_map / unordered_set — хеш-таблицы (O(1) среднее)
+```cpp
+#include <unordered_map>
+#include <string>
+
+std::unordered_map<std::string, int> umap;
+umap["key"] = 42;
+// Не упорядочены, быстрее для поиска, но нет итерации в сортированном порядке
+// Требуют хеш-функцию и operator== для ключа
+```
+
+### Адаптеры контейнеров
+```cpp
+#include <stack>
+#include <queue>
+
+std::stack<int> st;       // LIFO: push, pop, top
+std::queue<int> q;        // FIFO: push, pop, front, back
+std::priority_queue<int> pq; // max-heap: push, pop, top (больший сверху)
+```
+
+### Алгоритмы (перебор, поиск, сортировка)
+```cpp
+#include <algorithm>
+#include <vector>
+
+std::vector<int> v = {5, 2, 8, 1, 9};
+
+std::sort(v.begin(), v.end());           // {1,2,5,8,9}
+std::reverse(v.begin(), v.end());        // {9,8,5,2,1}
+auto it = std::find(v.begin(), v.end(), 5); // итератор на 5
+bool has = std::binary_search(v.begin(), v.end(), 5); // true (требует сортировки)
+std::for_each(v.begin(), v.end(), [](int& x){ x *= 2; });
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Динамический массив
+Реализуйте простой вектор вручную: `MyVector<int>` с `push_back`, `pop_back`, `size`, `capacity`, `operator[]`, итераторами. Сравните с `std::vector`.
+
+### Задание 2: Частота слов
+Прочитайте текст из `std::cin` до EOF. Посчитайте частоту каждого слова (`std::map<std::string, int>`). Выведите топ-10 самых частых.
+
+### Задание 3: Телефонная книга
+`std::map<std::string, std::vector<std::string>>` — имя → список телефонов.
+Команды: add имя телефон, find имя, delete имя, list (все в алфавитном порядке).
+
+### Задание 4: Уникальные слова
+Введите N строк. Выведите все уникальные слова в алфавитном порядке (`std::set`).
+
+### Задание 5: reserve vs без
+Замерьте время `push_back` 1 млн элементов с `reserve(1'000'000)` и без. Объясните разницу.
+
+### Задание 6: Pair и structured bindings
+Напишите функцию, возвращающую `std::pair<std::string, int>` (имя, длина). Используйте structured bindings при вызове.
+
+---
+
+## Типичные ошибки новичка
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| Итератор инвалидирован после `push_back` | Реаллокация памяти | Не храните итераторы/указатели/ссылки между операциями, меняющими capacity |
+| `map[key]` создаёт элемент | Нужно только проверить наличие | Используйте `find`, `contains` (C++20) или `at` |
+| `vector` копируется при передаче в функцию | Дорого! | Передавайте по `const std::vector&` |
+| `std::set` не позволяет дубликаты | По дизайну | Используйте `std::multiset` если нужны дубликаты |
+| `unordered_map` с пользовательским ключом не работает | Нет специализации `std::hash` | Определите `struct Hash { size_t operator()(Key) const; }` |
+
+---
+
+## Ресурсы
+- cppreference: [std::vector](https://en.cppreference.com/w/cpp/container/vector), [std::map](https://en.cppreference.com/w/cpp/container/map), [std::set](https://en.cppreference.com/w/cpp/container/set), [Algorithms](https://en.cppreference.com/w/cpp/algorithm)
+- C++ Core Guidelines: [SL containers](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#sl-containers)
+- [Big-O Cheat Sheet](https://www.bigocheatsheet.com/) — сложность операций

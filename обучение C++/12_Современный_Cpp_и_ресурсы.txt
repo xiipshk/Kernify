@@ -1,0 +1,316 @@
+# Урок 12: Современный C++ и управление ресурсами
+
+## Цели урока
+- Понять принцип RAII и его роль в современном C++
+- Изучить виды продолжительности хранения (storage duration)
+- Освоить умные указатели: unique_ptr, shared_ptr, weak_ptr
+- Применить Rule of 3/5/0 для корректного управления ресурсами
+- Научиться избегать утечек памяти и двойного освобождения
+
+---
+
+## Теория
+
+### RAII (Resource Acquisition Is Initialization)
+RAII — идиома, при которой захват ресурса (память, файл, мьютекс, сокет) происходит в конструкторе, а освобождение — в деструкторе. Гарантирует освобождение ресурса даже при исключениях.
+
+```cpp
+#include <fstream>
+#include <mutex>
+#include <vector>
+
+class FileWrapper {
+    std::fstream file_;
+public:
+    explicit FileWrapper(const char* path, std::ios::openmode mode = std::ios::in | std::ios::out)
+        : file_(path, mode) {
+        if (!file_.is_open()) throw std::runtime_error("Cannot open file");
+    }
+    ~FileWrapper() { if (file_.is_open()) file_.close(); }
+
+    // Запрет копирования (Rule of 5)
+    FileWrapper(const FileWrapper&) = delete;
+    FileWrapper& operator=(const FileWrapper&) = delete;
+
+    // Перемещение разрешено
+    FileWrapper(FileWrapper&& other) noexcept : file_(std::move(other.file_)) {}
+    FileWrapper& operator=(FileWrapper&& other) noexcept {
+        if (this != &other) {
+            if (file_.is_open()) file_.close();
+            file_ = std::move(other.file_);
+        }
+        return *this;
+    }
+
+    std::fstream& get() { return file_; }
+};
+
+// Использование: ресурс гарантированно освободится
+void processFile(const char* path) {
+    FileWrapper fw(path);
+    fw.get() << "data";
+    // При выходе из области видимости деструктор закроет файл
+}
+```
+
+### Storage Duration (Продолжительность хранения)
+
+| Вид | Ключевое слово | Жизненный цикл | Пример |
+|-----|---------------|----------------|--------|
+| Автоматическая | (нет) / `auto` | До конца блока `{}` | `int x;`, `std::vector v;` |
+| Статическая | `static` / `thread_local` / глобальные | Всё время работы программы | `static int counter;` |
+| Динамическая | `new` / `malloc` / умные указатели | До явного `delete` / деструктора | `auto p = std::make_unique<int>();` |
+| Потоковая | `thread_local` | Время жизни потока | `thread_local int tls = 0;` |
+
+```cpp
+#include <iostream>
+#include <thread>
+
+int global = 1;                    // Статическая продолжительность
+thread_local int tls = 0;          // Потоковая продолжительность
+
+void threadFunc(int id) {
+    tls = id;
+    std::cout << "Thread " << id << ": tls = " << tls << '\n';
+}
+
+int main() {
+    static int staticLocal = 42;   // Статическая (инициализируется один раз)
+    int autoVar = 10;              // Автоматическая
+
+    std::thread t1(threadFunc, 1);
+    std::thread t2(threadFunc, 2);
+    t1.join(); t2.join();
+}
+```
+
+### Умные указатели (C++11/14/20)
+
+#### `std::unique_ptr` — исключительное владение
+```cpp
+#include <memory>
+#include <iostream>
+
+struct Resource {
+    Resource() { std::cout << "Acquired\n"; }
+    ~Resource() { std::cout << "Released\n"; }
+    void use() { std::cout << "Using\n"; }
+};
+
+void uniquePtrDemo() {
+    // Создание (предпочтительно make_unique)
+    auto ptr1 = std::make_unique<Resource>();
+    auto ptr2 = std::make_unique<Resource[]>(5); // Массив
+
+    ptr1->use();
+
+    // Перемещение владения
+    auto ptr3 = std::move(ptr1); // ptr1 теперь nullptr
+    if (!ptr1) std::cout << "ptr1 is empty\n";
+
+    // Кастомный deleter
+    auto ptr4 = std::unique_ptr<Resource, void(*)(Resource*)>(
+        new Resource(),
+        [](Resource* p) { std::cout << "Custom delete\n"; delete p; }
+    );
+
+    // release() — передача владения без удаления
+    Resource* raw = ptr3.release(); // ptr3 = nullptr, нужно вручную delete
+    delete raw;
+}
+```
+
+#### `std::shared_ptr` — разделяемое владение
+```cpp
+#include <memory>
+#include <iostream>
+
+void sharedPtrDemo() {
+    auto sp1 = std::make_shared<Resource>(); // Счётчик = 1
+    {
+        auto sp2 = sp1; // Счётчик = 2
+        auto sp3 = sp1; // Счётчик = 3
+        std::cout << "Count: " << sp1.use_count() << '\n'; // 3
+    } // sp2, sp3 разрушены, счётчик = 1
+    std::cout << "Count: " << sp1.use_count() << '\n'; // 1
+} // sp1 разрушен, Resource удалён
+
+// Важно: make_shared — одна аллокация для объекта + контрольного блока
+// shared_ptr<T> p(new T) — две аллокации
+```
+
+#### `std::weak_ptr` — слабая ссылка (разрывает циклы)
+```cpp
+#include <memory>
+#include <iostream>
+
+struct Node;
+using NodePtr = std::shared_ptr<Node>;
+using WeakNodePtr = std::weak_ptr<Node>;
+
+struct Node {
+    int value;
+    WeakNodePtr parent;  // weak_ptr — не увеличивает счётчик
+    std::vector<NodePtr> children;
+
+    ~Node() { std::cout << "Node " << value << " destroyed\n"; }
+};
+
+void weakPtrDemo() {
+    auto root = std::make_shared<Node>();
+    root->value = 1;
+
+    auto child = std::make_shared<Node>();
+    child->value = 2;
+    child->parent = root;  // Не создаёт цикл!
+    root->children.push_back(child);
+
+    // Проверка и блокировка
+    if (auto locked = child->parent.lock()) {
+        std::cout << "Parent value: " << locked->value << '\n';
+    }
+
+    // root и child корректно уничтожатся при выходе из области видимости
+}
+```
+
+### Rule of 3 / 5 / 0
+
+| Правило | Когда применяется | Что определять |
+|---------|-------------------|----------------|
+| **Rule of 3** (C++98) | Класс управляет ресурсом вручную | Деструктор, копирующий конструктор, копирующее присваивание |
+| **Rule of 5** (C++11) | + перемещение | + перемещающий конструктор, перемещающее присваивание |
+| **Rule of 0** (Modern) | Класс использует RAII-обёртки | Ничего — компилятор сгенерирует правильно |
+
+```cpp
+// Rule of 0 — ПРЕДПОЧТИТЕЛЬНО
+class GoodClass {
+    std::string name_;        // RAII
+    std::vector<int> data_;   // RAII
+    std::unique_ptr<Resource> res_; // RAII
+    // Компилятор сгенерирует: деструктор, копирование, перемещение — все правильные
+};
+
+// Rule of 5 — когда НУЖНО ручное управление
+class ManualResource {
+    int* data_;
+    size_t size_;
+public:
+    ManualResource(size_t n) : data_(new int[n]), size_(n) {}
+
+    // Деструктор
+    ~ManualResource() { delete[] data_; }
+
+    // Копирование (глубокое)
+    ManualResource(const ManualResource& other)
+        : data_(new int[other.size_]), size_(other.size_) {
+        std::copy(other.data_, other.data_ + size_, data_);
+    }
+    ManualResource& operator=(const ManualResource& other) {
+        if (this != &other) {
+            int* newData = new int[other.size_];
+            std::copy(other.data_, other.data_ + other.size_, newData);
+            delete[] data_;
+            data_ = newData;
+            size_ = other.size_;
+        }
+        return *this;
+    }
+
+    // Перемещение (перехват ресурса)
+    ManualResource(ManualResource&& other) noexcept
+        : data_(other.data_), size_(other.size_) {
+        other.data_ = nullptr;
+        other.size_ = 0;
+    }
+    ManualResource& operator=(ManualResource&& other) noexcept {
+        if (this != &other) {
+            delete[] data_;
+            data_ = other.data_;
+            size_ = other.size_;
+            other.data_ = nullptr;
+            other.size_ = 0;
+        }
+        return *this;
+    }
+};
+```
+
+### `std::span` (C++20) — невладеющая ссылка на непрерывную последовательность
+```cpp
+#include <span>
+#include <vector>
+#include <array>
+
+void process(std::span<int> s) {  // Принимает vector, array, указатель+размер
+    for (int& x : s) x *= 2;
+}
+
+void spanDemo() {
+    std::vector<int> v = {1, 2, 3, 4, 5};
+    std::array<int, 3> a = {10, 20, 30};
+    int arr[] = {100, 200};
+
+    process(v);        // OK
+    process(a);        // OK
+    process(arr);      // OK (размер выводится)
+    process({1, 2, 3}); // OK (std::initializer_list -> span)
+}
+```
+
+---
+
+## Практические задания
+
+### Задание 1: RAII-обёртка для `FILE*`
+Создайте класс `ScopedFile`, который:
+- Принимает `const char* filename` и режим в конструкторе (`fopen`)
+- В деструкторе вызывает `fclose` (если файл открыт)
+- Запрещает копирование, разрешает перемещение
+- Предоставляет доступ к `FILE*` через `get()`
+
+### Задание 2: Реализация `unique_ptr` с кастомным deleter
+Напишите шаблонный класс `MyUniquePtr<T, Deleter>` с поддержкой:
+- Конструктора от `T*`
+- Перемещения (конструктор и присваивание)
+- `release()`, `reset()`, `get()`, `operator*`, `operator->`
+- Кастомного deleter'а (хранится как член класса)
+
+### Задание 3: Разрыв циклических ссылок
+Создайте структуру `TreeNode` с `children` (`vector<shared_ptr>`) и `parent` (`weak_ptr`).
+Напишите функцию, строящую дерево глубины 3, и проверьте, что все узлы корректно уничтожаются при удалении корня.
+
+### Задание 4: Rule of 5 для строкового буфера
+Реализуйте класс `StringBuffer`, владеющий `char*` (ручное управление через `new[]`/`delete[]`).
+Реализуйте все 5 специальных функций. Добавьте методы `append(const char*)`, `c_str()`, `size()`.
+
+### Задание 5: Эксперимент со storage duration
+Напишите программу, демонстрирующую разницу между:
+- Глобальной переменной
+- `static` локальной переменной в функции
+- `thread_local` переменной
+- Автоматической переменной
+- Динамически выделенной через `make_unique`
+
+Выведите адреса и порядок конструкторов/деструкторов.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `shared_ptr` цикл (parent↔child) | Два `shared_ptr` держат друг друга | Использовать `weak_ptr` для обратной ссылки |
+| `unique_ptr` копирование | Попытка `auto p2 = p1;` | Использовать `std::move(p1)` |
+| Утечка при исключении в конструкторе | Ресурс захвачен, но конструктор не завершился | RAII: каждый ресурс — в отдельном члене-обёртке |
+| `delete` вместо `delete[]` | Массив удалён через скалярный delete | `unique_ptr<T[]>` или `std::vector` |
+| Двойное удаление | Ручное управление + копирование | Rule of 5 или Rule of 0 |
+
+---
+
+## Ресурсы
+- [cppreference: RAII](https://en.cppreference.com/w/cpp/language/raii)
+- [cppreference: Smart pointers](https://en.cppreference.com/w/cpp/memory)
+- [C++ Core Guidelines: R.1-R.30](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r-resource-management)
+- **Книга:** Meyers "Effective Modern C++", Items 18-23
+- **Видео:** CppCon "Back to Basics: RAII" (Arthur O'Dwyer)

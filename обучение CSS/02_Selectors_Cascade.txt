@@ -1,0 +1,383 @@
+# Урок 2: Селекторы и каскад — Полный разбор
+
+## Цели урока
+- Освоить все типы селекторов: простые, комбинаторы, псевдоклассы, псевдоэлементы
+- Понять механизм каскада: специфичность, важность, порядок источников
+- Научиться писать эффективные, низкоспецифичные селекторы
+- Изучить современные селекторы Level 4: :is(), :where(), :has()
+
+---
+
+## 1. Классификация селекторов
+
+### Простые селекторы
+```css
+/* Типовой — элементы */
+div, span, article { }
+
+/* Класс — основной рабочий инструмент */
+.card, .btn--primary, .header__logo { }
+
+/* ID — избегай для стилей (специфичность 1,0,0) */
+#main-header { }
+
+/* Атрибут — мощный, специфичность как класс (0,1,0) */
+[href], [type="email"], [data-state="open"] { }
+
+/* Универсальный */
+* { box-sizing: border-box; }
+```
+
+### Комбинаторы (отношения между элементами)
+```css
+/* Потомок (пробел) — любой уровень вложенности */
+.article p { color: #374151; }
+
+/* Прямой потомок (>) — только дети */
+.card > .card__header { padding-bottom: 1rem; }
+
+/* Смежный брат (+) — следующий за элементом */
+h2 + p { margin-top: 0; }
+
+/* Все следующие братья (~) — все после элемента */
+h2 ~ p { color: #6b7280; }
+
+/* Колонка (||) — ячейки таблицы в колонке (редко) */
+col.selected || td { background: #eff6ff; }
+```
+
+### Псевдоклассы (состояние/позиция)
+```css
+/* Структурные */
+:first-child, :last-child, :only-child
+:nth-child(2n+1), :nth-last-child(3)
+:first-of-type, :last-of-type, :nth-of-type(2)
+
+/* Состояние форм */
+:enabled, :disabled, :checked, :indeterminate
+:valid, :invalid, :in-range, :out-of-range
+:required, :optional, :read-only, :read-write
+:placeholder-shown, :user-invalid (Firefox)
+
+/* Интерактивные */
+:hover, :active, :focus, :focus-visible, :focus-within
+:target, :lang(ru), :dir(rtl)
+
+/* Логические (Level 4) */
+:is(.a, .b, .c)        /* Любой из, специфичность = max */
+:where(.a, .b, .c)     /* Любой из, специфичность = 0 */
+:not(.disabled, .hidden)  /* Отрицание, список аргументов */
+:has(img, > .caption)  /* Родительский селектор! */
+```
+
+### Псевдоэлементы (виртуальные элементы)
+```css
+/* Типографические */
+::first-line, ::first-letter
+
+/* Вставка контента */
+::before, ::after { content: ""; }
+
+/* Выделение */
+::selection { background: #2563eb; color: white; }
+::marker { color: #2563eb; }  /* Маркеры списков */
+
+/* Формы */
+::placeholder { color: #9ca3af; }
+::file-selector-button { padding: 0.5rem; }
+
+/* Scrollbar (WebKit) */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+```
+
+---
+
+## 2. Специфичность — детальная математика
+
+### 4-компонентная система (a, b, c, d)
+```
+Инлайн стиль        → a = 1
+ID селекторы        → b = количество #id
+Классы/атрибуты/псевдоклассы → c = количество
+Элементы/псевдоэлементы      → d = количество
+```
+
+### Таблица примеров
+| Селектор | a,b,c,d | Десятичный |
+|----------|---------|------------|
+| `*` | 0,0,0,0 | 0 |
+| `div` | 0,0,0,1 | 1 |
+| `.class` | 0,0,1,0 | 16 |
+| `#id` | 0,1,0,0 | 256 |
+| `style=""` | 1,0,0,0 | 4096 |
+| `div .class` | 0,0,1,1 | 17 |
+| `.a .b .c` | 0,0,3,0 | 48 |
+| `#id .class` | 0,1,1,0 | 272 |
+| `:is(#id, .class)` | 0,1,0,0 | 256 (max) |
+| `:where(#id, .class)` | 0,0,0,0 | 0 |
+
+### Важные правила
+```css
+/* 1. Специфичность побеждает порядок */
+#id { color: red; }
+.class { color: blue; }  /* #id побеждает */
+
+/* 2. При равной специфичности — последний побеждает */
+.class { color: red; }
+.class { color: blue; }  /* blue */
+
+/* 3. !important ломает каскад (используй крайне редко) */
+.class { color: red !important; }
+#id { color: blue; }  /* red побеждает */
+
+/* 4. Наследование слабее любого селектора */
+body { color: red; }
+.child { color: blue; }  /* blue, даже если body выше */
+```
+
+---
+
+## 3. Каскад — полный порядок приоритетов (CSS Cascade Level 5)
+
+### Слои каскада (от низкого к высокому):
+```
+1. User Agent (браузер) — normal
+2. User (пользователь) — normal
+3. Author (разработчик) — normal
+4. Author — animation (@keyframes)
+5. Author — !important
+6. User — !important
+7. User Agent — !important
+8. Transition (CSS Transitions) — высший приоритет!
+```
+
+### Cascade Layers (@layer) — новый уровень управления
+```css
+/* Объявление порядка слоёв (первый = низкий приоритет) */
+@layer reset, base, theme, components, utilities;
+
+/* Стили внутри слоя */
+@layer reset {
+  * { margin: 0; padding: 0; }
+}
+
+@layer base {
+  body { font-family: system-ui; line-height: 1.5; }
+}
+
+@layer components {
+  .btn { padding: 0.5rem 1rem; }
+}
+
+/* Неименованные стили (без @layer) — выше всех слоёв */
+.btn { padding: 1rem 2rem; }  /* Перебивает @layer components */
+```
+
+### Внутри слоя работает обычная специфичность
+```css
+@layer theme {
+  .btn { background: blue; }  /* Специфичность 0,0,1,0 */
+}
+
+@layer components {
+  .btn.primary { background: red; }  /* 0,0,2,0 — побеждает внутри слоя */
+}
+
+/* Но порядок слоёв важнее специфичности! */
+@layer base, theme;  /* theme выше base */
+
+@layer base {
+  #id .btn { background: green; }  /* 0,1,1,0 — высокая специфичность */
+}
+
+@layer theme {
+  .btn { background: purple; }  /* 0,0,1,0 — но theme > base, побеждает! */
+}
+```
+
+---
+
+## 4. Современные селекторы Level 4 — детально
+
+### :is() — группировка с максимальной специфичностью
+```css
+/* Упрощение длинных селекторов */
+:is(header, main, footer, article, section) :is(h1, h2, h3, h4) {
+  color: var(--heading-color);
+  margin-bottom: 0.5em;
+}
+
+/* Специфичность = максимальная из аргументов */
+:is(#hero, .card, div) h1 { }  /* Специфичность = 0,1,0,0 (как #hero) */
+
+/* Не прощает невалидные селекторы */
+:is(.valid, :invalid-pseudo) { }  /* ВСЕ правило игнорируется! */
+
+/* Вложенность */
+:is(.sidebar, .footer) :is(h1, h2, h3, a) { color: inherit; }
+```
+
+### :where() — группировка с нулевой специфичностью
+```css
+/* Идеально для сбросов и библиотек */
+:where(html) { font-size: 16px; }
+:where(body) { margin: 0; line-height: 1.5; }
+
+/* Позволяет легко переопределить пользователю */
+:where(.sr-only) {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+}
+
+/* Комбинирование с :not() */
+:where(:not([hidden])) { display: block; }
+```
+
+### :not() — современный синтаксис со списком
+```css
+/* Старый (1 аргумент) */
+:not(.disabled) { opacity: 1; }
+
+/* Новый (список) — специфичность = max из аргументов */
+:not(.disabled, .loading, [aria-hidden="true"]) { opacity: 1; }
+:not(#main, .sidebar) { }  /* Специфичность 0,1,0,0 */
+
+/* Цепочки :not() */
+button:not(:disabled):not([aria-busy="true"]) { cursor: pointer; }
+
+/* С :has() */
+.card:not(:has(img)) { grid-template-columns: 1fr; }
+```
+
+### :has() — родительский селектор (CSS Level 4)
+```css
+/* Базовое: родитель ИМЕЕТ потомка */
+.card:has(img) { display: grid; grid-template-columns: 120px 1fr; }
+
+/* Родитель с конкретным состоянием потомка */
+.form:has(input:invalid) .submit { opacity: 0.5; pointer-events: none; }
+.field:has(input:focus) label { color: var(--color-primary); }
+
+/* Соседние комбинаторы внутри :has() */
+h2:has(+ p.intro) { margin-bottom: 0; }
+
+/* Количественные запросы (Quantity Queries) */
+.grid:has(> :nth-child(4)) { grid-template-columns: repeat(2, 1fr); }
+.grid:has(> :nth-child(7)) { grid-template-columns: repeat(3, 1fr); }
+.list:has(> :only-child) { padding: 0; }  /* Только один элемент */
+
+/* Формы: ошибка только если поле заполнено И невалидно */
+.field:has(input:not(:placeholder-shown):invalid) .error {
+  display: block;
+}
+
+/* Прогрессивное улучшение */
+@supports selector(:has(*)) {
+  .card:has(img) { /* enhanced styles */ }
+}
+```
+
+---
+
+## 5. Специфичность псевдоклассов — нюансы
+
+```css
+/* :not() — специфичность аргумента */
+:not(.class)        /* 0,0,1,0 */
+:not(#id)           /* 0,1,0,0 */
+:not(div)           /* 0,0,0,1 */
+
+/* :is() — максимальная специфичность */
+:is(.a, .b, .c)     /* 0,0,1,0 */
+:is(#id, .class)    /* 0,1,0,0 — берет от #id! */
+
+/* :where() — всегда 0 */
+:where(#id, .class) /* 0,0,0,0 */
+
+/* :has() — специфичность аргумента */
+:has(.class)        /* 0,0,1,0 */
+:has(#id)           /* 0,1,0,0 */
+```
+
+---
+
+## 6. Практическое задание
+
+### Задача 1: Аудит специфичности
+Дан CSS:
+```css
+#app .sidebar .nav .item.active a span { color: red; }
+.nav-link { color: blue; }
+body main aside nav ul li a { color: green; }
+```
+1. Посчитай специфичность каждого
+2. Перепиши с низкой специфичностью (цель: 0,0,1,0)
+3. Используй :where() для утилитарных сбросов
+
+### Задача 2: Селекторы для форм
+Напиши CSS только селекторами (без классов на input):
+- Input в фокусе → label становится синим
+- Заполненный input (не placeholder) → label поднимается
+- Невалидный заполненный input → красная рамка
+- Чекбокс checked → стилизировать соседний span
+
+### Задача 3: :has() паттерны
+Реализуй:
+- Карточка: если есть img → grid 2 колонки, иначе 1 колонка
+- Список: если 5+ элементов → 2 колонки, если 10+ → 3 колонки
+- Form: кнопка disabled, если есть input:invalid
+
+### Задача 4: Cascade Layers рефакторинг
+Раздели стили на слои:
+```css
+@layer reset, tokens, base, layout, components, utilities, overrides;
+```
+Перенеси существующие стили в соответствующие слои.
+
+---
+
+## 7. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| `div div div p span` | Хрупко, высокая специфичность | `.article__text` |
+| `#header .nav a:hover` | ID + псевдокласс = 0,1,1,1 | `.header__nav-link:hover` |
+| `:is(.btn, #submit)` | Специфичность = ID (0,1,0,0) | `:where(.btn, #submit)` или раздельно |
+| `:not(.a, .b)` без понимания | Специфичность = max(.a, .b) | Используй :where() для утилит |
+| Забывают про :focus-visible | :focus стилится и при Tab, и при клике | :focus-visible для клавиатуры |
+| Нет @supports для :has() | Ломается в старых браузерах | `@supports selector(:has(*)) { }` |
+
+---
+
+## 8. Полезные ресурсы
+
+### Спецификации
+- [Selectors Level 4](https://www.w3.org/TR/selectors-4/)
+- [CSS Cascading and Inheritance Level 5](https://www.w3.org/TR/css-cascade-5/)
+
+### Статьи
+- [MDN: CSS Selectors](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Selectors)
+- [CSS-Tricks: :has() selector](https://css-tricks.com/almanac/selectors/h/has/)
+- [Una Kravets: :has() is here](https://una.im/css-has/)
+
+### Инструменты
+- [Specificity Calculator](https://specificity.keegan.st/)
+- [Selectors Explained](https://selector.kotleit.dev/) — читает селектор на английском
+
+---
+
+## 9. Ключевые выводы
+
+1. **Классы — основа**. БЭМ: `.block__element--modifier`. Избегай ID и тегов.
+2. **Специфичность — математика**. Считай (a,b,c,d), держи ниже 0,0,2,0.
+3. **:where() — суперсила для библиотек/сбросов**. Специфичность 0.
+4. **:has() — революция 2023**. Родительские селекторы, quantity queries, формулярная логика.
+5. **Cascade Layers — архитектура без !important**. Порядок слоёв > специфичность внутри.
+6. **Псевдоклассы форм** (:valid, :placeholder-shown, :user-invalid) — нативная валидация.
+7. **DevTools → Computed** показывает победившее правило и его источник.
+
+---
+
+*Следующий урок: 03_Colors_Text.txt — цветовые модели, типографика, веб-шрифты, variable fonts*

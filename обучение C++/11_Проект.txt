@@ -1,0 +1,449 @@
+# Урок 11: Финальный проект — Консольное приложение "Менеджер задач"
+
+## Цели урока
+- Объединить все изученные темы в один проект
+- Практика проектирования классов и функций
+- Работа с файлами для персистентности данных
+- Меню, валидация ввода, обработка ошибок
+- Структура проекта: несколько .cpp/.h файлов, сборка
+
+---
+
+## Требования к проекту
+
+Создать консольное приложение **Task Manager** с функционалом:
+1. Добавление задач (название, описание, приоритет, дедлайн, теги)
+2. Просмотр списка задач (фильтры: все, активные, выполненные, по приоритету)
+3. Отметка задачи как выполненной / удаление
+4. Сохранение/загрузка из файла (JSON или простой текстовый формат)
+5. Поиск по ключевым словам
+6. Статистика: всего задач, выполнено, просрочено
+
+---
+
+## Архитектура (предлагаемая)
+
+```
+task_manager/
+├── include/
+│   ├── task.h          // Класс Task
+│   ├── task_manager.h  // Класс TaskManager
+│   ├── storage.h       // Интерфейс сохранения
+│   └── utils.h         // Вспомогательные функции
+├── src/
+│   ├── task.cpp
+│   ├── task_manager.cpp
+│   ├── storage_json.cpp   // или storage_text.cpp
+│   ├── utils.cpp
+│   └── main.cpp
+├── CMakeLists.txt      // или Makefile / .sln
+└── data/
+    └── tasks.json      // файл данных
+```
+
+---
+
+## Заголовочные файлы (скелеты)
+
+### include/task.h
+```cpp
+#pragma once
+#include <string>
+#include <vector>
+#include <chrono>
+#include <optional>
+
+enum class Priority { Low = 0, Medium, High, Critical };
+enum class Status { Pending, Completed };
+
+struct Task {
+    int id = 0;
+    std::string title;
+    std::string description;
+    Priority priority = Priority::Medium;
+    Status status = Status::Pending;
+    std::chrono::system_clock::time_point created_at;
+    std::optional<std::chrono::system_clock::time_point> due_date;
+    std::vector<std::string> tags;
+
+    // Методы
+    bool is_overdue() const;
+    std::string priority_str() const;
+    std::string status_str() const;
+    std::string due_date_str() const;
+};
+
+// Вспомогательные функции
+std::ostream& operator<<(std::ostream&, const Task&);
+Priority parse_priority(const std::string&);
+std::optional<std::chrono::system_clock::time_point> parse_date(const std::string&);
+```
+
+### include/task_manager.h
+```cpp
+#pragma once
+#include "task.h"
+#include <vector>
+#include <optional>
+#include <string>
+
+class TaskManager {
+    std::vector<Task> tasks_;
+    int next_id_ = 1;
+    std::string storage_path_;
+
+public:
+    explicit TaskManager(const std::string& storage_path);
+
+    // CRUD
+    Task& add_task(const std::string& title, const std::string& desc,
+                   Priority p, const std::optional<std::chrono::system_clock::time_point>& due,
+                   const std::vector<std::string>& tags);
+    bool remove_task(int id);
+    std::optional<Task*> find_task(int id);
+    bool toggle_status(int id);
+
+    // Запросы
+    std::vector<Task*> get_all() const;
+    std::vector<Task*> get_by_status(Status) const;
+    std::vector<Task*> get_by_priority(Priority) const;
+    std::vector<Task*> search(const std::string& keyword) const;
+    std::vector<Task*> get_overdue() const;
+
+    // Статистика
+    struct Stats { size_t total, completed, pending, overdue; };
+    Stats get_stats() const;
+
+    // Персистентность
+    bool save();
+    bool load();
+};
+```
+
+### include/storage.h
+```cpp
+#pragma once
+#include "task.h"
+#include <vector>
+#include <string>
+
+class IStorage {
+public:
+    virtual ~IStorage() = default;
+    virtual bool save(const std::vector<Task>& tasks, const std::string& path) = 0;
+    virtual bool load(std::vector<Task>& tasks, const std::string& path) = 0;
+};
+
+class JsonStorage : public IStorage {
+public:
+    bool save(const std::vector<Task>&, const std::string&) override;
+    bool load(std::vector<Task>&, const std::string&) override;
+};
+```
+
+---
+
+## Реализация (ключевые фрагменты)
+
+### src/task.cpp
+```cpp
+#include "task.h"
+#include <iomanip>
+#include <sstream>
+
+bool Task::is_overdue() const {
+    if (status == Status::Completed) return false;
+    if (!due_date) return false;
+    return *due_date < std::chrono::system_clock::now();
+}
+
+std::string Task::priority_str() const {
+    switch (priority) {
+        case Priority::Low: return "Low";
+        case Priority::Medium: return "Medium";
+        case Priority::High: return "High";
+        case Priority::Critical: return "Critical";
+    }
+    return "?";
+}
+
+std::string Task::due_date_str() const {
+    if (!due_date) return "—";
+    auto t = std::chrono::system_clock::to_time_t(*due_date);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M");
+    return ss.str();
+}
+
+std::ostream& operator<<(std::ostream& os, const Task& t) {
+    os << "[" << t.id << "] " << t.title
+       << " | " << t.priority_str()
+       << " | " << t.status_str()
+       << " | Due: " << t.due_date_str();
+    if (!t.tags.empty()) {
+        os << " | Tags: ";
+        for (size_t i = 0; i < t.tags.size(); ++i) {
+            if (i) os << ", ";
+            os << t.tags[i];
+        }
+    }
+    return os;
+}
+```
+
+### src/task_manager.cpp (фрагменты)
+```cpp
+#include "task_manager.h"
+#include "storage.h"
+#include <algorithm>
+#include <fstream>
+
+TaskManager::TaskManager(const std::string& path) : storage_path_(path) {
+    load();
+}
+
+Task& TaskManager::add_task(const std::string& title, const std::string& desc,
+                            Priority p, const std::optional<std::chrono::system_clock::time_point>& due,
+                            const std::vector<std::string>& tags) {
+    Task t;
+    t.id = next_id_++;
+    t.title = title;
+    t.description = desc;
+    t.priority = p;
+    t.due_date = due;
+    t.tags = tags;
+    t.created_at = std::chrono::system_clock::now();
+    tasks_.push_back(std::move(t));
+    save();
+    return tasks_.back();
+}
+
+bool TaskManager::remove_task(int id) {
+    auto it = std::find_if(tasks_.begin(), tasks_.end(),
+                           [id](const Task& t){ return t.id == id; });
+    if (it == tasks_.end()) return false;
+    tasks_.erase(it);
+    save();
+    return true;
+}
+
+std::optional<Task*> TaskManager::find_task(int id) {
+    for (auto& t : tasks_) if (t.id == id) return &t;
+    return std::nullopt;
+}
+
+TaskManager::Stats TaskManager::get_stats() const {
+    Stats s{};
+    auto now = std::chrono::system_clock::now();
+    for (const auto& t : tasks_) {
+        ++s.total;
+        if (t.status == Status::Completed) ++s.completed;
+        else {
+            ++s.pending;
+            if (t.due_date && *t.due_date < now) ++s.overdue;
+        }
+    }
+    return s;
+}
+
+bool TaskManager::save() {
+    JsonStorage storage;
+    return storage.save(tasks_, storage_path_);
+}
+bool TaskManager::load() {
+    JsonStorage storage;
+    return storage.load(tasks_, storage_path_);
+}
+```
+
+---
+
+## Главное меню (main.cpp)
+
+```cpp
+#include "task_manager.h"
+#include "utils.h"
+#include <iostream>
+#include <string>
+
+void print_menu() {
+    std::cout << R"(
+=== Task Manager ===
+1. Add task
+2. List all tasks
+3. List pending
+4. List completed
+5. List overdue
+6. Search tasks
+7. Complete/Uncomplete task
+8. Delete task
+9. Show statistics
+0. Exit
+Choose: )";
+}
+
+int main() {
+    TaskManager tm("data/tasks.json");
+    int choice = -1;
+
+    while (choice != 0) {
+        print_menu();
+        if (!(std::cin >> choice)) { std::cin.clear(); std::cin.ignore(10000,'\n'); continue; }
+        std::cin.ignore(10000, '\n');
+
+        switch (choice) {
+            case 1: {
+                std::string title = input_line("Title: ");
+                std::string desc = input_line("Description (optional): ");
+                Priority p = input_priority("Priority (low/medium/high/critical): ");
+                auto due = input_date("Due date (YYYY-MM-DD HH:MM, empty=none): ");
+                auto tags = input_tags("Tags (comma separated): ");
+                tm.add_task(title, desc, p, due, tags);
+                std::cout << "Task added!\n";
+                break;
+            }
+            case 2: case 3: case 4: case 5: {
+                std::vector<Task*> list;
+                if (choice == 2) list = tm.get_all();
+                else if (choice == 3) list = tm.get_by_status(Status::Pending);
+                else if (choice == 4) list = tm.get_by_status(Status::Completed);
+                else list = tm.get_overdue();
+                print_tasks(list);
+                break;
+            }
+            case 6: {
+                std::string kw = input_line("Keyword: ");
+                auto results = tm.search(kw);
+                print_tasks(results);
+                break;
+            }
+            case 7: {
+                int id = input_int("Task ID: ");
+                if (tm.toggle_status(id)) std::cout << "Toggled!\n";
+                else std::cout << "Not found\n";
+                break;
+            }
+            case 8: {
+                int id = input_int("Task ID: ");
+                if (tm.remove_task(id)) std::cout << "Deleted!\n";
+                else std::cout << "Not found\n";
+                break;
+            }
+            case 9: {
+                auto s = tm.get_stats();
+                std::cout << "Total: " << s.total
+                          << ", Done: " << s.completed
+                          << ", Pending: " << s.pending
+                          << ", Overdue: " << s.overdue << '\n';
+                break;
+            }
+            case 0: std::cout << "Goodbye!\n"; break;
+            default: std::cout << "Invalid option\n";
+        }
+    }
+}
+```
+
+---
+
+## Сборка (CMakeLists.txt)
+
+```cmake
+cmake_minimum_required(VERSION 3.20)
+project(TaskManager LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_executable(task_manager
+    src/main.cpp
+    src/task.cpp
+    src/task_manager.cpp
+    src/storage_json.cpp
+    src/utils.cpp
+)
+
+target_include_directories(task_manager PRIVATE include)
+
+# Для JSON — можно использовать nlohmann/json (header-only)
+# find_package(nlohmann_json REQUIRED)
+# target_link_libraries(task_manager PRIVATE nlohmann_json::nlohmann_json)
+```
+
+---
+
+## Пошаговый план реализации
+
+1. **Скелет**: создайте файлы, заготовки классов, пустые методы
+2. **Task**: поля, конструкторы, геттеры, `operator<<`, парсинг приоритета/даты
+3. **TaskManager**: вектор задач, `add`, `remove`, `find`, `toggle`, фильтры, статистика
+4. **Storage**: начните с простого текстового формата (CSV-like), потом JSON
+5. **Utils**: функции ввода с валидацией (`input_line`, `input_int`, `input_priority`, `input_date`, `input_tags`)
+6. **Main**: меню, цикл, вызов методов менеджера
+7. **Тестирование**: добавьте 5-10 задач, проверьте сохранение/загрузку после перезапуска
+8. **Рефакторинг**: выделите интерфейс `IStorage`, добавьте обработку ошибок (`std::expected` или исключения)
+
+---
+
+## Расширения (для закрепления)
+
+- **Цветной вывод** (ANSI escape codes): красный — просрочено, зелёный — выполнено
+- **Сортировка**: по дате, приоритету, имени (опция в меню)
+- **Редактирование задачи**: изменение названия, описания, дедлайна
+- **Подзадачи**: у задачи может быть вектор подзадач
+- **Экспорт в CSV/HTML** для отчётов
+- **Unit-тесты** (Catch2 / GoogleTest) для `TaskManager::search`, `get_stats`, парсеров
+
+---
+
+## Чек-лист сдачи проекта
+
+- [ ] Код компилируется без предупреждений (`-Wall -Wextra -pedantic`)
+- [ ] Нет утечек памяти (valgrind / AddressSanitizer)
+- [ ] Соблюдается Rule of Zero (нет ручного `new`/`delete`)
+- [ ] Используются `const` и `noexcept` где уместно
+- [ ] Обработка некорректного ввода пользователя
+- [ ] Файл данных создаётся/читается корректно
+- [ ] Код разбит на логические файлы (.h/.cpp)
+- [ ] Есть `README.md` с инструкцией по сборке и запуску
+
+---
+
+## Резюме курса
+
+| Урок | Ключевые навыки |
+|------|-----------------|
+| 1 | Компиляция, `main`, `iostream` |
+| 2 | Типы, `auto`, `constexpr`, `std::string` |
+| 3 | Операторы, приоритет, `<=>` |
+| 4 | `if`/`switch`, циклы, range-for |
+| 5 | Функции, перегрузка, lambda, `constexpr` |
+| 6 | `std::array`, `std::string`, итераторы |
+| 7 | `vector`, `map`, `set`, алгоритмы |
+| 8 | Указатели, ссылки, `unique_ptr`/`shared_ptr`, RAII |
+| 9 | Классы, наследование, виртуальность, Rule of Five |
+| 10 | Файлы, исключения, модули/заголовочные файлы |
+| 11 | **Проект: интеграция всего выше** |
+
+---
+
+## Дальнейшие темы для изучения
+
+- Шаблоны (templates), concepts (C++20)
+- Move semantics, perfect forwarding
+- Многопоточность: `std::thread`, `mutex`, `future`, `async`
+- STL алгоритмы и ranges (C++20): `views::filter`, `views::transform`
+- Modules (C++20) вместо заголовочных файлов
+- Coroutines (C++20) для асинхронного кода
+- Библиотеки: fmt, spdlog, nlohmann/json, CLI11, Catch2
+- CMake / Conan / vcpkg для управления зависимостями
+- Sanitizers (ASan, UBSan, TSan), статический анализ (clang-tidy)
+
+---
+
+## Ресурсы для проекта
+- [nlohmann/json](https://github.com/nlohmann/json) — header-only JSON
+- [CLI11](https://github.com/CLIUtils/CLI11) — парсинг аргументов командной строки
+- [fmt](https://github.com/fmtlib/fmt) — форматирование (`std::format` в C++20)
+- [Catch2](https://github.com/catchorg/Catch2) — unit testing
+- [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) — best practices

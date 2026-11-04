@@ -1,0 +1,413 @@
+# Урок 2.11: Производительность и профилирование — timeit, cProfile, memory_profiler, оптимизация
+
+## Цели урока
+- Измерять время выполнения (timeit, perf_counter)
+- Профилировать CPU (cProfile, snakeviz, py-spy)
+- Профилировать память (memory_profiler, tracemalloc, objgraph)
+- Понимать GIL и обходить его
+- Оптимизировать код: алгоритмы, структуры данных, кэширование
+
+---
+
+## 1. Измерение времени
+
+### timeit — точные замеры
+```python
+import timeit
+
+# Функция для теста
+def sum_range(n):
+    return sum(range(n))
+
+# Замер
+time = timeit.timeit(lambda: sum_range(1000), number=10000)
+print(f"Время: {time:.4f} сек")
+
+# Из командной строки
+# python -m timeit -n 10000 "sum(range(1000))"
+```
+
+### perf_counter — высокоточный таймер
+```python
+import time
+
+start = time.perf_counter()
+result = heavy_computation()
+elapsed = time.perf_counter() - start
+print(f"Выполнено за {elapsed:.6f} сек")
+```
+
+### Декоратор для тайминга
+```python
+import functools
+import time
+
+def timer(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+        print(f"{func.__name__}: {elapsed:.4f} сек")
+        return result
+    return wrapper
+
+@timer
+def slow_function():
+    time.sleep(1)
+```
+
+---
+
+## 2. CPU профилирование — cProfile
+
+### Базовое использование
+```python
+import cProfile
+import pstats
+
+profiler = cProfile.Profile()
+profiler.enable()
+
+# Код для профилирования
+result = compute_heavy()
+
+profiler.disable()
+
+# Статистика
+stats = pstats.Stats(profiler).sort_stats('cumulative')
+stats.print_stats(20)  # топ-20 функций
+```
+
+### Сохранение и визуализация
+```bash
+# Сохранить в файл
+python -m cProfile -o profile.stats script.py
+
+# Анализ в консоли
+python -m pstats profile.stats
+# В pstats: sort cumulative, stats 20
+
+# Визуализация (snakeviz)
+pip install snakeviz
+snakeviz profile.stats
+```
+
+### py-spy — sampling профайлер (без изменения кода)
+```bash
+pip install py-spy
+
+# Запуск на работающем процессе
+sudo py-spy top --pid 12345
+
+# Запись flamegraph
+py-spy record -o profile.svg -- python script.py
+
+# Flamegraph в браузере
+```
+
+---
+
+## 3. Профилирование памяти
+
+### memory_profiler — по строкам
+```bash
+pip install memory_profiler
+```
+
+```python
+from memory_profiler import profile
+
+@profile
+def memory_heavy():
+    a = [1] * (10**6)
+    b = [2] * (2 * 10**7)
+    del b
+    return a
+
+# Запуск: python -m memory_profiler script.py
+```
+
+### tracemalloc — встроенный (Python 3.4+)
+```python
+import tracemalloc
+
+tracemalloc.start()
+
+# ... ваш код ...
+
+snapshot = tracemalloc.take_snapshot()
+top_stats = snapshot.statistics('lineno')
+
+for stat in top_stats[:10]:
+    print(stat)
+
+# Сравнение снапшотов
+snapshot1 = tracemalloc.take_snapshot()
+# ... код ...
+snapshot2 = tracemalloc.take_snapshot()
+
+top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+for stat in top_stats[:10]:
+    print(stat)
+```
+
+### objgraph — поиск утечек
+```bash
+pip install objgraph
+```
+
+```python
+import objgraph
+
+# Сколько объектов каждого типа
+objgraph.by_type('MyClass')
+
+# Кто ссылается на объект
+objgraph.find_backref_chain(obj, objgraph.is_proper_module)
+
+# Граф ссылок (нужен graphviz)
+objgraph.show_most_common_types(limit=20)
+```
+
+---
+
+## 4. GIL (Global Interpreter Lock)
+
+### Что такое GIL
+- Только один поток выполняет Python байт-код одновременно
+- CPU-bound задачи не ускоряются потоками
+- I/O-bound — нормально (GIL отпускается при I/O)
+
+### Обход GIL
+
+#### multiprocessing — отдельные процессы
+```python
+from multiprocessing import Pool
+import time
+
+def cpu_heavy(n):
+    return sum(i*i for i in range(n))
+
+if __name__ == "__main__":
+    with Pool(4) as pool:
+        results = pool.map(cpu_heavy, [10**6] * 4)
+```
+
+#### concurrent.futures — высокоуровневый API
+```python
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
+# CPU-bound — процессы
+with ProcessPoolExecutor(max_workers=4) as executor:
+    futures = [executor.submit(cpu_heavy, 10**6) for _ in range(4)]
+    results = [f.result() for f in futures]
+
+# I/O-bound — потоки
+with ThreadPoolExecutor(max_workers=10) as executor:
+    futures = [executor.submit(fetch_url, url) for url in urls]
+```
+
+#### C-расширения (Cython, Rust/PyO3)
+```python
+# cython_example.pyx
+def fib(int n):
+    cdef int a = 0, b = 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+```
+
+```bash
+pip install cython
+# setup.py с Extension, затем pip install -e .
+```
+
+#### asyncio — для I/O без потоков
+```python
+import asyncio
+import aiohttp
+
+async def fetch_all(urls):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch(session, url) for url in urls]
+        return await asyncio.gather(*tasks)
+```
+
+---
+
+## 5. Типичные оптимизации
+
+### Алгоритмическая сложность
+```python
+# ПЛОХО: O(n²)
+def has_duplicates_slow(lst):
+    for i, x in enumerate(lst):
+        for y in lst[i+1:]:
+            if x == y:
+                return True
+    return False
+
+# ХОРОШО: O(n)
+def has_duplicates_fast(lst):
+    seen = set()
+    for x in lst:
+        if x in seen:
+            return True
+        seen.add(x)
+    return False
+```
+
+### Правильные структуры данных
+```python
+# Поиск в списке — O(n)
+if item in my_list: ...
+
+# Поиск в множестве/словаре — O(1)
+if item in my_set: ...
+if key in my_dict: ...
+
+# collections.deque для очереди — O(1) с обеих сторон
+from collections import deque
+queue = deque()
+queue.append(item)
+queue.popleft()
+```
+
+### Кэширование
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=128)
+def expensive_computation(x):
+    # тяжёлые вычисления
+    return result
+
+# Ручной кэш
+cache = {}
+def cached_func(key):
+    if key not in cache:
+        cache[key] = compute(key)
+    return cache[key]
+```
+
+### Генераторы вместо списков
+```python
+# ПЛОХО: создаёт весь список в памяти
+def process_all(items):
+    return [expensive(x) for x in items]
+
+# ХОРОШО: ленивое вычисление
+def process_all(items):
+    return (expensive(x) for x in items)
+
+# Или yield
+def process_all(items):
+    for item in items:
+        yield expensive(item)
+```
+
+### Встроенные функции быстрее циклов
+```python
+# ПЛОХО
+result = []
+for x in items:
+    result.append(x * 2)
+
+# ХОРОШО
+result = [x * 2 for x in items]
+# Или map
+result = list(map(lambda x: x * 2, items))
+
+# sum, max, min, any, all — на C
+total = sum(items)
+maximum = max(items)
+```
+
+### Избегайте лишних атрибутов
+```python
+# ПЛОХО: поиск атрибута в цикле
+for i in range(1000000):
+    obj.method()
+
+# ХОРОШО: кэшируйте ссылку
+method = obj.method
+for i in range(1000000):
+    method()
+```
+
+---
+
+## 6. Профилирование в продакшене
+
+### py-spy на продакшене
+```bash
+# Непрерывный профайлер
+py-spy record -o profile.svg --pid 12345 --duration 60
+
+# Top-функции в реальном времени
+py-spy top --pid 12345
+```
+
+### Continuous profiling (Pyroscope, Datadog)
+```bash
+# Pyroscope — open source
+docker run -d --name pyroscope \
+  -p 4040:4040 \
+  pyroscope/pyroscope
+```
+
+---
+
+## 7. Инструменты для анализа производительности
+
+| Инструмент | Назначение |
+|------------|------------|
+| `timeit` | Микробенчмарки |
+| `cProfile` | Детерминированное CPU профилирование |
+| `py-spy` | Sampling профилирование (zero overhead) |
+| `snakeviz` | Визуализация cProfile |
+| `memory_profiler` | Построчное профилирование памяти |
+| `tracemalloc` | Встроенное отслеживание аллокаций |
+| `objgraph` | Анализ ссылок, поиск утечек |
+| `scalene` | CPU + GPU + память вместе |
+| `line_profiler` | Построчное CPU профилирование |
+
+### Scalene — всё в одном
+```bash
+pip install scalene
+python -m scalene script.py
+# Показывает CPU, GPU, память по строкам!
+```
+
+---
+
+## Практические задания
+
+1. **Профилируйте**: найдите узкое место в сортировке 1М чисел
+2. **Оптимизируйте**: перепишите O(n²) алгоритм на O(n log n) или O(n)
+3. **Memory leak**: создайте утечку через циклические ссылки, найдите через objgraph
+4. **Multiprocessing**: ускорьте CPU-bound задачу через ProcessPoolExecutor
+5. **Benchmark**: сравните list vs deque vs array для очереди
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Оптимизируют без профилирования | Сначала `cProfile` / `py-spy`, потом оптимизируйте хотспоты |
+| Потоки для CPU-bound задач | `multiprocessing` / `ProcessPoolExecutor` |
+| Преждевременная оптимизация | "Premature optimization is the root of all evil" — Knuth |
+| Игнорируют аллокации памяти | `tracemalloc` / `memory_profiler` для large data |
+| Тестируют на малых данных | Бенчмарки на реалистичных объёмах |
+
+---
+
+## Полезные ресурсы
+- **Python Performance Tips** — https://wiki.python.org/moin/PythonSpeed/PerformanceTips
+- **Real Python: Profiling** — https://realpython.com/python-profiling/
+- **Scalene** — https://github.com/plasma-umass/scalene
+- **py-spy** — https://github.com/benfred/py-spy
+- **High Performance Python** — Micha Gorelick, Ian Ozsvald (O'Reilly)
+- **Effective Python: Item 66-68** — Brett Slatkin
