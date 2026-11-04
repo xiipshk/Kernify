@@ -1,0 +1,186 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ chat.title }} - {% trans "AI Chat" %} - RTK{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-0">
+    <div class="row g-0">
+        <!-- Sidebar -->
+        <aside class="col-lg-3 col-xl-2 bg-dark border-end d-none d-lg-block" style="min-height: calc(100vh - 56px); max-height: calc(100vh - 56px); overflow-y: auto;">
+            <div class="p-3">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0"><i class="bi bi-robot me-2"></i>{% trans "Chats" %}</h5>
+                    <a href="{% url 'ai:new_chat' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus me-1"></i></a>
+                </div>
+                <nav class="nav flex-column">
+                    {% for c in chats %}
+                    <a href="{% url 'ai:chat_detail' c.pk %}" class="nav-link {% if c == chat %}active{% endif %} px-2 py-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="bg-primary bg-opacity-10 rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" style="width: 32px; height: 32px;">
+                                <i class="bi bi-chat text-primary small"></i>
+                            </div>
+                            <div class="flex-grow-1 text-truncate small">
+                                <div class="fw-medium">{{ c.title|truncatechars:20 }}</div>
+                                <small class="text-muted">{{ c.updated_at|timesince }} {% trans "ago" %}</small>
+                            </div>
+                        </div>
+                    </a>
+                    {% empty %}
+                    <div class="text-center py-3 text-muted">
+                        <p class="small mb-0">{% trans "No chats yet" %}</p>
+                    </div>
+                    {% endfor %}
+                </nav>
+            </div>
+        </aside>
+
+        <!-- Chat Area -->
+        <main class="col-lg-9 col-xl-10 d-flex flex-column" style="min-height: calc(100vh - 56px);">
+            <!-- Header -->
+            <header class="bg-dark border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-3">
+                    <a href="{% url 'ai:chat' %}" class="btn btn-outline-secondary btn-sm d-lg-none"><i class="bi bi-list"></i></a>
+                    <div>
+                        <h5 class="mb-0">{{ chat.title }}</h5>
+                        <small class="text-muted">{{ chat.provider.name }}</small>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="btn-group btn-group-sm" role="group">
+                        <a href="{% url 'ai:assistant' %}" class="btn btn-outline-secondary"><i class="bi bi-magic"></i></a>
+                        <a href="{% url 'ai:code_review' %}" class="btn btn-outline-secondary"><i class="bi bi-code-square"></i></a>
+                        <a href="{% url 'ai:explain_code' %}" class="btn btn-outline-secondary"><i class="bi bi-lightbulb"></i></a>
+                    </div>
+                    <form method="post" action="{% url 'ai:chat_delete' chat.pk %}" class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('{% trans "Delete this chat?" %}')"><i class="bi bi-trash"></i></button>
+                    </form>
+                </div>
+            </header>
+
+            <!-- Messages -->
+            <div class="flex-grow-1 overflow-auto p-4" id="messagesContainer">
+                {% for message in chat.messages.all %}
+                <div class="message mb-4 {% if message.role == 'user' %}text-end{% endif %}">
+                    <div class="d-inline-block {% if message.role == 'user' %}bg-primary text-white{% else %}bg-secondary bg-opacity-25{% endif %} rounded-3 p-3" style="max-width: 80%;">
+                        {% if message.role == 'assistant' %}
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                            <i class="bi bi-robot text-primary small"></i>
+                            <small class="text-muted">{{ chat.provider.name }}</small>
+                        </div>
+                        {% endif %}
+                        <div class="{% if message.role == 'user' %}text-white{% endif %}">{{ message.content|linebreaksbr }}</div>
+                        <div class="mt-1 small {% if message.role == 'user' %}text-white-50{% else %}text-muted{% endif %}">
+                            {{ message.created_at|date:"H:i" }} {% if message.tokens_used %}&middot; {{ message.tokens_used }} tokens{% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-chat fs-1 mb-3"></i>
+                    <p>{% trans "Start the conversation..." %}</p>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Input -->
+            <footer class="bg-dark border-top p-3">
+                <form id="chatForm" class="d-flex gap-2">
+                    <div class="flex-grow-1">
+                        <textarea id="messageInput" class="form-control" rows="1" placeholder="{% trans "Type your message..." %}" style="resize: none; max-height: 150px;"></textarea>
+                    </div>
+                    <div class="d-flex flex-column gap-1">
+                        <button type="submit" class="btn btn-primary" id="sendBtn"><i class="bi bi-send-fill"></i></button>
+                        <div class="btn-group btn-group-sm" role="group">
+                            <select id="providerSelect" class="form-select form-select-sm">
+                                {% for p in providers %}
+                                <option value="{{ p.id }}" {% if p == chat.provider %}selected{% endif %}>{{ p.name }} ({{ p.default_model }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                </form>
+            </footer>
+        </main>
+    </div>
+</div>
+
+{% endblock %}
+{% block extra_js %}
+<script>
+const messagesContainer = document.getElementById('messagesContainer');
+const messageInput = document.getElementById('messageInput');
+const sendBtn = document.getElementById('sendBtn');
+const chatForm = document.getElementById('chatForm');
+
+// Auto-resize textarea
+messageInput.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+});
+
+// Send message
+chatForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const content = messageInput.value.trim();
+    if (!content) return;
+
+    // Add user message to UI
+    addMessage('user', content);
+    messageInput.value = '';
+    messageInput.style.height = 'auto';
+    sendBtn.disabled = true;
+
+    try {
+        const response = await fetch('/api/ai/chat/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}',
+            },
+            body: JSON.stringify({
+                chat_id: {{ chat.pk }},
+                message: content,
+                provider_id: document.getElementById('providerSelect').value,
+            })
+        });
+        const data = await response.json();
+        if (data.answer) {
+            addMessage('assistant', data.answer);
+        } else if (data.error) {
+            addMessage('assistant', 'Error: ' + data.error, true);
+        }
+    } catch (e) {
+        addMessage('assistant', 'Error: ' + e.message, true);
+    } finally {
+        sendBtn.disabled = false;
+        messageInput.focus();
+    }
+});
+
+function addMessage(role, content, isError = false) {
+    const div = document.createElement('div');
+    div.className = `message mb-4 ${role === 'user' ? 'text-end' : ''}`;
+    div.innerHTML = `
+        <div class="d-inline-block ${role === 'user' ? 'bg-primary text-white' : 'bg-secondary bg-opacity-25'} rounded-3 p-3" style="max-width: 80%;">
+            ${role === 'assistant' ? '<div class="d-flex align-items-center gap-2 mb-1"><i class="bi bi-robot text-primary small"></i><small class="text-muted">{{ chat.provider.name }}</small></div>' : ''}
+            <div class="${role === 'user' ? 'text-white' : ''} ${isError ? 'text-danger' : ''}">${content.replace(/\n/g, '<br>')}</div>
+            <div class="mt-1 small ${role === 'user' ? 'text-white-50' : 'text-muted'}">${new Date().toLocaleTimeString()}</div>
+        </div>
+    `;
+    messagesContainer.appendChild(div);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+// Enter to send, Shift+Enter for newline
+messageInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        chatForm.dispatchEvent(new Event('submit'));
+    }
+});
+
+messageInput.focus();
+</script>
+{% endblock %}

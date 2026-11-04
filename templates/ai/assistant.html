@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{% trans "AI Assistant" %} - RTK{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <div class="text-center mb-5">
+                <i class="bi bi-magic text-primary" style="font-size: 4rem;"></i>
+                <h2 class="mt-3">{% trans "AI Assistant" %}</h2>
+                <p class="lead text-muted">{% trans "Get help with code, explanations, debugging, and learning guidance." %}</p>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body">
+                    <h5 class="mb-3">{% trans "Ask a Question" %}</h5>
+                    <form id="assistantForm">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label class="form-label">{% trans "Your Question" %}</label>
+                            <textarea class="form-control" name="question" rows="4" placeholder="{% trans "How do I...? Explain this code... Debug this error..." %}" required></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">{% trans "Context Code (optional)" %}</label>
+                            <textarea class="form-control" name="context_code" rows="6" placeholder="{% trans "Paste relevant code here for context..." %}"></textarea>
+                        </div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">{% trans "Language" %}</label>
+                                <select class="form-select" name="language">
+                                    <option value="python">Python</option>
+                                    <option value="javascript">JavaScript</option>
+                                    <option value="java">Java</option>
+                                    <option value="cpp">C++</option>
+                                    <option value="go">Go</option>
+                                    <option value="rust">Rust</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">{% trans "Provider" %}</label>
+                                <select class="form-select" name="provider">
+                                    {% for p in providers %}
+                                    <option value="{{ p.id }}">{{ p.name }} ({{ p.default_model }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">{% trans "Ask Assistant" %}</button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="assistantAnswer" class="card border-0 shadow-sm d-none">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0">{% trans "Answer" %}</h5>
+                </div>
+                <div class="card-body" id="answerContent"></div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0">{% trans "Quick Actions" %}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex flex-wrap gap-2">
+                        <a href="{% url 'ai:code_review' %}" class="btn btn-outline-primary"><i class="bi bi-code-square me-1"></i>{% trans "Code Review" %}</a>
+                        <a href="{% url 'ai:explain_code' %}" class="btn btn-outline-info"><i class="bi bi-lightbulb me-1"></i>{% trans "Explain Code" %}</a>
+                        <a href="{% url 'ai:generate_exercise' %}" class="btn btn-outline-success"><i class="bi bi-plus-circle me-1"></i>{% trans "Generate Exercise" %}</a>
+                        <a href="{% url 'ai:chat' %}" class="btn btn-outline-secondary"><i class="bi bi-chat me-1"></i>{% trans "Full Chat" %}</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+{% block extra_js %}
+<script>
+document.getElementById('assistantForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const btn = form.querySelector('button[type="submit"]');
+    const answerCard = document.getElementById('assistantAnswer');
+    const answerContent = document.getElementById('answerContent');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>{% trans "Thinking..." %}';
+    answerCard.classList.add('d-none');
+
+    try {
+        const formData = new FormData(form);
+        const response = await fetch('{% url "ai:ask_assistant" %}', {
+            method: 'POST',
+            body: formData,
+        });
+        const data = await response.json();
+        answerContent.innerHTML = data.answer.replace(/\n/g, '<br>');
+        answerCard.classList.remove('d-none');
+    } catch (err) {
+        answerContent.innerHTML = '<div class="text-danger">{% trans "Error: " %}' + err.message + '</div>';
+        answerCard.classList.remove('d-none');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '{% trans "Ask Assistant" %}';
+    }
+});
+</script>
+{% endblock %}

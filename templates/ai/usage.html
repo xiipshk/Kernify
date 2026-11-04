@@ -1,0 +1,145 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{% trans "AI Usage Statistics" %} - RTK{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <h2 class="mb-4">{% trans "AI Usage Statistics" %}</h2>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <div class="fs-1 fw-bold text-primary">{{ usage.total_requests|default:0 }}</div>
+                    <small class="text-muted">{% trans "Total Requests" %}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <div class="fs-1 fw-bold text-success">{{ usage.total_tokens|default:0 }}</div>
+                    <small class="text-muted">{% trans "Total Tokens" %}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <div class="fs-1 fw-bold text-warning">${{ usage.total_cost|default:0|floatformat:4 }}</div>
+                    <small class="text-muted">{% trans "Estimated Cost" %}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <div class="fs-1 fw-bold text-danger">{{ usage.errors_count|default:0 }}</div>
+                    <small class="text-muted">{% trans "Errors" %}</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0"><i class="bi bi-bar-chart me-2"></i>{% trans "Usage by Provider" %}</h5>
+                </div>
+                <div class="card-body">
+                    <div id="providerChart" style="height: 300px;"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0"><i class="bi bi-graph-up me-2"></i>{% trans "Usage Over Time" %}</h5>
+                </div>
+                <div class="card-body">
+                    <div id="timeChart" style="height: 300px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+        <div class="card-header bg-transparent border-0">
+            <h5 class="mb-0"><i class="bi bi-table me-2"></i>{% trans "Detailed Stats" %}</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Date" %}</th>
+                            <th>{% trans "Provider" %}</th>
+                            <th>{% trans "Requests" %}</th>
+                            <th>{% trans "Tokens" %}</th>
+                            <th>{% trans "Cost" %}</th>
+                            <th>{% trans "Errors" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in usage.daily_stats %}
+                        <tr>
+                            <td>{{ stat.date }}</td>
+                            <td>{{ stat.provider }}</td>
+                            <td>{{ stat.requests }}</td>
+                            <td>{{ stat.tokens }}</td>
+                            <td>${{ stat.cost|floatformat:6 }}</td>
+                            <td>{{ stat.errors }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-4">{% trans "No usage data yet" %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// Placeholder charts - would be populated with real data
+const providerCtx = document.getElementById('providerChart').getContext('2d');
+new Chart(providerCtx, {
+    type: 'doughnut',
+    data: {
+        labels: ['OpenAI', 'Anthropic', 'Other'],
+        datasets: [{
+            data: [60, 30, 10],
+            backgroundColor: ['rgba(99, 102, 241, 0.8)', 'rgba(16, 185, 129, 0.8)', 'rgba(245, 158, 11, 0.8)'],
+        }]
+    },
+    options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+});
+
+const timeCtx = document.getElementById('timeChart').getContext('2d');
+new Chart(timeCtx, {
+    type: 'line',
+    data: {
+        labels: Array.from({length: 30}, (_, i) => {
+            const d = new Date();
+            d.setDate(d.getDate() - 29 + i);
+            return d.toLocaleDateString();
+        }),
+        datasets: [{
+            label: '{% trans "Requests" %}',
+            data: Array.from({length: 30}, () => Math.floor(Math.random() * 50)),
+            borderColor: 'rgba(99, 102, 241, 1)',
+            backgroundColor: 'rgba(99, 102, 241, 0.1)',
+            fill: true,
+        }]
+    },
+    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+});
+</script>
+{% endblock %}

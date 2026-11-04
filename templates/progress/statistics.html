@@ -1,0 +1,91 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{% trans "Statistics" %} - RTK{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <h2 class="mb-4">{% trans "Detailed Statistics" %}</h2>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <div class="fs-1 fw-bold text-primary">{{ stats.total|default:0 }}</div>
+                    <small class="text-muted">{% trans "Sessions (30 days)" %}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <div class="fs-1 fw-bold text-success">{{ stats.avg_score|floatformat:1|default:0 }}%</div>
+                    <small class="text-muted">{% trans "Avg Score" %}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <div class="fs-1 fw-bold text-warning">{{ stats.total_xp|default:0 }}</div>
+                    <small class="text-muted">{% trans "XP Earned" %}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm text-center">
+                <div class="card-body">
+                    <div class="fs-1 fw-bold text-info">{{ daily_stats|length }}</div>
+                    <small class="text-muted">{% trans "Active Days" %}</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-transparent border-0">
+            <h5 class="mb-0"><i class="bi bi-bar-chart me-2"></i>{% trans "Daily Activity (Last 30 Days)" %}</h5>
+        </div>
+        <div class="card-body">
+            <div id="activityChart" style="height: 300px;"></div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const ctx = document.getElementById('activityChart').getContext('2d');
+const dailyData = {{ daily_stats|json_script:"daily-stats" }};
+new Chart(ctx, {
+    type: 'bar',
+    data: {
+        labels: dailyData.map(d => d.date),
+        datasets: [
+            {
+                label: '{% trans "Sessions" %}',
+                data: dailyData.map(d => d.count),
+                backgroundColor: 'rgba(99, 102, 241, 0.8)',
+            },
+            {
+                label: '{% trans "Avg Score" %}',
+                data: dailyData.map(d => d.avg_score || 0),
+                type: 'line',
+                borderColor: 'rgba(16, 185, 129, 1)',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                yAxisID: 'y1',
+                fill: false,
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        scales: {
+            y: { beginAtZero: true, title: { display: true, text: '{% trans "Sessions" %}' } },
+            y1: { beginAtZero: true, max: 100, position: 'right', title: { display: true, text: '{% trans "Score %" %}' }, grid: { drawOnChartArea: false } }
+        }
+    }
+});
+</script>
+{% endblock %}

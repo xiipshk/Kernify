@@ -1,0 +1,238 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ task.title }} - {% trans "Solve" %} - RTK{% endblock %}
+
+{% block extra_head %}
+<link href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/editor/editor.main.css" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-0">
+    <div class="row g-0">
+        <!-- Left Panel: Problem -->
+        <aside class="col-lg-5 d-none d-lg-block bg-dark border-end" style="min-height: calc(100vh - 56px); max-height: calc(100vh - 56px); overflow-y: auto;">
+            <div class="p-4">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div>
+                        <span class="badge bg-primary px-3 py-2">{{ task.topic.program.language.name }}</span>
+                        <span class="badge bg-{{ task.get_difficulty_display|lower|slugify }} bg-opacity-10 text-{{ task.get_difficulty_display|lower|slugify }} px-3 py-2">{{ task.get_difficulty_display }}</span>
+                        <span class="badge bg-{{ task.get_task_type_display|lower|slugify }} bg-opacity-10 text-{{ task.get_task_type_display|lower|slugify }} px-3 py-2">{{ task.get_task_type_display }}</span>
+                    </div>
+                    <a href="{% url 'practice:task_detail' task.slug %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-info-circle me-1"></i>{% trans "Details" %}</a>
+                </div>
+
+                <h3 class="mb-3">{{ task.title }}</h3>
+                <p class="text-muted mb-4">{{ task.description }}</p>
+
+                <div class="card bg-secondary bg-opacity-25 border-0 mb-4">
+                    <div class="card-body">
+                        <h6 class="mb-3">{% trans "Requirements" %}</h6>
+                        {{ task.prompt|linebreaks }}
+                    </div>
+                </div>
+
+                <!-- Hints -->
+                {% if task.hints %}
+                <div class="card bg-warning bg-opacity-10 border-0 mb-4">
+                    <div class="card-body">
+                        <h6 class="mb-3"><i class="bi bi-lightbulb text-warning me-2"></i>{% trans "Hints" %}</h6>
+                        <ol class="mb-0 small">
+                            {% for hint in task.hints %}
+                            <li class="mb-2">{{ hint }}</li>
+                            {% endfor %}
+                        </ol>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Test Cases -->
+                {% if task.test_cases %}
+                <details class="mb-4">
+                    <summary class="text-decoration-underline text-muted small cursor-pointer">{% trans "View Test Cases" %}</summary>
+                    <pre class="mt-2 p-3 bg-dark text-light rounded small"><code>{{ task.test_cases|json_script:"test-cases" }}</code></pre>
+                </details>
+                {% endif %}
+
+                <div class="d-flex gap-2 mt-4">
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary px-3 py-2"><i class="bi bi-star text-warning me-1"></i>{{ task.xp_reward }} XP</span>
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary px-3 py-2"><i class="bi bi-clock me-1"></i>{{ task.estimated_minutes }} {% trans "min" %}</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right Panel: Editor -->
+        <main class="col-lg-7 d-flex flex-column" style="min-height: calc(100vh - 56px);">
+            <!-- Top Bar -->
+            <header class="bg-dark border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-3">
+                    <a href="{% url 'practice:index' %}" class="btn btn-outline-secondary btn-sm d-lg-none"><i class="bi bi-list"></i></a>
+                    <h5 class="mb-0">{{ task.title }}</h5>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-{{ task.get_difficulty_display|lower|slugify }} bg-opacity-10 text-{{ task.get_difficulty_display|lower|slugify }} px-3 py-2">{{ task.get_difficulty_display }}</span>
+                    <span class="text-theme-muted small"><i class="bi bi-star text-warning me-1"></i>{{ task.xp_reward }} XP</span>
+                </div>
+            </header>
+
+            <!-- Editor Area -->
+            <div class="flex-grow-1 d-flex flex-column overflow-hidden">
+                <!-- Tabs -->
+                <div class="bg-dark border-bottom px-3 py-2 d-flex gap-1" role="tablist">
+                    <button class="btn btn-sm btn-outline-light active" data-tab="editor">{% trans "Code" %}</button>
+                    <button class="btn btn-sm btn-outline-light" data-tab="output">{% trans "Output" %}</button>
+                    <button class="btn btn-sm btn-outline-light" data-tab="tests">{% trans "Tests" %}</button>
+                </div>
+
+                <!-- Editor -->
+                <div class="flex-grow-1 overflow-hidden" role="tabpanel">
+                    <div id="editor" style="height: 100%;"></div>
+                </div>
+
+                <!-- Output Panel (hidden by default) -->
+                <div id="outputPanel" class="d-none flex-grow-1 overflow-auto bg-dark p-3" role="tabpanel" style="height: 100%;">
+                    <pre id="outputContent" class="mb-0 text-theme" style="font-family: monospace; font-size: 0.875rem;"></pre>
+                </div>
+
+                <!-- Tests Panel -->
+                <div id="testsPanel" class="d-none flex-grow-1 overflow-auto bg-dark p-3" role="tabpanel" style="height: 100%;">
+                    <div id="testsContent"></div>
+                </div>
+            </div>
+
+            <!-- Bottom Bar -->
+            <footer class="bg-dark border-top px-4 py-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-primary" id="runBtn"><i class="bi bi-play-fill me-1"></i>{% trans "Run" %} (Ctrl+Enter)</button>
+                        <button class="btn btn-success" id="submitBtn"><i class="bi bi-send me-1"></i>{% trans "Submit" %}</button>
+                        <button class="btn btn-outline-secondary" id="resetBtn"><i class="bi bi-arrow-counterclockwise me-1"></i>{% trans "Reset" %}</button>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <select id="languageSelect" class="form-select form-select-sm" style="width: auto;">
+                            <option value="python" {% if task.topic.program.language.slug == 'python' %}selected{% endif %}>Python</option>
+                            <option value="javascript" {% if task.topic.program.language.slug == 'javascript' %}selected{% endif %}>JavaScript</option>
+                            <option value="java" {% if task.topic.program.language.slug == 'java' %}selected{% endif %}>Java</option>
+                            <option value="cpp" {% if task.topic.program.language.slug == 'cpp' %}selected{% endif %}>C++</option>
+                            <option value="go" {% if task.topic.program.language.slug == 'go' %}selected{% endif %}>Go</option>
+                            <option value="rust" {% if task.topic.program.language.slug == 'rust' %}selected{% endif %}>Rust</option>
+                        </select>
+                    </div>
+                </div>
+            </footer>
+        </main>
+    </div>
+</div>
+
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.js"></script>
+<script>
+require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' }});
+require(['vs/editor/editor.main'], function() {
+    const editor = monaco.editor.create(document.getElementById('editor'), {
+        value: `{{ task.starter_code|escapejs }}`,
+        language: '{{ task.topic.program.language.slug }}',
+        theme: 'vs-dark',
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 14,
+        lineNumbers: 'on',
+        tabSize: 4,
+        wordWrap: 'on',
+    });
+
+    // Tab switching
+    document.querySelectorAll('[data-tab]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('[data-tab]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('editor').style.display = btn.dataset.tab === 'editor' ? 'block' : 'none';
+            document.getElementById('outputPanel').classList.toggle('d-none', btn.dataset.tab !== 'output');
+            document.getElementById('outputPanel').classList.toggle('d-flex', btn.dataset.tab === 'output');
+            document.getElementById('testsPanel').classList.toggle('d-none', btn.dataset.tab !== 'tests');
+            document.getElementById('testsPanel').classList.toggle('d-flex', btn.dataset.tab === 'tests');
+        });
+    });
+
+    // Run code
+    async function runCode() {
+        const code = editor.getValue();
+        const language = document.getElementById('languageSelect').value;
+        const outputContent = document.getElementById('outputContent');
+        const testsContent = document.getElementById('testsContent');
+
+        outputContent.textContent = 'Running...';
+        testsContent.innerHTML = '';
+
+        try {
+            const response = await fetch('/api/code/run/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}',
+                },
+                body: JSON.stringify({ code, language })
+            });
+            const data = await response.json();
+
+            if (data.output !== undefined) {
+                outputContent.textContent = data.output;
+            } else if (data.error) {
+                outputContent.textContent = 'Error: ' + data.error;
+            }
+
+            // If test results returned
+            if (data.tests) {
+                let html = '<h6>Test Results:</h6><ul class="list-group">';
+                data.tests.forEach(t => {
+                    html += `<li class="list-group-item bg-transparent border-0 d-flex justify-content-between align-items-center">
+                        ${t.name} <span class="badge ${t.passed ? 'bg-success' : 'bg-danger'}">${t.passed ? 'Passed' : 'Failed'}</span>
+                    </li>`;
+                    if (!t.passed && t.expected && t.actual) {
+                        html += `<li class="list-group-item bg-transparent border-0 ps-4 small text-muted">
+                            Expected: ${t.expected}<br>Got: ${t.actual}
+                        </li>`;
+                    }
+                });
+                html += '</ul>';
+                testsContent.innerHTML = html;
+            }
+        } catch (e) {
+            outputContent.textContent = 'Error: ' + e.message;
+        }
+    }
+
+    document.getElementById('runBtn').addEventListener('click', runCode);
+    document.getElementById('submitBtn').addEventListener('click', async () => {
+        const code = editor.getValue();
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '{% url "practice:task_submit" task.slug %}';
+        form.innerHTML = `
+            <input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">
+            <input type="hidden" name="code" value="${code.replace(/"/g, '"')}">
+            <input type="hidden" name="session_id" value="{{ session.id }}">
+        `;
+        document.body.appendChild(form);
+        form.submit();
+    });
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        editor.setValue(`{{ task.starter_code|escapejs }}`);
+        document.getElementById('outputContent').textContent = '';
+        document.getElementById('testsContent').innerHTML = '';
+    });
+
+    // Keyboard shortcut
+    editor.onKeyDown(e => {
+        if (e.ctrlKey && e.keyCode === 13) { // Ctrl+Enter
+            runCode();
+        }
+    });
+
+    // Language change
+    document.getElementById('languageSelect').addEventListener('change', (e) => {
+        monaco.editor.setModelLanguage(editor.getModel(), e.target.value);
+    });
+});
+</script>
+{% endblock %}

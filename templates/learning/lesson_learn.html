@@ -1,0 +1,413 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ lesson.title }} - {% trans "Learning" %} - RTK{% endblock %}
+
+{% block extra_head %}
+<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/editor/editor.main.css" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-0">
+    <div class="row g-0">
+        <!-- Sidebar: Lesson Navigation -->
+        <aside class="col-lg-3 col-xl-2 bg-dark border-end d-none d-lg-block" style="min-height: calc(100vh - 56px); position: sticky; top: 56px; max-height: calc(100vh - 56px); overflow-y: auto;">
+            <div class="p-3">
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    {% if lesson.subtopic.topic.program.language.icon %}
+                    <div class="language-icon-text d-flex align-items-center justify-content-center" style="width: 32px; height: 32px; font-size: 1rem; border-radius: 6px; background: {{ lesson.subtopic.topic.program.language.color|default:'#6366f1' }}20;">{{ lesson.subtopic.topic.program.language.icon }}</div>
+                    {% else %}
+                    <i class="bi bi-cpu text-primary fs-4"></i>
+                    {% endif %}
+                    <div>
+                        <h6 class="mb-0">{{ lesson.subtopic.topic.program.name }}</h6>
+                        <small class="text-muted">{{ lesson.subtopic.topic.name }} > {{ lesson.subtopic.name }}</small>
+                    </div>
+                </div>
+
+                <div class="list-group list-group-flush bg-transparent">
+                    {% for l in subtopic_lessons %}
+                    <a href="{% url 'learning:lesson_learn' l.slug %}" class="list-group-item list-group-item-action bg-transparent border-0 px-2 py-2 {% if l == lesson %}active{% endif %} d-flex align-items-center gap-2">
+                        <div class="bg-{{ l.get_lesson_type_display|lower|slugify }} bg-opacity-10 text-{{ l.get_lesson_type_display|lower|slugify }} rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" style="width: 28px; height: 28px;">
+                            {% if l.lesson_type == 'theory' %}
+                            <i class="bi bi-book" style="font-size: 0.7rem;"></i>
+                            {% elif l.lesson_type == 'practice' %}
+                            <i class="bi bi-terminal" style="font-size: 0.7rem;"></i>
+                            {% elif l.lesson_type == 'quiz' %}
+                            <i class="bi bi-question-circle" style="font-size: 0.7rem;"></i>
+                            {% elif l.lesson_type == 'project' %}
+                            <i class="bi bi-folder2" style="font-size: 0.7rem;"></i>
+                            {% else %}
+                            <i class="bi bi-play-circle" style="font-size: 0.7rem;"></i>
+                            {% endif %}
+                        </div>
+                        <div class="flex-grow-1 text-truncate small">
+                            {% if l == lesson %}
+                            <span class="badge bg-primary bg-opacity-25 text-primary px-2 py-1 small">{% trans "Current" %}</span>
+                            {% elif l.order < lesson.order %}
+                            <i class="bi bi-check-circle-fill text-success me-1" style="font-size: 0.7rem;"></i>
+                            {% endif %}
+                            {{ l.title|truncatechars:25 }}
+                        </div>
+                        <small class="text-muted">{{ l.xp_reward }} XP</small>
+                    </a>
+                    {% endfor %}
+                </div>
+
+                <div class="mt-3 pt-3 border-top">
+                    <div class="d-flex justify-content-between small text-muted mb-2">
+                        <span>{% trans "Progress" %}</span>
+                        <span>{{ lesson.subtopic.topic.program.lessons_count }} {% trans "lessons" %}</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="col-lg-9 col-xl-10 d-flex flex-column" style="min-height: calc(100vh - 56px);">
+            <!-- Top Bar -->
+            <header class="bg-dark border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-3 flex-grow-1">
+                    <a href="{% url 'learning:index' %}" class="btn btn-outline-secondary btn-sm d-lg-none"><i class="bi bi-list"></i></a>
+                    <nav aria-label="breadcrumb" class="mb-0 d-none d-md-block">
+                        <ol class="breadcrumb bg-transparent mb-0 small">
+                            <li class="breadcrumb-item"><a href="{% url 'learning:index' %}">{% trans "Learning" %}</a></li>
+                            <li class="breadcrumb-item"><a href="{% url 'core:program_detail' lesson.subtopic.topic.program.slug %}">{{ lesson.subtopic.topic.program.name }}</a></li>
+                            <li class="breadcrumb-item"><a href="{% url 'core:topic_detail' lesson.subtopic.topic.slug %}">{{ lesson.subtopic.topic.name }}</a></li>
+                            <li class="breadcrumb-item"><a href="{% url 'core:subtopic_detail' lesson.subtopic.slug %}">{{ lesson.subtopic.name }}</a></li>
+                            <li class="breadcrumb-item active text-truncate" style="max-width: 200px;">{{ lesson.title }}</li>
+                        </ol>
+                    </nav>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-{{ lesson.get_difficulty_display|lower|slugify }} bg-opacity-10 text-{{ lesson.get_difficulty_display|lower|slugify }} px-3 py-2">{{ lesson.get_difficulty_display }}</span>
+                    <span class="badge bg-{{ lesson.get_lesson_type_display|lower|slugify }} bg-opacity-10 text-{{ lesson.get_lesson_type_display|lower|slugify }} px-3 py-2">{{ lesson.get_lesson_type_display }}</span>
+                    <span class="text-theme-muted small"><i class="bi bi-star text-warning me-1"></i>{{ lesson.xp_reward }} XP</span>
+                </div>
+            </header>
+
+            <!-- Lesson Content -->
+            <div class="flex-grow-1 overflow-auto p-4">
+                <div class="row">
+                    <!-- Content Area -->
+                    <div class="col-lg-8">
+                        <div class="card border-0 shadow-sm mb-4">
+                            <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">{{ lesson.title }}</h5>
+                                <div class="d-flex gap-2">
+                                    {% if progress.status == 'completed' %}
+                                    <span class="badge bg-success px-3 py-2"><i class="bi bi-check-circle me-1"></i>{% trans "Completed" %}</span>
+                                    {% else %}
+                                    <button class="btn btn-success btn-sm" id="completeBtn">
+                                        <i class="bi bi-check-circle me-1"></i>{% trans "Mark Complete" %}
+                                    </button>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                {% if lesson.content_blocks %}
+                                <div class="lesson-content">
+                                    {% for block in lesson.content_blocks %}
+                                    {% if block.type == 'text' %}
+                                    <div class="mb-4">{{ block.content|safe }}</div>
+                                    {% elif block.type == 'code' %}
+                                    <div class="mb-4">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span class="badge bg-secondary bg-opacity-10 text-secondary">{{ block.language|default:'python' }}</span>
+                                            <button class="btn btn-sm btn-outline-secondary copy-code" data-code="{{ block.content|escapejs }}"><i class="bi bi-clipboard"></i></button>
+                                        </div>
+                                        <pre class="bg-dark text-light p-4 rounded mb-0"><code class="language-{{ block.language|default:'python' }}">{{ block.content }}</code></pre>
+                                    </div>
+                                    {% elif block.type == 'heading' %}
+                                    <h{{ block.level|default:3 }} class="mt-4 mb-3">{{ block.content }}</h{{ block.level|default:3 }}>
+                                    {% elif block.type == 'list' %}
+                                    <ul class="mb-4">
+                                        {% for item in block.items %}
+                                        <li class="mb-2">{{ item }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                    {% elif block.type == 'callout' %}
+                                    <div class="alert alert-{{ block.style|default:'info' }} mb-4" role="alert">
+                                        <h6 class="alert-heading">{{ block.title }}</h6>
+                                        <p class="mb-0">{{ block.content }}</p>
+                                    </div>
+                                    {% elif block.type == 'video' %}
+                                    <div class="ratio ratio-16x9 mb-4 rounded overflow-hidden">
+                                        <iframe src="{{ block.url }}" frameborder="0" allowfullscreen></iframe>
+                                    </div>
+                                    {% endif %}
+                                    {% endfor %}
+                                </div>
+                                {% else %}
+                                <div class="text-center py-5 text-muted">
+                                    <i class="bi bi-file-text fs-1 mb-3"></i>
+                                    <p>{% trans "Lesson content will be available soon." %}</p>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Practice Section -->
+                        {% if lesson.lesson_type == 'practice' %}
+                        <div class="card border-0 shadow-sm mb-4">
+                            <div class="card-header bg-transparent border-0">
+                                <h5 class="mb-0"><i class="bi bi-terminal me-2"></i>{% trans "Practice Exercise" %}</h5>
+                            </div>
+                            <div class="card-body p-0">
+                                <div id="editor" style="height: 400px;"></div>
+                                <div class="p-3 border-top bg-dark">
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-primary" id="runBtn"><i class="bi bi-play-fill me-1"></i>{% trans "Run Code" %}</button>
+                                        <button class="btn btn-success" id="submitBtn"><i class="bi bi-send me-1"></i>{% trans "Submit Solution" %}</button>
+                                        <button class="btn btn-outline-secondary" id="resetBtn"><i class="bi bi-arrow-counterclockwise me-1"></i>{% trans "Reset" %}</button>
+                                    </div>
+                                    <div id="output" class="mt-3 bg-dark text-theme p-3 rounded" style="min-height: 100px; font-family: monospace; font-size: 0.875rem; display: none;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Starter Code Reference -->
+                        {% if lesson.starter_code and lesson.lesson_type != 'practice' %}
+                        <div class="card border-0 shadow-sm mb-4">
+                            <div class="card-header bg-transparent border-0">
+                                <h5 class="mb-0"><i class="bi bi-code me-2"></i>{% trans "Reference Code" %}</h5>
+                            </div>
+                            <div class="card-body p-0">
+                                <pre class="mb-0 p-4"><code class="language-{{ lesson.subtopic.topic.program.language.slug }}">{{ lesson.starter_code }}</code></pre>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Hints -->
+                        {% if lesson.hints %}
+                        <div class="card border-0 shadow-sm mb-4">
+                            <div class="card-header bg-transparent border-0">
+                                <h5 class="mb-0"><i class="bi bi-lightbulb me-2"></i>{% trans "Hints" %}</h5>
+                            </div>
+                            <div class="card-body">
+                                <ol class="mb-0">
+                                    {% for hint in lesson.hints %}
+                                    <li class="mb-3 pb-3 border-bottom">{{ hint }}</li>
+                                    {% endfor %}
+                                </ol>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Navigation -->
+                        <div class="card border-0 shadow-sm">
+                            <div class="card-body">
+                                <div class="row">
+                                    {% if prev_lesson %}
+                                    <div class="col-md-6">
+                                        <a href="{% url 'learning:lesson_learn' prev_lesson.slug %}" class="btn btn-outline-secondary w-100 d-flex align-items-center gap-2">
+                                            <i class="bi bi-chevron-left"></i>
+                                            <div>
+                                                <small class="text-muted d-block">{% trans "Previous Lesson" %}</small>
+                                                <span>{{ prev_lesson.title|truncatechars:40 }}</span>
+                                            </div>
+                                        </a>
+                                    </div>
+                                    {% endif %}
+                                    {% if next_lesson %}
+                                    <div class="col-md-6 text-md-end">
+                                        <a href="{% url 'learning:lesson_learn' next_lesson.slug %}" class="btn btn-primary w-100 d-flex align-items-center justify-content-end gap-2">
+                                            <div>
+                                                <small class="text-muted d-block">{% trans "Next Lesson" %}</small>
+                                                <span>{{ next_lesson.title|truncatechars:40 }}</span>
+                                            </div>
+                                            <i class="bi bi-chevron-right"></i>
+                                        </a>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sidebar: Info & Notes -->
+                    <div class="col-lg-4 d-none d-lg-block">
+                        <div class="sticky-top" style="top: 80px;">
+                            <!-- Lesson Info -->
+                            <div class="card border-0 shadow-sm mb-4">
+                                <div class="card-header bg-transparent border-0">
+                                    <h6 class="mb-0">{% trans "Lesson Info" %}</h6>
+                                </div>
+                                <div class="card-body">
+                                    <dl class="row mb-0 small">
+                                        <dt class="col-5 text-muted">{% trans "Type" %}</dt>
+                                        <dd class="col-7">{{ lesson.get_lesson_type_display }}</dd>
+                                        <dt class="col-5 text-muted">{% trans "Difficulty" %}</dt>
+                                        <dd class="col-7">
+                                            <span class="badge bg-{{ lesson.get_difficulty_display|lower|slugify }} bg-opacity-10 text-{{ lesson.get_difficulty_display|lower|slugify }}">{{ lesson.get_difficulty_display }}</span>
+                                        </dd>
+                                        <dt class="col-5 text-muted">{% trans "XP Reward" %}</dt>
+                                        <dd class="col-7 fw-bold text-warning"><i class="bi bi-star-fill me-1"></i>{{ lesson.xp_reward }}</dd>
+                                        <dt class="col-5 text-muted">{% trans "Est. Time" %}</dt>
+                                        <dd class="col-7">{{ lesson.estimated_minutes }} {% trans "min" %}</dd>
+                                    </dl>
+                                </div>
+                            </div>
+
+                            <!-- Tags -->
+                            {% if lesson.tags.exists %}
+                            <div class="card border-0 shadow-sm mb-4">
+                                <div class="card-header bg-transparent border-0">
+                                    <h6 class="mb-0">{% trans "Tags" %}</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="d-flex flex-wrap gap-1">
+                                        {% for tag in lesson.tags.all %}
+                                        <span class="badge bg-secondary bg-opacity-10 text-secondary px-2 py-1">{{ tag.name }}</span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <!-- Attachments -->
+                            {% if lesson.attachments.exists %}
+                            <div class="card border-0 shadow-sm mb-4">
+                                <div class="card-header bg-transparent border-0">
+                                    <h6 class="mb-0">{% trans "Attachments" %}</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="list-group list-group-flush">
+                                        {% for attachment in lesson.attachments.all %}
+                                        <a href="{{ attachment.file.url }}" class="list-group-item list-group-item-action px-0 d-flex align-items-center gap-2" target="_blank">
+                                            {% if attachment.attachment_type == 'pdf' %}
+                                            <i class="bi bi-file-earmark-pdf text-danger fs-5"></i>
+                                            {% elif attachment.attachment_type == 'image' %}
+                                            <i class="bi bi-file-earmark-image text-primary fs-5"></i>
+                                            {% elif attachment.attachment_type == 'code' %}
+                                            <i class="bi bi-file-earmark-code text-success fs-5"></i>
+                                            {% else %}
+                                            <i class="bi bi-file-earmark text-secondary fs-5"></i>
+                                            {% endif %}
+                                            <div class="flex-grow-1 small">
+                                                <div class="fw-medium">{{ attachment.name }}</div>
+                                                <small class="text-muted">{{ attachment.get_attachment_type_display }}</small>
+                                            </div>
+                                        </a>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <!-- Notes -->
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                                    <h6 class="mb-0">{% trans "My Notes" %}</h6>
+                                    <a href="{% url 'learning:lesson_notes' lesson.slug %}" class="btn btn-sm btn-outline-primary">{% trans "Full View" %}</a>
+                                </div>
+                                <div class="card-body">
+                                    <textarea class="form-control" rows="6" placeholder="{% trans "Take notes while learning..." %}" id="lessonNotes"></textarea>
+                                    <div class="d-flex justify-content-end gap-2 mt-2">
+                                        <button class="btn btn-outline-secondary btn-sm" id="saveNotesBtn"><i class="bi bi-save me-1"></i>{% trans "Save" %}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.js"></script>
+<script>
+// Monaco Editor Setup
+require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' }});
+require(['vs/editor/editor.main'], function() {
+    const editor = monaco.editor.create(document.getElementById('editor'), {
+        value: `{{ lesson.starter_code|escapejs }}`,
+        language: '{{ lesson.subtopic.topic.program.language.slug }}',
+        theme: 'vs-dark',
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 14,
+        lineNumbers: 'on',
+        tabSize: 4,
+    });
+
+    // Run button
+    document.getElementById('runBtn').addEventListener('click', async () => {
+        const code = editor.getValue();
+        const output = document.getElementById('output');
+        output.style.display = 'block';
+        output.textContent = 'Running...';
+
+        try {
+            const response = await fetch('/api/code/run/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}',
+                },
+                body: JSON.stringify({
+                    code: code,
+                    language: '{{ lesson.subtopic.topic.program.language.slug }}',
+                })
+            });
+            const data = await response.json();
+            output.textContent = data.output || data.error || 'Done';
+        } catch (e) {
+            output.textContent = 'Error: ' + e.message;
+        }
+    });
+
+    // Submit button
+    document.getElementById('submitBtn').addEventListener('click', async () => {
+        const code = editor.getValue();
+        // TODO: Submit to practice API
+        alert('Submit functionality coming soon');
+    });
+
+    // Reset button
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        editor.setValue(`{{ lesson.starter_code|escapejs }}`);
+        document.getElementById('output').style.display = 'none';
+    });
+
+    // Complete button
+    document.getElementById('completeBtn').addEventListener('click', async () => {
+        const response = await fetch('{% url "learning:lesson_complete" lesson.slug %}', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+        });
+        if (response.ok) {
+            location.reload();
+        }
+    });
+
+    // Notes
+    document.getElementById('saveNotesBtn').addEventListener('click', () => {
+        const notes = document.getElementById('lessonNotes').value;
+        localStorage.setItem('lesson_notes_{{ lesson.slug }}', notes);
+        alert('{% trans "Notes saved locally" %}');
+    });
+
+    // Load saved notes
+    const savedNotes = localStorage.getItem('lesson_notes_{{ lesson.slug }}');
+    if (savedNotes) {
+        document.getElementById('lessonNotes').value = savedNotes;
+    }
+
+    // Copy code buttons
+    document.querySelectorAll('.copy-code').forEach(btn => {
+        btn.addEventListener('click', () => {
+            navigator.clipboard.writeText(btn.dataset.code);
+            btn.innerHTML = '<i class="bi bi-clipboard-check"></i>';
+            setTimeout(() => btn.innerHTML = '<i class="bi bi-clipboard"></i>', 2000);
+        });
+    });
+});
+</script>
+{% endblock %}

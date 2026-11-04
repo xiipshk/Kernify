@@ -1,0 +1,157 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{% trans "Result" %} - {{ session.task.title }} - RTK{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <nav aria-label="breadcrumb" class="mb-4">
+        <ol class="breadcrumb bg-transparent mb-0">
+            <li class="breadcrumb-item"><a href="{% url 'practice:index' %}">{% trans "Practice" %}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'practice:task_detail' session.task.slug %}">{{ session.task.title }}</a></li>
+            <li class="breadcrumb-item active">{% trans "Result" %}</li>
+        </ol>
+    </nav>
+
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <!-- Result Header -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body text-center py-5">
+                    <div class="bg-{{ session.status|yesno:'success,warning,danger' }} bg-opacity-10 rounded-circle d-flex align-items-center justify-content-center mx-auto mb-4" style="width: 100px; height: 100px;">
+                        {% if session.status == 'completed' %}
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        {% elif session.status == 'failed' %}
+                        <i class="bi bi-x-circle text-danger" style="font-size: 3rem;"></i>
+                        {% else %}
+                        <i class="bi bi-clock text-warning" style="font-size: 3rem;"></i>
+                        {% endif %}
+                    </div>
+                    <h2 class="fw-bold mb-2">
+                        {% if session.status == 'completed' %}
+                        {% trans "Solved!" %}
+                        {% elif session.status == 'failed' %}
+                        {% trans "Failed" %}
+                        {% else %}
+                        {% trans "In Progress" %}
+                        {% endif %}
+                    </h2>
+                    <p class="text-muted mb-3">{{ session.task.title }}</p>
+                    <div class="d-flex justify-content-center gap-4">
+                        <div>
+                            <div class="fs-2 fw-bold text-{{ session.status|yesno:'success,danger,warning' }}">{{ session.score|default:0 }}%</div>
+                            <small class="text-muted">{% trans "Score" %}</small>
+                        </div>
+                        <div>
+                            <div class="fs-2 fw-bold text-warning">{{ session.xp_earned|default:0 }}</div>
+                            <small class="text-muted">{% trans "XP Earned" %}</small>
+                        </div>
+                        <div>
+                            <div class="fs-2 fw-bold text-info">{{ session.attempts }}</div>
+                            <small class="text-muted">{% trans "Attempts" %}</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Test Results -->
+            {% if session.test_results %}
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-check-circle me-2"></i>{% trans "Test Results" %}</h5>
+                    <span class="badge bg-{{ session.status|yesno:'success,danger,warning' }} px-3 py-2">{{ session.get_status_display }}</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="list-group list-group-flush">
+                        {% for test in session.test_results %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center px-4">
+                            <div class="d-flex align-items-center gap-3">
+                                {% if test.passed %}
+                                <i class="bi bi-check-circle-fill text-success fs-4"></i>
+                                {% else %}
+                                <i class="bi bi-x-circle-fill text-danger fs-4"></i>
+                                {% endif %}
+                                <div>
+                                    <h6 class="mb-0">{{ test.test_name|default:"Test" }}</h6>
+                                    <small class="text-muted">Attempt #{{ session.attempts }}</small>
+                                </div>
+                            </div>
+                            <span class="badge bg-{% if test.passed %}success{% else %}danger{% endif %} px-3 py-2">
+                                {% if test.passed %}{% trans "Passed" %}{% else %}{% trans "Failed" %}{% endif %}
+                            </span>
+                        </div>
+                        {% if not test.passed and test.expected and test.actual %}
+                        <div class="list-group-item bg-danger bg-opacity-10 px-4">
+                            <div class="row small">
+                                <div class="col-6">
+                                    <strong>{% trans "Expected:" %}</strong>
+                                    <pre class="mb-0 mt-1">{{ test.expected }}</pre>
+                                </div>
+                                <div class="col-6">
+                                    <strong>{% trans "Got:" %}</strong>
+                                    <pre class="mb-0 mt-1">{{ test.actual }}</pre>
+                                </div>
+                            </div>
+                            {% if test.error_message %}
+                            <div class="mt-2 small text-danger">{{ test.error_message }}</div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Submitted Code -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-code me-2"></i>{% trans "Your Solution" %}</h5>
+                    <button class="btn btn-sm btn-outline-secondary copy-code" data-code="{{ session.submitted_code|escapejs }}"><i class="bi bi-clipboard"></i></button>
+                </div>
+                <div class="card-body p-0">
+                    <pre class="mb-0 p-4"><code class="language-{{ session.task.topic.program.language.slug }}">{{ session.submitted_code }}</code></pre>
+                </div>
+            </div>
+
+            <!-- Explanation (if completed) -->
+            {% if session.status == 'completed' and session.task.explanation %}
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0"><i class="bi bi-lightbulb me-2"></i>{% trans "Explanation" %}</h5>
+                </div>
+                <div class="card-body">
+                    {{ session.task.explanation|linebreaks }}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Actions -->
+            <div class="d-flex gap-2 justify-content-center">
+                <a href="{% url 'practice:task_solve' session.task.slug %}" class="btn btn-primary">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>{% trans "Try Again" %}
+                </a>
+                <a href="{% url 'practice:task_list' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-list-ul me-1"></i>{% trans "All Tasks" %}
+                </a>
+                <a href="{% url 'practice:history' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-clock-history me-1"></i>{% trans "History" %}
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script>
+document.querySelectorAll('.copy-code').forEach(btn => {
+    btn.addEventListener('click', () => {
+        navigator.clipboard.writeText(btn.dataset.code);
+        btn.innerHTML = '<i class="bi bi-clipboard-check"></i>';
+        setTimeout(() => btn.innerHTML = '<i class="bi bi-clipboard"></i>', 2000);
+    });
+});
+</script>
+{% endblock %}

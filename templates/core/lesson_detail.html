@@ -1,0 +1,236 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ lesson.title }} - {{ lesson.subtopic.topic.name }} - RTK{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-4">
+        <ol class="breadcrumb bg-transparent mb-0">
+            <li class="breadcrumb-item"><a href="{% url 'core:home' %}">{% trans "Home" %}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:languages' %}">{% trans "Languages" %}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:language_detail' lesson.subtopic.topic.program.language.slug %}">{{ lesson.subtopic.topic.program.language.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:program_detail' lesson.subtopic.topic.program.slug %}">{{ lesson.subtopic.topic.program.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:topic_detail' lesson.subtopic.topic.slug %}">{{ lesson.subtopic.topic.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:subtopic_detail' lesson.subtopic.slug %}">{{ lesson.subtopic.name }}</a></li>
+            <li class="breadcrumb-item active">{{ lesson.title }}</li>
+        </ol>
+    </nav>
+
+    <div class="row">
+        <!-- Main Content -->
+        <main class="col-lg-9">
+            <!-- Lesson Header -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body p-4">
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                        <span class="badge bg-primary px-3 py-2">{{ lesson.subtopic.topic.program.language.name }}</span>
+                        <span class="badge bg-{{ lesson.get_difficulty_display|lower|slugify }} bg-opacity-10 text-{{ lesson.get_difficulty_display|lower|slugify }} px-3 py-2">{{ lesson.get_difficulty_display }}</span>
+                        <span class="badge bg-{{ lesson.get_lesson_type_display|lower|slugify }} bg-opacity-10 text-{{ lesson.get_lesson_type_display|lower|slugify }} px-3 py-2">{{ lesson.get_lesson_type_display }}</span>
+                        <span class="badge bg-{{ lesson.status }} bg-opacity-10 text-{{ lesson.status }} px-3 py-2">{{ lesson.get_status_display }}</span>
+                    </div>
+                    <h1 class="fw-bold mb-3">{{ lesson.title }}</h1>
+                    <p class="lead text-muted mb-4">{{ lesson.description }}</p>
+                    <div class="d-flex flex-wrap gap-4 text-muted small mb-4">
+                        <span><i class="bi bi-star text-warning me-1"></i>{{ lesson.xp_reward }} XP</span>
+                        <span><i class="bi bi-clock me-1"></i>{{ lesson.estimated_minutes }} {% trans "min" %}</span>
+                        <span><i class="bi bi-eye me-1"></i>{{ lesson.views_count }} {% trans "views" %}</span>
+                    </div>
+                    <div class="d-flex gap-2">
+                        {% if user_progress and user_progress.status == 'completed' %}
+                        <span class="badge bg-success px-3 py-2"><i class="bi bi-check-circle me-1"></i>{% trans "Completed" %}</span>
+                        {% elif user_progress and user_progress.status == 'in_progress' %}
+                        <a href="{% url 'learning:lesson_learn' lesson.slug %}" class="btn btn-primary">
+                            <i class="bi bi-play-fill me-1"></i>{% trans "Continue Learning" %}
+                        </a>
+                        {% else %}
+                        <a href="{% url 'learning:lesson_learn' lesson.slug %}" class="btn btn-primary">
+                            <i class="bi bi-play-fill me-1"></i>{% trans "Start Lesson" %}
+                        </a>
+                        {% endif %}
+                        {% if user.is_authenticated %}
+                        <form method="post" action="{% url 'learning:bookmark_lesson' lesson.slug %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-outline-secondary" title="{% trans "Bookmark" %}">
+                                <i class="bi bi-bookmark{% if lesson in bookmarked_lessons %}-fill text-primary{% endif %}"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Lesson Content -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0"><i class="bi bi-file-text me-2"></i>{% trans "Lesson Content" %}</h5>
+                </div>
+                <div class="card-body">
+                    {% if lesson.content_blocks %}
+                    <div class="lesson-content">
+                        {% for block in lesson.content_blocks %}
+                        {% if block.type == 'text' %}
+                        <div class="mb-4">{{ block.content|safe }}</div>
+                        {% elif block.type == 'code' %}
+                        <pre class="bg-dark text-light p-4 rounded mb-4"><code class="language-{{ block.language|default:'python' }}">{{ block.content }}</code></pre>
+                        {% elif block.type == 'heading' %}
+                        <h{{ block.level|default:3 }} class="mt-4 mb-3">{{ block.content }}</h{{ block.level|default:3 }}>
+                        {% elif block.type == 'list' %}
+                        <ul class="mb-4">
+                            {% for item in block.items %}
+                            <li class="mb-2">{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% elif block.type == 'callout' %}
+                        <div class="alert alert-{{ block.style|default:'info' }} mb-4" role="alert">
+                            <h6 class="alert-heading">{{ block.title }}</h6>
+                            <p class="mb-0">{{ block.content }}</p>
+                        </div>
+                        {% elif block.type == 'video' %}
+                        <div class="ratio ratio-16x9 mb-4 rounded overflow-hidden">
+                            <iframe src="{{ block.url }}" frameborder="0" allowfullscreen></iframe>
+                        </div>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5 text-muted">
+                        <i class="bi bi-file-text fs-1 mb-3"></i>
+                        <p>{% trans "Lesson content will be available soon." %}</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Starter Code (for practice lessons) -->
+            {% if lesson.lesson_type == 'practice' and lesson.starter_code %}
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0"><i class="bi bi-code me-2"></i>{% trans "Starter Code" %}</h5>
+                </div>
+                <div class="card-body p-0">
+                    <pre class="mb-0 p-4"><code class="language-{{ lesson.subtopic.topic.program.language.slug }}">{{ lesson.starter_code }}</code></pre>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Hints -->
+            {% if lesson.hints %}
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-transparent border-0">
+                    <h5 class="mb-0"><i class="bi bi-lightbulb me-2"></i>{% trans "Hints" %}</h5>
+                </div>
+                <div class="card-body">
+                    <ol class="mb-0">
+                        {% for hint in lesson.hints %}
+                        <li class="mb-3 pb-3 border-bottom">{{ hint }}</li>
+                        {% endfor %}
+                    </ol>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Navigation -->
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="row">
+                        {% if prev_lesson %}
+                        <div class="col-md-6">
+                            <a href="{% url 'core:lesson_detail' prev_lesson.slug %}" class="btn btn-outline-secondary w-100 d-flex align-items-center gap-2">
+                                <i class="bi bi-chevron-left"></i>
+                                <div>
+                                    <small class="text-muted d-block">{% trans "Previous Lesson" %}</small>
+                                    <span>{{ prev_lesson.title|truncatechars:40 }}</span>
+                                </div>
+                            </a>
+                        </div>
+                        {% endif %}
+                        {% if next_lesson %}
+                        <div class="col-md-6 text-md-end">
+                            <a href="{% url 'core:lesson_detail' next_lesson.slug %}" class="btn btn-primary w-100 d-flex align-items-center justify-content-end gap-2">
+                                <div>
+                                    <small class="text-muted d-block">{% trans "Next Lesson" %}</small>
+                                    <span>{{ next_lesson.title|truncatechars:40 }}</span>
+                                </div>
+                                <i class="bi bi-chevron-right"></i>
+                            </a>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Sidebar -->
+        <aside class="col-lg-3">
+            <!-- Lesson Info -->
+            <div class="card border-0 shadow-sm mb-4 sticky-top" style="top: 80px;">
+                <div class="card-header bg-transparent border-0">
+                    <h6 class="mb-0">{% trans "Lesson Info" %}</h6>
+                </div>
+                <div class="card-body">
+                    <dl class="row mb-0 small">
+                        <dt class="col-5 text-muted">{% trans "Type" %}</dt>
+                        <dd class="col-7">{{ lesson.get_lesson_type_display }}</dd>
+                        <dt class="col-5 text-muted">{% trans "Difficulty" %}</dt>
+                        <dd class="col-7">
+                            <span class="badge bg-{{ lesson.get_difficulty_display|lower|slugify }} bg-opacity-10 text-{{ lesson.get_difficulty_display|lower|slugify }}">{{ lesson.get_difficulty_display }}</span>
+                        </dd>
+                        <dt class="col-5 text-muted">{% trans "XP Reward" %}</dt>
+                        <dd class="col-7 fw-bold text-warning"><i class="bi bi-star-fill me-1"></i>{{ lesson.xp_reward }}</dd>
+                        <dt class="col-5 text-muted">{% trans "Est. Time" %}</dt>
+                        <dd class="col-7">{{ lesson.estimated_minutes }} {% trans "min" %}</dd>
+                    </dl>
+                </div>
+            </div>
+
+            <!-- Tags -->
+            {% if lesson.tags.exists %}
+            <div class="card border-0 shadow-sm mb-4 sticky-top" style="top: 80px;">
+                <div class="card-header bg-transparent border-0">
+                    <h6 class="mb-0">{% trans "Tags" %}</h6>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex flex-wrap gap-1">
+                        {% for tag in lesson.tags.all %}
+                        <span class="badge bg-secondary bg-opacity-10 text-secondary px-2 py-1">{{ tag.name }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Attachments -->
+            {% if lesson.attachments.exists %}
+            <div class="card border-0 shadow-sm sticky-top" style="top: 80px;">
+                <div class="card-header bg-transparent border-0">
+                    <h6 class="mb-0">{% trans "Attachments" %}</h6>
+                </div>
+                <div class="card-body">
+                    <div class="list-group list-group-flush">
+                        {% for attachment in lesson.attachments.all %}
+                        <a href="{{ attachment.file.url }}" class="list-group-item list-group-item-action px-0 d-flex align-items-center gap-2" target="_blank">
+                            {% if attachment.attachment_type == 'pdf' %}
+                            <i class="bi bi-file-earmark-pdf text-danger fs-5"></i>
+                            {% elif attachment.attachment_type == 'image' %}
+                            <i class="bi bi-file-earmark-image text-primary fs-5"></i>
+                            {% elif attachment.attachment_type == 'code' %}
+                            <i class="bi bi-file-earmark-code text-success fs-5"></i>
+                            {% else %}
+                            <i class="bi bi-file-earmark text-secondary fs-5"></i>
+                            {% endif %}
+                            <div class="flex-grow-1 small">
+                                <div class="fw-medium">{{ attachment.name }}</div>
+                                <small class="text-muted">{{ attachment.get_attachment_type_display }}</small>
+                            </div>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </aside>
+    </div>
+</div>
+{% endblock %}
