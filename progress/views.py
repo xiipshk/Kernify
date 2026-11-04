@@ -1,9 +1,12 @@
 """Views for progress app."""
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 from django.views.generic import DetailView, ListView, TemplateView
+
+from datetime import timedelta
 
 from learning.models import CourseProgram, ProgrammingLanguage, Topic
 from progress.models import ErrorHistory, TestResult, UserProgress
@@ -72,7 +75,7 @@ class LanguageProgressView(LoginRequiredMixin, DetailView):
         progress = get_object_or_404(UserProgress, user=user, language=language)
 
         # Topic progress
-        topic_progress = progress.topicprogress_set.select_related('topic').order_by('-updated_at')
+        topic_progress = TopicProgress.objects.filter(user=user, topic__program__language=language).select_related('topic').order_by('-updated_at')
 
         # Recent lessons
         from progress.models import LessonProgress
@@ -108,7 +111,7 @@ class TopicProgressView(LoginRequiredMixin, DetailView):
         topic = self.object
 
         topic_progress = get_object_or_404(
-            topic.topicprogress_set, user=user
+            topic.user_progress, user=user
         )
 
         # Lesson progress
@@ -243,7 +246,3 @@ class ExportProgressView(LoginRequiredMixin, TemplateView):
 
     template_name = 'progress/export.html'
     login_url = reverse_lazy('accounts:login')
-
-
-from django.utils import timezone
-from datetime import timedelta

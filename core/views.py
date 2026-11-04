@@ -1,4 +1,5 @@
 """Views for core app."""
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import DetailView, ListView, TemplateView
@@ -73,6 +74,16 @@ class ProgramDetailView(DetailView):
     def get_queryset(self):
         return CourseProgram.objects.filter(status='published').select_related('language')
 
+    def get_object(self, queryset=None):
+        queryset = queryset or self.get_queryset()
+        slug = self.kwargs.get(self.slug_url_kwarg)
+        obj = queryset.filter(**{self.slug_field: slug}).first()
+        if obj is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': queryset.model._meta.verbose_name,
+            })
+        return obj
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         program = self.object
@@ -104,6 +115,16 @@ class TopicDetailView(DetailView):
     def get_queryset(self):
         return Topic.objects.filter(status='published').select_related('program__language')
 
+    def get_object(self, queryset=None):
+        queryset = queryset or self.get_queryset()
+        slug = self.kwargs.get(self.slug_url_kwarg)
+        obj = queryset.filter(**{self.slug_field: slug}).first()
+        if obj is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': queryset.model._meta.verbose_name,
+            })
+        return obj
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         topic = self.object
@@ -126,13 +147,22 @@ class SubTopicDetailView(DetailView):
     def get_queryset(self):
         return SubTopic.objects.filter(status='published').select_related('topic__program__language')
 
+    def get_object(self, queryset=None):
+        queryset = queryset or self.get_queryset()
+        slug = self.kwargs.get(self.slug_url_kwarg)
+        obj = queryset.filter(**{self.slug_field: slug}).first()
+        if obj is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': queryset.model._meta.verbose_name,
+            })
+        return obj
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         subtopic = self.object
         context['lessons'] = Lesson.objects.filter(
             subtopic=subtopic,
-            status='published',
-            is_published=True
+            status='published'
         ).order_by('order')
         return context
 
@@ -148,9 +178,18 @@ class LessonDetailView(DetailView):
 
     def get_queryset(self):
         return Lesson.objects.filter(
-            status='published',
-            is_published=True
+            status='published'
         ).select_related('subtopic__topic__program__language')
+
+    def get_object(self, queryset=None):
+        queryset = queryset or self.get_queryset()
+        slug = self.kwargs.get(self.slug_url_kwarg)
+        obj = queryset.filter(**{self.slug_field: slug}).first()
+        if obj is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': queryset.model._meta.verbose_name,
+            })
+        return obj
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -160,13 +199,11 @@ class LessonDetailView(DetailView):
         context['prev_lesson'] = Lesson.objects.filter(
             subtopic=lesson.subtopic,
             status='published',
-            is_published=True,
             order__lt=lesson.order
         ).order_by('-order').first()
         context['next_lesson'] = Lesson.objects.filter(
             subtopic=lesson.subtopic,
             status='published',
-            is_published=True,
             order__gt=lesson.order
         ).order_by('order').first()
 

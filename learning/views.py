@@ -1,6 +1,7 @@
 """Views for learning app."""
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.shortcuts import get_object_or_404, redirect
+from django.http import Http404
+from django.shortcuts import redirect
 from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import DetailView, ListView, TemplateView, View
@@ -52,7 +53,13 @@ class EnrollView(LoginRequiredMixin, View):
     """Enroll in a course program."""
 
     def post(self, request, slug):
-        program = get_object_or_404(CourseProgram, slug=slug, status='published')
+        program = CourseProgram.objects.filter(
+            slug=slug, status='published'
+        ).first()
+        if program is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': CourseProgram._meta.verbose_name,
+            })
 
         from progress.models import UserProgress
         progress, created = UserProgress.objects.get_or_create(
@@ -69,7 +76,7 @@ class EnrollView(LoginRequiredMixin, View):
             progress.current_topic = program.topics.filter(status='published').order_by('order').first()
             progress.save()
 
-        return redirect('learning:lesson_learn', slug=progress.current_lesson.slug if progress.current_lesson else program.topics.filter(status='published').order_by('order').first().subtopics.filter(status='published').order_by('order').first().lessons.filter(status='published', is_published=True).order_by('order').first().slug)
+        return redirect('learning:lesson_learn', slug=progress.current_lesson.slug if progress.current_lesson else program.topics.filter(status='published').order_by('order').first().subtopics.filter(status='published').order_by('order').first().lessons.filter(status='published').order_by('order').first().slug)
 
 
 class LessonLearnView(LoginRequiredMixin, DetailView):
@@ -84,9 +91,18 @@ class LessonLearnView(LoginRequiredMixin, DetailView):
 
     def get_queryset(self):
         return Lesson.objects.filter(
-            status='published',
-            is_published=True
+            status='published'
         ).select_related('subtopic__topic__program__language')
+
+    def get_object(self, queryset=None):
+        queryset = queryset or self.get_queryset()
+        slug = self.kwargs.get(self.slug_url_kwarg)
+        obj = queryset.filter(**{self.slug_field: slug}).first()
+        if obj is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': queryset.model._meta.verbose_name,
+            })
+        return obj
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -110,21 +126,18 @@ class LessonLearnView(LoginRequiredMixin, DetailView):
         context['prev_lesson'] = Lesson.objects.filter(
             subtopic=lesson.subtopic,
             status='published',
-            is_published=True,
             order__lt=lesson.order
         ).order_by('-order').first()
         context['next_lesson'] = Lesson.objects.filter(
             subtopic=lesson.subtopic,
             status='published',
-            is_published=True,
             order__gt=lesson.order
         ).order_by('order').first()
 
         # All lessons in subtopic for sidebar
         context['subtopic_lessons'] = Lesson.objects.filter(
             subtopic=lesson.subtopic,
-            status='published',
-            is_published=True
+            status='published'
         ).order_by('order')
 
         context['progress'] = progress
@@ -135,7 +148,13 @@ class LessonCompleteView(LoginRequiredMixin, View):
     """Mark lesson as complete."""
 
     def post(self, request, slug):
-        lesson = get_object_or_404(Lesson, slug=slug, status='published', is_published=True)
+        lesson = Lesson.objects.filter(
+            slug=slug, status='published'
+        ).first()
+        if lesson is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': Lesson._meta.verbose_name,
+            })
 
         from progress.models import LessonProgress, UserProgress
         from django.utils import timezone
@@ -168,7 +187,11 @@ class BookmarkLessonView(LoginRequiredMixin, View):
     """Toggle lesson bookmark."""
 
     def post(self, request, slug):
-        lesson = get_object_or_404(Lesson, slug=slug)
+        lesson = Lesson.objects.filter(slug=slug).first()
+        if lesson is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': Lesson._meta.verbose_name,
+            })
 
         from accounts.models import UserProfile
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
@@ -192,7 +215,17 @@ class LessonNotesView(LoginRequiredMixin, DetailView):
     login_url = reverse_lazy('accounts:login')
 
     def get_queryset(self):
-        return Lesson.objects.filter(status='published', is_published=True)
+        return Lesson.objects.filter(status='published')
+
+    def get_object(self, queryset=None):
+        queryset = queryset or self.get_queryset()
+        slug = self.kwargs.get(self.slug_url_kwarg)
+        obj = queryset.filter(**{self.slug_field: slug}).first()
+        if obj is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': queryset.model._meta.verbose_name,
+            })
+        return obj
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

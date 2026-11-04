@@ -4,7 +4,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import DetailView, ListView, TemplateView, View
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 
 from practice.models import PracticeTask, PracticeSession
 
@@ -92,6 +92,16 @@ class TaskDetailView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         return PracticeTask.objects.filter(status='published').select_related('topic__program__language')
 
+    def get_object(self, queryset=None):
+        queryset = queryset or self.get_queryset()
+        slug = self.kwargs.get(self.slug_url_kwarg)
+        obj = queryset.filter(**{self.slug_field: slug}).first()
+        if obj is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': queryset.model._meta.verbose_name,
+            })
+        return obj
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         task = self.object
@@ -102,7 +112,7 @@ class TaskDetailView(LoginRequiredMixin, DetailView):
             user=user,
             task=task,
             status='completed'
-        ).order_by('-score').first()
+        ).order_by('-xp_earned').first()
 
         context['best_session'] = best_session
         context['total_sessions'] = PracticeSession.objects.filter(user=user, task=task).count()
@@ -122,6 +132,16 @@ class TaskSolveView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         return PracticeTask.objects.filter(status='published').select_related('topic__program__language')
 
+    def get_object(self, queryset=None):
+        queryset = queryset or self.get_queryset()
+        slug = self.kwargs.get(self.slug_url_kwarg)
+        obj = queryset.filter(**{self.slug_field: slug}).first()
+        if obj is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': queryset.model._meta.verbose_name,
+            })
+        return obj
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         task = self.object
@@ -130,6 +150,7 @@ class TaskSolveView(LoginRequiredMixin, DetailView):
         session = PracticeSession.objects.create(
             user=self.request.user,
             task=task,
+            topic=task.topic,
             status='in_progress'
         )
         context['session'] = session

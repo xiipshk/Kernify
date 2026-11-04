@@ -5,7 +5,7 @@
  */
 class ThemeManager {
     constructor() {
-        this.themes = ['auto', 'light'];
+        this.themes = ['auto', 'light', 'dark'];
         this.currentTheme = localStorage.getItem('theme') || 'auto';
         this.init();
     }
