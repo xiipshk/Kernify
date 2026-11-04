@@ -176,8 +176,8 @@ class TaskSubmitView(LoginRequiredMixin, View):
                 language=task.topic.program.language
             )
             progress.total_xp += task.xp_reward
-            progress.exercises_solved += 1
-            progress.last_activity_date = timezone.now().date()
+            progress.practice_solved += 1
+            progress.last_activity_at = timezone.now()
             progress.save()
 
         return redirect('practice:session_result', pk=session.pk)

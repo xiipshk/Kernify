@@ -150,6 +150,7 @@ class StatisticsView(LoginRequiredMixin, TemplateView):
 
         from practice.models import PracticeSession
         from django.db.models import Count, Avg, Sum
+        from django.db.models.functions import TruncDate
         from django.utils import timezone
         from datetime import timedelta
 
@@ -164,7 +165,7 @@ class StatisticsView(LoginRequiredMixin, TemplateView):
         )
 
         # Daily stats for chart
-        daily = sessions.extra({'date': "date(created_at)"}).values('date').annotate(
+        daily = sessions.annotate(date=TruncDate('created_at')).values('date').annotate(
             count=Count('id'),
             xp=Sum('xp_earned')
         ).order_by('date')
@@ -213,8 +214,7 @@ class ErrorReviewSubmitView(LoginRequiredMixin, TemplateView):
             error.count = 0
             error.interval_days = 1
 
-        error.last_quality = quality
-        error.next_review = timezone.now().date() + timedelta(days=error.interval_days)
+        error.next_review = timezone.now() + timedelta(days=error.interval_days)
 
         if quality >= 4 and error.count >= 3:
             error.is_resolved = True

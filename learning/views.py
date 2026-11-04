@@ -98,12 +98,12 @@ class LessonLearnView(LoginRequiredMixin, DetailView):
         progress, created = LessonProgress.objects.get_or_create(
             user=user,
             lesson=lesson,
-            defaults={'status': 'in_progress', 'first_viewed_at': timezone.now()}
+            defaults={'status': 'in_progress', 'started_at': timezone.now()}
         )
 
         if created or progress.status == 'not_started':
             progress.status = 'in_progress'
-            progress.first_viewed_at = timezone.now()
+            progress.started_at = timezone.now()
             progress.save()
 
         # Navigation
