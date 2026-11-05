@@ -10,7 +10,7 @@ from handlers.test_callback import test_callback
 from handlers.ai_chat_callback import ai_chat_callback
 from handlers.menu_callback import menu_callback
 from handlers.cancel_callback import cancel_callback
-from handlers.onboarding import onboarding_conversation
+from handlers.start import onboarding_conversation
 from handlers.error_handler import error_handler
 
 __all__ = [

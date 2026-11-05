@@ -36,7 +36,7 @@ async def ai_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             context.user_data["ai_chat_mode"] = True
         elif data == "ai_clear":
-            await clear_ai_chat(query, db_user, session)
+            await clear_ai_chat(query, db_user, session, context)
 
 
 async def start_ai_chat(query, db_user: User, topic_id: int, session, context):
@@ -85,12 +85,17 @@ async def start_ai_chat(query, db_user: User, topic_id: int, session, context):
     )
 
 
-async def clear_ai_chat(query, db_user: User, session):
-    """Clear AI chat history."""
-    from models import AIChat
-    await session.execute(
-        AIChat.__table__.delete().where(AIChat.user_id == db_user.id)
-    )
+async def clear_ai_chat(query, db_user: User, session, context: ContextTypes.DEFAULT_TYPE):
+    """Clear AI chat history for the current topic."""
+    topic_id = context.user_data.get("ai_chat_topic")
+    if topic_id:
+        await session.execute(
+            AIChat.__table__.delete().where(AIChat.user_id == db_user.id, AIChat.topic_id == topic_id)
+        )
+    else:
+        await session.execute(
+            AIChat.__table__.delete().where(AIChat.user_id == db_user.id)
+        )
     await session.commit()
 
     await query.answer("История очищена", show_alert=True)

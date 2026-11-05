@@ -53,11 +53,15 @@ async def show_practice_list(query, db_user: User, topic_id: int, session):
 
     # Get user's completed tasks
     from models import PracticeSession
-    sessions_result = await session.execute(
-        select(PracticeSession.task_id, PracticeSession.status)
-        .where(PracticeSession.user_id == db_user.id, PracticeSession.task_id.in_([t.id for t in tasks]))
-    )
-    session_map = {tid: status for tid, status in sessions_result}
+    task_ids = [t.id for t in tasks]
+    if task_ids:
+        sessions_result = await session.execute(
+            select(PracticeSession.task_id, PracticeSession.status)
+            .where(PracticeSession.user_id == db_user.id, PracticeSession.task_id.in_(task_ids))
+        )
+        session_map = {tid: status for tid, status in sessions_result}
+    else:
+        session_map = {}
 
     status_icons = {
         "passed": "✅",

@@ -23,7 +23,7 @@ async def test_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data.startswith("test_start_"):
             topic_id = int(data.replace("test_start_", ""))
-            await start_test(query, db_user, topic_id, session)
+            await start_test(query, db_user, topic_id, session, context)
         elif data.startswith("test_question_"):
             question_id = int(data.replace("test_question_", ""))
             await show_test_question(query, db_user, question_id, session)
@@ -31,12 +31,12 @@ async def test_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = data.replace("test_answer_", "").split("_")
             question_id = int(parts[0])
             score = int(parts[1])
-            await submit_answer(query, db_user, question_id, score, session)
+            await submit_answer(query, db_user, question_id, score, session, context)
         elif data == "test_finish":
-            await finish_test(query, db_user, session)
+            await finish_test(query, db_user, session, context)
 
 
-async def start_test(query, db_user: User, topic_id: int, session):
+async def start_test(query, db_user: User, topic_id: int, session, context: ContextTypes.DEFAULT_TYPE):
     """Start entrance test for a topic."""
     questions = await get_test_questions(session, topic_id)
 
@@ -50,11 +50,12 @@ async def start_test(query, db_user: User, topic_id: int, session):
         )
         return
 
-    # Store test state in context
-    from contextlib import contextmanager
-    # Initialize test session data
-    query._test_questions = [q.id for q in questions]
-    query._current_question_index = 0
+    # Store test state in context.user_data (persists via PicklePersistence)
+    context.user_data["test_state"] = {
+        "topic_id": topic_id,
+        "question_ids": [q.id for q in questions],
+        "current_index": 0,
+    }
 
     await show_test_question(query, db_user, questions[0].id, session)
 
@@ -108,7 +109,7 @@ async def show_test_question(query, db_user: User, question_id: int, session):
     )
 
 
-async def submit_answer(query, db_user: User, question_id: int, score: int, session):
+async def submit_answer(query, db_user: User, question_id: int, score: int, session, context: ContextTypes.DEFAULT_TYPE):
     """Submit answer for a test question."""
     # Save result
     result = TestResult(
@@ -126,7 +127,6 @@ async def submit_answer(query, db_user: User, question_id: int, score: int, sess
     question = question_result.scalar_one_or_none()
 
     if question:
-        from models import UserProgress
         progress_result = await session.execute(
             select(UserProgress).where(
                 UserProgress.user_id == db_user.id,
@@ -153,28 +153,32 @@ async def submit_answer(query, db_user: User, question_id: int, score: int, sess
     score_text = {2: "🟢 Отлично!", 1: "🟡 Частично", 0: "🔴 Нужно изучить"}
     await query.answer(score_text.get(score, "OK"), show_alert=True)
 
-    # Get next question
-    from contextlib import contextmanager
-    test_questions = getattr(query, '_test_questions', [])
-    current_idx = getattr(query, '_current_question_index', 0) + 1
-    query._current_question_index = current_idx
+    # Get next question from context.user_data
+    test_state = context.user_data.get("test_state", {})
+    test_questions = test_state.get("question_ids", [])
+    current_idx = test_state.get("current_index", 0) + 1
+    test_state["current_index"] = current_idx
+    context.user_data["test_state"] = test_state
 
     if current_idx < len(test_questions):
         await show_test_question(query, db_user, test_questions[current_idx], session)
     else:
-        await finish_test(query, db_user, session)
+        await finish_test(query, db_user, session, context)
 
 
-async def finish_test(query, db_user: User, session):
+async def finish_test(query, db_user: User, session, context: ContextTypes.DEFAULT_TYPE):
     """Finish test and show results."""
-    # Get all results for this topic
-    from models import TestQuestion, Topic
-    topic_result = await session.execute(
-        select(Topic).join(TestQuestion).where(TestQuestion.id.in_(
-            select(TestResult.question_id).where(TestResult.user_id == db_user.id)
-        )).distinct()
-    )
-    topics = topic_result.scalars().all()
+    # Get results only for the current topic being tested
+    test_state = context.user_data.get("test_state", {})
+    topic_id = test_state.get("topic_id")
+
+    topics = []
+    if topic_id:
+        topic_result = await session.execute(
+            select(Topic).where(Topic.id == topic_id)
+        )
+        topic = topic_result.scalar_one_or_none()
+        topics = [topic] if topic else []
 
     text = "📊 <b>Результаты теста</b>\n\n"
 

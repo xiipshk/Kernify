@@ -208,7 +208,9 @@ class Command(BaseCommand):
         topic_slug = f'{django_slugify(topic_name) or "topic"}-{topic_order}'
 
         # Get or create topic (one topic per lesson order within program)
-        topic, _ = Topic.all_objects.update_or_create(
+        # Use get_or_create to avoid overwriting existing topic data when
+        # multiple lessons share the same topic_order
+        topic, created = Topic.all_objects.get_or_create(
             program=program,
             order=topic_order,
             defaults={

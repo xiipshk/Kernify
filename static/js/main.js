@@ -19,9 +19,12 @@ class ThemeManager {
         if (!this.themes.includes(theme)) {
             theme = 'auto';
         }
-        document.documentElement.classList.remove('theme-light', 'theme-auto');
+        document.documentElement.classList.remove('theme-light', 'theme-dark', 'theme-auto');
         document.documentElement.classList.add(`theme-${theme}`);
         localStorage.setItem('theme', theme);
+        // Also set a cookie so Django templates can read it for Monaco Editor
+        const monacoTheme = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'vs-dark' : 'vs';
+        document.cookie = `rtk_theme=${monacoTheme}; path=/; max-age=31536000`;
         this.currentTheme = theme;
     }
 

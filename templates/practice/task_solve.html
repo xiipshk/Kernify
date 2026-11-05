@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load i18n %}
 
-{% block title %}{{ task.title }} - {% trans "Solve" %} - RTK{% endblock %}
+{% block title %}{{ task.name }} - {% trans "Solve" %} - RTK{% endblock %}
 
 {% block extra_head %}
 <link href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/editor/editor.main.css" rel="stylesheet">
@@ -11,7 +11,7 @@
 <div class="container-fluid px-0">
     <div class="row g-0">
         <!-- Left Panel: Problem -->
-        <aside class="col-lg-5 d-none d-lg-block bg-dark border-end" style="min-height: calc(100vh - 56px); max-height: calc(100vh - 56px); overflow-y: auto;">
+        <aside id="taskSidebar" class="col-lg-5 d-none d-lg-block bg-theme-dark border-end sidebar-mobile" style="min-height: calc(100vh - 56px); max-height: calc(100vh - 56px); overflow-y: auto; z-index: 1039;">
             <div class="p-4">
                 <div class="d-flex justify-content-between align-items-start mb-3">
                     <div>
@@ -22,7 +22,7 @@
                     <a href="{% url 'practice:task_detail' task.slug %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-info-circle me-1"></i>{% trans "Details" %}</a>
                 </div>
 
-                <h3 class="mb-3">{{ task.title }}</h3>
+                <h3 class="mb-3">{{ task.name }}</h3>
                 <p class="text-muted mb-4">{{ task.description }}</p>
 
                 <div class="card bg-secondary bg-opacity-25 border-0 mb-4">
@@ -64,10 +64,10 @@
         <!-- Right Panel: Editor -->
         <main class="col-lg-7 d-flex flex-column" style="min-height: calc(100vh - 56px);">
             <!-- Top Bar -->
-            <header class="bg-dark border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+            <header class="bg-theme-dark border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
                 <div class="d-flex align-items-center gap-3">
-                    <a href="{% url 'practice:index' %}" class="btn btn-outline-secondary btn-sm d-lg-none"><i class="bi bi-list"></i></a>
-                    <h5 class="mb-0">{{ task.title }}</h5>
+                    <button class="btn btn-outline-secondary btn-sm d-lg-none" id="toggleTaskSidebar" aria-label="{% trans "Toggle navigation" %}"><i class="bi bi-list"></i></button>
+                    <h5 class="mb-0">{{ task.name }}</h5>
                 </div>
                 <div class="d-flex align-items-center gap-2">
                     <span class="badge bg-{{ task.get_difficulty_display|lower|slugify }} bg-opacity-10 text-{{ task.get_difficulty_display|lower|slugify }} px-3 py-2">{{ task.get_difficulty_display }}</span>
@@ -78,7 +78,7 @@
             <!-- Editor Area -->
             <div class="flex-grow-1 d-flex flex-column overflow-hidden">
                 <!-- Tabs -->
-                <div class="bg-dark border-bottom px-3 py-2 d-flex gap-1" role="tablist">
+                <div class="bg-theme-dark border-bottom px-3 py-2 d-flex gap-1" role="tablist">
                     <button class="btn btn-sm btn-outline-light active" data-tab="editor">{% trans "Code" %}</button>
                     <button class="btn btn-sm btn-outline-light" data-tab="output">{% trans "Output" %}</button>
                     <button class="btn btn-sm btn-outline-light" data-tab="tests">{% trans "Tests" %}</button>
@@ -90,18 +90,18 @@
                 </div>
 
                 <!-- Output Panel (hidden by default) -->
-                <div id="outputPanel" class="d-none flex-grow-1 overflow-auto bg-dark p-3" role="tabpanel" style="height: 100%;">
+                <div id="outputPanel" class="d-none flex-grow-1 overflow-auto bg-theme-dark p-3" role="tabpanel" style="height: 100%;">
                     <pre id="outputContent" class="mb-0 text-theme" style="font-family: monospace; font-size: 0.875rem;"></pre>
                 </div>
 
                 <!-- Tests Panel -->
-                <div id="testsPanel" class="d-none flex-grow-1 overflow-auto bg-dark p-3" role="tabpanel" style="height: 100%;">
+                <div id="testsPanel" class="d-none flex-grow-1 overflow-auto bg-theme-dark p-3" role="tabpanel" style="height: 100%;">
                     <div id="testsContent"></div>
                 </div>
             </div>
 
             <!-- Bottom Bar -->
-            <footer class="bg-dark border-top px-4 py-3">
+            <footer class="bg-theme-dark border-top px-4 py-3">
                 <div class="d-flex justify-content-between align-items-center">
                     <div class="d-flex gap-2">
                         <button class="btn btn-primary" id="runBtn"><i class="bi bi-play-fill me-1"></i>{% trans "Run" %} (Ctrl+Enter)</button>
@@ -126,6 +126,24 @@
 {% endblock %}
 
 {% block extra_js %}
+<script>
+    const toggleTaskSidebar = document.getElementById('toggleTaskSidebar');
+    const taskSidebar = document.getElementById('taskSidebar');
+    if (toggleTaskSidebar && taskSidebar) {
+        toggleTaskSidebar.addEventListener('click', () => {
+            taskSidebar.classList.toggle('show');
+            taskSidebar.classList.toggle('d-none');
+            document.body.classList.toggle('sidebar-open');
+        });
+        document.addEventListener('click', (e) => {
+            if (!taskSidebar.contains(e.target) && !toggleTaskSidebar.contains(e.target) && taskSidebar.classList.contains('show')) {
+                taskSidebar.classList.remove('show');
+                taskSidebar.classList.add('d-none');
+                document.body.classList.remove('sidebar-open');
+            }
+        });
+    }
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.js"></script>
 <script>
 require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' }});
@@ -133,7 +151,7 @@ require(['vs/editor/editor.main'], function() {
     const editor = monaco.editor.create(document.getElementById('editor'), {
         value: `{{ task.starter_code|escapejs }}`,
         language: '{{ task.topic.program.language.slug }}',
-        theme: 'vs-dark',
+        theme: '{{ request.COOKIES.rtk_theme|default:'vs-dark' }}',
         automaticLayout: true,
         minimap: { enabled: false },
         fontSize: 14,

@@ -2,10 +2,11 @@
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse_lazy
-from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 from django.views.generic import DetailView, ListView, TemplateView, View
-from django.http import Http404, JsonResponse
+from django.http import JsonResponse
 
+from core.views import SlugDetailMixin
 from practice.models import PracticeTask, PracticeSession
 
 
@@ -35,8 +36,13 @@ class PracticeIndexView(LoginRequiredMixin, TemplateView):
         # Recent sessions
         recent = PracticeSession.objects.filter(user=user).select_related('task', 'task__topic')[:5]
 
-        # Daily challenge
-        daily = PracticeTask.objects.filter(status='published').order_by('?').first()
+        # Daily challenge - efficient random selection (avoid order_by('?') on full table)
+        task_ids = list(PracticeTask.objects.filter(status='published').values_list('id', flat=True))
+        if task_ids:
+            import random
+            daily = PracticeTask.objects.filter(id=random.choice(task_ids)).first()
+        else:
+            daily = None
 
         context.update({
             'recommended_tasks': recommended[:6],
@@ -79,7 +85,7 @@ class TaskListView(LoginRequiredMixin, ListView):
         return context
 
 
-class TaskDetailView(LoginRequiredMixin, DetailView):
+class TaskDetailView(LoginRequiredMixin, SlugDetailMixin, DetailView):
     """Task detail view."""
 
     model = PracticeTask
@@ -92,16 +98,6 @@ class TaskDetailView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         return PracticeTask.objects.filter(status='published').select_related('topic__program__language')
 
-    def get_object(self, queryset=None):
-        queryset = queryset or self.get_queryset()
-        slug = self.kwargs.get(self.slug_url_kwarg)
-        obj = queryset.filter(**{self.slug_field: slug}).first()
-        if obj is None:
-            raise Http404(_("No %(verbose_name)s found matching the query") % {
-                'verbose_name': queryset.model._meta.verbose_name,
-            })
-        return obj
-
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         task = self.object
@@ -111,7 +107,7 @@ class TaskDetailView(LoginRequiredMixin, DetailView):
         best_session = PracticeSession.objects.filter(
             user=user,
             task=task,
-            status='completed'
+            status='passed'
         ).order_by('-xp_earned').first()
 
         context['best_session'] = best_session
@@ -119,7 +115,7 @@ class TaskDetailView(LoginRequiredMixin, DetailView):
         return context
 
 
-class TaskSolveView(LoginRequiredMixin, DetailView):
+class TaskSolveView(LoginRequiredMixin, SlugDetailMixin, DetailView):
     """Task solving view (IDE)."""
 
     model = PracticeTask
@@ -132,26 +128,16 @@ class TaskSolveView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         return PracticeTask.objects.filter(status='published').select_related('topic__program__language')
 
-    def get_object(self, queryset=None):
-        queryset = queryset or self.get_queryset()
-        slug = self.kwargs.get(self.slug_url_kwarg)
-        obj = queryset.filter(**{self.slug_field: slug}).first()
-        if obj is None:
-            raise Http404(_("No %(verbose_name)s found matching the query") % {
-                'verbose_name': queryset.model._meta.verbose_name,
-            })
-        return obj
-
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         task = self.object
 
-        # Create new session
-        session = PracticeSession.objects.create(
+        # Get existing session or create one (avoid creating trash sessions on every GET)
+        session, _ = PracticeSession.objects.get_or_create(
             user=self.request.user,
             task=task,
             topic=task.topic,
-            status='in_progress'
+            defaults={'status': 'pending'},
         )
         context['session'] = session
         return context
@@ -178,20 +164,18 @@ class TaskSubmitView(LoginRequiredMixin, View):
 
         session.submitted_code = code
         session.test_results = test_results
-        session.score = score
         session.attempts += 1
-        session.status = 'completed' if score == 100 else 'failed'
+        session.status = 'passed' if score == 100 else 'failed'
         session.completed_at = timezone.now()
 
-        if session.status == 'completed':
+        if session.status == 'passed':
             session.xp_earned = task.xp_reward
 
         session.save()
 
         # Update user progress
-        if session.status == 'completed':
+        if session.status == 'passed':
             from progress.models import UserProgress
-            from django.utils import timezone
             progress, _ = UserProgress.objects.get_or_create(
                 user=request.user,
                 language=task.topic.program.language
@@ -238,14 +222,15 @@ class DailyChallengeView(LoginRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         # Get or create daily challenge
-        from django.utils import timezone
         today = timezone.now().date()
 
-        # Simple daily task selection
-        task = PracticeTask.objects.filter(status='published').order_by('?').first()
+        # Simple daily task selection - efficient random (avoid order_by('?') on full table)
+        task_ids = list(PracticeTask.objects.filter(status='published').values_list('id', flat=True))
+        if task_ids:
+            import random
+            task = PracticeTask.objects.filter(id=random.choice(task_ids)).first()
+        else:
+            task = None
         context['task'] = task
         context['date'] = today
         return context
-
-
-from django.utils import timezone

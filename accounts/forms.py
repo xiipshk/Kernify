@@ -80,6 +80,8 @@ class CustomUserCreationForm(UserCreationForm):
 class CustomAuthenticationForm(AuthenticationForm):
     """Custom authentication form using email."""
 
+    username_field = 'email'
+
     username = forms.CharField(
         label=_('Email or Username'),
         max_length=254,

@@ -30,6 +30,7 @@ from handlers import (
     cancel_callback,
     onboarding_conversation,
 )
+from handlers.ai_chat_callback import handle_ai_message
 from handlers.error_handler import error_handler
 from keyboards import get_main_menu_keyboard
 
@@ -87,6 +88,9 @@ def create_application() -> Application:
     app.add_handler(CallbackQueryHandler(ai_chat_callback, pattern="^ai_"))
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel$"))
+
+    # Add message handler for AI chat (TEXT messages, non-commands)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ai_message))
 
     # Add error handler
     app.add_error_handler(error_handler)

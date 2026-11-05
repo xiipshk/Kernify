@@ -1,11 +1,14 @@
 """Views for learning app."""
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db.models import F
 from django.http import Http404
 from django.shortcuts import redirect
 from django.urls import reverse_lazy
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import DetailView, ListView, TemplateView, View
 
+from core.views import SlugDetailMixin
 from learning.models import CourseProgram, Lesson, SubTopic, Topic
 
 
@@ -76,10 +79,34 @@ class EnrollView(LoginRequiredMixin, View):
             progress.current_topic = program.topics.filter(status='published').order_by('order').first()
             progress.save()
 
-        return redirect('learning:lesson_learn', slug=progress.current_lesson.slug if progress.current_lesson else program.topics.filter(status='published').order_by('order').first().subtopics.filter(status='published').order_by('order').first().lessons.filter(status='published').order_by('order').first().slug)
+        # Redirect to the user's current lesson, or the first available lesson of the program
+        if progress.current_lesson:
+            return redirect('learning:lesson_learn', slug=progress.current_lesson.slug)
+        first_topic = (
+            program.topics.filter(status='published')
+            .order_by('order')
+            .first()
+        )
+        if not first_topic:
+            return redirect('learning:index')
+        first_subtopic = (
+            first_topic.subtopics.filter(status='published')
+            .order_by('order')
+            .first()
+        )
+        if not first_subtopic:
+            return redirect('learning:index')
+        first_lesson = (
+            first_subtopic.lessons.filter(status='published')
+            .order_by('order')
+            .first()
+        )
+        if not first_lesson:
+            return redirect('learning:index')
+        return redirect('learning:lesson_learn', slug=first_lesson.slug)
 
 
-class LessonLearnView(LoginRequiredMixin, DetailView):
+class LessonLearnView(LoginRequiredMixin, SlugDetailMixin, DetailView):
     """Lesson learning view."""
 
     model = Lesson
@@ -94,16 +121,6 @@ class LessonLearnView(LoginRequiredMixin, DetailView):
             status='published'
         ).select_related('subtopic__topic__program__language')
 
-    def get_object(self, queryset=None):
-        queryset = queryset or self.get_queryset()
-        slug = self.kwargs.get(self.slug_url_kwarg)
-        obj = queryset.filter(**{self.slug_field: slug}).first()
-        if obj is None:
-            raise Http404(_("No %(verbose_name)s found matching the query") % {
-                'verbose_name': queryset.model._meta.verbose_name,
-            })
-        return obj
-
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         lesson = self.object
@@ -117,10 +134,10 @@ class LessonLearnView(LoginRequiredMixin, DetailView):
             defaults={'status': 'in_progress', 'started_at': timezone.now()}
         )
 
-        if created or progress.status == 'not_started':
+        if not created and progress.status == 'not_started':
             progress.status = 'in_progress'
             progress.started_at = timezone.now()
-            progress.save()
+            progress.save(update_fields=['status', 'started_at', 'updated_at'])
 
         # Navigation
         context['prev_lesson'] = Lesson.objects.filter(
@@ -171,14 +188,14 @@ class LessonCompleteView(LoginRequiredMixin, View):
             progress.score = 100
             progress.save()
 
-            # Update user progress
-            user_progress, _ = UserProgress.objects.get_or_create(
+            # Update user progress (atomic increment to avoid race condition)
+            UserProgress.objects.filter(
                 user=request.user,
                 language=lesson.subtopic.topic.program.language
+            ).update(
+                lessons_completed=F('lessons_completed') + 1,
+                last_activity_at=timezone.now(),
             )
-            user_progress.lessons_completed += 1
-            user_progress.last_activity_at = timezone.now()
-            user_progress.save()
 
         return redirect('learning:lesson_learn', slug=slug)
 
@@ -204,7 +221,7 @@ class BookmarkLessonView(LoginRequiredMixin, View):
         return redirect('learning:lesson_learn', slug=slug)
 
 
-class LessonNotesView(LoginRequiredMixin, DetailView):
+class LessonNotesView(LoginRequiredMixin, SlugDetailMixin, DetailView):
     """Lesson notes view."""
 
     model = Lesson
@@ -217,18 +234,7 @@ class LessonNotesView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         return Lesson.objects.filter(status='published')
 
-    def get_object(self, queryset=None):
-        queryset = queryset or self.get_queryset()
-        slug = self.kwargs.get(self.slug_url_kwarg)
-        obj = queryset.filter(**{self.slug_field: slug}).first()
-        if obj is None:
-            raise Http404(_("No %(verbose_name)s found matching the query") % {
-                'verbose_name': queryset.model._meta.verbose_name,
-            })
-        return obj
-
     def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
         # Notes functionality placeholder
         context['notes'] = ''
         return context
@@ -246,5 +252,3 @@ class UserNotesView(LoginRequiredMixin, TemplateView):
         return context
 
 
-# Import timezone
-from django.utils import timezone

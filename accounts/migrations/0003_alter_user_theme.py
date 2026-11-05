@@ -3,6 +3,12 @@
 from django.db import migrations, models
 
 
+def update_dark_theme(apps, schema_editor):
+    """Migrate existing users with theme='dark' to 'system' since 'dark' choice was removed."""
+    User = apps.get_model('accounts', 'User')
+    User.objects.filter(theme='dark').update(theme='system')
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,6 +16,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(update_dark_theme),
         migrations.AlterField(
             model_name='user',
             name='theme',

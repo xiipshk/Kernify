@@ -9,7 +9,7 @@ from django.views.generic import DetailView, ListView, TemplateView
 from datetime import timedelta
 
 from learning.models import CourseProgram, ProgrammingLanguage, Topic
-from progress.models import ErrorHistory, TestResult, UserProgress
+from progress.models import ErrorHistory, TestResult, TopicProgress, UserProgress
 
 
 class ProgressDashboardView(LoginRequiredMixin, TemplateView):
@@ -40,7 +40,7 @@ class ProgressDashboardView(LoginRequiredMixin, TemplateView):
         due_errors = ErrorHistory.objects.filter(
             user=user,
             is_resolved=False,
-            next_review__lte=timezone.now().date()
+            next_review__lte=timezone.now()
         ).select_related('lesson')[:5]
 
         context.update({
@@ -154,8 +154,6 @@ class StatisticsView(LoginRequiredMixin, TemplateView):
         from practice.models import PracticeSession
         from django.db.models import Count, Avg, Sum
         from django.db.models.functions import TruncDate
-        from django.utils import timezone
-        from datetime import timedelta
 
         # Last 30 days
         thirty_days_ago = timezone.now() - timedelta(days=30)
@@ -200,30 +198,22 @@ class ErrorReviewSubmitView(LoginRequiredMixin, TemplateView):
 
     def post(self, request, pk):
         error = get_object_or_404(ErrorHistory, pk=pk, user=request.user)
-        quality = int(request.POST.get('quality', 0))
+        try:
+            quality = int(request.POST.get('quality', 0))
+        except (ValueError, TypeError):
+            from django.http import HttpResponseBadRequest
+            return HttpResponseBadRequest(_('Invalid quality value'))
+        if quality < 0 or quality > 5:
+            from django.http import HttpResponseBadRequest
+            return HttpResponseBadRequest(_('Quality must be between 0 and 5'))
 
-        # SM-2 algorithm
-        error.ease_factor = max(1.3, error.ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)))
-
-        if quality >= 3:
-            if error.count == 0:
-                error.interval_days = 1
-            elif error.count == 1:
-                error.interval_days = 6
-            else:
-                error.interval_days = int(error.interval_days * error.ease_factor)
-            error.count += 1
-        else:
-            error.count = 0
-            error.interval_days = 1
-
-        error.next_review = timezone.now() + timedelta(days=error.interval_days)
+        # Use model's SM-2 implementation (avoids duplication)
+        error.schedule_next_review(quality)
 
         if quality >= 4 and error.count >= 3:
             error.is_resolved = True
             error.resolved_at = timezone.now()
-
-        error.save()
+            error.save(update_fields=['is_resolved', 'resolved_at', 'updated_at'])
 
         return redirect('progress:error_review')
 

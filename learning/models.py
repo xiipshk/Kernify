@@ -273,6 +273,37 @@ class Lesson(TimeStampedModel, OrderedModel, PublishedModel):
         help_text=_('Structured lesson content (blocks: heading, text, code, list, table, image, etc.)'),
     )
 
+    class LessonType(models.TextChoices):
+        TEXT = 'text', _('Text')
+        CODE = 'code', _('Code')
+        PRACTICE = 'practice', _('Practice')
+        QUIZ = 'quiz', _('Quiz')
+        PROJECT = 'project', _('Project')
+        VIDEO = 'video', _('Video')
+
+    class Difficulty(models.TextChoices):
+        BEGINNER = 'beginner', _('Beginner')
+        INTERMEDIATE = 'intermediate', _('Intermediate')
+        ADVANCED = 'advanced', _('Advanced')
+        EXPERT = 'expert', _('Expert')
+
+    lesson_type = models.CharField(
+        _('lesson type'),
+        max_length=20,
+        choices=LessonType.choices,
+        default=LessonType.TEXT,
+    )
+    starter_code = models.TextField(_('starter code'), blank=True)
+    hints = models.JSONField(_('hints'), default=list, blank=True)
+    xp_reward = models.PositiveIntegerField(_('XP reward'), default=10)
+    difficulty = models.CharField(
+        _('difficulty'),
+        max_length=20,
+        choices=Difficulty.choices,
+        default=Difficulty.BEGINNER,
+    )
+    tags = models.JSONField(_('tags'), default=list, blank=True)
+
     # Metadata
     estimated_minutes = models.PositiveIntegerField(_('estimated minutes'), default=15)
 

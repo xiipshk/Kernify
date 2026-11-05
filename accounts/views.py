@@ -18,6 +18,16 @@ from accounts.forms import (
 from accounts.models import UserProfile, UserSettings
 
 
+def user_progress_totals(user):
+    """Aggregate XP and streak across all of a user's language progress records."""
+    from progress.models import UserProgress
+    progress = UserProgress.objects.filter(user=user).select_related('language')
+    return {
+        'total_xp': sum(p.total_xp for p in progress),
+        'current_streak': max((p.current_streak for p in progress), default=0),
+    }
+
+
 class LoginView(SuccessMessageMixin, TemplateView):
     """Custom login view."""
 
@@ -86,7 +96,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         recent_sessions = PracticeSession.objects.filter(user=user).select_related('task')[:5]
 
         # Get bookmarked lessons
-        bookmarked_lessons = profile.bookmarked_lessons.select_related('subtopic__topic__program__language')[:5]
+        bookmarked_lessons = profile.bookmarked_lessons.prefetch_related('subtopic__topic__program__language')[:5]
 
         # Get in-progress lessons
         from learning.models import Lesson, ProgrammingLanguage
@@ -95,6 +105,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             user_progress__status='in_progress'
         ).select_related('subtopic__topic__program__language')[:5]
 
+        totals = user_progress_totals(user)
         context.update({
             'profile': profile,
             'settings': settings_obj,
@@ -102,8 +113,8 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             'recent_sessions': recent_sessions,
             'bookmarked_lessons': bookmarked_lessons,
             'in_progress_lessons': in_progress_lessons,
-            'total_xp': sum(p.total_xp for p in progress),
-            'current_streak': max((p.current_streak for p in progress), default=0),
+            'total_xp': totals['total_xp'],
+            'current_streak': totals['current_streak'],
             'languages': ProgrammingLanguage.objects.filter(status='published').order_by('order')[:6],
         })
         return context
@@ -126,8 +137,7 @@ class ProfileView(LoginRequiredMixin, TemplateView):
         context.update({
             'profile': profile,
             'progress': progress,
-            'total_xp': sum(p.total_xp for p in progress),
-            'current_streak': max((p.current_streak for p in progress), default=0),
+            **user_progress_totals(user),
             'total_lessons': sum(p.lessons_completed for p in progress),
         })
         return context

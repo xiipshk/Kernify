@@ -1,7 +1,7 @@
 """Start command handler - entry point and onboarding."""
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler
+from telegram.ext import CallbackQueryHandler, ContextTypes, ConversationHandler
 
 from config import settings
 from database import get_session

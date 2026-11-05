@@ -4,7 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from database import get_session
-from models import User, Topic, Level, Language, Course, TopicStatus
+from models import User, Topic, Level, Language, Course, TopicStatus, UserProgress
 from sqlalchemy import select
 from services.user_service import get_or_create_user
 from keyboards import get_topics_keyboard, get_topic_detail_keyboard
@@ -86,13 +86,6 @@ async def show_topics_for_level(query, db_user: User, level: Level):
         # Get user progress for these topics
         topic_ids = [t.id for t in topics]
         progress_result = await session.execute(
-            select(Topic.id, TopicStatus)
-            .where(Topic.id.in_(topic_ids))
-            .join(Topic, Topic.id == Topic.id)
-        )
-        # Actually need UserProgress
-        from models import UserProgress
-        progress_result = await session.execute(
             select(UserProgress.topic_id, UserProgress.status)
             .where(UserProgress.user_id == db_user.id, UserProgress.topic_id.in_(topic_ids))
         )
@@ -130,7 +123,6 @@ async def show_topic_detail(query, db_user: User, topic_id: int):
             return
 
         # Get user progress
-        from models import UserProgress
         progress_result = await session.execute(
             select(UserProgress).where(
                 UserProgress.user_id == db_user.id,
