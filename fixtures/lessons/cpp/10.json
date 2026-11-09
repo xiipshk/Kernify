@@ -29,27 +29,60 @@
     {
       "type": "heading",
       "level": 2,
-      "content": "Теория"
+      "content": "1. Потоки ввода/вывода (streams)"
+    },
+    {
+      "type": "text",
+      "content": "Поток — это абстракция над последовательностью данных. Вы не заботитесь о том, откуда приходят данные (клавиатура, файл, сеть) и куда уходят (экран, файл, сеть) — вы просто читаете из потока или пишете в него. C++ предоставляет иерархию классов потоков для разных источников данных."
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Класс",
+        "Заголовок",
+        "Источник/приёмник данных",
+        "Пример"
+      ],
+      "rows": [
+        [
+          "`std::cin` / `std::cout`",
+          "`<iostream>`",
+          "Консоль (клавиатура / экран)",
+          "`std::cin >> x; std::cout << y;`"
+        ],
+        [
+          "`std::ifstream` / `std::ofstream`",
+          "`<fstream>`",
+          "Файл на диске",
+          "`std::ifstream in(\"file.txt\");`"
+        ],
+        [
+          "`std::istringstream` / `std::ostringstream`",
+          "`<sstream>`",
+          "Строка в памяти",
+          "`std::istringstream iss(\"10 20\");`"
+        ],
+        [
+          "`std::fstream`",
+          "`<fstream>`",
+          "Файл (чтение и запись)",
+          "`std::fstream io(\"file.txt\", std::ios::in | std::ios::out);`"
+        ]
+      ]
     },
     {
       "type": "heading",
-      "level": 3,
-      "content": "Потоки (streams) — иерархия"
+      "level": 2,
+      "content": "2. Работа с текстовыми файлами (`fstream`)"
     },
     {
-      "type": "code",
-      "language": "text",
-      "content": "ios_base\n  └── ios\n       ├── istream (ввод)  ← cin, ifstream, istringstream\n       ├── ostream (вывод) ← cout, ofstream, ostringstream\n       └── iostream (ввод/вывод) ← fstream, stringstream"
-    },
-    {
-      "type": "heading",
-      "level": 3,
-      "content": "Работа с файлами (fstream)"
+      "type": "text",
+      "content": "Работа с файлом обычно выглядит так: открываете поток, проверяете что файл открылся успешно, читаете или пишете данные, закрываете поток (или позволяете деструктору сделать это автоматически thanks to RAII)."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "#include <fstream>\n#include <iostream>\n#include <string>\n\nint main() {\n    // Запись в текстовый файл\n    {\n        std::ofstream out(\"data.txt\"); // RAII: автоматически закроется при выходе из области\n        if (!out) {\n            std::cerr << \"Не удалось открыть файл для записи\\n\";\n            return 1;\n        }\n        out << \"Привет, мир!\\n\";\n        out << 42 << ' ' << 3.14 << '\\n';\n        // out.close() — не обязательно, деструктор закроет\n    }\n\n    // Чтение из текстового файла\n    {\n        std::ifstream in(\"data.txt\");\n        if (!in) {\n            std::cerr << \"Файл не найден\\n\";\n            return 1;\n        }\n\n        std::string line;\n        while (std::getline(in, line)) { // читает строку до '\\n'\n            std::cout << \"Line: \" << line << '\\n';\n        }\n\n        // Или по токенам (разделены пробелом/переводом строки)\n        in.clear(); in.seekg(0); // сброс флагов и возврат в начало\n        std::string word;\n        int num; double d;\n        in >> word >> num >> d; // \"Привет,\" 42 3.14\n    }\n\n    // Бинарные файлы\n    {\n        std::vector<int> data = {1, 2, 3, 4, 5};\n        // Запись\n        std::ofstream bin_out(\"data.bin\", std::ios::binary);\n        bin_out.write(reinterpret_cast<const char*>(data.data()),\n                      data.size() * sizeof(int));\n\n        // Чтение\n        std::ifstream bin_in(\"data.bin\", std::ios::binary);\n        bin_in.seekg(0, std::ios::end);\n        size_t size = bin_in.tellg() / sizeof(int);\n        bin_in.seekg(0);\n        std::vector<int> read_data(size);\n        bin_in.read(reinterpret_cast<char*>(read_data.data()),\n                    size * sizeof(int));\n    }\n}"
+      "content": "#include <fstream>\n#include <iostream>\n#include <string>\n\nint main() {\n    // Запись в текстовый файл\n    {\n        std::ofstream out(\"data.txt\"); // RAII: файл закроется автоматически при выходе из блока\n        if (!out) {\n            std::cerr << \"Не удалось открыть файл для записи\\n\";\n            return 1;\n        }\n        out << \"Привет, мир!\\n\";\n        out << 42 << ' ' << 3.14 << '\\n';\n        // out.close() — не обязательно, деструктор вызовет fclose\n    }\n\n    // Чтение из текстового файла построчно\n    {\n        std::ifstream in(\"data.txt\");\n        if (!in) {\n            std::cerr << \"Файл не найден\\n\";\n            return 1;\n        }\n\n        std::string line;\n        while (std::getline(in, line)) { // читает строку до символа перевода строки\n            std::cout << \"Line: \" << line << '\\n';\n        }\n\n        // Чтение по токенам (разделённые пробелом или переводом строки)\n        in.clear();                          // сбросить флаги ошибок\n        in.seekg(0);                         // вернуть позицию чтения в начало файла\n        std::string word;\n        int num; double d;\n        in >> word >> num >> d; // считывает \"Привет,\" 42 3.14\n    }\n\n    // Бинарные файлы — запись и чтение «как есть», без преобразований\n    {\n        std::vector<int> data = {1, 2, 3, 4, 5};\n        // Запись в бинарный файл\n        std::ofstream bin_out(\"data.bin\", std::ios::binary);\n        bin_out.write(reinterpret_cast<const char*>(data.data()),\n                      data.size() * sizeof(int));\n\n        // Чтение из бинарного файла\n        std::ifstream bin_in(\"data.bin\", std::ios::binary);\n        bin_in.seekg(0, std::ios::end);       // перейти в конец файла\n        size_t size = bin_in.tellg() / sizeof(int); // узнать размер\n        bin_in.seekg(0);                       // вернуться в начало\n        std::vector<int> read_data(size);\n        bin_in.read(reinterpret_cast<char*>(read_data.data()),\n                    size * sizeof(int));\n    }\n}"
     },
     {
       "type": "heading",
@@ -59,12 +92,30 @@
     {
       "type": "code",
       "language": "cpp",
-      "content": "std::ofstream out(\"file.txt\", std::ios::app);      // append (дописывать в конец)\nstd::ofstream out(\"file.txt\", std::ios::trunc);    // очистить (по умолчанию)\nstd::fstream io(\"file.txt\", std::ios::in | std::ios::out | std::ios::binary);"
+      "content": "std::ofstream out(\"file.txt\", std::ios::app);      // append — дописывать в конец файла\nstd::ofstream out(\"file.txt\", std::ios::trunc);    // trunc — очистить файл при открытии (по умолчанию для ofstream)\nstd::fstream io(\"file.txt\", std::ios::in | std::ios::out | std::ios::binary); // чтение+запись, бинарный режим"
     },
     {
       "type": "heading",
       "level": 3,
-      "content": "stringstream — работа со строками как с потоками"
+      "content": "Частая ошибка: `while (!in.eof())`"
+    },
+    {
+      "type": "text",
+      "content": "Не используйте `while (!in.eof())` для чтения файла. Флаг `eof` устанавливается только после неудачной попытки чтения — то есть вы уже попытались прочитать за конец файла. Правильный паттерн: проверять результат самого чтения."
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ПЛОХО:\nwhile (!in.eof()) {\n    std::string line;\n    std::getline(in, line);\n    std::cout << line << '\\n'; // последняя строка выведется дважды!\n}\n\n// ХОРОШО:\nstd::string line;\nwhile (std::getline(in, line)) {\n    std::cout << line << '\\n';\n}"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. `stringstream` — строки как потоки"
+    },
+    {
+      "type": "text",
+      "content": "Иногда удобно обрабатывать строку так же, как файл — извлекать числа, слова, форматировать вывод. Для этого есть `std::istringstream` (чтение из строки) и `std::ostringstream` (запись в строку)."
     },
     {
       "type": "code",
@@ -83,48 +134,100 @@
     },
     {
       "type": "heading",
-      "level": 3,
-      "content": "Обработка ошибок: исключения (exceptions)"
+      "level": 2,
+      "content": "4. Обработка ошибок: исключения (exceptions)"
+    },
+    {
+      "type": "text",
+      "content": "Исключение — это способ сигнализировать об ошибке, прерывая нормальный поток выполнения и передавая управление ближайшему блоку `catch`, который умеет эту ошибку обработать. Это позволяет разделить обычную логику программы и код обработки ошибок."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "#include <stdexcept>\n#include <fstream>\n\nvoid read_config(const std::string& filename) {\n    std::ifstream f(filename);\n    if (!f) {\n        throw std::runtime_error(\"Cannot open \" + filename);\n    }\n    // ...\n}\n\nint main() {\n    try {\n        read_config(\"config.txt\");\n    } catch (const std::runtime_error& e) {\n        std::cerr << \"Runtime error: \" << e.what() << '\\n';\n    } catch (const std::exception& e) { // базовый класс всех стандартных исключений\n        std::cerr << \"Error: \" << e.what() << '\\n';\n    } catch (...) { // ловит всё остальное\n        std::cerr << \"Unknown error\\n\";\n    }\n}"
+      "content": "#include <stdexcept>\n#include <fstream>\n#include <iostream>\n\nvoid read_config(const std::string& filename) {\n    std::ifstream f(filename);\n    if (!f) {\n        throw std::runtime_error(\"Cannot open \" + filename);\n    }\n    // ... чтение конфига\n}\n\nint main() {\n    try {\n        read_config(\"config.txt\");\n    } catch (const std::runtime_error& e) {\n        std::cerr << \"Runtime error: \" << e.what() << '\\n';\n    } catch (const std::exception& e) { // базовый класс всех стандартных исключений\n        std::cerr << \"Error: \" << e.what() << '\\n';\n    } catch (...) { // ловит всё остальное, что не является std::exception\n        std::cerr << \"Unknown error\\n\";\n    }\n}"
     },
     {
       "type": "heading",
       "level": 3,
-      "content": "Стандартные исключения (из `<stdexcept>`)"
+      "content": "Стандартные исключения из `<stdexcept>`"
     },
     {
-      "type": "code",
-      "language": "text",
-      "content": "std::exception\n  ├── std::logic_error (ошибки программирования)\n  │    ├── std::invalid_argument\n  │    ├── std::domain_error\n  │    ├── std::length_error\n  │    └── std::out_of_range\n  └── std::runtime_error (ошибки времени выполнения)\n       ├── std::range_error\n       ├── std::overflow_error\n       └── std::underflow_error"
+      "type": "table",
+      "headers": [
+        "Класс",
+        "Когда использовать"
+      ],
+      "rows": [
+        [
+          "`std::logic_error`",
+          "Ошибка в логике программы (программист мог её предотвратить)"
+        ],
+        [
+          "`std::invalid_argument`",
+          "Неверный аргумент функции"
+        ],
+        [
+          "`std::domain_error`",
+          "Аргумент вне области определения функции"
+        ],
+        [
+          "`std::length_error`",
+          "Превышена допустимая длина объекта"
+        ],
+        [
+          "`std::out_of_range`",
+          "Индекс вне границ контейнера"
+        ],
+        [
+          "`std::runtime_error`",
+          "Ошибка во время выполнения (файл не найден, сеть недоступна)"
+        ],
+        [
+          "`std::range_error`",
+          "Результат вычисления вне диапазона"
+        ],
+        [
+          "`std::overflow_error` / `std::underflow_error`",
+          "Переполнение или недополнение арифметического типа"
+        ]
+      ]
     },
     {
       "type": "heading",
       "level": 3,
-      "content": "noexcept и спецификация исключений"
+      "content": "Спецификация `noexcept`"
+    },
+    {
+      "type": "text",
+      "content": "Ключевое слово `noexcept` даёт гарантию, что функция не выбросит исключение. Это позволяет компилятору оптимизировать код и даёт понять читающему, что функция безопасна с точки зрения исключений. Если внутри `noexcept` функции всё же выбросится исключение — вызовется `std::terminate()` и программа аварийно завершится."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "void never_throws() noexcept;           // гарантирует: не бросает\nvoid may_throw() noexcept(false);       // может бросать (по умолчанию)\n\nvoid func() noexcept {\n    // если внутри бросят — std::terminate!\n    std::vector<int> v;\n    v.push_back(1); // может бросить bad_alloc → terminate!\n}"
+      "content": "void never_throws() noexcept;           // гарантирует: не бросает исключения\nvoid may_throw() noexcept(false);       // может бросать (это поведение по умолчанию)\n\nvoid func() noexcept {\n    std::vector<int> v;\n    v.push_back(1); // может выбросить std::bad_alloc → вызовется std::terminate!\n}"
     },
     {
       "type": "heading",
-      "level": 3,
-      "content": "Коды ошибок (error codes) — альтернатива исключениям"
+      "level": 2,
+      "content": "5. Коды ошибок (`std::error_code`) — альтернатива исключениям"
+    },
+    {
+      "type": "text",
+      "content": "Исключения не всегда подходят — например, в высоконагруженных системах или встроенных устройствах, где производительность критична. Коды ошибок позволяют вернуть результат и информацию об ошибке без механизма unwinding стека."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "#include <system_error>\n\nstd::error_code ec;\nstd::filesystem::remove(\"file.txt\", ec); // не бросает, заполняет ec\nif (ec) {\n    std::cerr << \"Error: \" << ec.message() << \" (\" << ec.value() << \")\\n\";\n}\n\n// Свои коды ошибок (C++11)\nenum class MyErrc { Success = 0, NotFound, PermissionDenied };\n// специализация std::is_error_code_enum<MyErrc> = true;\n// make_error_code(MyErrc::NotFound) -> std::error_code"
+      "content": "#include <system_error>\n\nstd::error_code ec;\nstd::filesystem::remove(\"file.txt\", ec); // не бросает исключение, заполняет ec\nif (ec) {\n    std::cerr << \"Error: \" << ec.message() << \" (\" << ec.value() << \")\\n\";\n}\n\n// Свои коды ошибок (C++11)\nenum class MyErrc { Success = 0, NotFound, PermissionDenied };\n// Нужна специализация std::is_error_code_enum<MyErrc> = true;\n// Тогда make_error_code(MyErrc::NotFound) вернёт std::error_code"
     },
     {
       "type": "heading",
       "level": 3,
-      "content": "std::expected (C++23) — значение или ошибка"
+      "content": "`std::expected` (C++23) — значение или ошибка"
+    },
+    {
+      "type": "text",
+      "content": "`std::expected<T, E>` — это контейнер, который либо содержит значение типа `T` (успех), либо ошибку типа `E`. Это делает намерение кода явным: функция может вернуть значение или ошибку, и вызывающий код должен обработать оба случая. Это альтернатива исключениям, когда вы хотите явно показывать возможность неудачи в сигнатуре функции."
     },
     {
       "type": "code",
@@ -133,33 +236,45 @@
     },
     {
       "type": "heading",
-      "level": 3,
-      "content": "Множественные файлы проекта"
+      "level": 2,
+      "content": "6. Работа с несколькими исходными файлами"
+    },
+    {
+      "type": "text",
+      "content": "Большие программы разбивают на несколько файлов: заголовочные (`.h` или `.hpp`) содержат объявления, файлы реализации (`.cpp`) содержат определения. Это ускоряет компиляцию (перекомпилируется только изменённый файл) и позволяет повторно использовать код."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "// math.h — заголовочный файл (объявления)\n#pragma once // или include guards\n#ifndef MATH_H\n#define MATH_H\n\nint add(int a, int b);        // объявление\ndouble pi();                  // constexpr лучше в заголовочном\n\n#endif\n\n// math.cpp — реализация\n#include \"math.h\"\nint add(int a, int b) { return a + b; }\nconstexpr double pi() { return 3.1415926535; }\n\n// main.cpp — использование\n#include \"math.h\"\n#include <iostream>\nint main() { std::cout << add(2,3); }\n\n// Компиляция:\n// g++ -std=c++20 -c math.cpp -o math.o      // компиляция в объектный файл\n// g++ -std=c++20 -c main.cpp -o main.o\n// g++ math.o main.o -o app                   // линковка\n// Или одной командой:\n// g++ -std=c++20 math.cpp main.cpp -o app"
+      "content": "// math.h — заголовочный файл (объявления)\n#pragma once  // или include guards, чтобы файл не подключался дважды\n#ifndef MATH_H\n#define MATH_H\n\nint add(int a, int b);        // объявление — компилятор знает, что функция существует\ndouble pi();\n\n#endif\n\n// math.cpp — файл реализации\n#include \"math.h\"\nint add(int a, int b) { return a + b; }\nconstexpr double pi() { return 3.1415926535; }\n\n// main.cpp — точка входа, использует объявления из заголовочного\n#include \"math.h\"\n#include <iostream>\nint main() { std::cout << add(2, 3); }\n\n// Компиляция по шагам:\n// g++ -std=c++20 -c math.cpp -o math.o      // компиляция в объектный файл\n// g++ -std=c++20 -c main.cpp -o main.o\n// g++ math.o main.o -o app                   // линковка объектных файлов в программу\n// Или одной командой:\n// g++ -std=c++20 math.cpp main.cpp -o app"
     },
     {
       "type": "heading",
       "level": 3,
-      "content": "Заголовочные файлы — лучшие практики"
+      "content": "Лучшие практики заголовочных файлов"
+    },
+    {
+      "type": "text",
+      "content": "В заголовочных файлах должны быть только объявления, inline/constexpr функции, шаблоны и константы. Не определяйте здесь не-inline функции (приведёт к múltiльным определениям), не пишите `using namespace std` (загрязняет глобальное пространство имён во всех файлах, которые подключают этот заголовок) и не объявляйте глобальные переменные без `inline`."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "// Хорошо: только объявления, inline/constexpr функции, шаблоны\n#pragma once\n#include <string>\n\nnamespace utils {\n    constexpr int max_size = 100;\n    inline void log(const std::string& msg) { std::clog << msg << '\\n'; }\n    template<typename T> T square(T x) { return x * x; }\n}\n\n// Плохо: определения не-inline функций, using namespace std, определения переменных"
+      "content": "// Хорошо: только объявления, inline/constexpr функции, шаблоны\n#pragma once\n#include <string>\n\nnamespace utils {\n    constexpr int max_size = 100;\n    inline void log(const std::string& msg) { std::clog << msg << '\\n'; }\n    template<typename T> T square(T x) { return x * x; }\n}\n\n// Плохо: определения не-inline функций, using namespace std, глобальные переменные без inline"
     },
     {
       "type": "heading",
       "level": 3,
-      "content": "RAII для файлов и ресурсов"
+      "content": "RAII для файлов и других ресурсов"
+    },
+    {
+      "type": "text",
+      "content": "RAII — принцип, при котором ресурс привязан к времени жизни объекта. Конструктор захватывает ресурс (открывает файл, блокирует мьютекс), деструктор освобождает его (закрывает файл, разблокирует мьютекс). Даже если в коде вылетит исключение, деструктор гарантированно вызовется, и ресурс не протекёт."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "class ScopedFile {\n    FILE* f_;\npublic:\n    ScopedFile(const char* name, const char* mode) : f_(std::fopen(name, mode)) {\n        if (!f_) throw std::runtime_error(\"fopen failed\");\n    }\n    ~ScopedFile() { if (f_) std::fclose(f_); }\n    // Запрет копирования, разрешение move\n    ScopedFile(const ScopedFile&) = delete;\n    ScopedFile& operator=(const ScopedFile&) = delete;\n    ScopedFile(ScopedFile&& other) noexcept : f_(other.f_) { other.f_ = nullptr; }\n    FILE* get() const { return f_; }\n};\n\n// Использование:\nvoid process() {\n    ScopedFile f(\"data.txt\", \"r\");\n    // работа с f.get()\n    // гарантированно закроется даже при исключении\n}"
+      "content": "class ScopedFile {\n    FILE* f_;\npublic:\n    ScopedFile(const char* name, const char* mode) : f_(std::fopen(name, mode)) {\n        if (!f_) throw std::runtime_error(\"fopen failed\");\n    }\n    ~ScopedFile() { if (f_) std::fclose(f_); }\n    // Запрет копирования — только один владелец\n    ScopedFile(const ScopedFile&) = delete;\n    ScopedFile& operator=(const ScopedFile&) = delete;\n    // Move разрешён\n    ScopedFile(ScopedFile&& other) noexcept : f_(other.f_) { other.f_ = nullptr; }\n    FILE* get() const { return f_; }\n};\n\n// Использование:\nvoid process() {\n    ScopedFile f(\"data.txt\", \"r\");\n    // работа с f.get()\n    // файл гарантированно закроется даже при исключении\n}"
     },
     {
       "type": "heading",
@@ -167,146 +282,88 @@
       "content": "Практические задания"
     },
     {
-      "type": "heading",
-      "level": 3,
-      "content": "Задание 1: Конфигурационный файл"
-    },
-    {
-      "type": "text",
-      "content": "Напишите программу, читающую <code>config.ini</code> формата:"
-    },
-    {
-      "type": "code",
-      "language": "text",
-      "content": "[section]\nkey=value"
-    },
-    {
-      "type": "text",
-      "content": "Храните в <code>std::map<std::string, std::map<std::string, std::string>></code>."
-    },
-    {
-      "type": "heading",
-      "level": 3,
-      "content": "Задание 2: Бинарная сериализация"
-    },
-    {
-      "type": "text",
-      "content": "Создайте структуру <code>Student {int id; char name[32]; float gpa;}</code>. Запишите массив студентов в бинарный файл, прочитайте обратно. Проверьте корректность."
-    },
-    {
-      "type": "heading",
-      "level": 3,
-      "content": "Задание 3: Логирование с RAII"
-    },
-    {
-      "type": "text",
-      "content": "Сделайте класс <code>Logger</code>, открывающий файл в конструкторе, пишущий с таймстемпами, закрывающий в деструкторе. Используйте <code>std::chrono</code> для времени."
-    },
-    {
-      "type": "heading",
-      "level": 3,
-      "content": "Задание 4: Обработка ошибок без исключений"
-    },
-    {
-      "type": "text",
-      "content": "Перепишите чтение файла с использованием <code>std::expected<std::string, std::error_code></code> (или <code>std::pair<bool, string></code> если нет C++23). Верните ошибку вместо throw."
-    },
-    {
-      "type": "heading",
-      "level": 3,
-      "content": "Задание 5: Многофайловый проект"
-    },
-    {
-      "type": "text",
-      "content": "Создайте проект из 3 файлов: <code>geometry.h</code>, <code>geometry.cpp</code>, <code>main.cpp</code>. В geometry: классы <code>Point</code>, <code>Circle</code>, <code>Rectangle</code> с методами <code>area()</code>. В main: создайте фигуры, выведите площади."
-    },
-    {
-      "type": "heading",
-      "level": 3,
-      "content": "Задание 6: CSV парсер с ошибками"
-    },
-    {
-      "type": "text",
-      "content": "Напишите функцию <code>std::expected<std::vector<std::vector<std::string>>, Error> parse_csv(const std::string& filename)</code>. Обработайте: файл не найден, пустой файл, разное число колонок в строках."
+      "type": "list",
+      "items": [
+        "Напишите программу, которая читает конфигурационный файл `config.ini` формата `[section]\\nkey=value` и сохраняет в `std::map<std::string, std::map<std::string, std::string>>`",
+        "Создайте структуру `Student {int id; char name[32]; float gpa;}`. Запишите массив студентов в бинарный файл, прочитайте обратно и проверьте корректность",
+        "Сделайте класс `Logger`, открывающий файл в конструкторе, пишущий сообщения с таймстемпами, закрывающий файл в деструкторе. Используйте `std::chrono` для получения текущего времени",
+        "Перепишите чтение файла с использованием `std::expected<std::string, std::error_code>` (или `std::pair<bool, std::string>`, если нет C++23). Возвращайте ошибку вместо выброса исключения",
+        "Создайте многофайловый проект из 3 файлов: `geometry.h`, `geometry.cpp`, `main.cpp`. В geometry: классы `Point`, `Circle`, `Rectangle` с методами `area()`. В main: создайте фигуры, выведите площади",
+        "Напишите функцию `std::expected<std::vector<std::vector<std::string>>, Error> parse_csv(const std::string& filename)`. Обработайте ошибки: файл не найден, пустой файл, разное число колонок в строках"
+      ],
+      "ordered": true
     },
     {
       "type": "heading",
       "level": 2,
-      "content": "Типичные ошибки новичка"
+      "content": "Типичные ошибки новичков"
     },
     {
       "type": "table",
       "headers": [
         "Ошибка",
-        "Правильно"
+        "Что происходит",
+        "Как исправить"
       ],
       "rows": [
         [
           "`while (!in.eof())`",
-          "eof устанавливается ПОСЛЕ неудачного чтения"
+          "Флаг eof устанавливается только после неудачной попытки чтения — последняя строка обрабатывается дважды",
+          "Проверяйте результат чтения: `while (std::getline(in, line))`"
         ],
         [
           "Текстовый режим на Windows: `\\r\\n`",
-          "Читаются `\\r` в конце строк"
+          "В конце строк читаются символы `\\r`, что может ломать сравнение строк",
+          "Используйте бинарный режим `std::ios::binary` или обрабатывайте `\\r` вручную"
         ],
         [
-          "Исключение в деструкторе",
-          "`std::terminate`"
+          "Выброс исключения в деструкторе",
+          "Если во время обработки одного исключения деструктор выбросит другое — вызовется `std::terminate`",
+          "Деструкторы должны быть `noexcept` — не выбрасывайте исключения из них"
         ],
         [
-          "`using namespace std` в заголовочном",
-          "Загрязняет глобальное пространство во всех includers"
+          "`using namespace std` в заголовочном файле",
+          "Загрязняет глобальное пространство имён во всех файлах, которые подключают этот заголовок",
+          "Используйте `using namespace std` только в .cpp файлах, в заголовках — полные имена"
         ],
         [
-          "Циклические включения заголовков",
-          "Ошибки компиляции"
+          "Циклические включения заголовочных файлов",
+          "Ошибки компиляции, файл не видит определения",
+          "Используйте `#pragma once` или include guards, впередные объявления классов"
         ],
         [
-          "Бинарная запись non-POD типов (string, vector)",
-          "Запишутся указатели, не данные"
+          "Бинарная запись не-POD типов (`std::string`, `std::vector`)",
+          "Записываются указатели на данные, а не сами данные — при чтении получите мусор",
+          "Сериализуйте поля по отдельности, или используйте библиотеки сериализации"
         ]
       ]
-    },
-    {
-      "type": "heading",
-      "level": 2,
-      "content": "Ресурсы"
-    },
-    {
-      "type": "list",
-      "items": [
-        "cppreference: [I/O library](https://en.cppreference.com/w/cpp/io), [Exceptions](https://en.cppreference.com/w/cpp/error), [Filesystem (C++17)](https://en.cppreference.com/w/cpp/filesystem)",
-        "C++ Core Guidelines: [I/O](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#io-streams), [Error handling](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#e-error-handling)",
-        "[C++23 std::expected](https://en.cppreference.com/w/cpp/utility/expected)"
-      ],
-      "ordered": false
     }
   ],
   "practice_tasks": [],
   "common_errors": [
     {
       "mistake": "`while (!in.eof())`",
-      "correct": "eof устанавливается ПОСЛЕ неудачного чтения"
+      "correct": "eof устанавливается после неудачного чтения — используйте `while (std::getline(in, line))`"
     },
     {
       "mistake": "Текстовый режим на Windows: `\\r\\n`",
-      "correct": "Читаются `\\r` в конце строк"
+      "correct": "Читаются `\\r` в конце строк — используйте бинарный режим или обрабатывайте вручную"
     },
     {
       "mistake": "Исключение в деструкторе",
-      "correct": "`std::terminate`"
+      "correct": "`std::terminate` — деструкторы должны быть noexcept"
     },
     {
-      "mistake": "`using namespace std` в заголовочном",
-      "correct": "Загрязняет глобальное пространство во всех includers"
+      "mistake": "`using namespace std` в заголовочном файле",
+      "correct": "Загрязняет глобальное пространство имён — используйте только в .cpp"
     },
     {
-      "mistake": "Циклические включения заголовков",
-      "correct": "Ошибки компиляции"
+      "mistake": "Циклические включения заголовочных файлов",
+      "correct": "Используйте `#pragma once` или include guards"
     },
     {
       "mistake": "Бинарная запись non-POD типов (string, vector)",
-      "correct": "Запишутся указатели, не данные"
+      "correct": "Запишутся указатели, не данные — сериализуйте поля по отдельности"
     }
   ],
   "resources": [],

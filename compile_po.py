@@ -1,15 +1,10 @@
-#!/usr/bin/env python3
-"""Compile django.po to django.mo using pure Python (no msgfmt needed)."""
+"""Compile django.po to django.mo compatible with Python 3.11's gettext."""
 import struct
-from pathlib import Path
-
-LOCALE_DIR = Path("locale/ru/LC_MESSAGES")
-PO_FILE = LOCALE_DIR / "django.po"
-MO_FILE = LOCALE_DIR / "django.mo"
+import re
 
 
 def unescape_po_string(s):
-    """Convert .po escape sequences to actual characters (\\n, \\t, \\r, \\", \\\\)."""
+    """Unescape a PO file string value."""
     result = []
     i = 0
     while i < len(s):
@@ -26,7 +21,7 @@ def unescape_po_string(s):
             elif nxt == '\\':
                 result.append('\\')
             else:
-                result.append(s[i])
+                result.append(nxt)
             i += 2
         else:
             result.append(s[i])
@@ -34,89 +29,124 @@ def unescape_po_string(s):
     return ''.join(result)
 
 
-def compile_mo(po_path, mo_path):
-    messages = []
-    with open(po_path, 'r', encoding='utf-8') as f:
-        content = f.read()
+def parse_po(filepath):
+    """Parse a .po file and return list of (msgid, msgstr) tuples."""
+    entries = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
 
-    current_msgid = None
-    current_msgstr = None
-    collecting_msgid = False
-    collecting_msgstr = False
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip('\n')
+        if line.startswith('msgid '):
+            msgid_parts = []
+            m = re.match(r'msgid "(.*)"$', line)
+            if m:
+                msgid_parts.append(m.group(1))
+            i += 1
+            while i < len(lines):
+                cont_line = lines[i].rstrip('\n')
+                if cont_line.startswith('"') and cont_line.endswith('"'):
+                    msgid_parts.append(cont_line[1:-1])
+                    i += 1
+                else:
+                    break
+            msgid = unescape_po_string(''.join(msgid_parts))
 
-    for line in content.split('\n'):
-        stripped = line.rstrip('\r\n')
-        if stripped.startswith('msgid '):
-            if current_msgid is not None:
-                messages.append((current_msgid, current_msgstr or ""))
-            val = stripped[6:]
-            if val.startswith('"') and val.endswith('"'):
-                current_msgid = unescape_po_string(val[1:-1])
-            else:
-                current_msgid = unescape_po_string(val)
-            collecting_msgid = True
-            collecting_msgstr = False
-        elif stripped.startswith('msgstr '):
-            val = stripped[7:]
-            if val.startswith('"') and val.endswith('"'):
-                current_msgstr = unescape_po_string(val[1:-1])
-            else:
-                current_msgstr = unescape_po_string(val)
-            collecting_msgstr = True
-            collecting_msgid = False
-        elif stripped.startswith('"') and collecting_msgid:
-            val = stripped[1:-1] if stripped.endswith('"') else stripped[1:]
-            current_msgid += unescape_po_string(val)
-        elif stripped.startswith('"') and collecting_msgstr:
-            val = stripped[1:-1] if stripped.endswith('"') else stripped[1:]
-            current_msgstr += unescape_po_string(val)
+            msgstr_parts = []
+            if i < len(lines) and lines[i].rstrip('\n').startswith('msgstr '):
+                m = re.match(r'msgstr "(.*)"$', lines[i].rstrip('\n'))
+                if m:
+                    msgstr_parts.append(m.group(1))
+                i += 1
+                while i < len(lines):
+                    cont_line = lines[i].rstrip('\n')
+                    if cont_line.startswith('"') and cont_line.endswith('"'):
+                        msgstr_parts.append(cont_line[1:-1])
+                        i += 1
+                    else:
+                        break
+            msgstr = unescape_po_string(''.join(msgstr_parts))
 
-    if current_msgid is not None:
-        messages.append((current_msgid, current_msgstr or ""))
+            entries.append((msgid, msgstr))
+        else:
+            i += 1
 
-    messages = [(m, s) for m, s in messages if m is not None]
-    messages.sort(key=lambda x: (x[0] != "", x[0]))  # header (empty msgid) first
-
-    mo_data = bytearray()
-    mo_data.extend(struct.pack('<I', 0x950412de))  # magic (little endian)
-    mo_data.extend(struct.pack('<I', 0))  # version
-    mo_data.extend(struct.pack('<I', len(messages)))  # num messages
-
-    msgid_table_offset = 28
-    msgstr_table_offset = msgid_table_offset + len(messages) * 8
-
-    mo_data.extend(struct.pack('<I', msgid_table_offset))
-    mo_data.extend(struct.pack('<I', msgstr_table_offset))
-    mo_data.extend(struct.pack('<I', 0))  # hash table size
-    mo_data.extend(struct.pack('<I', 0))  # hash table offset
-
-    current_str_offset = msgstr_table_offset + len(messages) * 8
-
-    msgid_table = bytearray()
-    msgstr_table = bytearray()
-    strings_data = bytearray()
-
-    for msgid, msgstr in messages:
-        msgid_bytes = msgid.encode('utf-8')
-        msgstr_bytes = msgstr.encode('utf-8')
-
-        msgid_table.extend(struct.pack('<I', len(msgid_bytes)))
-        msgid_table.extend(struct.pack('<I', current_str_offset))
-        strings_data.extend(msgid_bytes)
-        current_str_offset += len(msgid_bytes)
-
-        msgstr_table.extend(struct.pack('<I', len(msgstr_bytes)))
-        msgstr_table.extend(struct.pack('<I', current_str_offset))
-        strings_data.extend(msgstr_bytes)
-        current_str_offset += len(msgstr_bytes)
-
-    mo_data.extend(msgid_table)
-    mo_data.extend(msgstr_table)
-    mo_data.extend(strings_data)
-    mo_data.extend(b'\x00')  # trailing byte: Python gettext requires tend < buflen
-
-    mo_path.write_bytes(mo_data)
-    print(f"Written {mo_path} with {len(messages)} messages")
+    return entries
 
 
-compile_mo(PO_FILE, MO_FILE)
+def write_mo(filepath, entries):
+    """Write entries to a GNU gettext .mo file (Python 3.11 compatible)."""
+    # Include ALL entries including empty msgid (header with charset metadata)
+    # Python's gettext reads charset from the header entry
+
+    num_strings = len(entries)
+
+    # Build string data.
+    # Length (mlen/tlen) counts only the encoded content, NOT the null terminator.
+    # Python's gettext detects the header entry by mlen == 0 (empty msgid).
+    # The null terminator is still written as part of the data bytes.
+    orig_encoded = []
+    trans_encoded = []
+    orig_lengths = []
+    trans_lengths = []
+    for msgid, msgstr in entries:
+        oe = msgid.encode('utf-8')
+        te = msgstr.encode('utf-8')
+        orig_encoded.append(oe)
+        trans_encoded.append(te)
+        orig_lengths.append(len(oe))
+        trans_lengths.append(len(te))
+
+    # String data section starts after header + both index tables
+    string_data_start = 20 + num_strings * 8 + num_strings * 8
+
+    # Offsets are absolute file positions pointing into the string data area.
+    # Each string's data includes its null terminator.
+    orig_offsets = []
+    trans_offsets = []
+    pos = string_data_start
+    for oe in orig_encoded:
+        orig_offsets.append(pos)
+        pos += len(oe) + 1  # +1 for null terminator
+    trans_data_start = pos
+    for te in trans_encoded:
+        trans_offsets.append(pos)
+        pos += len(te) + 1  # +1 for null terminator
+
+    orig_index_data = b''
+    for i in range(num_strings):
+        orig_index_data += struct.pack('<II', orig_lengths[i], orig_offsets[i])
+
+    trans_index_data = b''
+    for i in range(num_strings):
+        trans_index_data += struct.pack('<II', trans_lengths[i], trans_offsets[i])
+
+    # Header: 5 integers (Python 3.11 gettext reads 5, not 7)
+    # Magic: 0x950412de for Python 3.11 LE_MAGIC
+    header = struct.pack('<IIIII',
+        0x950412de,  # magic (Python 3.11 LE_MAGIC)
+        0,            # version
+        num_strings,
+        20,           # offset to original index table (right after 5-int header)
+        20 + num_strings * 8,  # offset to translated index table
+    )
+
+    with open(filepath, 'wb') as f:
+        f.write(header)
+        f.write(orig_index_data)
+        f.write(trans_index_data)
+        for oe in orig_encoded:
+            f.write(oe + b'\x00')
+        for te in trans_encoded:
+            f.write(te + b'\x00')
+
+
+if __name__ == '__main__':
+    po_path = 'locale/ru/LC_MESSAGES/django.po'
+    mo_path = 'locale/ru/LC_MESSAGES/django.mo'
+
+    entries = parse_po(po_path)
+    print(f"Parsed {len(entries)} entries from {po_path}")
+    write_mo(mo_path, entries)
+    print(f"Written {mo_path}")

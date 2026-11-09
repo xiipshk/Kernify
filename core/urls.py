@@ -28,9 +28,6 @@ urlpatterns = [
     # Topic detail
     path('topics/<slug:slug>/', views.TopicDetailView.as_view(), name='topic_detail'),
 
-    # Subtopic detail
-    path('subtopics/<slug:slug>/', views.SubTopicDetailView.as_view(), name='subtopic_detail'),
-
     # Lesson detail
     path('lessons/<slug:slug>/', views.LessonDetailView.as_view(), name='lesson_detail'),
 ]

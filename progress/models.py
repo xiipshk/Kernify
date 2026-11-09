@@ -7,7 +7,7 @@ from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 
 from core.models import TimeStampedModel, PublishedModel, PublishedManager, ActiveManager
-from learning.models import ProgrammingLanguage, CourseProgram, Topic, SubTopic, Lesson
+from learning.models import ProgrammingLanguage, CourseProgram, Topic, Lesson
 
 
 class UserProgress(TimeStampedModel):
@@ -39,7 +39,7 @@ class UserProgress(TimeStampedModel):
         verbose_name=_('current program'),
     )
 
-    # Current topic/subtopic/lesson
+    # Current topic/lesson
     current_topic = models.ForeignKey(
         Topic,
         on_delete=models.SET_NULL,
@@ -47,14 +47,6 @@ class UserProgress(TimeStampedModel):
         blank=True,
         related_name='current_users',
         verbose_name=_('current topic'),
-    )
-    current_subtopic = models.ForeignKey(
-        SubTopic,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='current_users',
-        verbose_name=_('current subtopic'),
     )
     current_lesson = models.ForeignKey(
         Lesson,

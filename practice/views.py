@@ -63,25 +63,34 @@ class TaskListView(LoginRequiredMixin, ListView):
 
     def get_queryset(self):
         queryset = PracticeTask.objects.filter(status='published').select_related('topic__program__language')
-        topic = self.request.GET.get('topic')
+        topics = self.request.GET.getlist('topic')
         task_type = self.request.GET.get('type')
         difficulty = self.request.GET.get('difficulty')
+        language = self.request.GET.get('language')
 
-        if topic:
-            queryset = queryset.filter(topic__slug=topic)
+        if topics:
+            queryset = queryset.filter(topic__slug__in=topics)
         if task_type:
             queryset = queryset.filter(task_type=task_type)
         if difficulty:
             queryset = queryset.filter(difficulty=difficulty)
+        if language:
+            queryset = queryset.filter(topic__program__language__slug=language)
 
         return queryset.order_by('topic', 'order')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        from learning.models import Topic
+        from learning.models import Topic, ProgrammingLanguage
         context['topics'] = Topic.objects.filter(status='published').select_related('program__language')
+        context['languages'] = ProgrammingLanguage.objects.filter(status='published')
         context['task_types'] = PracticeTask.TaskType.choices
         context['difficulties'] = [(str(d), str(d)) for d in range(1, 6)]
+        # Preserve selected filters for the template
+        context['selected_topics'] = self.request.GET.getlist('topic')
+        context['selected_type'] = self.request.GET.get('type', '')
+        context['selected_difficulty'] = self.request.GET.get('difficulty', '')
+        context['selected_language'] = self.request.GET.get('language', '')
         return context
 
 

@@ -40,7 +40,7 @@ TRANSLATIONS = {
     "course": "курса",
     "No languages available yet": "Языки пока недоступны",
     "Check back soon for new programming languages!": "Загляните позже за новыми языками программирования!",
-    "Why Choose RTK?": "Почему выбирают RTK?",
+    "Why Choose kernify?": "Почему выбирают kernify?",
     "Structured Curriculum": "Структурированная программа",
     "From basics to advanced topics — each language has a carefully designed learning path with prerequisites and clear progression.": "От основ до продвинутых тем — у каждого языка тщательно продуманный путь обучения с предварительными условиями и четкой прогрессией.",
     "Hands-on Practice": "Практика кодирования",
@@ -58,7 +58,7 @@ TRANSLATIONS = {
     "Interactive Lessons": "Интерактивных урока",
     "Practice Exercises": "Упражнения для практики",
     "Ready to Start Coding?": "Готовы начать кодить?",
-    "Join thousands of learners mastering programming languages with RTK. Free forever, no credit card required.": "Присоединяйтесь к тысячам учащихся, осваивающих языки программирования с RTK. Бесплатно навсегда, кредитная карта не требуется.",
+    "Join thousands of learners mastering programming languages with kernify. Free forever.": "Присоединяйтесь к тысячам учащихся, осваивающих языки программирования с kernify. Бесплатно навсегда.",
     "Continue Learning": "Продолжить обучение",
     "Create Free Account": "Создать бесплатный аккаунт",
     "Explore Languages": "Изучить языки",
@@ -74,7 +74,7 @@ TRANSLATIONS = {
 
     # Register
     "Create Account": "Создать аккаунт",
-    "Join RTK and start learning 6 programming languages": "Присоединяйтесь к RTK и начните изучение 6 языков программирования",
+    "Join kernify and start learning 6 programming languages": "Присоединяйтесь к kernify и начните изучение 6 языков программирования",
     "Email": "Электронная почта",
     "Username": "Имя пользователя",
     "150 chars max. Letters, digits and @/./+/-/_ only.": "Максимум 150 символов. Только буквы, цифры и @/./+/-/_.",
@@ -208,10 +208,10 @@ TRANSLATIONS = {
     "students": "студентов",
 
     # About
-    "About RTK": "О RTK",
-    "Rust Token Killer - Learn 6 Programming Languages in One Platform": "RTK - Изучение 6 языков программирования на одной платформе",
+    "About kernify": "О kernify",
+    "Rust Token Killer - Learn 6 Programming Languages in One Platform": "kernify - Изучение 6 языков программирования на одной платформе",
     "Our Mission": "Наша миссия",
-    "RTK was created to make learning programming languages accessible, engaging, and effective. We believe that anyone can learn to code with the right guidance, practice, and tools.": "RTK был создан, чтобы сделать изучение языков программирования доступным, увлекательным и эффективным. Мы верим, что каждый может научиться кодировать с правильным руководством, практикой и инструментами.",
+    "kernify was created to make learning programming languages accessible, engaging, and effective. We believe that anyone can learn to code with the right guidance, practice, and tools.": "kernify был создан, чтобы сделать изучение языков программирования доступным, увлекательным и эффективным. Мы верим, что каждый может научиться кодировать с правильным руководством, практикой и инструментами.",
     "Key Features": "Ключевые возможности",
     "6 languages, 12+ courses, 150+ lessons with clear prerequisites and progression paths.": "6 языков, 12+ курсов, 150+ уроков с четкими предварительными требованиями и путями прогрессии.",
     "Interactive Practice": "Интерактивная практика",
@@ -247,14 +247,14 @@ TRANSLATIONS = {
     "GitHub": "GitHub",
     "Discord": "Discord",
     "Frequently Asked Questions": "Часто задаваемые вопросы",
-    "Is RTK really free?": "RTK действительно бесплатен?",
-    "Yes! RTK is completely free to use. No credit card required, no hidden fees. We may offer optional premium features in the future, but the core learning experience will always be free.": "Да! RTK полностью бесплатен. Кредитная карта не требуется, нет скрытых комиссий. В будущем могут появиться дополнительные премиум-функции, но базовый опыт обучения всегда останется бесплатным.",
+    "Is kernify really free?": "kernify действительно бесплатен?",
+    "Yes! kernify is completely free to use. No credit card required, no hidden fees. We may offer optional premium features in the future, but the core learning experience will always be free.": "Да! kernify полностью бесплатен. Кредитная карта не требуется, нет скрытых комиссий. В будущем могут появиться дополнительные премиум-функции, но базовый опыт обучения всегда останется бесплатным.",
     "Which languages are supported?": "Какие языки поддерживаются?",
     "Currently: Python, JavaScript, Java, C++, Go, and Rust. More languages are planned for future releases.": "В настоящее время: Python, JavaScript, Java, C++, Go и Rust. Больше языков запланировано к будущим релизам.",
     "Do I need to install anything?": "Нужно ли что-то устанавливать?",
     "No! Everything runs in your browser. Our code editor uses Monaco (VS Code's editor) and code execution happens on our servers via Piston API.": "Нет! Все работает в вашем браузере. Редактор кода использует Monaco (редактор VS Code), выполнение кода — на наших серверах через Piston API.",
     "How does the AI assistant work?": "Как работает AI-помощник?",
-    "RTK integrates with multiple AI providers (OpenAI, Anthropic). You can use it for code explanations, debugging help, hints, and learning guidance. API keys can be configured in settings.": "RTK интегрируется с несколькими провайдерами ИИ (OpenAI, Anthropic). Используйте его для объяснений кода, помощи с отладкой, подсказок и руководства по обучению. Ключи API настраиваются в настройках.",
+    "kernify integrates with multiple AI providers (OpenAI, Anthropic). You can use it for code explanations, debugging help, hints, and learning guidance. API keys can be configured in settings.": "kernify интегрируется с несколькими провайдерами ИИ (OpenAI, Anthropic). Используйте его для объяснений кода, помощи с отладкой, подсказок и руководства по обучению. Ключи API настраиваются в настройках.",
     "Can I export my data?": "Могу ли я экспортировать мои данные?",
     "Yes! You can export your progress, settings, and learning data anytime from the Progress section. We believe your data belongs to you.": "Да! Экспортируйте прогресс, настройки и данные об обучении в любое время из раздела Прогресс. Мы считаем, что ваши данные принадлежат вам.",
 
@@ -455,7 +455,7 @@ TRANSLATIONS = {
 
     # Form labels and validation
     "A user with that email already exists.": "Пользователь с таким email уже существует.",
-    "Account created successfully! Welcome to RTK!": "Аккаунт успешно создан! Добро пожаловать в RTK!",
+    "Account created successfully! Welcome to kernify!": "Аккаунт успешно создан! Добро пожаловать в kernify!",
     "150 chars max. Letters, digits and @/./+/-/_ only.": "Максимум 150 символов. Только буквы, цифры и @/./+/-/_.",
     "At least 8 characters.": "Не менее 8 символов.",
 
@@ -463,13 +463,188 @@ TRANSLATIONS = {
     "About": "Обо мне",
     "Links": "Ссылки",
     "Website": "Веб-сайт",
+
+    # base.html
+    "Toggle navigation": "Переключить навигацию",
+
+    # accounts/profile.html
+    "XP": "XP",
+    "Streak": "Серия",
+
+    # accounts/profile_edit.html
+    "Max 5MB. JPG, PNG, WebP.": "Макс. 5 МБ. JPG, PNG, WebP.",
+    "Save Changes": "Сохранить изменения",
+
+    # accounts/settings.html
+    "Code Editor": "Редактор кода",
+
+    # accounts/password_change.html
+    "Your password must contain at least 8 characters.": "Ваш пароль должен содержать не менее 8 символов.",
+
+    # accounts/password_change_done.html
+    "Password Changed": "Пароль изменён",
+    "Password Changed Successfully": "Пароль успешно изменён",
+    "Your password has been updated. You can now log in with your new password.": "Ваш пароль обновлён. Теперь вы можете войти с новым паролем.",
+    "Go to Dashboard": "Перейти на панель управления",
+
+    # accounts/email_resend.html
+    "Resend Verification": "Повторная проверка",
+    "Resend Verification Email": "Отправить письмо подтверждения повторно",
+    "Enter your email address and we'll send you a new verification link.": "Введите адрес электронной почты, и мы вышлем вам новую ссылку для подтверждения.",
+    "Email Address": "Адрес электронной почты",
+    "Enter your email": "Введите ваш email",
+    "Send Verification Email": "Отправить письмо подтверждения",
+
+    # accounts/email_verify.html
+    "Verify Your Email": "Подтвердите ваш email",
+    "We've sent a verification link to your email address. Please check your inbox and click the link to verify your account.": "Мы отправили ссылку подтверждения на ваш адрес электронной почты. Пожалуйста, проверьте свою почту и нажмите на ссылку, чтобы подтвердить аккаунт.",
+    "Didn't receive the email? Check your spam folder or": "Не получили письмо? Проверьте папку спама или",
+    "request a new one": "запросить новое",
+    "Back to Dashboard": "Вернуться на панель управления",
+
+    # accounts/email_verify_confirm.html
+    "Confirm Email": "Подтверждение email",
+    "Email Verified!": "Email подтверждён!",
+    "Your email has been successfully verified. You now have full access to all features.": "Ваш email успешно подтверждён. Теперь у вас полный доступ ко всем функциям.",
+    "Invalid or Expired Link": "Недействительная или истёкшая ссылка",
+    "This verification link is invalid or has expired. Please request a new verification email.": "Эта ссылка подтверждения недействительна или истекла. Пожалуйста, запросите новое письмо подтверждения.",
+    "Request New Link": "Запросить новую ссылку",
+
+    # ai/assistant.html
+    "Get help with code, explanations, debugging, and learning guidance.": "Получите помощь с кодом, объяснениями, отладкой и руководством по обучению.",
+    "Your Question": "Ваш вопрос",
+    "How do I...? Explain this code... Debug this error...": "Как сделать...? Объясните этот код... Отладьте эту ошибку...",
+    "Context Code (optional)": "Контекстный код (опционально)",
+    "Paste relevant code here for context...": "Вставьте соответствующий код здесь для контекста...",
+    "Provider": "Провайдер",
+    "Answer": "Ответ",
+    "Quick Actions": "Быстрые действия",
+    "Explain Code": "Объяснить код",
+    "Full Chat": "Полный чат",
+    "Thinking...": "Думаю...",
+    "Error: ": "Ошибка: ",
+
+    # ai/chat.html
+    "New": "Новый",
+    "No chats yet": "Чатов пока нет",
+    "Start Chat": "Начать чат",
+    "Select a chat from the sidebar or start a new one.": "Выберите чат из боковой панели или начните новый.",
+    "New Chat": "Новый чат",
+
+    # ai/code_review.html
+    "Get AI-powered code review with suggestions for improvements, bugs, and best practices.": "Получите ИИ-ревью кода с предложениями по улучшению, ошибкам и лучшим практикам.",
+    "Code to Review": "Код для ревью",
+    "Paste your code here...": "Вставьте ваш код здесь...",
+    "Focus Area": "Область фокуса",
+    "General Review": "Общий обзор",
+    "Performance": "Производительность",
+    "Security": "Безопасность",
+    "Code Style": "Стиль кода",
+    "Bug Detection": "Обнаружение ошибок",
+    "Get Review": "Получить ревью",
+    "Review Results": "Результаты ревью",
+    "Reviewing...": "Проверка...",
+
+    # ai/explain.html
+    "Get detailed explanations of code snippets, algorithms, and concepts.": "Получите подробные объяснения фрагментов кода, алгоритмов и концепций.",
+    "Code to Explain": "Код для объяснения",
+    "Paste code to get explanation...": "Вставьте код для получения объяснения...",
+    "Detail Level": "Уровень детализации",
+    "Beginner Friendly": "Для начинающих",
+    "Advanced/Technical": "Продвинутый/Технический",
+    "Explanation": "Объяснение",
+    "Explaining...": "Объясняю...",
+    "Explanation feature coming soon. This would integrate with AI providers to provide detailed code explanations.": "Функция объяснения скоро будет доступна. Это позволит интегрироваться с провайдерами ИИ для подробных объяснений кода.",
+
+    # ai/generate_exercise.html
+    "Create custom practice exercises with AI.": "Создавайте пользовательские упражнения для практики с помощью ИИ.",
+    "Topic / Concept": "Тема / Концепция",
+    "e.g., recursion, loops, classes, async/await": "напр., рекурсия, циклы, классы, async/await",
+    "Difficulty": "Сложность",
+    "Exercise Type": "Тип упражнения",
+    "Coding Task": "Задача по кодированию",
+    "Quiz Question": "Вопрос викторины",
+    "Debugging": "Отладка",
+    "Code Completion": "Автодополнение кода",
+    "Generated Exercise": "Сгенерированное упражнение",
+    "Generating...": "Генерация...",
+    "Exercise generation coming soon. This would create practice tasks with test cases and hints.": "Генерация упражнений скоро будет доступна. Это создаст задачи практики с тестовыми случаями и подсказками.",
+
+    # ai/usage.html
+    "Total Requests": "Всего запросов",
+    "Total Tokens": "Всего токенов",
+    "Estimated Cost": "Примерная стоимость",
+    "Errors": "Ошибки",
+    "Usage by Provider": "Использование по провайдерам",
+    "Usage Over Time": "Использование во времени",
+    "Detailed Stats": "Подробная статистика",
+    "Date": "Дата",
+    "Requests": "Запросы",
+    "Tokens": "Токены",
+    "Cost": "Стоимость",
+    "No usage data yet": "Данных об использовании пока нет",
+
+    # learning/index.html
+    "My Learning": "Моё обучение",
+    "Your Courses": "Ваши курсы",
+    "All Courses": "Все курсы",
+    "Courses will be available soon!": "Курсы скоро будут доступны!",
+
+    # learning/my_courses.html
+    "No enrolled courses yet": "Записей на курсы пока нет",
+    "Start learning by enrolling in a course from the catalog.": "Начните обучение, записавшись на курс из каталога.",
+    "lessons done": "уроков завершено",
+
+    # learning/user_notes.html
+    "No notes yet": "Заметок пока нет",
+    "Start taking notes while learning lessons. They'll appear here.": "Начинайте делать заметки во время изучения уроков. Они появятся здесь.",
+    "Start Learning": "Начать обучение",
+    "View / Edit": "Посмотреть / Редактировать",
+
+    # practice/index.html
+    "History": "История",
+    "Code Practice": "Практика кодирования",
+    "Recommended for You": "Рекомендуемое для вас",
+    "Recent Sessions": "Недавние сессии",
+    "Available": "Доступно",
+    "Keep coding daily": "Пишите код ежедневно",
+
+    # practice/daily.html
+    "Today": "Сегодня",
+    "Start Challenge": "Начать вызов",
+    "No daily challenge available": "Ежедневный вызов пока недоступен",
+    "There are no published practice tasks yet.": "Опубликованных задач практики пока нет.",
+    "View All Tasks": "Посмотреть все задачи",
+
+    # practice/history.html
+    "Practice History": "История практики",
+    "Task": "Задача",
+    "Status": "Статус",
+    "Score": "Очки",
+    "Attempts": "Попытки",
+    "Details": "Подробности",
+    "Previous": "Назад",
+    "Next": "Вперёд",
+    "No practice sessions yet": "Сессий практики пока нет",
+    "Start solving tasks to see your history here.": "Начните решать задачи, чтобы увидеть здесь свою историю.",
+    "Browse Tasks": "Посмотреть задачи",
+
+    # progress/dashboard.html
+    "Progress Dashboard": "Панель прогресса",
+    "Error Review": "Обзор ошибок",
+    "Heatmap": "Тепловая карта",
+    "Export": "Экспорт",
+    "Recent Activity": "Недавняя активность",
+    "All": "Все",
+    "No recent activity": "Недавней активности нет",
+    "Errors to Review": "Ошибки для обзора",
 }
 
 # .po file header
-PO_HEADER = '''# Russian translations for RTK project
+PO_HEADER = '''# Russian translations for kernify project
 msgid ""
 msgstr ""
-"Project-Id-Version: RTK 1.0\\n"
+"Project-Id-Version: kernify 1.0\\n"
 "Report-Msgid-Bugs-To: \\n"
 "POT-Creation-Date: \\n"
 "PO-Revision-Date: \\n"

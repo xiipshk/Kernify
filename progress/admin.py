@@ -24,7 +24,7 @@ class UserProgressAdmin(admin.ModelAdmin):
     search_fields = ('user__email', 'language__name', 'current_program__name')
     raw_id_fields = (
         'user', 'language', 'current_program', 'current_topic',
-        'current_subtopic', 'current_lesson',
+        'current_lesson',
     )
     ordering = ('-last_activity_at',)
     readonly_fields = ('created_at', 'updated_at', 'last_activity_at')
@@ -32,7 +32,7 @@ class UserProgressAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {'fields': ('user', 'language')}),
         (_('Current progress'), {
-            'fields': ('current_program', 'current_topic', 'current_subtopic', 'current_lesson'),
+            'fields': ('current_program', 'current_topic', 'current_lesson'),
         }),
         (_('Statistics'), {
             'fields': ('topics_completed', 'lessons_completed', 'practice_solved', 'total_xp'),

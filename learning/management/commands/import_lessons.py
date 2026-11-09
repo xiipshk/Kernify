@@ -22,7 +22,6 @@ from learning.models import (
     ProgrammingLanguage,
     CourseProgram,
     Topic,
-    SubTopic,
     Lesson,
 )
 
@@ -53,7 +52,7 @@ LANGUAGE_META = {
 
 
 class Command(BaseCommand):
-    help = 'Import courses, topics, subtopics and lessons from parsed JSON fixtures.'
+    help = 'Import courses, topics and lessons from parsed JSON fixtures.'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -90,7 +89,7 @@ class Command(BaseCommand):
 
         if clear and not dry_run:
             self.stdout.write('Clearing existing learning data...')
-            ProgrammingLanguage.objects.all().delete()  # cascades to programs/topics/subtopics/lessons
+            ProgrammingLanguage.objects.all().delete()  # cascades to programs/topics/lessons
 
         if not fixtures_dir.exists():
             self.stderr.write(self.style.ERROR(f'Fixtures directory not found: {fixtures_dir}'))
@@ -224,18 +223,6 @@ class Command(BaseCommand):
             },
         )
 
-        # Get or create subtopic (one subtopic per topic)
-        subtopic, _ = SubTopic.all_objects.update_or_create(
-            topic=topic,
-            order=1,
-            defaults={
-                'name': 'Основной материал',
-                'slug': f'subtopic-{topic_order}',
-                'description': '',
-                'status': SubTopic.PublishStatus.PUBLISHED,
-            },
-        )
-
         # Create lesson
         content_blocks = data.get('content_blocks', [])
         estimated = data.get('estimated_minutes', 15)
@@ -248,8 +235,8 @@ class Command(BaseCommand):
             change_log_parts.append(f'{len(data["practice_tasks"])} practice tasks')
 
         lesson, _ = Lesson.all_objects.update_or_create(
-            subtopic=subtopic,
-            order=lesson_order,
+            topic=topic,
+            order=topic_order,
             defaults={
                 'name': data.get('title', 'Untitled'),
                 'slug': lesson_slug,

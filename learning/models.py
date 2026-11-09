@@ -56,7 +56,7 @@ class ProgrammingLanguage(TimeStampedModel, OrderedModel, PublishedModel):
         """Update cached counts."""
         self.programs_count = self.programs.filter(status=self.PublishStatus.PUBLISHED).count()
         self.topics_count = Topic.objects.filter(program__language=self, status=Topic.PublishStatus.PUBLISHED).count()
-        self.lessons_count = Lesson.objects.filter(subtopic__topic__program__language=self, status=Lesson.PublishStatus.PUBLISHED).count()
+        self.lessons_count = Lesson.objects.filter(topic__program__language=self, status=Lesson.PublishStatus.PUBLISHED).count()
         self.save(update_fields=['programs_count', 'topics_count', 'lessons_count', 'updated_at'])
 
 
@@ -124,7 +124,7 @@ class CourseProgram(TimeStampedModel, OrderedModel, PublishedModel):
     def update_counts(self):
         """Update cached counts."""
         self.topics_count = self.topics.filter(status=self.PublishStatus.PUBLISHED).count()
-        self.lessons_count = Lesson.objects.filter(subtopic__topic__program=self, status=Lesson.PublishStatus.PUBLISHED).count()
+        self.lessons_count = Lesson.objects.filter(topic__program=self, status=Lesson.PublishStatus.PUBLISHED).count()
         self.save(update_fields=['topics_count', 'lessons_count', 'updated_at'])
 
 
@@ -181,7 +181,6 @@ class Topic(TimeStampedModel, OrderedModel, PublishedModel):
     is_base_topic = models.BooleanField(_('base topic'), default=False)
 
     # Statistics (cached)
-    subtopics_count = models.PositiveIntegerField(_('subtopics count'), default=0)
     lessons_count = models.PositiveIntegerField(_('lessons count'), default=0)
 
     objects = PublishedManager()
@@ -201,49 +200,7 @@ class Topic(TimeStampedModel, OrderedModel, PublishedModel):
 
     def update_counts(self):
         """Update cached counts."""
-        self.subtopics_count = self.subtopics.filter(status=self.PublishStatus.PUBLISHED).count()
-        self.lessons_count = Lesson.objects.filter(subtopic__topic=self, status=Lesson.PublishStatus.PUBLISHED).count()
-        self.save(update_fields=['subtopics_count', 'lessons_count', 'updated_at'])
-
-
-class SubTopic(TimeStampedModel, OrderedModel, PublishedModel):
-    """
-    Sub-topics within a topic.
-    More granular breakdown of content.
-    """
-
-    topic = models.ForeignKey(
-        Topic,
-        on_delete=models.CASCADE,
-        related_name='subtopics',
-        verbose_name=_('topic'),
-    )
-
-    name = models.CharField(_('name'), max_length=200)
-    slug = models.SlugField(_('slug'), max_length=200)
-    description = models.TextField(_('description'), blank=True)
-
-    # Statistics (cached)
-    lessons_count = models.PositiveIntegerField(_('lessons count'), default=0)
-
-    objects = PublishedManager()
-    all_objects = ActiveManager()
-
-    class Meta:
-        verbose_name = _('subtopic')
-        verbose_name_plural = _('subtopics')
-        ordering = ['topic', 'order', 'name']
-        constraints = [
-            models.UniqueConstraint(fields=['topic', 'slug'], name='unique_subtopic_slug_per_topic'),
-            models.UniqueConstraint(fields=['topic', 'order'], name='unique_subtopic_order_per_topic'),
-        ]
-
-    def __str__(self):
-        return f"{self.topic.name} - {self.name}"
-
-    def update_counts(self):
-        """Update cached counts."""
-        self.lessons_count = self.lessons.filter(status=self.PublishStatus.PUBLISHED).count()
+        self.lessons_count = Lesson.objects.filter(topic=self, status=Lesson.PublishStatus.PUBLISHED).count()
         self.save(update_fields=['lessons_count', 'updated_at'])
 
 
@@ -253,11 +210,11 @@ class Lesson(TimeStampedModel, OrderedModel, PublishedModel):
     Contains the actual learning content.
     """
 
-    subtopic = models.ForeignKey(
-        SubTopic,
+    topic = models.ForeignKey(
+        Topic,
         on_delete=models.CASCADE,
         related_name='lessons',
-        verbose_name=_('subtopic'),
+        verbose_name=_('topic'),
     )
 
     name = models.CharField(_('name'), max_length=200)
@@ -335,14 +292,14 @@ class Lesson(TimeStampedModel, OrderedModel, PublishedModel):
     class Meta:
         verbose_name = _('lesson')
         verbose_name_plural = _('lessons')
-        ordering = ['subtopic', 'order', 'name']
+        ordering = ['topic', 'order', 'name']
         constraints = [
-            models.UniqueConstraint(fields=['subtopic', 'slug'], name='unique_lesson_slug_per_subtopic'),
-            models.UniqueConstraint(fields=['subtopic', 'order'], name='unique_lesson_order_per_subtopic'),
+            models.UniqueConstraint(fields=['topic', 'slug'], name='unique_lesson_slug_per_topic'),
+            models.UniqueConstraint(fields=['topic', 'order'], name='unique_lesson_order_per_topic'),
         ]
 
     def __str__(self):
-        return f"{self.subtopic.name} - {self.name}"
+        return f"{self.topic.name} - {self.name}"
 
     def save(self, *args, **kwargs):
         # Increment version on update
@@ -458,13 +415,7 @@ def update_program_counts(sender, instance, **kwargs):
         instance.program.update_counts()
 
 
-@receiver([post_save, post_delete], sender=SubTopic)
+@receiver([post_save, post_delete], sender=Lesson)
 def update_topic_counts(sender, instance, **kwargs):
     if instance.topic_id:
         instance.topic.update_counts()
-
-
-@receiver([post_save, post_delete], sender=Lesson)
-def update_subtopic_counts(sender, instance, **kwargs):
-    if instance.subtopic_id:
-        instance.subtopic.update_counts()

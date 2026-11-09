@@ -6,7 +6,8 @@
     "Работать с C-массивами и std::array",
     "Использовать std::string для работы с текстом",
     "Понимать разницу между массивами и контейнерами",
-    "Безопасно обращаться к элементам"
+    "Безопасно обращаться к элементам",
+    "Выбирать подходящий контейнер для каждой задачи"
   ],
   "content_blocks": [
     {
@@ -20,24 +21,33 @@
         "Работать с C-массивами и std::array",
         "Использовать std::string для работы с текстом",
         "Понимать разницу между массивами и контейнерами",
-        "Безопасно обращаться к элементам"
+        "Безопасно обращаться к элементам",
+        "Выбирать подходящий контейнер для каждой задачи"
       ],
       "ordered": false
     },
     {
       "type": "heading",
       "level": 2,
-      "content": "1. C-массивы (встроенные)"
+      "content": "1. C-массивы (встроенные массивы)"
+    },
+    {
+      "type": "text",
+      "content": "C-массив — это фиксированный набор элементов одного типа, расположенных в памяти подряд. Это самый базовый способ хранить коллекцию данных в C++. Массивы быстрые и не имеют накладных расходов, но они не знают свой размер и не проверяют границы при доступе."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "// Объявление\nint arr[5];              // неинициализирован (мусор)\nint arr2[5] = {1, 2, 3}; // {1, 2, 3, 0, 0} — остальное value-initialized\nint arr3[] = {1, 2, 3, 4, 5}; // размер выводится автоматически\n\n// Доступ\narr[0] = 10;\nint x = arr[2];          // без проверки границ!\n// arr[10] = 5;          // UB: выход за границы\n\n// Размер\nsizeof(arr) / sizeof(arr[0])  // 5 (только для массивов, не указателей!)\nstd::size(arr)                // C++17, работает и для массивов, и для контейнеров"
+      "content": "// Объявление\nint arr[5];              // неинициализирован — содержит мусор!\nint arr2[5] = {1, 2, 3}; // {1, 2, 3, 0, 0} — остальные элементы value-initialized (0)\nint arr3[] = {1, 2, 3, 4, 5}; // размер выводится автоматически из количества инициализаторов\n\n// Доступ\narr[0] = 10;\nint x = arr[2];          // без проверки границ!\n// arr[10] = 5;          // UB: выход за границы — неопределённое поведение!\n\n// Размер\nsizeof(arr) / sizeof(arr[0])  // 5 (только для массивов, не указателей!)\nstd::size(arr)                // C++17, работает и для массивов, и для контейнеров"
     },
     {
       "type": "heading",
       "level": 3,
       "content": "Многомерные массивы"
+    },
+    {
+      "type": "text",
+      "content": "Массивы могут быть многомерными — например, матрица — это массив массивов. Они полезны для представления игрового поля, изображений, таблиц данных."
     },
     {
       "type": "code",
@@ -50,6 +60,10 @@
       "content": "Ухудшение до указателя (array decay)"
     },
     {
+      "type": "text",
+      "content": "Когда вы передаёте массив в функцию, он «ухудшается» (decay) до указателя на первый элемент. Информация о размере теряется — внутри функции вы не сможете узнать, сколько элементов было в массиве. Это один из главных источников ошибок в C++."
+    },
+    {
       "type": "code",
       "language": "cpp",
       "content": "void func(int* ptr, size_t size);  // принимает указатель\n\nint arr[5] = {1,2,3,4,5};\nfunc(arr, 5);  // arr неявно преобразуется в int* (утеря размера!)\n// Внутри func: sizeof(ptr) == sizeof(int*), а не 5*sizeof(int)"
@@ -57,12 +71,16 @@
     {
       "type": "heading",
       "level": 2,
-      "content": "2. std::array (C++11) — обёртка над C-массивом"
+      "content": "2. std::array (C++11) — безопасная обёртка над C-массивом"
+    },
+    {
+      "type": "text",
+      "content": "`std::array` — это современная замена C-массиву. Он хранит размер как часть своего типа, поддерживает копирование, сравнение и имеет полезные методы. При этом он не имеет накладных расходов — такой же быстрый, как C-массив."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "#include <array>\n\nstd::array<int, 5> arr = {1, 2, 3, 4, 5};  // размер — часть типа!\nstd::array<int, 5> arr2{1, 2, 3, 4, 5};    // uniform init\n\n// Методы\narr.size()       // 5 (compile-time)\narr.max_size()   // 5\narr.empty()      // false\narr.front()      // 1\narr.back()       // 5\narr.data()       // указатель на первый элемент (int*)\n\n// Доступ с проверкой границ\narr.at(2)        // 3, бросает std::out_of_range при ошибке\narr[2]           // 3, без проверки (быстрее)\n\n// Присваивание и сравнение (в отличие от C-массивов!)\nstd::array<int, 5> a = {1,2,3,4,5};\nstd::array<int, 5> b = a;  // копирование!\nbool eq = (a == b);        // true"
+      "content": "#include <array>\n\nstd::array<int, 5> arr = {1, 2, 3, 4, 5};  // размер — часть типа!\nstd::array<int, 5> arr2{1, 2, 3, 4, 5};    // uniform init\n\n// Методы\narr.size()       // 5 (известен на этапе компиляции)\narr.max_size()   // 5\narr.empty()      // false\narr.front()      // 1\narr.back()       // 5\narr.data()       // указатель на первый элемент (int*)\n\n// Доступ с проверкой границ\narr.at(2)        // 3, бросает std::out_of_range при ошибке\narr[2]           // 3, без проверки (быстрее)\n\n// Присваивание и сравнение (в отличие от C-массивов!)\nstd::array<int, 5> a = {1,2,3,4,5};\nstd::array<int, 5> b = a;  // копирование!\nbool eq = (a == b);        // true"
     },
     {
       "type": "heading",
@@ -110,14 +128,22 @@
       ]
     },
     {
+      "type": "text",
+      "content": "<strong>Когда использовать std::array:</strong> когда размер известен на этапе компиляции и не меняется. Если нужно добавлять/убирать элементы динамически, используйте `std::vector`."
+    },
+    {
       "type": "heading",
       "level": 2,
-      "content": "3. std::string"
+      "content": "3. std::string — строки текста"
+    },
+    {
+      "type": "text",
+      "content": "`std::string` — это стандартный способ работы с текстом в C++. В отличие от C-строк (массивов `char`), он сам управляет памятью, автоматически растёт при добавлении текста и защищает от многих ошибок с памятью."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "#include <string>\n\nstd::string s1;           // пустая\nstd::string s2 = \"hello\"; // из строкового литерала\nstd::string s3(5, 'x');   // \"xxxxx\"\nstd::string s4(s2, 1, 3); // подстрока: \"ell\"\nstd::string s5 = s2;      // копия"
+      "content": "#include <string>\n\nstd::string s1;           // пустая строка\nstd::string s2 = \"hello\"; // из строкового литерала\nstd::string s3(5, 'x');   // \"xxxxx\" — 5 повторений символа\nstd::string s4(s2, 1, 3); // подстрока: \"ell\" (с позиции 1, длина 3)\nstd::string s5 = s2;      // копия строки"
     },
     {
       "type": "heading",
@@ -127,7 +153,7 @@
     {
       "type": "code",
       "language": "cpp",
-      "content": "std::string s = \"hello\";\n\ns.size()          // 5 (байт)\ns.length()        // 5 (синоним)\ns.empty()         // false\ns.front()         // 'h'\ns.back()          // 'o'\n\ns[0]              // 'h' (нет проверки)\ns.at(0)           // 'h' (с проверкой)\n\ns += \" world\";    // \"hello world\"\ns.append(\"!\");    // \"hello world!\"\ns.push_back('?'); // \"hello world!?\""
+      "content": "std::string s = \"hello\";\n\ns.size()          // 5 (количество байт/символов)\ns.length()        // 5 (синоним size())\ns.empty()         // false — строка не пустая\ns.front()         // 'h' — первый символ\ns.back()          // 'o' — последний символ\n\ns[0]              // 'h' (нет проверки границ)\ns.at(0)           // 'h' (с проверкой — бросает исключение при ошибке)\n\ns += \" world\";    // \"hello world\" — конкатенация\ns.append(\"!\");    // \"hello world!\"\ns.push_back('?'); // \"hello world!?\" — добавление одного символа"
     },
     {
       "type": "heading",
@@ -137,17 +163,17 @@
     {
       "type": "code",
       "language": "cpp",
-      "content": "std::string s = \"hello world hello\";\n\ns.find(\"world\")        // 6 (позиция первого вхождения)\ns.rfind(\"hello\")       // 12 (последнее вхождение)\ns.find(\"xxx\")          // std::string::npos (не найдено)\n\ns.substr(6, 5)         // \"world\" (pos, len)\ns.substr(6)            // \"world hello\" (до конца)"
+      "content": "std::string s = \"hello world hello\";\n\ns.find(\"world\")        // 6 — позиция первого вхождения\ns.rfind(\"hello\")       // 12 — последнее вхождение\ns.find(\"xxx\")          // std::string::npos (не найдено)\n\ns.substr(6, 5)         // \"world\" (позиция, длина)\ns.substr(6)            // \"world hello\" (до конца строки)"
     },
     {
       "type": "heading",
       "level": 3,
-      "content": "Модификация"
+      "content": "Модификация строки"
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "std::string s = \"hello\";\n\ns.insert(5, \" world\");   // \"hello world\"\ns.erase(5, 6);           // \"hello\" (pos, count)\ns.replace(0, 5, \"Hi\");   // \"Hi world\"\ns.clear();               // \"\""
+      "content": "std::string s = \"hello\";\n\ns.insert(5, \" world\");   // \"hello world\" — вставка в позицию 5\ns.erase(5, 6);           // \"hello\" (позиция, количество символов)\ns.replace(0, 5, \"Hi\");   // \"Hi world\" — замена подстроки\ns.clear();               // \"\" — очистка строки"
     },
     {
       "type": "heading",
@@ -157,37 +183,45 @@
     {
       "type": "code",
       "language": "cpp",
-      "content": "std::string a = \"apple\", b = \"banana\";\na == b    // false\na < b     // true (лексикографическое)\na.compare(b) < 0  // true"
+      "content": "std::string a = \"apple\", b = \"banana\";\na == b    // false — строки не равны\na < b     // true (лексикографическое сравнение — как в словаре)\na.compare(b) < 0  // true"
     },
     {
       "type": "heading",
       "level": 3,
-      "content": "Конвертация"
+      "content": "Конвертация между строкой и числами"
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "std::string s = \"42\";\nint x = std::stoi(s);      // 42\ndouble d = std::stod(\"3.14\"); // 3.14\n\nstd::string s2 = std::to_string(42);      // \"42\"\nstd::string s3 = std::to_string(3.14);    // \"3.140000\""
+      "content": "std::string s = \"42\";\nint x = std::stoi(s);      // 42 — строка в int\ndouble d = std::stod(\"3.14\"); // 3.14 — строка в double\n\nstd::string s2 = std::to_string(42);      // \"42\" — int в строку\nstd::string s3 = std::to_string(3.14);    // \"3.140000\" — double в строку"
     },
     {
       "type": "heading",
       "level": 3,
-      "content": "Raw string literals (C++11)"
+      "content": "Raw string literals (C++11) — строки без экранирования"
+    },
+    {
+      "type": "text",
+      "content": "Raw strings позволяют записать текст буквально, без экранирования обратных слэшей и кавычек. Это удобно для путей к файлам, регулярных выражений, JSON и SQL-запросов."
     },
     {
       "type": "code",
       "language": "cpp",
-      "content": "std::string path = R\"(C:\\Users\\Name\\Documents)\";  // без экранирования\nstd::string json = R\"({\"key\": \"value\"})\";         // удобно для JSON"
+      "content": "std::string path = R\"(C:\\\\Users\\\\Name\\\\Documents)\";  // без экранирования обратных слэшей\nstd::string json = R\"({\"key\": \"value\"})\";         // удобно для JSON\nstd::string regex = R\"(\\\\d+\\\\.\\\\d+)\";                  // регулярные выражения"
     },
     {
       "type": "heading",
       "level": 2,
-      "content": "4. Перебор (итерация)"
+      "content": "4. Перебор (итерация) по коллекциям"
     },
     {
       "type": "heading",
       "level": 3,
       "content": "C-массив"
+    },
+    {
+      "type": "text",
+      "content": "По C-массиву можно итерироваться как классическим циклом с индексом, так и range-based for (начиная с C++11)."
     },
     {
       "type": "code",
@@ -202,7 +236,7 @@
     {
       "type": "code",
       "language": "cpp",
-      "content": "std::array<int, 5> arr = {1,2,3,4,5};\nfor (int& x : arr) x *= 2;  // модификация"
+      "content": "std::array<int, 5> arr = {1,2,3,4,5};\nfor (int& x : arr) x *= 2;  // модификация элементов через ссылку"
     },
     {
       "type": "heading",
@@ -212,7 +246,7 @@
     {
       "type": "code",
       "language": "cpp",
-      "content": "std::string s = \"hello\";\nfor (char c : s) std::cout << c << ' ';  // h e l l o\nfor (auto& c : s) c = std::toupper(c);   // HELLO"
+      "content": "std::string s = \"hello\";\nfor (char c : s) std::cout << c << ' ';  // h e l l o — перебор символов\nfor (auto& c : s) c = std::toupper(c);   // HELLO — модификация через ссылку"
     },
     {
       "type": "heading",
@@ -220,14 +254,60 @@
       "content": "5. char* vs std::string vs std::string_view (C++17)"
     },
     {
+      "type": "text",
+      "content": "В C++ есть три способа работать с текстом, каждый со своими компромиссами между удобством и производительностью."
+    },
+    {
       "type": "code",
       "language": "cpp",
-      "content": "// std::string_view — не владеющий взгляд на строку (zero-copy)\n#include <string_view>\n\nvoid print(std::string_view sv) {  // принимает string, char*, string_view\n    std::cout << sv << '\\n';\n}\n\nstd::string s = \"hello\";\nprint(s);           // OK\nprint(\"world\");     // OK\nprint(std::string_view(s, 2, 3)); // \"llo\""
+      "content": "// std::string_view — не владеющий взгляд на строку (zero-copy)\n#include <string_view>\n\nvoid print(std::string_view sv) {  // принимает string, char*, string_view\n    std::cout << sv << '\\n';\n}\n\nstd::string s = \"hello\";\nprint(s);           // OK — неявное преобразование\nprint(\"world\");     // OK — строковый литерал\nprint(std::string_view(s, 2, 3)); // \"llo\" — подпоследовательность"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Тип",
+        "Владеет памятью?",
+        "Может менять?",
+        "Когда использовать"
+      ],
+      "rows": [
+        [
+          "`char*`",
+          "Нет (указатель на чужую память)",
+          "Да (если память не const)",
+          "Низкоуровневый код, взаимодействие с C API"
+        ],
+        [
+          "`std::string`",
+          "Да — сам управляет памятью",
+          "Да",
+          "Большинство случаев работы с текстом"
+        ],
+        [
+          "`std::string_view`",
+          "Нет — только смотрит на чужую строку",
+          "Нет",
+          "Параметры функций, когда не нужно владение или модификация"
+        ]
+      ]
     },
     {
       "type": "heading",
       "level": 2,
       "content": "Практические задания"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Создайте массив из 10 чисел, заполните его и выведите все элементы в консоль",
+        "Напишите программу, которая находит наибольший элемент в массиве",
+        "Создайте std::string, попросите пользователя ввести строку и выведите её в обратном порядке",
+        "Напишите программу, которая подсчитывает количество гласных букв в строке",
+        "Создайте std::array из 5 имён и выведите их с помощью range-based for",
+        "Напишите функцию, которая принимает std::string_view и выводит его на экран",
+        "Создайте программу, которая проверяет, является ли строка палиндромом (читается одинаково слева направо и справа налево)"
+      ],
+      "ordered": true
     },
     {
       "type": "heading",
@@ -238,35 +318,36 @@
       "type": "table",
       "headers": [
         "Ошибка",
-        "Правильно"
+        "Правильно",
+        "Почему это важно"
       ],
       "rows": [
         [
           "`std::string s[5];` — массив строк",
-          "`std::vector<std::string>` или `std::array<std::string, 5>`"
+          "`std::vector<std::string>` или `std::array<std::string, 5>`",
+          "Массив строк — это массив указателей, легко запутаться в управлении памятью"
         ],
         [
-          "`arr[10] = 5` (UB)",
-          "`arr.at(10)` — exception, или проверка `if (i < size)`"
+          "`arr[10] = 5` (UB — выход за границы)",
+          "`arr.at(10)` — exception, или проверка `if (i < size)`",
+          "Выход за границы массива — неопределённое поведение, может привести к падению программы"
         ],
         [
           "`sizeof(ptr) / sizeof(ptr[0])` для указателя",
-          "Передавайте размер отдельно или используйте контейнеры"
+          "Передавайте размер отдельно или используйте контейнеры",
+          "Для указателя sizeof вернёт размер указателя, а не массива"
         ],
         [
           "`char* s = \"hello\"; s[0] = 'H';` (UB: string literal read-only)",
-          "`std::string s = \"hello\"; s[0] = 'H';`"
+          "`std::string s = \"hello\"; s[0] = 'H';`",
+          "Строковые литералы хранятся в области памяти только для чтения"
         ],
         [
           "`std::string s = \"hello\" + \" world\";` (pointer arithmetic!)",
-          "`std::string s = \"hello\" + std::string(\" world\");`"
+          "`std::string s = \"hello\" + std::string(\" world\");`",
+          "Нельзя складывать два C-строковых литерала — один должен быть std::string"
         ]
       ]
-    },
-    {
-      "type": "heading",
-      "level": 2,
-      "content": "Полезные ресурсы"
     }
   ],
   "practice_tasks": [],

@@ -81,8 +81,8 @@ class LanguageProgressView(LoginRequiredMixin, DetailView):
         from progress.models import LessonProgress
         recent_lessons = LessonProgress.objects.filter(
             user=user,
-            lesson__subtopic__topic__program__language=language
-        ).select_related('lesson', 'lesson__subtopic__topic').order_by('-updated_at')[:10]
+            lesson__topic__program__language=language
+        ).select_related('lesson', 'lesson__topic').order_by('-updated_at')[:10]
 
         context.update({
             'progress': progress,
@@ -118,8 +118,8 @@ class TopicProgressView(LoginRequiredMixin, DetailView):
         from progress.models import LessonProgress
         lessons = LessonProgress.objects.filter(
             user=user,
-            lesson__subtopic__topic=topic
-        ).select_related('lesson', 'lesson__subtopic').order_by('lesson__order')
+            lesson__topic=topic
+        ).select_related('lesson', 'lesson__topic').order_by('lesson__order')
 
         context.update({
             'topic_progress': topic_progress,
@@ -190,7 +190,7 @@ class ErrorReviewView(LoginRequiredMixin, ListView):
         return ErrorHistory.objects.filter(
             user=self.request.user,
             is_resolved=False
-        ).select_related('lesson', 'lesson__subtopic__topic').order_by('next_review')
+        ).select_related('lesson', 'lesson__topic').order_by('next_review')
 
 
 class ErrorReviewSubmitView(LoginRequiredMixin, TemplateView):

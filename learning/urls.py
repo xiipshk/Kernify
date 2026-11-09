@@ -21,6 +21,9 @@ urlpatterns = [
     # Lesson complete
     path('lessons/<slug:slug>/complete/', views.LessonCompleteView.as_view(), name='lesson_complete'),
 
+    # Lesson next (complete + award XP + go to next lesson)
+    path('lessons/<slug:slug>/next/', views.LessonNextView.as_view(), name='lesson_next'),
+
     # Bookmark lesson
     path('lessons/<slug:slug>/bookmark/', views.BookmarkLessonView.as_view(), name='bookmark_lesson'),
 

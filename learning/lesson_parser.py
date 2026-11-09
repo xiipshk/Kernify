@@ -1,5 +1,5 @@
 """
-Lesson text-file parser for RTK Django integration.
+Lesson text-file parser for kernify Django integration.
 
 Parses lesson text files (UTF-8, Markdown-like) from all 6 programming
 language courses into structured content blocks suitable for the

@@ -60,7 +60,7 @@ class RegisterView(SuccessMessageMixin, CreateView):
     template_name = 'accounts/register.html'
     form_class = CustomUserCreationForm
     success_url = reverse_lazy('accounts:dashboard')
-    success_message = _('Account created successfully! Welcome to RTK!')
+    success_message = _('Account created successfully! Welcome to kernify!')
 
     def get(self, request, *args, **kwargs):
         if request.user.is_authenticated:
@@ -96,14 +96,14 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         recent_sessions = PracticeSession.objects.filter(user=user).select_related('task')[:5]
 
         # Get bookmarked lessons
-        bookmarked_lessons = profile.bookmarked_lessons.prefetch_related('subtopic__topic__program__language')[:5]
+        bookmarked_lessons = profile.bookmarked_lessons.prefetch_related('topic__program__language')[:5]
 
         # Get in-progress lessons
         from learning.models import Lesson, ProgrammingLanguage
         in_progress_lessons = Lesson.objects.filter(
             user_progress__user=user,
             user_progress__status='in_progress'
-        ).select_related('subtopic__topic__program__language')[:5]
+        ).select_related('topic__program__language')[:5]
 
         totals = user_progress_totals(user)
         context.update({
@@ -169,6 +169,10 @@ class SettingsView(LoginRequiredMixin, SuccessMessageMixin, UpdateView):
     def get_object(self):
         settings_obj, _ = UserSettings.objects.get_or_create(user=self.request.user)
         return settings_obj
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        return response
 
 
 class PasswordChangeView(LoginRequiredMixin, SuccessMessageMixin, BasePasswordChangeView):

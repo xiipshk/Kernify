@@ -1,4 +1,4 @@
-# RTK - Dockerfile for Production
+# Kernify - Dockerfile for Production
 FROM python:3.11-slim
 
 # Set environment variables

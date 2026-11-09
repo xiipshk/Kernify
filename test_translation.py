@@ -8,7 +8,7 @@ try:
     print('Learning:', t.gettext('Learning'))
     print('Sign In:', t.gettext('Sign In'))
     print('Welcome Back:', t.gettext('Welcome Back'))
-    print('About RTK:', t.gettext('About RTK'))
+    print('About kernify:', t.gettext('About kernify'))
     print('Settings:', t.gettext('Settings'))
     print('Dashboard:', t.gettext('Dashboard'))
 except Exception as e:

@@ -1,9 +1,9 @@
 @echo off
-REM RTK - Installation Script for Windows
+REM Kernify - Installation Script for Windows
 REM This script sets up the Django project with all dependencies
 
 echo ========================================
-echo RTK - Installation Script
+echo Kernify - Installation Script
 echo ========================================
 echo.
 

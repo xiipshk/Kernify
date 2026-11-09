@@ -10,7 +10,7 @@ import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 
-from learning.models import ProgrammingLanguage, CourseProgram, Topic, SubTopic, Lesson
+from learning.models import ProgrammingLanguage, CourseProgram, Topic, Lesson
 
 # --- Educational explanation templates by topic keyword ---
 EXPLANATIONS = {
@@ -244,10 +244,9 @@ TOPIC_KEYWORDS = {
 def find_topic_key(lesson):
     """Определяет ключ темы для шаблона объяснения по имени урока и темы."""
     name = lesson.name.lower()
-    topic_name = lesson.subtopic.topic.name.lower() if lesson.subtopic and lesson.subtopic.topic else ''
-    subtopic_name = lesson.subtopic.name.lower() if lesson.subtopic else ''
+    topic_name = lesson.topic.name.lower() if lesson.topic else ''
 
-    combined = f'{name} {subtopic_name} {topic_name}'
+    combined = f'{name} {topic_name}'
 
     for keyword, key in TOPIC_KEYWORDS.items():
         if keyword in combined:
@@ -349,15 +348,13 @@ for lang in ProgrammingLanguage.objects.filter(status='published').order_by('ord
     for p in progs:
         topics = Topic.objects.filter(program=p, status='published').order_by('order')
         for t in topics:
-            subs = SubTopic.objects.filter(topic=t, status='published').order_by('order')
-            for s in subs:
-                lessons = Lesson.objects.filter(subtopic=s, status='published').order_by('order')
-                for l in lessons:
-                    total += 1
-                    if update_lesson_content(l):
-                        updated += 1
-                        print(f'  [UPDATED] {lang.name} / {p.name} / {t.name} / {s.name} / {l.name}')
-                    else:
-                        skipped_no_change += 1
+            lessons = Lesson.objects.filter(topic=t, status='published').order_by('order')
+            for l in lessons:
+                total += 1
+                if update_lesson_content(l):
+                    updated += 1
+                    print(f'  [UPDATED] {lang.name} / {p.name} / {t.name} / {l.name}')
+                else:
+                    skipped_no_change += 1
 
 print(f'\n=== Готово: обновлено {updated} из {total} уроков (пропущено без изменений: {skipped_no_change}) ===')

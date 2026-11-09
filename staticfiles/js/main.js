@@ -1,13 +1,43 @@
-// RTK - Main JavaScript Utilities
+// kernify - Main JavaScript Utilities
 
 /**
  * Theme Management
  */
 class ThemeManager {
     constructor() {
-        this.themes = ['auto', 'light', 'dark'];
-        this.currentTheme = localStorage.getItem('theme') || 'auto';
+        this.themes = ['light', 'dark'];
+        // Priority: cookie (set when saving settings) > localStorage > body class > default
+        const cookieTheme = this.getCookie('theme');
+        if (cookieTheme && this.themes.includes(cookieTheme)) {
+            this.currentTheme = cookieTheme;
+        } else {
+            const stored = localStorage.getItem('theme');
+            if (stored && this.themes.includes(stored)) {
+                this.currentTheme = stored;
+            } else {
+                // Fall back to the theme rendered by the server (from user's saved preference)
+                this.currentTheme = this.getThemeFromBody() || 'light';
+            }
+        }
         this.init();
+    }
+
+    getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) {
+            return parts.pop().split(';').shift();
+        }
+        return null;
+    }
+
+    getThemeFromBody() {
+        for (const theme of this.themes) {
+            if (document.body.classList.contains(`theme-${theme}`)) {
+                return theme;
+            }
+        }
+        return null;
     }
 
     init() {
@@ -19,11 +49,12 @@ class ThemeManager {
         if (!this.themes.includes(theme)) {
             theme = 'auto';
         }
-        document.documentElement.classList.remove('theme-light', 'theme-dark', 'theme-auto');
-        document.documentElement.classList.add(`theme-${theme}`);
+        document.body.classList.remove('theme-light', 'theme-dark', 'theme-auto');
+        document.body.classList.add(`theme-${theme}`);
         localStorage.setItem('theme', theme);
-        // Also set a cookie so Django templates can read it for Monaco Editor
-        const monacoTheme = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'vs-dark' : 'vs';
+        // Sync theme to cookie so Django and other clients can read it
+        document.cookie = `theme=${theme}; path=/; max-age=31536000`;
+        const monacoTheme = theme === 'dark' ? 'vs-dark' : 'vs';
         document.cookie = `rtk_theme=${monacoTheme}; path=/; max-age=31536000`;
         this.currentTheme = theme;
     }
@@ -448,7 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /**
  * Export for global access
  */
-window.RTK = {
+window.kernify = {
     ThemeManager,
     apiRequest,
     apiPost,

@@ -9,7 +9,7 @@ from django.utils.translation import gettext_lazy as _
 from django.views.generic import DetailView, ListView, TemplateView, View
 
 from core.views import SlugDetailMixin
-from learning.models import CourseProgram, Lesson, SubTopic, Topic
+from learning.models import CourseProgram, Lesson, Topic
 
 
 class LearningIndexView(LoginRequiredMixin, TemplateView):
@@ -48,7 +48,7 @@ class MyCoursesView(LoginRequiredMixin, ListView):
     def get_queryset(self):
         from progress.models import UserProgress
         return UserProgress.objects.filter(user=self.request.user).select_related(
-            'language', 'current_program', 'current_topic', 'current_subtopic', 'current_lesson'
+            'language', 'current_program', 'current_topic', 'current_lesson'
         )
 
 
@@ -89,15 +89,8 @@ class EnrollView(LoginRequiredMixin, View):
         )
         if not first_topic:
             return redirect('learning:index')
-        first_subtopic = (
-            first_topic.subtopics.filter(status='published')
-            .order_by('order')
-            .first()
-        )
-        if not first_subtopic:
-            return redirect('learning:index')
         first_lesson = (
-            first_subtopic.lessons.filter(status='published')
+            first_topic.lessons.filter(status='published')
             .order_by('order')
             .first()
         )
@@ -119,7 +112,7 @@ class LessonLearnView(LoginRequiredMixin, SlugDetailMixin, DetailView):
     def get_queryset(self):
         return Lesson.objects.filter(
             status='published'
-        ).select_related('subtopic__topic__program__language')
+        ).select_related('topic__program__language')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -139,21 +132,34 @@ class LessonLearnView(LoginRequiredMixin, SlugDetailMixin, DetailView):
             progress.started_at = timezone.now()
             progress.save(update_fields=['status', 'started_at', 'updated_at'])
 
-        # Navigation
+        # Navigation — next lesson can span across topics within the same program
         context['prev_lesson'] = Lesson.objects.filter(
-            subtopic=lesson.subtopic,
+            topic=lesson.topic,
             status='published',
             order__lt=lesson.order
         ).order_by('-order').first()
         context['next_lesson'] = Lesson.objects.filter(
-            subtopic=lesson.subtopic,
+            topic=lesson.topic,
             status='published',
             order__gt=lesson.order
         ).order_by('order').first()
 
-        # All lessons in subtopic for sidebar
-        context['subtopic_lessons'] = Lesson.objects.filter(
-            subtopic=lesson.subtopic,
+        # If no next lesson in current topic, try first lesson of next topic in same program
+        if not context['next_lesson']:
+            next_topic = Topic.objects.filter(
+                program=lesson.topic.program,
+                status='published',
+                order__gt=lesson.topic.order
+            ).order_by('order').first()
+            if next_topic:
+                context['next_lesson'] = Lesson.objects.filter(
+                    topic=next_topic,
+                    status='published'
+                ).order_by('order').first()
+
+        # All lessons in topic for sidebar
+        context['topic_lessons'] = Lesson.objects.filter(
+            topic=lesson.topic,
             status='published'
         ).order_by('order')
 
@@ -191,12 +197,74 @@ class LessonCompleteView(LoginRequiredMixin, View):
             # Update user progress (atomic increment to avoid race condition)
             UserProgress.objects.filter(
                 user=request.user,
-                language=lesson.subtopic.topic.program.language
+                language=lesson.topic.program.language
             ).update(
+                total_xp=F('total_xp') + lesson.xp_reward,
                 lessons_completed=F('lessons_completed') + 1,
                 last_activity_at=timezone.now(),
             )
 
+        return redirect('learning:lesson_learn', slug=slug)
+
+
+class LessonNextView(LoginRequiredMixin, View):
+    """Complete lesson, award XP once, and redirect to the next lesson."""
+
+    def post(self, request, slug):
+        lesson = Lesson.objects.filter(
+            slug=slug, status='published'
+        ).first()
+        if lesson is None:
+            raise Http404(_("No %(verbose_name)s found matching the query") % {
+                'verbose_name': Lesson._meta.verbose_name,
+            })
+
+        from progress.models import LessonProgress, UserProgress
+        from django.utils import timezone
+
+        progress, _ = LessonProgress.objects.get_or_create(
+            user=request.user,
+            lesson=lesson,
+            defaults={'status': 'completed', 'completed_at': timezone.now(), 'score': 100}
+        )
+
+        # Award XP only once — when the lesson transitions to completed
+        if progress.status != 'completed':
+            progress.status = 'completed'
+            progress.completed_at = timezone.now()
+            progress.score = 100
+            progress.save()
+
+            UserProgress.objects.filter(
+                user=request.user,
+                language=lesson.topic.program.language
+            ).update(
+                total_xp=F('total_xp') + lesson.xp_reward,
+                lessons_completed=F('lessons_completed') + 1,
+                last_activity_at=timezone.now(),
+            )
+
+        # Redirect to the next lesson — can span across topics within the same program
+        next_lesson = Lesson.objects.filter(
+            topic=lesson.topic,
+            status='published',
+            order__gt=lesson.order
+        ).order_by('order').first()
+
+        if not next_lesson:
+            next_topic = Topic.objects.filter(
+                program=lesson.topic.program,
+                status='published',
+                order__gt=lesson.topic.order
+            ).order_by('order').first()
+            if next_topic:
+                next_lesson = Lesson.objects.filter(
+                    topic=next_topic,
+                    status='published'
+                ).order_by('order').first()
+
+        if next_lesson:
+            return redirect('learning:lesson_learn', slug=next_lesson.slug)
         return redirect('learning:lesson_learn', slug=slug)
 
 

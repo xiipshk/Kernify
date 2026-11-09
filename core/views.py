@@ -3,7 +3,7 @@ from django.http import Http404
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import DetailView, ListView, TemplateView
 
-from learning.models import Lesson, ProgrammingLanguage, CourseProgram, SubTopic, Topic
+from learning.models import Lesson, ProgrammingLanguage, CourseProgram, Topic
 
 
 class SlugDetailMixin:
@@ -93,7 +93,7 @@ class ProgramDetailView(SlugDetailMixin, DetailView):
         context['topics'] = Topic.objects.filter(
             program=program,
             status='published'
-        ).prefetch_related('subtopics').order_by('order')
+        ).order_by('order')
         # User enrollment check
         if self.request.user.is_authenticated:
             from progress.models import UserProgress
@@ -121,30 +121,8 @@ class TopicDetailView(SlugDetailMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         topic = self.object
-        context['subtopics'] = SubTopic.objects.filter(
-            topic=topic,
-            status='published'
-        ).prefetch_related('lessons').order_by('order')
-        return context
-
-
-class SubTopicDetailView(SlugDetailMixin, DetailView):
-    """Subtopic detail page."""
-
-    model = SubTopic
-    template_name = 'core/subtopic_detail.html'
-    context_object_name = 'subtopic'
-    slug_field = 'slug'
-    slug_url_kwarg = 'slug'
-
-    def get_queryset(self):
-        return SubTopic.objects.filter(status='published').select_related('topic__program__language')
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        subtopic = self.object
         context['lessons'] = Lesson.objects.filter(
-            subtopic=subtopic,
+            topic=topic,
             status='published'
         ).order_by('order')
         return context
@@ -162,7 +140,7 @@ class LessonDetailView(SlugDetailMixin, DetailView):
     def get_queryset(self):
         return Lesson.objects.filter(
             status='published'
-        ).select_related('subtopic__topic__program__language')
+        ).select_related('topic__program__language')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -170,12 +148,12 @@ class LessonDetailView(SlugDetailMixin, DetailView):
 
         # Next/Previous lessons
         context['prev_lesson'] = Lesson.objects.filter(
-            subtopic=lesson.subtopic,
+            topic=lesson.topic,
             status='published',
             order__lt=lesson.order
         ).order_by('-order').first()
         context['next_lesson'] = Lesson.objects.filter(
-            subtopic=lesson.subtopic,
+            topic=lesson.topic,
             status='published',
             order__gt=lesson.order
         ).order_by('order').first()

@@ -1,4 +1,4 @@
-# RTK - Learn Programming Languages
+# kernify - Learn Programming Languages
 
 A modern Django web application for learning 6 programming languages with interactive lessons, practice exercises, AI-powered assistance, and spaced repetition.
 

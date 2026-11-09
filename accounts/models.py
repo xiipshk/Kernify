@@ -75,7 +75,7 @@ class User(AbstractUser, TimeStampedModel):
     theme = models.CharField(
         _('theme'),
         max_length=20,
-        choices=[('light', _('Light')), ('system', _('System'))],
+        choices=[('light', _('Light')), ('dark', _('Dark'))],
         default='light',
     )
 

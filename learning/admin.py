@@ -6,7 +6,6 @@ from learning.models import (
     ProgrammingLanguage,
     CourseProgram,
     Topic,
-    SubTopic,
     Lesson,
     LessonAttachment,
     LessonVersion,
@@ -78,39 +77,19 @@ class CourseProgramAdmin(admin.ModelAdmin):
 class TopicAdmin(admin.ModelAdmin):
     """Admin for Topic."""
 
-    list_display = ('name', 'program', 'slug', 'status', 'difficulty', 'order', 'is_base_topic', 'subtopics_count', 'lessons_count', 'estimated_minutes')
+    list_display = ('name', 'program', 'slug', 'status', 'difficulty', 'order', 'is_base_topic', 'lessons_count', 'estimated_minutes')
     list_filter = ('status', 'difficulty', 'program', 'is_base_topic')
     search_fields = ('name', 'slug', 'description')
     prepopulated_fields = {'slug': ('name',)}
     raw_id_fields = ('program',)
     ordering = ('program', 'order', 'name')
-    readonly_fields = ('created_at', 'updated_at', 'subtopics_count', 'lessons_count')
+    readonly_fields = ('created_at', 'updated_at', 'lessons_count')
     filter_horizontal = ('prerequisite_topics',)
 
     fieldsets = (
         (None, {'fields': ('program', 'name', 'slug', 'description', 'learning_objectives')}),
         (_('Status & Difficulty'), {'fields': ('status', 'difficulty', 'estimated_minutes', 'order', 'is_base_topic')}),
         (_('Prerequisites'), {'fields': ('prerequisite_topics',)}),
-        (_('Statistics'), {'fields': ('subtopics_count', 'lessons_count')}),
-        (_('Timestamps'), {'fields': ('created_at', 'updated_at')}),
-    )
-
-
-@admin.register(SubTopic)
-class SubTopicAdmin(admin.ModelAdmin):
-    """Admin for SubTopic."""
-
-    list_display = ('name', 'topic', 'slug', 'status', 'order', 'lessons_count')
-    list_filter = ('status', 'topic')
-    search_fields = ('name', 'slug', 'description')
-    prepopulated_fields = {'slug': ('name',)}
-    raw_id_fields = ('topic',)
-    ordering = ('topic', 'order', 'name')
-    readonly_fields = ('created_at', 'updated_at', 'lessons_count')
-
-    fieldsets = (
-        (None, {'fields': ('topic', 'name', 'slug', 'description')}),
-        (_('Status'), {'fields': ('status', 'order')}),
         (_('Statistics'), {'fields': ('lessons_count',)}),
         (_('Timestamps'), {'fields': ('created_at', 'updated_at')}),
     )
@@ -120,18 +99,18 @@ class SubTopicAdmin(admin.ModelAdmin):
 class LessonAdmin(admin.ModelAdmin):
     """Admin for Lesson."""
 
-    list_display = ('name', 'subtopic', 'slug', 'status', 'order', 'estimated_minutes', 'version', 'created_at')
-    list_filter = ('status', 'subtopic')
+    list_display = ('name', 'topic', 'slug', 'status', 'order', 'estimated_minutes', 'version', 'created_at')
+    list_filter = ('status', 'topic')
     search_fields = ('name', 'slug', 'short_description')
     prepopulated_fields = {'slug': ('name',)}
-    raw_id_fields = ('subtopic', 'created_by', 'updated_by')
-    ordering = ('subtopic', 'order', 'name')
+    raw_id_fields = ('topic', 'created_by', 'updated_by')
+    ordering = ('topic', 'order', 'name')
     readonly_fields = ('created_at', 'updated_at', 'version', 'content')
     filter_horizontal = ()
     inlines = [LessonAttachmentInline, LessonVersionInline]
 
     fieldsets = (
-        (None, {'fields': ('subtopic', 'name', 'slug', 'short_description')}),
+        (None, {'fields': ('topic', 'name', 'slug', 'short_description')}),
         (_('Content'), {'fields': ('content',)}),
         (_('Status & Order'), {'fields': ('status', 'order', 'estimated_minutes')}),
         (_('Authorship'), {'fields': ('created_by', 'updated_by', 'version', 'change_log')}),

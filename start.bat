@@ -1,9 +1,9 @@
 @echo off
-REM RTK - Start Script for Windows
+REM Kernify - Start Script for Windows
 REM Runs the Django development server
 
 echo ========================================
-echo RTK - Starting Development Server
+echo Kernify - Starting Development Server
 echo ========================================
 echo.
 
