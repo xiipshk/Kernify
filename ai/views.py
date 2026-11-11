@@ -5,6 +5,8 @@ from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import DetailView, ListView, TemplateView, View
 from django.http import JsonResponse
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 
 from ai.models import AIChatSession, AIMessage, AIProvider, AIPromptTemplate
 
@@ -79,6 +81,7 @@ class AssistantView(LoginRequiredMixin, TemplateView):
 class AskAssistantView(LoginRequiredMixin, View):
     """Ask AI assistant (AJAX)."""
 
+    @method_decorator(ratelimit(key='user', rate='30/m', method='POST', block=True))
     def post(self, request):
         # Placeholder for AI integration
         question = request.POST.get('question', '')
@@ -100,6 +103,7 @@ class CodeReviewView(LoginRequiredMixin, TemplateView):
 class CodeReviewSubmitView(LoginRequiredMixin, View):
     """Submit code for review."""
 
+    @method_decorator(ratelimit(key='user', rate='10/m', method='POST', block=True))
     def post(self, request):
         code = request.POST.get('code', '')
         language = request.POST.get('language', 'python')

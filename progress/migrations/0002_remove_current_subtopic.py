@@ -7,7 +7,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('progress', '0001_initial'),
-        ('learning', '0003_remove_subtopic'),
+        ('learning', '0001_initial'),
     ]
 
     operations = [

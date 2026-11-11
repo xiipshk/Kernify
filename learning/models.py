@@ -15,10 +15,12 @@ from core.models import (
     PublishedTimeStampedModel,
     PublishedManager,
     ActiveManager,
+    PublishedActiveManager,
+    PublishedSoftDeleteTimeStampedModel,
 )
 
 
-class ProgrammingLanguage(TimeStampedModel, OrderedModel, PublishedModel):
+class ProgrammingLanguage(PublishedSoftDeleteTimeStampedModel, OrderedModel):
     """
     Programming languages available for learning.
     Managed by administrators.
@@ -41,8 +43,8 @@ class ProgrammingLanguage(TimeStampedModel, OrderedModel, PublishedModel):
     topics_count = models.PositiveIntegerField(_('topics count'), default=0)
     lessons_count = models.PositiveIntegerField(_('lessons count'), default=0)
 
-    objects = PublishedManager()
-    all_objects = ActiveManager()
+    # objects = PublishedManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
+    # all_objects = ActiveManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
 
     class Meta:
         verbose_name = _('programming language')
@@ -60,7 +62,7 @@ class ProgrammingLanguage(TimeStampedModel, OrderedModel, PublishedModel):
         self.save(update_fields=['programs_count', 'topics_count', 'lessons_count', 'updated_at'])
 
 
-class CourseProgram(TimeStampedModel, OrderedModel, PublishedModel):
+class CourseProgram(PublishedSoftDeleteTimeStampedModel, OrderedModel):
     """
     Learning programs/courses for a programming language.
     Example: "Python Basics", "Advanced Python", "Web Development with Python"
@@ -71,6 +73,7 @@ class CourseProgram(TimeStampedModel, OrderedModel, PublishedModel):
         on_delete=models.CASCADE,
         related_name='programs',
         verbose_name=_('language'),
+        db_index=True,
     )
 
     name = models.CharField(_('name'), max_length=200)
@@ -107,8 +110,8 @@ class CourseProgram(TimeStampedModel, OrderedModel, PublishedModel):
     topics_count = models.PositiveIntegerField(_('topics count'), default=0)
     lessons_count = models.PositiveIntegerField(_('lessons count'), default=0)
 
-    objects = PublishedManager()
-    all_objects = ActiveManager()
+    # objects = PublishedManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
+    # all_objects = ActiveManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
 
     class Meta:
         verbose_name = _('course program')
@@ -128,7 +131,7 @@ class CourseProgram(TimeStampedModel, OrderedModel, PublishedModel):
         self.save(update_fields=['topics_count', 'lessons_count', 'updated_at'])
 
 
-class Topic(TimeStampedModel, OrderedModel, PublishedModel):
+class Topic(PublishedSoftDeleteTimeStampedModel, OrderedModel):
     """
     Topics within a course program.
     Example: "Variables and Types", "Control Flow", "Functions"
@@ -139,6 +142,7 @@ class Topic(TimeStampedModel, OrderedModel, PublishedModel):
         on_delete=models.CASCADE,
         related_name='topics',
         verbose_name=_('program'),
+        db_index=True,
     )
 
     name = models.CharField(_('name'), max_length=200)
@@ -183,8 +187,8 @@ class Topic(TimeStampedModel, OrderedModel, PublishedModel):
     # Statistics (cached)
     lessons_count = models.PositiveIntegerField(_('lessons count'), default=0)
 
-    objects = PublishedManager()
-    all_objects = ActiveManager()
+    # objects = PublishedManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
+    # all_objects = ActiveManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
 
     class Meta:
         verbose_name = _('topic')
@@ -204,7 +208,7 @@ class Topic(TimeStampedModel, OrderedModel, PublishedModel):
         self.save(update_fields=['lessons_count', 'updated_at'])
 
 
-class Lesson(TimeStampedModel, OrderedModel, PublishedModel):
+class Lesson(PublishedSoftDeleteTimeStampedModel, OrderedModel):
     """
     Individual lessons within a subtopic.
     Contains the actual learning content.
@@ -215,6 +219,7 @@ class Lesson(TimeStampedModel, OrderedModel, PublishedModel):
         on_delete=models.CASCADE,
         related_name='lessons',
         verbose_name=_('topic'),
+        db_index=True,
     )
 
     name = models.CharField(_('name'), max_length=200)
@@ -286,8 +291,8 @@ class Lesson(TimeStampedModel, OrderedModel, PublishedModel):
     version = models.PositiveIntegerField(_('version'), default=1)
     change_log = models.TextField(_('change log'), blank=True)
 
-    objects = PublishedManager()
-    all_objects = ActiveManager()
+    # objects = PublishedManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
+    # all_objects = ActiveManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
 
     class Meta:
         verbose_name = _('lesson')
@@ -302,9 +307,24 @@ class Lesson(TimeStampedModel, OrderedModel, PublishedModel):
         return f"{self.topic.name} - {self.name}"
 
     def save(self, *args, **kwargs):
-        # Increment version on update
+        # Increment version only when content or significant fields change
         if self.pk:
-            self.version += 1
+            try:
+                old = Lesson.objects.get(pk=self.pk)
+                # Check if content or important fields changed
+                if (old.content != self.content or
+                    old.name != self.name or
+                    old.short_description != self.short_description or
+                    old.lesson_type != self.lesson_type or
+                    old.starter_code != self.starter_code or
+                    old.hints != self.hints or
+                    old.xp_reward != self.xp_reward or
+                    old.difficulty != self.difficulty or
+                    old.tags != self.tags or
+                    old.estimated_minutes != self.estimated_minutes):
+                    self.version += 1
+            except Lesson.DoesNotExist:
+                pass
         super().save(*args, **kwargs)
 
     def get_content_blocks(self):

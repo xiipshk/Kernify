@@ -6,11 +6,11 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 
-from core.models import TimeStampedModel, OrderedModel, PublishedModel, PublishedManager, ActiveManager
+from core.models import TimeStampedModel, OrderedModel, PublishedModel, PublishedManager, ActiveManager, PublishedSoftDeleteTimeStampedModel
 from learning.models import ProgrammingLanguage, Topic
 
 
-class PracticeTask(TimeStampedModel, OrderedModel, PublishedModel):
+class PracticeTask(PublishedSoftDeleteTimeStampedModel, OrderedModel):
     """
     Coding practice tasks.
     """
@@ -20,6 +20,7 @@ class PracticeTask(TimeStampedModel, OrderedModel, PublishedModel):
         on_delete=models.CASCADE,
         related_name='practice_tasks',
         verbose_name=_('topic'),
+        db_index=True,
     )
 
     language = models.ForeignKey(
@@ -27,6 +28,7 @@ class PracticeTask(TimeStampedModel, OrderedModel, PublishedModel):
         on_delete=models.CASCADE,
         related_name='practice_tasks',
         verbose_name=_('language'),
+        db_index=True,
     )
 
     name = models.CharField(_('name'), max_length=200)
@@ -80,8 +82,8 @@ class PracticeTask(TimeStampedModel, OrderedModel, PublishedModel):
     time_limit = models.PositiveIntegerField(_('time limit (seconds)'), default=5)
     memory_limit = models.PositiveIntegerField(_('memory limit (MB)'), default=128)
 
-    objects = PublishedManager()
-    all_objects = ActiveManager()
+    # objects = PublishedManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
+    # all_objects = ActiveManager()  # Now inherited from PublishedSoftDeleteTimeStampedModel
 
     class Meta:
         verbose_name = _('practice task')
@@ -117,6 +119,7 @@ class PracticeSession(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='practice_sessions',
         verbose_name=_('user'),
+        db_index=True,
     )
 
     task = models.ForeignKey(
@@ -124,6 +127,7 @@ class PracticeSession(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='sessions',
         verbose_name=_('task'),
+        db_index=True,
     )
 
     topic = models.ForeignKey(
@@ -131,6 +135,7 @@ class PracticeSession(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='practice_sessions',
         verbose_name=_('topic'),
+        db_index=True,
     )
 
     # Submitted code

@@ -7,6 +7,7 @@ lesson->topic mapping. Existing data is marked 'hidden' rather than deleted.
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -14,82 +15,20 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
-# Reference .md files location
-REF_DIR = Path(r"C:\Users\maksy\OneDrive\Рабочий стол\логи клауде\обучение\структура обучения")
+# Reference .md files location - configurable via env var
+REF_DIR = Path(os.environ.get('REF_DIR', BASE_DIR / 'reference_structure'))
 
 # Fixtures location
 FIXTURES_DIR = BASE_DIR / "fixtures" / "lessons"
 
-# Language mapping: lang_slug -> reference file name
-LANG_FILES = {
-    'csharp': 'CSharp.md',
-    'cpp': 'C++.md',
-    'python': 'Python.md',
-    'javascript': 'JavaScript.md',
-    'css': 'CSS.md',
-    'rust': 'Rust.md',
-}
-
-# Language metadata
-LANGUAGE_META = {
-    'python': {'name': 'Python', 'icon': '🐍', 'color': '#3776AB', 'order': 1},
-    'cpp': {'name': 'C++', 'icon': '⚡', 'color': '#00599C', 'order': 2},
-    'javascript': {'name': 'JavaScript', 'icon': '🟨', 'color': '#F7DF1E', 'order': 3},
-    'rust': {'name': 'Rust', 'icon': '🦀', 'color': '#000000', 'order': 4},
-    'css': {'name': 'CSS', 'icon': '🎨', 'color': '#1572B6', 'order': 5},
-    'csharp': {'name': 'C#', 'icon': '🔷', 'color': '#68217A', 'order': 6},
-}
-
-LEVEL_ORDER = {'beginner': 1, 'intermediate': 2, 'advanced': 3}
-LEVEL_NAME_RU = {
-    'beginner': 'Новичок',
-    'intermediate': 'Средний уровень',
-    'advanced': 'Углубленный уровень',
-}
-
-# Number of topics per level per language (from reference files)
-TOPIC_COUNTS = {
-    'csharp': {'beginner': 11, 'intermediate': 11, 'advanced': 11},
-    'cpp': {'beginner': 11, 'intermediate': 11, 'advanced': 11},
-    'python': {'beginner': 11, 'intermediate': 11, 'advanced': 11},
-    'javascript': {'beginner': 10, 'intermediate': 11, 'advanced': 11},
-    'css': {'beginner': 10, 'intermediate': 11, 'advanced': 11},
-    'rust': {'beginner': 11, 'intermediate': 11, 'advanced': 11},
-}
-
-# Lesson order -> topic order mapping per language/level
-LESSON_ORDER_MAP = {
-    'csharp': {
-        'beginner': list(range(1, 12)),
-        'intermediate': list(range(12, 23)),
-        'advanced': list(range(23, 34)),
-    },
-    'cpp': {
-        'beginner': list(range(1, 12)),
-        'intermediate': list(range(12, 23)),
-        'advanced': list(range(23, 34)),
-    },
-    'python': {
-        'beginner': list(range(1, 12)),
-        'intermediate': list(range(12, 23)),
-        'advanced': list(range(23, 34)),
-    },
-    'rust': {
-        'beginner': list(range(1, 12)),
-        'intermediate': list(range(12, 23)),
-        'advanced': list(range(23, 34)),
-    },
-    'javascript': {
-        'beginner': list(range(1, 11)),
-        'intermediate': list(range(11, 22)),
-        'advanced': list(range(25, 33)),
-    },
-    'css': {
-        'beginner': list(range(1, 11)),
-        'intermediate': list(range(11, 22)),
-        'advanced': list(range(22, 33)),
-    },
-}
+from learning.import_config import (
+    LANG_FILES,
+    LANGUAGE_META,
+    LEVEL_ORDER,
+    LEVEL_NAME_RU,
+    TOPIC_COUNTS,
+    LESSON_ORDER_MAP,
+)
 
 
 def parse_reference_md(file_path):

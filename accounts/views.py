@@ -20,11 +20,15 @@ from accounts.models import UserProfile, UserSettings
 
 def user_progress_totals(user):
     """Aggregate XP and streak across all of a user's language progress records."""
+    from django.db.models import Sum, Max
     from progress.models import UserProgress
-    progress = UserProgress.objects.filter(user=user).select_related('language')
+    agg = UserProgress.objects.filter(user=user).aggregate(
+        total_xp=Sum('total_xp'),
+        current_streak=Max('current_streak'),
+    )
     return {
-        'total_xp': sum(p.total_xp for p in progress),
-        'current_streak': max((p.current_streak for p in progress), default=0),
+        'total_xp': agg['total_xp'] or 0,
+        'current_streak': agg['current_streak'] or 0,
     }
 
 
@@ -83,27 +87,36 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         user = self.request.user
 
-        # Get or create profile and settings
+        # Get or create profile and settings (single query each)
         profile, _ = UserProfile.objects.get_or_create(user=user)
         settings_obj, _ = UserSettings.objects.get_or_create(user=user)
 
-        # Get progress data
+        # Get progress data with language prefetched
         from progress.models import UserProgress
         progress = UserProgress.objects.filter(user=user).select_related('language')
 
-        # Get recent activity
+        # Get recent activity with full task hierarchy
         from practice.models import PracticeSession
-        recent_sessions = PracticeSession.objects.filter(user=user).select_related('task')[:5]
+        recent_sessions = PracticeSession.objects.filter(user=user).select_related(
+            'task__topic__program__language'
+        )[:5]
 
-        # Get bookmarked lessons
-        bookmarked_lessons = profile.bookmarked_lessons.prefetch_related('topic__program__language')[:5]
+        # Get bookmarked lessons with full hierarchy
+        bookmarked_lessons = profile.bookmarked_lessons.select_related(
+            'topic__program__language'
+        )[:5]
 
-        # Get in-progress lessons
+        # Get in-progress lessons with full hierarchy
         from learning.models import Lesson, ProgrammingLanguage
         in_progress_lessons = Lesson.objects.filter(
             user_progress__user=user,
             user_progress__status='in_progress'
         ).select_related('topic__program__language')[:5]
+
+        # Get featured languages
+        languages = ProgrammingLanguage.objects.filter(
+            status='published'
+        ).order_by('order')[:6]
 
         totals = user_progress_totals(user)
         context.update({
@@ -115,7 +128,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             'in_progress_lessons': in_progress_lessons,
             'total_xp': totals['total_xp'],
             'current_streak': totals['current_streak'],
-            'languages': ProgrammingLanguage.objects.filter(status='published').order_by('order')[:6],
+            'languages': languages,
         })
         return context
 
@@ -131,14 +144,21 @@ class ProfileView(LoginRequiredMixin, TemplateView):
         user = self.request.user
         profile, _ = UserProfile.objects.get_or_create(user=user)
 
+        from django.db.models import Sum
         from progress.models import UserProgress
         progress = UserProgress.objects.filter(user=user).select_related('language')
+
+        # Use aggregation instead of Python sum
+        totals = user_progress_totals(user)
+        lessons_agg = UserProgress.objects.filter(user=user).aggregate(
+            total_lessons=Sum('lessons_completed')
+        )
 
         context.update({
             'profile': profile,
             'progress': progress,
-            **user_progress_totals(user),
-            'total_lessons': sum(p.lessons_completed for p in progress),
+            **totals,
+            'total_lessons': lessons_agg['total_lessons'] or 0,
         })
         return context
 

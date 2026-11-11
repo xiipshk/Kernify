@@ -182,17 +182,24 @@ class TaskSubmitView(LoginRequiredMixin, View):
 
         session.save()
 
-        # Update user progress
+        # Update user progress atomically
         if session.status == 'passed':
             from progress.models import UserProgress
-            progress, _ = UserProgress.objects.get_or_create(
-                user=request.user,
-                language=task.topic.program.language
-            )
-            progress.total_xp += task.xp_reward
-            progress.practice_solved += 1
-            progress.last_activity_at = timezone.now()
-            progress.save()
+            from django.db.models import F
+            from django.db import transaction
+
+            with transaction.atomic():
+                progress = UserProgress.objects.select_for_update().filter(
+                    user=request.user,
+                    language=task.topic.program.language
+                ).first()
+
+                if progress:
+                    UserProgress.objects.filter(pk=progress.pk).update(
+                        total_xp=F('total_xp') + task.xp_reward,
+                        practice_solved=F('practice_solved') + 1,
+                        last_activity_at=timezone.now(),
+                    )
 
         return redirect('practice:session_result', pk=session.pk)
 

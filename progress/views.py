@@ -226,8 +226,47 @@ class HeatmapView(LoginRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        # Placeholder
-        context['heatmap_data'] = {}
+        user = self.request.user
+        from datetime import date, timedelta
+        from django.db.models import Count
+        from django.db.models.functions import TruncDate
+
+        # Get last 365 days of activity
+        end_date = date.today()
+        start_date = end_date - timedelta(days=365)
+
+        # Combine lesson completions and practice sessions
+        from progress.models import LessonProgress
+        from practice.models import PracticeSession
+
+        lesson_dates = LessonProgress.objects.filter(
+            user=user,
+            status=LessonProgress.ProgressStatus.COMPLETED,
+            completed_at__date__gte=start_date,
+            completed_at__date__lte=end_date
+        ).annotate(d=TruncDate('completed_at')).values('d').annotate(c=Count('id'))
+
+        practice_dates = PracticeSession.objects.filter(
+            user=user,
+            status='passed',
+            completed_at__date__gte=start_date,
+            completed_at__date__lte=end_date
+        ).annotate(d=TruncDate('completed_at')).values('d').annotate(c=Count('id'))
+
+        # Build heatmap data: {date_string: count}
+        heatmap = {}
+        for item in lesson_dates:
+            d = item['d']
+            if d:
+                heatmap[d.isoformat()] = heatmap.get(d.isoformat(), 0) + item['c']
+        for item in practice_dates:
+            d = item['d']
+            if d:
+                heatmap[d.isoformat()] = heatmap.get(d.isoformat(), 0) + item['c']
+
+        context['heatmap_data'] = heatmap
+        context['start_date'] = start_date.isoformat()
+        context['end_date'] = end_date.isoformat()
         return context
 
 
@@ -236,3 +275,23 @@ class ExportProgressView(LoginRequiredMixin, TemplateView):
 
     template_name = 'progress/export.html'
     login_url = reverse_lazy('accounts:login')
+
+    def get(self, request, *args, **kwargs):
+        import json
+        from django.http import HttpResponse
+        from progress.models import UserProgress, LessonProgress, TopicProgress
+        from practice.models import PracticeSession
+
+        user = request.user
+
+        data = {
+            'user_progress': list(UserProgress.objects.filter(user=user).values()),
+            'lesson_progress': list(LessonProgress.objects.filter(user=user).values()),
+            'topic_progress': list(TopicProgress.objects.filter(user=user).values()),
+            'practice_sessions': list(PracticeSession.objects.filter(user=user).values()),
+        }
+
+        response = HttpResponse(json.dumps(data, default=str, ensure_ascii=False, indent=2),
+                                content_type='application/json')
+        response['Content-Disposition'] = f'attachment; filename="progress_export_{user.username}.json"'
+        return response

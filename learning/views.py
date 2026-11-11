@@ -1,15 +1,14 @@
 """Views for learning app."""
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.db.models import F
 from django.http import Http404
 from django.shortcuts import redirect
 from django.urls import reverse_lazy
-from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import DetailView, ListView, TemplateView, View
 
 from core.views import SlugDetailMixin
 from learning.models import CourseProgram, Lesson, Topic
+from learning.services import LessonCompletionService
 
 
 class LearningIndexView(LoginRequiredMixin, TemplateView):
@@ -65,38 +64,31 @@ class EnrollView(LoginRequiredMixin, View):
             })
 
         from progress.models import UserProgress
+        first_topic = program.topics.filter(status='published').order_by('order').first()
+        first_lesson = first_topic.lessons.filter(status='published').order_by('order').first() if first_topic else None
+
         progress, created = UserProgress.objects.get_or_create(
             user=request.user,
             language=program.language,
             defaults={
                 'current_program': program,
-                'current_topic': program.topics.filter(status='published').order_by('order').first(),
+                'current_topic': first_topic,
+                'current_lesson': first_lesson,
             }
         )
 
-        if not created and not progress.current_program:
-            progress.current_program = program
-            progress.current_topic = program.topics.filter(status='published').order_by('order').first()
-            progress.save()
+        if not created:
+            # Update to new program if different or if not set
+            if progress.current_program != program or not progress.current_program:
+                progress.current_program = program
+                progress.current_topic = first_topic
+                progress.current_lesson = first_lesson
+                progress.save(update_fields=['current_program', 'current_topic', 'current_lesson', 'updated_at'])
 
         # Redirect to the user's current lesson, or the first available lesson of the program
         if progress.current_lesson:
             return redirect('learning:lesson_learn', slug=progress.current_lesson.slug)
-        first_topic = (
-            program.topics.filter(status='published')
-            .order_by('order')
-            .first()
-        )
-        if not first_topic:
-            return redirect('learning:index')
-        first_lesson = (
-            first_topic.lessons.filter(status='published')
-            .order_by('order')
-            .first()
-        )
-        if not first_lesson:
-            return redirect('learning:index')
-        return redirect('learning:lesson_learn', slug=first_lesson.slug)
+        return redirect('learning:index')
 
 
 class LessonLearnView(LoginRequiredMixin, SlugDetailMixin, DetailView):
@@ -119,18 +111,8 @@ class LessonLearnView(LoginRequiredMixin, SlugDetailMixin, DetailView):
         lesson = self.object
         user = self.request.user
 
-        # Get or create progress
-        from progress.models import LessonProgress
-        progress, created = LessonProgress.objects.get_or_create(
-            user=user,
-            lesson=lesson,
-            defaults={'status': 'in_progress', 'started_at': timezone.now()}
-        )
-
-        if not created and progress.status == 'not_started':
-            progress.status = 'in_progress'
-            progress.started_at = timezone.now()
-            progress.save(update_fields=['status', 'started_at', 'updated_at'])
+        # Get or create progress (mark as in_progress if not started)
+        progress = LessonCompletionService.start_lesson(user, lesson)
 
         # Navigation — next lesson can span across topics within the same program
         context['prev_lesson'] = Lesson.objects.filter(
@@ -179,30 +161,8 @@ class LessonCompleteView(LoginRequiredMixin, View):
                 'verbose_name': Lesson._meta.verbose_name,
             })
 
-        from progress.models import LessonProgress, UserProgress
-        from django.utils import timezone
-
-        progress, _ = LessonProgress.objects.get_or_create(
-            user=request.user,
-            lesson=lesson,
-            defaults={'status': 'completed', 'completed_at': timezone.now(), 'score': 100}
-        )
-
-        if progress.status != 'completed':
-            progress.status = 'completed'
-            progress.completed_at = timezone.now()
-            progress.score = 100
-            progress.save()
-
-            # Update user progress (atomic increment to avoid race condition)
-            UserProgress.objects.filter(
-                user=request.user,
-                language=lesson.topic.program.language
-            ).update(
-                total_xp=F('total_xp') + lesson.xp_reward,
-                lessons_completed=F('lessons_completed') + 1,
-                last_activity_at=timezone.now(),
-            )
+        # Use service for atomic completion with XP awarding
+        LessonCompletionService.complete_lesson(request.user, lesson, award_xp=True)
 
         return redirect('learning:lesson_learn', slug=slug)
 
@@ -219,49 +179,11 @@ class LessonNextView(LoginRequiredMixin, View):
                 'verbose_name': Lesson._meta.verbose_name,
             })
 
-        from progress.models import LessonProgress, UserProgress
-        from django.utils import timezone
-
-        progress, _ = LessonProgress.objects.get_or_create(
-            user=request.user,
-            lesson=lesson,
-            defaults={'status': 'completed', 'completed_at': timezone.now(), 'score': 100}
-        )
-
-        # Award XP only once — when the lesson transitions to completed
-        if progress.status != 'completed':
-            progress.status = 'completed'
-            progress.completed_at = timezone.now()
-            progress.score = 100
-            progress.save()
-
-            UserProgress.objects.filter(
-                user=request.user,
-                language=lesson.topic.program.language
-            ).update(
-                total_xp=F('total_xp') + lesson.xp_reward,
-                lessons_completed=F('lessons_completed') + 1,
-                last_activity_at=timezone.now(),
-            )
+        # Use service for atomic completion with XP awarding
+        LessonCompletionService.complete_lesson(request.user, lesson, award_xp=True)
 
         # Redirect to the next lesson — can span across topics within the same program
-        next_lesson = Lesson.objects.filter(
-            topic=lesson.topic,
-            status='published',
-            order__gt=lesson.order
-        ).order_by('order').first()
-
-        if not next_lesson:
-            next_topic = Topic.objects.filter(
-                program=lesson.topic.program,
-                status='published',
-                order__gt=lesson.topic.order
-            ).order_by('order').first()
-            if next_topic:
-                next_lesson = Lesson.objects.filter(
-                    topic=next_topic,
-                    status='published'
-                ).order_by('order').first()
+        next_lesson = LessonCompletionService.get_next_lesson(lesson)
 
         if next_lesson:
             return redirect('learning:lesson_learn', slug=next_lesson.slug)

@@ -24,31 +24,13 @@ from learning.models import (
     Topic,
     Lesson,
 )
+from learning.import_config import (
+    LEVEL_RANGES,
+    LEVEL_PROGRAM_ORDER,
+    LANGUAGE_META,
+)
 
 logger = logging.getLogger(__name__)
-
-# Lesson order range -> (target_level, level_display_name)
-LEVEL_RANGES = [
-    (1, 11, CourseProgram.TargetLevel.BEGINNER, 'Новичок'),
-    (12, 22, CourseProgram.TargetLevel.INTERMEDIATE, 'Средний уровень'),
-    (23, 33, CourseProgram.TargetLevel.ADVANCED, 'Углубленный уровень'),
-]
-
-LEVEL_PROGRAM_ORDER = {
-    CourseProgram.TargetLevel.BEGINNER: 1,
-    CourseProgram.TargetLevel.INTERMEDIATE: 2,
-    CourseProgram.TargetLevel.ADVANCED: 3,
-}
-
-# Per-language metadata
-LANGUAGE_META = {
-    'python': {'name': 'Python', 'icon': '🐍', 'color': '#3776AB', 'order': 1},
-    'cpp': {'name': 'C++', 'icon': '⚡', 'color': '#00599C', 'order': 2},
-    'javascript': {'name': 'JavaScript', 'icon': '🟨', 'color': '#F7DF1E', 'order': 3},
-    'rust': {'name': 'Rust', 'icon': '🦀', 'color': '#000000', 'order': 4},
-    'css': {'name': 'CSS', 'icon': '🎨', 'color': '#1572B6', 'order': 5},
-    'csharp': {'name': 'C#', 'icon': '🔷', 'color': '#68217A', 'order': 6},
-}
 
 
 class Command(BaseCommand):

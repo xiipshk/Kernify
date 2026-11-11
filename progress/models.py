@@ -20,6 +20,7 @@ class UserProgress(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='language_progress',
         verbose_name=_('user'),
+        db_index=True,
     )
 
     language = models.ForeignKey(
@@ -27,6 +28,7 @@ class UserProgress(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='user_progress',
         verbose_name=_('language'),
+        db_index=True,
     )
 
     # Current program
@@ -37,6 +39,7 @@ class UserProgress(TimeStampedModel):
         blank=True,
         related_name='current_users',
         verbose_name=_('current program'),
+        db_index=True,
     )
 
     # Current topic/lesson
@@ -47,6 +50,7 @@ class UserProgress(TimeStampedModel):
         blank=True,
         related_name='current_users',
         verbose_name=_('current topic'),
+        db_index=True,
     )
     current_lesson = models.ForeignKey(
         Lesson,
@@ -55,6 +59,7 @@ class UserProgress(TimeStampedModel):
         blank=True,
         related_name='current_users',
         verbose_name=_('current lesson'),
+        db_index=True,
     )
 
     # Overall statistics
@@ -104,6 +109,7 @@ class LessonProgress(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='lesson_progress',
         verbose_name=_('user'),
+        db_index=True,
     )
 
     lesson = models.ForeignKey(
@@ -111,6 +117,7 @@ class LessonProgress(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='user_progress',
         verbose_name=_('lesson'),
+        db_index=True,
     )
 
     # Status
@@ -131,6 +138,9 @@ class LessonProgress(TimeStampedModel):
     time_spent = models.PositiveIntegerField(_('time spent (seconds)'), default=0)
     started_at = models.DateTimeField(_('started at'), null=True, blank=True)
     completed_at = models.DateTimeField(_('completed at'), null=True, blank=True)
+
+    # Score (0-100)
+    score = models.PositiveIntegerField(_('score'), default=0)
 
     # Review
     review_count = models.PositiveIntegerField(_('review count'), default=0)
@@ -177,6 +187,7 @@ class TopicProgress(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='topic_progress',
         verbose_name=_('user'),
+        db_index=True,
     )
 
     topic = models.ForeignKey(
@@ -184,6 +195,7 @@ class TopicProgress(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='user_progress',
         verbose_name=_('topic'),
+        db_index=True,
     )
 
     # Status (based on entrance test and lesson completion)
@@ -229,12 +241,16 @@ class TopicProgress(TimeStampedModel):
 
     def update_status(self):
         """Update status based on completion and test score."""
+        # Check MASTERED first (highest bar)
         if self.test_score >= 70 and self.completion_percentage >= 80:
             self.status = self.TopicStatus.MASTERED
+        # Check NOT_MASTERED: took test but scored < 30 AND no lessons completed
+        elif self.test_score > 0 and self.test_score < 30 and self.completion_percentage == 0:
+            self.status = self.TopicStatus.NOT_MASTERED
+        # Check PARTIAL: either passed test with 30-69, or completed some lessons
         elif self.test_score >= 30 or self.completion_percentage > 0:
             self.status = self.TopicStatus.PARTIAL
-        elif self.test_score > 0:
-            self.status = self.TopicStatus.NOT_MASTERED
+        # Default: never took test, no completion
         else:
             self.status = self.TopicStatus.UNTESTED
         self.save(update_fields=['status', 'updated_at'])
@@ -250,6 +266,7 @@ class ErrorHistory(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='error_history',
         verbose_name=_('user'),
+        db_index=True,
     )
 
     topic = models.ForeignKey(
@@ -257,6 +274,7 @@ class ErrorHistory(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='error_history',
         verbose_name=_('topic'),
+        db_index=True,
     )
 
     lesson = models.ForeignKey(
@@ -266,6 +284,7 @@ class ErrorHistory(TimeStampedModel):
         blank=True,
         related_name='error_history',
         verbose_name=_('lesson'),
+        db_index=True,
     )
 
     practice_task = models.ForeignKey(
@@ -275,6 +294,7 @@ class ErrorHistory(TimeStampedModel):
         blank=True,
         related_name='error_history',
         verbose_name=_('practice task'),
+        db_index=True,
     )
 
     # Error details
@@ -320,27 +340,46 @@ class ErrorHistory(TimeStampedModel):
 
     def schedule_next_review(self, quality=3):
         """
-        Schedule next review using SM-2 algorithm (simplified).
+        Schedule next review using SM-2 algorithm.
         quality: 0-5 (0 = complete blackout, 5 = perfect response)
+        
+        Standard SM-2 algorithm:
+        - repetition (count) starts at 1
+        - If quality >= 3:
+            - If count == 1: interval = 1
+            - If count == 2: interval = 6
+            - Else: interval = previous_interval * ease_factor (rounded)
+            - ease_factor = ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+            - ease_factor = max(1.3, ease_factor)
+        - If quality < 3:
+            - count = 1 (reset)
+            - interval = 1
+            - ease_factor = max(1.3, ease_factor - 0.2)
         """
         from django.utils import timezone
         from datetime import timedelta
 
         if quality >= 3:
+            # Successful recall
             if self.count == 1:
                 self.interval_days = 1
             elif self.count == 2:
                 self.interval_days = 6
             else:
-                self.interval_days = int(self.interval_days * self.ease_factor)
+                # Use previous interval * ease_factor, rounded
+                self.interval_days = int(round(self.interval_days * self.ease_factor))
 
-            # Update ease factor
-            self.ease_factor = max(1.3, self.ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)))
+            # Update ease factor per SM-2 formula
+            # EF' = EF + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
+            q = quality
+            self.ease_factor = max(1.3, self.ease_factor + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)))
+            self.count += 1
         else:
+            # Failed recall - reset to first repetition
+            self.count = 1
             self.interval_days = 1
             self.ease_factor = max(1.3, self.ease_factor - 0.2)
 
-        self.count += 1
         self.next_review = timezone.now() + timedelta(days=self.interval_days)
         self.save(update_fields=['count', 'interval_days', 'ease_factor', 'next_review', 'updated_at'])
 

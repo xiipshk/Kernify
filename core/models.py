@@ -119,10 +119,36 @@ class PublishedManager(models.Manager):
         return super().get_queryset().filter(status=PublishedModel.PublishStatus.PUBLISHED)
 
 
+class PublishedActiveManager(models.Manager):
+    """
+    Manager that returns only published AND non-deleted objects.
+    Combines PublishedManager and ActiveManager logic.
+    """
+
+    def get_queryset(self):
+        queryset = super().get_queryset().filter(status=PublishedModel.PublishStatus.PUBLISHED)
+        if hasattr(self.model, 'is_deleted'):
+            queryset = queryset.filter(is_deleted=False)
+        return queryset
+
+
 class TimeStampedSoftDeleteModel(TimeStampedModel, SoftDeleteModel):
     """Combines TimeStampedModel and SoftDeleteModel."""
 
     objects = ActiveManager()
+    all_objects = models.Manager()
+
+    class Meta:
+        abstract = True
+
+
+class PublishedSoftDeleteTimeStampedModel(TimeStampedModel, PublishedModel, SoftDeleteModel):
+    """
+    Combines TimeStampedModel, PublishedModel, and SoftDeleteModel.
+    Uses PublishedActiveManager to filter both published and non-deleted.
+    """
+
+    objects = PublishedActiveManager()
     all_objects = models.Manager()
 
     class Meta:
