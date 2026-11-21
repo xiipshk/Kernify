@@ -1,0 +1,397 @@
+# Урок 11: Семантика JavaScript — типы, приведение, равенство, ссылки, копирование объектов
+
+## Цели урока
+- Понимать систему типов JavaScript: примитивы и объекты
+- Разбираться в неявном и явном приведении типов (coercion)
+- Правильно использовать строгое и нестрогое равенство
+- Понимать передачу по ссылке vs по значению
+- Уметь глубоко и поверхностно копировать объекты и массивы
+
+---
+
+## 1. Система типов JavaScript
+
+### Примитивы (неизменяемые, передаются по значению)
+```javascript
+// 7 примитивных типов
+let str = "текст";           // string
+let num = 42;                // number
+let big = 9007199254740991n; // bigint (ES2020)
+let bool = true;             // boolean
+let und = undefined;         // undefined
+let nul = null;              // null (баг typeof null === "object")
+let sym = Symbol("id");      // symbol (ES2015)
+
+// Примитивы неизменяемы
+str[0] = "Т"; // Ошибка в строгом режиме, молча игнорируется в нестрогом
+console.log(str); // "текст"
+```
+
+### Объекты (изменяемые, передаются по ссылке)
+```javascript
+let obj = { a: 1 };
+let arr = [1, 2, 3];
+let fn = function() {};
+let map = new Map();
+let set = new Set();
+let date = new Date();
+let regex = /pattern/;
+
+// Все объекты — ссылки на одну область памяти
+let obj2 = obj;
+obj2.a = 2;
+console.log(obj.a); // 2 — изменился и исходный!
+```
+
+### typeof и instanceof
+```javascript
+typeof "строка"     // "string"
+typeof 42           // "number"
+typeof true         // "boolean"
+typeof undefined    // "undefined"
+typeof Symbol()     // "symbol"
+typeof 1n           // "bigint"
+typeof null         // "object" — известный баг языка
+typeof {}           // "object"
+typeof []           // "object"
+typeof function(){} // "function"
+
+// instanceof проверяет прототипную цепочку
+[] instanceof Array        // true
+[] instanceof Object       // true
+new Date() instanceof Date // true
+new Date() instanceof Object // true
+```
+
+---
+
+## 2. Приведение типов (Type Coercion)
+
+### Явное приведение (конструкторы без new)
+```javascript
+// В строку
+String(123)        // "123"
+String(true)       // "true"
+String(null)       // "null"
+String(undefined)  // "undefined"
+String(Symbol("x"))// "Symbol(x)" — бросает ошибку при конкатенации!
+
+// В число
+Number("42")       // 42
+Number("  42  ")   // 42 (пробелы игнорируются)
+Number("")         // 0
+Number("abc")      // NaN
+Number(true)       // 1
+Number(false)      // 0
+Number(null)       // 0
+Number(undefined)  // NaN
+
+// parseInt / parseFloat — парсинг строк
+parseInt("42px", 10)    // 42
+parseFloat("3.14")      // 3.14
+parseInt("0x10")        // 16 (hex)
+parseInt("0b10")        // NaN (parseInt не понимает binary!)
+
+// В булево
+Boolean(0)         // false
+Boolean("")        // false
+Boolean(null)      // false
+Boolean(undefined) // false
+Boolean(NaN)       // false
+Boolean({})        // true
+Boolean([])        // true
+Boolean("false")   // true — непустая строка!
+```
+
+### Неявное приведение (coercion) — опасно!
+```javascript
+// Строковое сложение
+"5" + 1      // "51" — число приведено к строке
+"5" - 1      // 4 — строка приведена к числу (вычитание только для чисел)
+"5" * "2"    // 10
+"5" / "2"    // 2.5
+
+// Сравнение с ==
+5 == "5"        // true
+0 == ""         // true
+0 == false      // true
+"" == false     // true
+null == undefined // true
+null == 0       // false!
+undefined == 0  // false!
+
+// Логические операторы
+[] && "hello"   // "hello" ([] — truthy)
+"" || "default" // "default"
+```
+
+### ToPrimitive алгоритм (ES2023)
+```javascript
+// При операции с объектом вызывается [Symbol.toPrimitive](hint)
+// hint: "string" | "number" | "default"
+
+const user = {
+  name: "Анна",
+  age: 25,
+  [Symbol.toPrimitive](hint) {
+    if (hint === "string") return this.name;
+    if (hint === "number") return this.age;
+    return this.name; // default
+  }
+};
+
+console.log(`${user}`);     // "Анна" (string context)
+console.log(+user);         // 25 (number context)
+console.log(user + "");     // "Анна" (default -> string)
+console.log(user * 2);      // 50 (default -> number)
+```
+
+---
+
+## 3. Равенство: == vs === vs Object.is
+
+### Строгое равенство (===) — всегда предпочтительно
+```javascript
+5 === 5           // true
+5 === "5"         // false
+true === 1        // false
+null === undefined // false
+NaN === NaN       // false — особенность IEEE 754
+0 === -0          // true
+```
+
+### Нестрогое равенство (==) — избегайте!
+```javascript
+// Правила абстрактного сравнения (ECMA-262):
+// 1. Одинаковые типы -> ===
+// 2. null == undefined -> true
+// 3. number == string -> ToNumber(string)
+// 4. boolean == anything -> ToNumber(boolean)
+// 5. object == primitive -> ToPrimitive(object)
+
+1 == "1"          // true
+true == "1"       // true
+[] == ""          // true
+[] == 0           // true
+[0] == false      // true
+```
+
+### Object.is() — для особых случаев
+```javascript
+Object.is(5, 5)        // true
+Object.is(NaN, NaN)    // true — в отличие от ===
+Object.is(0, -0)       // false — в отличие от ===
+Object.is({}, {})      // false (разные ссылки)
+```
+
+---
+
+## 4. Передача по ссылке vs по значению
+
+### Примитивы — по значению
+```javascript
+let a = 10;
+let b = a;
+b = 20;
+console.log(a); // 10 — не изменилось
+
+function changePrimitive(x) {
+  x = 999;
+}
+changePrimitive(a);
+console.log(a); // 10
+```
+
+### Объекты — по ссылке (на самом деле — копия ссылки)
+```javascript
+let obj1 = { x: 1 };
+let obj2 = obj1; // obj2 ссылается на ТОТ ЖЕ объект
+obj2.x = 2;
+console.log(obj1.x); // 2!
+
+function mutate(obj) {
+  obj.x = 999; // мутирует исходный объект
+}
+mutate(obj1);
+console.log(obj1.x); // 999
+
+function reassign(obj) {
+  obj = { x: 0 }; // меняет локальную ссылку, не исходный объект!
+}
+reassign(obj1);
+console.log(obj1.x); // 999 — не изменилось
+```
+
+---
+
+## 5. Копирование объектов и массивов
+
+### Поверхностное копирование (shallow copy)
+```javascript
+const original = { a: 1, b: { c: 2 } };
+
+// Spread operator (ES2018)
+const copy1 = { ...original };
+
+// Object.assign
+const copy2 = Object.assign({}, original);
+
+// Array.from / spread для массивов
+const arr = [1, 2, [3, 4]];
+const arrCopy1 = [...arr];
+const arrCopy2 = Array.from(arr);
+
+// Object.create — копирует прототип, не свойства
+const copy3 = Object.create(Object.getPrototypeOf(original));
+Object.assign(copy3, original);
+
+// ⚠️ Проблема: вложенные объекты всё равно共用!
+copy1.b.c = 999;
+console.log(original.b.c); // 999 — оригинал изменился!
+```
+
+### Глубокое копирование (deep copy)
+
+#### Вариант 1: structuredClone (современный, ES2022)
+```javascript
+const original = {
+  a: 1,
+  b: { c: 2 },
+  date: new Date(),
+  regex: /abc/,
+  map: new Map([[1, 2]]),
+  set: new Set([3, 4])
+};
+
+const deep = structuredClone(original);
+deep.b.c = 999;
+console.log(original.b.c); // 2 — безопасно!
+
+// Не копирует: функции, DOM-узлы, WeakMap/WeakSet, Error
+```
+
+#### Вариант 2: JSON (устаревший, с ограничениями)
+```javascript
+const deep = JSON.parse(JSON.stringify(original));
+// Потеряет: undefined, Symbol, function, Date -> string,
+// Map/Set -> {}, RegExp -> {}, Infinity/NaN -> null
+// Циклические ссылки -> ошибка
+```
+
+#### Вариант 3: Кастомная рекурсивная функция
+```javascript
+function deepClone(obj, visited = new WeakMap()) {
+  // Примитивы
+  if (obj === null || typeof obj !== "object") return obj;
+
+  // Циклические ссылки
+  if (visited.has(obj)) return visited.get(obj);
+
+  // Дата, Регэксп, Map, Set, ArrayBuffer, TypedArray
+  if (obj instanceof Date) return new Date(obj);
+  if (obj instanceof RegExp) return new RegExp(obj);
+  if (obj instanceof Map) {
+    const copy = new Map();
+    visited.set(obj, copy);
+    for (const [k, v] of obj) copy.set(deepClone(k, visited), deepClone(v, visited));
+    return copy;
+  }
+  if (obj instanceof Set) {
+    const copy = new Set();
+    visited.set(obj, copy);
+    for (const v of obj) copy.add(deepClone(v, visited));
+    return copy;
+  }
+
+  // Array / Object
+  const copy = Array.isArray(obj) ? [] : {};
+  visited.set(obj, copy);
+
+  for (const key of Object.keys(obj)) {
+    copy[key] = deepClone(obj[key], visited);
+  }
+  // Символы
+  for (const key of Object.getOwnPropertySymbols(obj)) {
+    copy[key] = deepClone(obj[key], visited);
+  }
+
+  return copy;
+}
+```
+
+#### Вариант 4: lodash.clonedeep (production)
+```bash
+npm install lodash.clonedeep
+```
+```javascript
+import cloneDeep from "lodash.clonedeep";
+const deep = cloneDeep(original);
+```
+
+### Копирование с сохранением прототипа
+```javascript
+class User {
+  constructor(name) { this.name = name; }
+  greet() { return `Hi, ${this.name}`; }
+}
+
+const user = new User("Анна");
+
+// structuredClone НЕ сохраняет прототип класса!
+const clone1 = structuredClone(user);
+console.log(clone1 instanceof User); // false
+console.log(clone1.greet());         // Error: greet is not a function
+
+// Правильно: новый экземпляр + копия свойств
+const clone2 = Object.assign(Object.create(Object.getPrototypeOf(user)), user);
+console.log(clone2 instanceof User); // true
+console.log(clone2.greet());         // "Hi, Анна"
+```
+
+---
+
+## Практические задания
+
+1. **Типовый детектор**: Напишите функцию `getType(value)`, возвращающую точный тип: `"null"`, `"array"`, `"date"`, `"regexp"`, `"map"`, `"set"`, `"arguments"`, `"htmlcollection"`, `"nodelist"`, `"primitive:string"` и т.д.
+
+2. **Безопасное сравнение**: Реализуйте `looseEqual(a, b)`, имитирующую `==`, но без неожиданностей с `[] == false` (должно быть `false`).
+
+3. **Глубокое сравнение**: Напишите `deepEqual(a, b)` — рекурсивное сравнение объектов, массивов, Map, Set, Date, RegExp с учётом циклических ссылок.
+
+4. **Immutable update**: Функция `setIn(obj, path, value)` — возвращает новый объект с изменённым вложенным свойством (path = "a.b[0].c"), не мутируя оригинал.
+
+5. **Coercion quiz**: Предскажите результаты без запуска:
+   ```javascript
+   [] + []       // ?
+   [] + {}       // ?
+   {} + []       // ? (в консоли vs в скрипте!)
+   true + true   // ?
+   "5" - "3"     // ?
+   "5" + 3       // ?
+   null + 1      // ?
+   undefined + 1 // ?
+   ```
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `if (x == null)` — пропускает `undefined` | Используйте `x == null` намеренно для проверки `null/undefined` вместе, или `x === null` / `x === undefined` раздельно |
+| `typeof null === "null"` | `typeof null === "object"` — это баг языка, используйте `x === null` |
+| `NaN === NaN` возвращает `true` | `NaN !== NaN` всегда, используйте `Number.isNaN()` или `Object.is(NaN, x)` |
+| `parseInt("09")` возвращает 0 (в старых JS) | Всегда указывайте базу: `parseInt("09", 10)` |
+| `[] == ![]` — `true` | Понять приведение: `[] == false -> "" == 0 -> 0 == 0` |
+| Spread копирует глубоко | Spread — только shallow! Используйте `structuredClone` |
+| `JSON.parse(JSON.stringify())` для всего | Потеряет функции, Date, Map, Set, Symbol, циклические ссылки |
+
+---
+
+## Полезные ресурсы
+
+- **ECMAScript 2024 Spec: Type Conversion** — https://262.ecma-international.org/14.0/#sec-type-conversion
+- **MDN: Comparison operators** — https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Comparison_Operators
+- **MDN: structuredClone** — https://developer.mozilla.org/en-US/docs/Web/API/structuredClone
+- **You Don't Know JS: Types & Grammar** — Kyle Simpson, Ch. 4 "Coercion"
+- **WTW (Why Types Work): Equality** — https://github.com/microsoft/TypeScript/wiki/What's-new-in-TypeScript#strict-null-checks

@@ -1,0 +1,609 @@
+# Урок 3.5: Async/Concurrency — Async Internals, Scheduling, ValueTask, Channels, Parallel/PLINQ, Synchronization
+
+## Цели урока
+- Понимать state machine async/await и её накладные расходы
+- Работать с ValueTask, IValueTaskSource для высокопроизводительных сценариев
+- Использовать Channels для producer/consumer паттернов
+- Применять Parallel, PLINQ для CPU-bound работы
+- Освоить примитивы синхронизации: SemaphoreSlim, Lock, ReaderWriterLockSlim, AsyncLock
+
+---
+
+## 1. Async Internals — State Machine
+
+### Что происходит под капотом
+```csharp
+// Исходный код
+public async Task<int> DownloadAsync(string url)
+{
+    using var client = new HttpClient();
+    var data = await client.GetStringAsync(url);
+    return data.Length;
+}
+
+// Компилятор генерирует (упрощённо):
+public struct DownloadAsyncStateMachine : IAsyncStateMachine
+{
+    public int State; // -1=start, 0=awaiting, 1=completed, -2=error
+    public AsyncTaskMethodBuilder<int> Builder;
+    public string Url;
+    public HttpClient Client;
+    public Task<string> AwaiterTask;
+    public string Data;
+
+    public void MoveNext()
+    {
+        try
+        {
+            if (State == -1)
+            {
+                Client = new HttpClient();
+                AwaiterTask = Client.GetStringAsync(Url);
+                State = 0;
+                Builder.AwaitUnsafeOnCompleted(ref AwaiterTask.GetAwaiter(), ref this);
+                return;
+            }
+
+            var awaiter = AwaiterTask.GetAwaiter();
+            Data = awaiter.GetResult(); // Может бросить исключение
+            State = 1;
+            Builder.SetResult(Data.Length);
+        }
+        catch (Exception ex)
+        {
+            State = -2;
+            Builder.SetException(ex);
+        }
+    }
+}
+```
+
+### Накладные расходы
+```csharp
+// Каждый await — аллокация state machine (если не ValueTask)
+// + boxing для async Task методов
+// + продолжение через ThreadPool/TaskScheduler
+
+// Избегайте лишних await:
+public async Task BadExample() // 2 аллокации state machine
+{
+    await Task.Delay(100);
+    await Task.Delay(200);
+}
+
+// Лучше: объединяйте или используйте ValueTask
+public async ValueTask GoodExample()
+{
+    await Task.Delay(100);
+    await Task.Delay(200);
+}
+```
+
+### ConfigureAwait
+```csharp
+// В библиотеках — всегда false (не захватывать SynchronizationContext)
+public async Task LibraryMethod()
+{
+    await DoWorkAsync().ConfigureAwait(false);
+    // Код здесь выполняется на ThreadPool, не на UI thread
+}
+
+// В приложениях (WPF/WinForms/ASP.NET Core до .NET 5) — true по умолчанию
+// ASP.NET Core 5+ — нет SynchronizationContext, ConfigureAwait не нужен
+```
+
+---
+
+## 2. ValueTask и IValueTaskSource
+
+### ValueTask — избегаем аллокаций для синхронных путей
+```csharp
+public class CacheService
+{
+    private readonly Dictionary<string, string> _cache = new();
+
+    // ValueTask<T> — структурный, нет аллокации если синхронно
+    public ValueTask<string?> GetAsync(string key)
+    {
+        if (_cache.TryGetValue(key, out var value))
+            return new ValueTask<string?>(value); // Синхронно — нет аллокации!
+
+        return FetchFromDbAsync(key); // Асинхронно — возвращает Task
+    }
+
+    private async ValueTask<string?> FetchFromDbAsync(string key)
+    {
+        await Task.Delay(10); // Симуляция БД
+        var value = $"value-{key}";
+        _cache[key] = value;
+        return value;
+    }
+}
+
+// ValueTask vs Task: когда что использовать
+// Task — публичный API, долгоживущие операции, нужно кэшировать
+// ValueTask — внутренние методы, частые вызовы, горячие пути
+```
+
+### IValueTaskSource — ручное управление
+```csharp
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks.Sources;
+
+public class CustomValueTaskSource : IValueTaskSource<int>
+{
+    private ManualResetValueTaskSourceCore<int> _core = new();
+
+    public ValueTask<int> GetValueTask()
+    {
+        _core.Reset();
+        // Запускаем асинхронную операцию
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            Thread.Sleep(100);
+            _core.SetResult(42);
+        });
+        return new ValueTask<int>(this, _core.Version);
+    }
+
+    // IValueTaskSource implementation
+    public int GetResult(short token) => _core.GetResult(token);
+    public ValueTaskSourceStatus GetStatus(short token) => _core.GetStatus(token);
+    public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
+        => _core.OnCompleted(continuation, state, token, flags);
+}
+
+// Использование
+var source = new CustomValueTaskSource();
+var vt = source.GetValueTask();
+int result = await vt; // 42
+```
+
+### ValueTask — правила использования
+```csharp
+// НЕЛЬЗЯ:
+public async ValueTask BadUsage()
+{
+    var vt = SomeMethod();
+    var t1 = vt.AsTask(); // Преобразует в Task — аллокация!
+    var t2 = vt.AsTask(); // Ещё одна аллокация!
+    await vt; // Можно await только ОДИН раз!
+}
+
+// ПРАВИЛЬНО:
+public async ValueTask GoodUsage()
+{
+    var result = await SomeMethod(); // Прямой await
+    // Или:
+    var vt = SomeMethod();
+    if (vt.IsCompletedSuccessfully)
+    {
+        var result = vt.Result; // Синхронное получение
+    }
+    else
+    {
+        var result = await vt; // Асинхронное ожидание
+    }
+}
+```
+
+---
+
+## 3. Channels — Producer/Consumer
+
+### Основы Channels
+```csharp
+using System.Threading.Channels;
+
+// Unbounded — без ограничения размера
+var unbounded = Channel.CreateUnbounded<int>();
+
+// Bounded — с backpressure
+var bounded = Channel.CreateBounded<int>(new BoundedChannelOptions(100)
+{
+    FullMode = BoundedChannelFullMode.Wait, // Блокирует producer
+    SingleReader = true,
+    SingleWriter = true,
+    AllowSynchronousContinuations = false
+});
+
+// Writer
+var writer = bounded.Writer;
+await writer.WriteAsync(42);
+writer.TryWrite(43); // Неблокирующий
+writer.Complete(); // Сигнал завершения
+
+// Reader
+var reader = bounded.Reader;
+var item = await reader.ReadAsync(); // Ждет данные
+while (await reader.WaitToReadAsync())
+{
+    while (reader.TryRead(out var i))
+        Console.WriteLine(i);
+}
+```
+
+### Pipeline с Channels
+```csharp
+public class Pipeline<TInput, TOutput>
+{
+    private readonly Channel<TInput> _input = Channel.CreateBounded<TInput>(100);
+    private readonly Channel<TOutput> _output = Channel.CreateBounded<TOutput>(100);
+    private readonly Func<TInput, ValueTask<TOutput>> _processor;
+    private readonly int _parallelism;
+
+    public Pipeline(Func<TInput, ValueTask<TOutput>> processor, int parallelism = 4)
+    {
+        _processor = processor;
+        _parallelism = parallelism;
+    }
+
+    public ChannelReader<TOutput> Output => _output.Reader;
+
+    public async ValueTask SendAsync(TInput item)
+    {
+        await _input.Writer.WriteAsync(item);
+    }
+
+    public void Complete() => _input.Writer.Complete();
+
+    public async Task RunAsync(CancellationToken ct = default)
+    {
+        var workers = Enumerable.Range(0, _parallelism)
+            .Select(_ => Task.Run(async () =>
+            {
+                await foreach (var item in _input.Reader.ReadAllAsync(ct))
+                {
+                    var result = await _processor(item);
+                    await _output.Writer.WriteAsync(result, ct);
+                }
+            }, ct))
+            .ToArray();
+
+        await Task.WhenAll(workers);
+        _output.Writer.Complete();
+    }
+}
+
+// Использование
+var pipeline = new Pipeline<string, int>(async s =>
+{
+    await Task.Delay(10);
+    return s.Length;
+}, parallelism: 8);
+
+_ = pipeline.RunAsync();
+
+for (int i = 0; i < 1000; i++)
+    await pipeline.SendAsync($"item-{i}");
+
+pipeline.Complete();
+
+await foreach (var result in pipeline.Output.ReadAllAsync())
+    Console.WriteLine(result);
+```
+
+---
+
+## 4. Parallel и PLINQ
+
+### Parallel.For/ForEach
+```csharp
+// CPU-bound работа — Parallel
+var items = Enumerable.Range(0, 1_000_000).ToArray();
+
+// Простой цикл
+Parallel.For(0, items.Length, i =>
+{
+    items[i] = ComputeHeavy(items[i]);
+});
+
+// С настройками
+Parallel.ForEach(items, new ParallelOptions
+{
+    MaxDegreeOfParallelism = Environment.ProcessorCount,
+    CancellationToken = ct
+}, item =>
+{
+    Process(item);
+});
+
+// Parallel.Invoke — несколько действий
+Parallel.Invoke(
+    () => Task1(),
+    () => Task2(),
+    () => Task3()
+);
+
+// Break/Stop
+Parallel.For(0, 100, (i, state) =>
+{
+    if (i == 50) state.Break(); // Завершает итерации < 50
+    if (i == 75) state.Stop();  // Останавливает все
+});
+```
+
+### PLINQ — Parallel LINQ
+```csharp
+var numbers = Enumerable.Range(1, 1_000_000);
+
+// Просто добавьте .AsParallel()
+var primes = numbers.AsParallel()
+    .Where(IsPrime)
+    .OrderBy(x => x)
+    .ToList();
+
+// Настройки
+var result = numbers.AsParallel()
+    .WithDegreeOfParallelism(8)
+    .WithExecutionMode(ParallelExecutionMode.ForceParallelism)
+    .WithMergeOptions(ParallelMergeOptions.NotBuffered) // Streaming
+    .Select(ExpensiveTransform)
+    .ToList();
+
+// Partitioning
+var partitioned = Partitioner.Create(0, 1_000_000, 10000); // Range partitioning
+var parallelQuery = partitioned.AsParallel()
+    .SelectMany(range => ProcessRange(range));
+
+// Агрегация без lock
+var sum = numbers.AsParallel()
+    .Aggregate(
+        0,                    // seed
+        (local, n) => local + n,  // local aggregation
+        (main, local) => main + local, // combine
+        final => final       // final result
+    );
+```
+
+### Когда использовать Parallel/PLINQ vs async
+```csharp
+// CPU-bound, независимые итерации — Parallel/PLINQ
+Parallel.ForEach(files, f => Compress(f));
+
+// I/O-bound, ожидание внешних ресурсов — async/await
+await Task.WhenAll(urls.Select(u => DownloadAsync(u)));
+
+// Смешанное — Channels + Parallel workers
+```
+
+---
+
+## 5. Примитивы синхронизации
+
+### Lock (C# 7.2+) — быстрый монитор
+```csharp
+private readonly Lock _lock = new(); // struct, не аллоцирует
+
+public void ThreadSafeMethod()
+{
+    _lock.Enter();
+    try
+    {
+        // Critical section
+    }
+    finally
+    {
+        _lock.Exit();
+    }
+}
+
+// Using pattern (C# 8+)
+public void BetterLock()
+{
+    using (_lock.EnterScope())
+    {
+        // Auto-exit
+    }
+}
+```
+
+### SemaphoreSlim — асинхронное ограничение параллелизма
+```csharp
+// Ограничиваем до 10 одновременных операций
+private readonly SemaphoreSlim _semaphore = new(10, 10);
+
+public async Task LimitedOperationAsync()
+{
+    await _semaphore.WaitAsync(); // Асинхронное ожидание!
+    try
+    {
+        await DoWorkAsync();
+    }
+    finally
+    {
+        _semaphore.Release();
+    }
+}
+
+// AsyncScopedSemaphore (helper)
+public readonly struct AsyncSemaphoreScope : IDisposable
+{
+    private readonly SemaphoreSlim _semaphore;
+    public AsyncSemaphoreScope(SemaphoreSlim semaphore) { _semaphore = semaphore; }
+    public void Dispose() => _semaphore.Release();
+}
+
+public async ValueTask<AsyncSemaphoreScope> EnterAsync()
+{
+    await _semaphore.WaitAsync();
+    return new AsyncSemaphoreScope(_semaphore);
+}
+
+// Использование
+await using (await _semaphore.EnterAsync())
+{
+    // Автоматический Release
+}
+```
+
+### ReaderWriterLockSlim — много читателей, один писатель
+```csharp
+private readonly ReaderWriterLockSlim _rwLock = new();
+
+public TValue GetOrAdd<TKey, TValue>(TKey key, Func<TKey, TValue> factory)
+{
+    // Read lock — множественные читатели
+    _rwLock.EnterReadLock();
+    try
+    {
+        if (_cache.TryGetValue(key, out var value))
+            return value;
+    }
+    finally { _rwLock.ExitReadLock(); }
+
+    // Upgrade to write lock
+    _rwLock.EnterWriteLock();
+    try
+    {
+        // Double-check
+        if (_cache.TryGetValue(key, out var value))
+            return value;
+
+        var newValue = factory(key);
+        _cache[key] = newValue;
+        return newValue;
+    }
+    finally { _rwLock.ExitWriteLock(); }
+}
+```
+
+### AsyncLock — для async критических секций
+```csharp
+// Nito.AsyncEx или ручная реализация
+public sealed class AsyncLock
+{
+    private readonly SemaphoreSlim _semaphore = new(1, 1);
+    private readonly Task<IDisposable> _releaser;
+
+    public AsyncLock() => _releaser = Task.FromResult<IDisposable>(new Releaser(this));
+
+    public Task<IDisposable> LockAsync() => _semaphore.WaitAsync().ContinueWith(_ => (IDisposable)new Releaser(this));
+
+    private sealed class Releaser : IDisposable
+    {
+        private readonly AsyncLock _lock;
+        public Releaser(AsyncLock @lock) => _lock = @lock;
+        public void Dispose() => _lock._semaphore.Release();
+    }
+}
+
+// Использование
+private readonly AsyncLock _lock = new();
+
+public async Task CriticalAsync()
+{
+    using (await _lock.LockAsync())
+    {
+        await DoSomethingAsync();
+    }
+}
+```
+
+### Interlocked — атомарные операции
+```csharp
+private long _counter = 0;
+
+// Инкремент
+long newValue = Interlocked.Increment(ref _counter);
+
+// Compare-Exchange — CAS
+long original = _counter;
+long desired = original + 1;
+long result = Interlocked.CompareExchange(ref _counter, desired, original);
+if (result != original) { /* retry */ }
+
+// Exchange
+var oldObj = Interlocked.Exchange(ref _reference, newObj);
+
+// Для double — через bits
+double current = _doubleValue;
+double next;
+do
+{
+    next = current + 1.0;
+} while (Interlocked.CompareExchange(
+    ref Unsafe.As<double, long>(ref _doubleValue),
+    BitConverter.DoubleToInt64Bits(next),
+    BitConverter.DoubleToInt64Bits(current)) != BitConverter.DoubleToInt64Bits(current));
+```
+
+---
+
+## 6. Task.Run vs ValueTask vs ThreadPool
+
+### Когда что использовать
+```csharp
+// Task.Run — offload CPU-bound на ThreadPool
+public async Task<int> ComputeAsync(int input)
+{
+    return await Task.Run(() => HeavyCalculation(input));
+}
+
+// ValueTask — для высокочастотных вызовов с частым синхронным завершением
+public ValueTask<int> TryGetCachedAsync(int key)
+{
+    if (_cache.TryGetValue(key, out var value))
+        return new ValueTask<int>(value); // Синхронно
+
+    return new ValueTask<int>(FetchAsync(key)); // Асинхронно
+}
+
+// Не используйте Task.Run для I/O-bound!
+// ПЛОХО: await Task.Run(() => httpClient.GetAsync(url));
+// ХОРОШО: await httpClient.GetAsync(url);
+```
+
+### TaskCreationOptions
+```csharp
+// LongRunning — отдельный поток, не ThreadPool
+var longTask = Task.Factory.StartNew(() => RunForever(),
+    TaskCreationOptions.LongRunning);
+
+// DenyChildAttach — не прикреплять дочерние задачи
+var task = Task.Factory.StartNew(() => Work(),
+    TaskCreationOptions.DenyChildAttach);
+
+// RunContinuationsAsynchronously — продолжения не inline
+var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+```
+
+---
+
+## 7. Практические задания
+
+1. **High-Throughput Pipeline**: Постройте конвейер: источник → обработка (Parallel) → батчинг → запись в БД, используя Channels между этапами
+
+2. **Async Cache с ValueTask**: Реализуйте кэш с `GetOrAddAsync`, возвращающим `ValueTask<T>`, использующим `IValueTaskSource` для избежания аллокаций при попадании в кэш
+
+3. **Rate Limiter**: Напишите `AsyncRateLimiter` с `SemaphoreSlim` и sliding window, поддерживающий burst и sustained rate
+
+4. **Parallel File Processor**: Обработайте 100K файлов: чтение (async) → CPU обработка (Parallel) → запись (async), с контролем памяти и отменой
+
+5. **Custom TaskScheduler**: Реализуйте `TaskScheduler` с приоритетами (High/Medium/Low queues) для управления очередью задач
+
+---
+
+## 8. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `await` в цикле вместо `Task.WhenAll` | `await Task.WhenAll(items.Select(i => ProcessAsync(i)))` |
+| `Task.Result` / `.Wait()` — deadlock риск | Всегда `await`, в sync контексте — `GetAwaiter().GetResult()` |
+| `ValueTask` await несколько раз | `ValueTask` можно await только ОДИН раз |
+| `lock` в async методе | Используйте `SemaphoreSlim.WaitAsync` или `AsyncLock` |
+| `Parallel.ForEach` с async лямбдой | `Parallel.ForEach` не ждет async! Используйте `Task.WhenAll` или Channels |
+| `ConfigureAwait(true)` в библиотеках | В библиотеках всегда `ConfigureAwait(false)` |
+
+---
+
+## 9. Полезные ресурсы
+
+- **Async/Await Internals** — https://learn.microsoft.com/dotnet/csharp/async-internals
+- **ValueTask** — https://learn.microsoft.com/dotnet/api/system.threading.tasks.valuetask-1
+- **Channels** — https://learn.microsoft.com/dotnet/core/extensions/channels
+- **Parallel Programming** — https://learn.microsoft.com/dotnet/standard/parallel-programming
+- **PLINQ** — https://learn.microsoft.com/dotnet/standard/parallel-programming/parallel-linq-plinq
+- **Synchronization Primitives** — https://learn.microsoft.com/dotnet/standard/threading/synchronization-primitives
+- **Stephen Toub Blog** — https://devblogs.microsoft.com/dotnet/author/stephentoub/
+- **Concurrency in .NET** — Riccardo Terrell (книга)

@@ -1,0 +1,878 @@
+# Урок 27: Node.js Internals — Event-Driven Design, Streams, Buffers, Worker Threads, Processes, IPC
+
+## 🎯 Цели урока
+- Понять архитектуру Node.js: libuv, V8, bindings, event loop phases
+- Глубоко разобрать Event Loop: timers, I/O callbacks, idle/prepare, poll, check, close callbacks
+- Освоить Streams: Readable, Writable, Duplex, Transform, pipeline, backpressure
+- Изучить Buffers: binary data, zero-copy, Buffer.alloc vs Buffer.allocUnsafe
+- Разобрать Worker Threads: параллелизм, SharedArrayBuffer, MessagePort
+- Понять Processes: child_process, spawn vs exec vs fork, IPC каналы
+- Научиться диагностировать: async hooks, performance hooks, tracing
+
+---
+
+## 1. Node.js Architecture Overview
+
+### 1.1 Компоненты Node.js
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Node.js Application                       │
+├─────────────────────────────────────────────────────────────┤
+│  Node.js Bindings (C++)  ◄──►  V8 Engine (JS Runtime)       │
+│       │                                                    │
+│       ▼                                                    │
+│  libuv (Event Loop, I/O, Thread Pool)                     │
+│       │                                                    │
+│       ▼                                                    │
+│  OS (Windows: IOCP, Linux: epoll, macOS: kqueue)          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 1.2 V8 Isolates & Contexts
+```javascript
+// Каждый Node.js процесс = один V8 Isolate (изолированная куча памяти)
+// Внутри isolate: несколько Contexts (глобальных объектов)
+
+// main context: global, process, require, module, __filename, __dirname
+// vm.createContext() — создаёт новый context в том же isolate
+const vm = require('vm');
+const ctx = vm.createContext({ x: 1 });
+vm.runInContext('x = 2', ctx);
+console.log(ctx.x); // 2 — изолированный global object
+```
+
+### 1.3 libuv Event Loop (src/unix/core.c / src/win/core.c)
+```c
+// Упрощённый event loop (libuv):
+while (loop->active_handles > 0) {
+  uv__loop_alive(loop);
+  uv__run_timers(loop);           // Phase 1: Timers (setTimeout, setInterval)
+  uv__run_pending(loop);          // Phase 2: Pending callbacks (I/O callbacks deferred)
+  uv__run_idle(loop);             // Phase 3: Idle callbacks
+  uv__run_prepare(loop);          // Phase 4: Prepare callbacks
+  uv__io_poll(loop);              // Phase 5: Poll (I/O blocking here)
+  uv__run_check(loop);            // Phase 6: Check callbacks (setImmediate)
+  uv__run_closing_handles(loop);  // Phase 7: Close callbacks
+}
+```
+
+---
+
+## 2. Event Loop Phases Deep Dive
+
+### 2.1 Фазы Event Loop (порядок выполнения)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Event Loop                                │
+├──────────────┬──────────────┬──────────────┬────────────────────┤
+│   Timers     │  Pending     │   Idle/      │      Poll          │
+│ (setTimeout, │  Callbacks   │  Prepare     │  (I/O callbacks,   │
+│  setInterval)│  (I/O done)  │  (internal)  │   blocking here)   │
+├──────────────┼──────────────┼──────────────┼────────────────────┤
+│   Check      │   Close      │              │                    │
+│ (setImmediate)│  Callbacks   │              │                    │
+└──────────────┴──────────────┴──────────────┴────────────────────┘
+```
+
+### 2.2 Microtasks vs Macrotasks в Node.js
+```javascript
+// Microtask queue (Promise, queueMicrotask, process.nextTick) — выполняется ПОСЛЕ КАЖДОЙ фазы!
+// Macrotask queue — одна за итерацию event loop
+
+console.log('1: sync');
+
+setTimeout(() => console.log('2: setTimeout'), 0);        // Macrotask: Timers phase
+setImmediate(() => console.log('3: setImmediate'));       // Macrotask: Check phase
+Promise.resolve().then(() => console.log('4: promise'));  // Microtask
+process.nextTick(() => console.log('5: nextTick'));       // Microtask (priority!)
+queueMicrotask(() => console.log('6: queueMicrotask'));   // Microtask
+
+// Output:
+// 1: sync
+// 5: nextTick       (nextTick имеет СВОЮ очередь, выполняется ПЕРВОЙ среди microtasks)
+// 4: promise
+// 6: queueMicrotask
+// 2: setTimeout     (Timers phase следующей итерации)
+// 3: setImmediate   (Check phase той же итерации, если poll пуст)
+
+// ВАЖНО: process.nextTick() выполняется ДО остальных microtasks!
+```
+
+### 2.3 setImmediate vs setTimeout vs process.nextTick
+```javascript
+// setImmediate — Check phase (после Poll)
+// setTimeout — Timers phase (следующая итерация, или текущая если время вышло)
+// process.nextTick — перед следующей фазой (highest priority)
+
+// Пример: I/O callback
+const fs = require('fs');
+fs.readFile(__filename, () => {
+  console.log('1: I/O callback (Pending callbacks phase)');
+
+  setTimeout(() => console.log('2: setTimeout'), 0);
+  setImmediate(() => console.log('3: setImmediate'));
+  process.nextTick(() => console.log('4: nextTick'));
+  Promise.resolve().then(() => console.log('5: promise'));
+});
+
+// Output внутри I/O callback:
+// 4: nextTick
+// 5: promise
+// 3: setImmediate  (Check phase ТЕКУЩЕЙ итерации — мы ВНУТРИ Poll phase callback!)
+// 2: setTimeout    (Timers phase СЛЕДУЮЩЕЙ итерации)
+```
+
+---
+
+## 3. Streams — Потоковая обработка данных
+
+### 3.1 Stream Types & Inheritance
+```javascript
+// stream.Readable  →  stream.Duplex  →  stream.Transform
+//       ↑                    ↑
+//       └────────────────────┘
+// stream.Writable  →  stream.Duplex
+//
+// Все наследуются от EventEmitter
+
+// Режимы:
+// - Flowing mode: данные текут автоматически (data event, pipe)
+// - Paused mode: нужно вызывать read() вручную
+```
+
+### 3.2 Readable Streams
+```javascript
+const { Readable } = require('stream');
+
+// Создание custom Readable:
+class NumberStream extends Readable {
+  constructor(options) {
+    super({ ...options, objectMode: true }); // objectMode для не-Buffer данных
+    this.current = 0;
+    this.max = options.max || 100;
+  }
+
+  _read(size) {
+    // Вызывается когда consumer готов принять данные
+    if (this.current <= this.max) {
+      this.push(this.current++); // push(chunk) — отправляет данные
+    } else {
+      this.push(null); // null = EOF (end of stream)
+    }
+  }
+}
+
+// Использование:
+const stream = new NumberStream({ max: 5 });
+stream.on('data', chunk => console.log('data:', chunk));
+stream.on('end', () => console.log('end'));
+// data: 0, data: 1, ... data: 5, end
+```
+
+### 3.3 Writable Streams
+```javascript
+const { Writable } = require('stream');
+
+class LoggerStream extends Writable {
+  constructor(options) {
+    super({ ...options, objectMode: true });
+    this.logs = [];
+  }
+
+  _write(chunk, encoding, callback) {
+    // chunk — данные (Buffer/string/object при objectMode)
+    this.logs.push(`[${new Date().toISOString()}] ${chunk}`);
+    callback(); // ВАЖНО: вызываем когда готовы принять следующий chunk
+  }
+
+  _writev(chunks, callback) {
+    // Оптимизация: batch write multiple chunks
+    for (const { chunk } of chunks) {
+      this.logs.push(`[${new Date().toISOString()}] ${chunk}`);
+    }
+    callback();
+  }
+
+  _final(callback) {
+    // Вызывается при end() перед finish event
+    console.log('Stream ending, total logs:', this.logs.length);
+    callback();
+  }
+}
+
+const logger = new LoggerStream();
+logger.write('First log');
+logger.write('Second log');
+logger.end('Final log'); // end() = write + finish
+// logger.on('finish', () => console.log('Done'));
+```
+
+### 3.4 Transform Streams (Readable + Writable)
+```javascript
+const { Transform } = require('stream');
+
+// JSON Lines parser (NDJSON)
+class NDJSONParse extends Transform {
+  constructor(options) {
+    super({ ...options, readableObjectMode: true, writableObjectMode: false });
+    this.buffer = '';
+  }
+
+  _transform(chunk, encoding, callback) {
+    this.buffer += chunk.toString();
+    const lines = this.buffer.split('\n');
+    this.buffer = lines.pop(); // incomplete line stays in buffer
+
+    for (const line of lines) {
+      if (line.trim()) {
+        try {
+          this.push(JSON.parse(line));
+        } catch (e) {
+          this.destroy(e); // Error в stream = emit('error')
+          return;
+        }
+      }
+    }
+    callback();
+  }
+
+  _flush(callback) {
+    if (this.buffer.trim()) {
+      try {
+        this.push(JSON.parse(this.buffer));
+      } catch (e) {
+        return callback(e);
+      }
+    }
+    callback();
+  }
+}
+
+// Использование:
+const parser = new NDJSONParse();
+parser.on('data', obj => console.log('Parsed:', obj));
+parser.write('{"a":1}\n');
+parser.write('{"b":2}\n{"c":3}');
+parser.end('\n{"d":4}\n');
+// Parsed: {a:1}, {b:2}, {c:3}, {d:4}
+```
+
+### 3.5 Pipeline & Backpressure
+```javascript
+const { pipeline } = require('stream/promises');
+const fs = require('fs');
+const zlib = require('zlib');
+
+// pipeline автоматически управляет backpressure и cleanup!
+async function compressFile(input, output) {
+  await pipeline(
+    fs.createReadStream(input),
+    zlib.createGzip(),
+    fs.createWriteStream(output)
+  );
+  console.log('Compressed!');
+}
+
+// Backpressure mechanism:
+// 1. Writable.write() возвращает false когда highWaterMark превышен
+// 2. Readable.pause() вызывается автоматически
+// 3. Когда Writable drain event — Readable.resume()
+// 4. pipe() / pipeline() делают это автоматически
+
+// Manual backpressure handling:
+readable.on('data', chunk => {
+  if (!writable.write(chunk)) {
+    readable.pause(); // остановить чтение
+  }
+});
+writable.on('drain', () => {
+  readable.resume(); // продолжить чтение
+});
+```
+
+### 3.6 Stream Utilities (Node 15+)
+```javascript
+const {
+  Readable, Writable, Transform, Duplex,
+  pipeline, finished,
+  ReadableStream, WritableStream // Web Streams API (Node 17+)
+} = require('stream');
+
+// Web Streams API (WHATWG standard):
+const readable = new ReadableStream({
+  start(controller) {
+    controller.enqueue('chunk1');
+    controller.enqueue('chunk2');
+    controller.close();
+  }
+});
+
+// Interop Node ↔ Web Streams:
+const nodeReadable = Readable.fromWeb(webReadableStream);
+const webReadable = Readable.toWeb(nodeReadableStream);
+
+// finished(stream, options) — Promise, резолвится при end/error
+await finished(stream, { error: true });
+```
+
+---
+
+## 4. Buffers — Binary Data Handling
+
+### 4.1 Buffer Basics
+```javascript
+// Buffer = raw memory allocation outside V8 heap (C++ malloc)
+// Глобальный класс, не требует require()
+
+// Создание:
+Buffer.alloc(10);           // zero-filled, БЕЗОПАСНЫЙ (slow)
+Buffer.allocUnsafe(10);     // uninitialized, БЫСТРЫЙ (may contain old data!)
+Buffer.allocUnsafeSlow(10); // не использует internal pool (для больших буферов)
+Buffer.from([1, 2, 3]);     // из массива
+Buffer.from('hello', 'utf8'); // из строки (encoding: utf8, base64, hex, latin1)
+Buffer.from(arrayBuffer);   // из ArrayBuffer (zero-copy!)
+
+// Zero-copy с ArrayBuffer / TypedArray:
+const buf = Buffer.from('hello');
+const uint8 = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+// buf и uint8 делят ОДНУЮ память!
+uint8[0] = 104; // 'h'
+console.log(buf.toString()); // 'hello' → 'hello' (wait, 104 = 'h')
+
+// Правильно:
+const buf2 = Buffer.from('hello');
+const view = new DataView(buf2.buffer, buf2.byteOffset, buf2.byteLength);
+view.setUint8(0, 72); // 'H'
+console.log(buf2.toString()); // 'Hello'
+```
+
+### 4.2 Buffer Operations
+```javascript
+const buf = Buffer.from('hello world');
+
+// Чтение/запись:
+buf.readUInt8(0);       // 104
+buf.writeUInt8(72, 0);  // 'H'
+buf.toString('utf8', 0, 5); // 'Hello'
+
+// Срезы (ZERO COPY!):
+const slice = buf.subarray(6, 11); // НЕ копирует память!
+slice.write('Node');
+console.log(buf.toString()); // 'Hello Node'
+
+// Конкатенация:
+Buffer.concat([Buffer.from('a'), Buffer.from('b')]); // Buffer 'ab'
+
+// Поиск:
+buf.indexOf('world'); // 6
+buf.includes('hello'); // true
+
+// Comparison:
+buf.equals(Buffer.from('hello world')); // true
+buf.compare(Buffer.from('hello')); // 1 (this > other)
+```
+
+### 4.3 Buffer Performance Tips
+```javascript
+// ❌ Плохо: постоянное создание новых буферов
+let result = Buffer.alloc(0);
+for (const chunk of chunks) {
+  result = Buffer.concat([result, chunk]); // O(n²)!
+}
+
+// ✅ Хорошо: собираем в массив, один concat в конце
+const buffers = [];
+for (const chunk of chunks) {
+  buffers.push(chunk);
+}
+const result = Buffer.concat(buffers); // O(n)
+
+// ✅ Ещё лучше: предварительно знаем размер
+const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+const result = Buffer.allocUnsafe(totalLength);
+let offset = 0;
+for (const chunk of chunks) {
+  chunk.copy(result, offset);
+  offset += chunk.length;
+}
+```
+
+---
+
+## 5. Worker Threads — True Parallelism
+
+### 5.1 Worker Threads Basics
+```javascript
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+
+if (isMainThread) {
+  // Main thread
+  const worker = new Worker(__filename, {
+    workerData: { iterations: 1000000 }
+  });
+
+  worker.on('message', result => {
+    console.log('Result:', result);
+  });
+  worker.on('error', err => console.error(err));
+  worker.on('exit', code => {
+    if (code !== 0) console.error('Worker stopped with code', code);
+  });
+} else {
+  // Worker thread
+  const { iterations } = workerData;
+  let sum = 0;
+  for (let i = 0; i < iterations; i++) sum += i;
+  parentPort.postMessage(sum);
+}
+```
+
+### 5.2 MessagePort & Transferable Objects
+```javascript
+// main.js
+const { Worker, MessageChannel } = require('worker_threads');
+
+const { port1, port2 } = new MessageChannel();
+
+const worker = new Worker('./worker.js', {
+  transferList: [port2] // Передаём владение портом!
+});
+
+port1.on('message', msg => console.log('From worker:', msg));
+port1.postMessage({ type: 'init', data: [1,2,3] });
+
+// worker.js
+const { parentPort } = require('worker_threads');
+
+parentPort.on('message', (msg, transferList) => {
+  // transferList содержит переданные MessagePorts
+  const [port] = transferList;
+  port.on('message', m => console.log('Received:', m));
+  port.postMessage('Worker ready');
+});
+```
+
+### 5.3 SharedArrayBuffer — Shared Memory
+```javascript
+// main.js
+const { Worker } = require('worker_threads');
+
+const sab = new SharedArrayBuffer(1024); // 1KB shared memory
+const int32 = new Int32Array(sab);
+
+const worker = new Worker('./worker.js', { workerData: sab });
+
+// Атомарные операции (Atomics):
+Atomics.store(int32, 0, 42);
+console.log(Atomics.load(int32, 0)); // 42
+
+// Wait/Notify для синхронизации:
+Atomics.wait(int32, 0, 42, 1000); // ждёт пока index 0 != 42, timeout 1s
+Atomics.notify(int32, 0, 1);      // разбудить 1 поток
+
+// worker.js
+const { parentPort } = require('worker_threads');
+const sab = workerData;
+const int32 = new Int32Array(sab);
+
+Atomics.add(int32, 0, 1); // атомарный инкремент
+Atomics.notify(int32, 0, 1);
+```
+
+### 5.4 Worker Pool Pattern
+```javascript
+// worker-pool.js
+const { Worker } = require('worker_threads');
+const path = require('path');
+
+class WorkerPool {
+  constructor(workerScript, size = require('os').cpus().length) {
+    this.workerScript = workerScript;
+    this.size = size;
+    this.workers = [];
+    this.queue = [];
+    this.freeWorkers = [];
+
+    for (let i = 0; i < size; i++) this.createWorker();
+  }
+
+  createWorker() {
+    const worker = new Worker(this.workerScript);
+    worker.on('message', this.handleMessage.bind(this, worker));
+    worker.on('error', err => console.error('Worker error:', err));
+    this.workers.push(worker);
+    this.freeWorkers.push(worker);
+  }
+
+  handleMessage(worker, result) {
+    const { resolve, reject } = this.queue.shift();
+    if (result.error) reject(new Error(result.error));
+    else resolve(result.data);
+    this.freeWorkers.push(worker);
+    this.processQueue();
+  }
+
+  processQueue() {
+    if (this.queue.length && this.freeWorkers.length) {
+      const worker = this.freeWorkers.pop();
+      const { data, resolve, reject } = this.queue.shift();
+      worker.postMessage(data);
+    }
+  }
+
+  exec(data) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ data, resolve, reject });
+      this.processQueue();
+    });
+  }
+
+  async terminate() {
+    await Promise.all(this.workers.map(w => w.terminate()));
+  }
+}
+
+// Использование:
+const pool = new WorkerPool('./heavy-task.js');
+const results = await Promise.all(
+  Array.from({ length: 100 }, (_, i) => pool.exec({ taskId: i }))
+);
+await pool.terminate();
+```
+
+---
+
+## 6. Child Processes & IPC
+
+### 6.1 spawn / exec / fork
+```javascript
+const { spawn, exec, fork, execFile } = require('child_process');
+
+// spawn — streaming, для больших выводов
+const ls = spawn('ls', ['-la', '/tmp']);
+ls.stdout.on('data', data => console.log(`stdout: ${data}`));
+ls.stderr.on('data', data => console.error(`stderr: ${data}`));
+ls.on('close', code => console.log(`exited with code ${code}`));
+
+// exec — buffer-based, для небольших команд
+exec('ls -la /tmp', (error, stdout, stderr) => {
+  if (error) console.error(`error: ${error.message}`);
+  console.log(`stdout: ${stdout}`);
+});
+
+// execFile — как spawn но с callback (без shell)
+execFile('node', ['--version'], (error, stdout, stderr) => {
+  console.log(stdout.trim()); // v20.10.0
+});
+
+// fork — специально для Node.js модулей (с IPC каналом!)
+const child = fork('./child.js', ['arg1'], {
+  env: { ...process.env, CUSTOM_VAR: 'value' },
+  stdio: ['pipe', 'pipe', 'pipe', 'ipc'] // 4-й fd = IPC channel
+});
+
+child.on('message', msg => console.log('From child:', msg));
+child.send({ type: 'task', payload: 42 });
+```
+
+### 6.2 IPC (Inter-Process Communication)
+```javascript
+// parent.js
+const { fork } = require('child_process');
+const child = fork('./worker.js');
+
+child.on('message', (msg) => {
+  console.log('Parent received:', msg);
+  if (msg.type === 'result') {
+    console.log('Computed:', msg.payload);
+  }
+});
+
+child.send({ type: 'compute', payload: { a: 10, b: 20 } });
+
+// worker.js (child process)
+process.on('message', (msg) => {
+  if (msg.type === 'compute') {
+    const { a, b } = msg.payload;
+    // Heavy computation...
+    const result = a + b; // просто пример
+    process.send({ type: 'result', payload: result });
+  }
+});
+
+// Автоматическое переподключение при перезапуске child:
+child.on('exit', (code, signal) => {
+  if (code !== 0 && !signal) {
+    // Restart logic
+  }
+});
+```
+
+### 6.3 Advanced: Cluster Module (Multi-process HTTP Server)
+```javascript
+// cluster.js
+const cluster = require('cluster');
+const http = require('http');
+const numCPUs = require('os').cpus().length;
+
+if (cluster.isPrimary) {
+  console.log(`Primary ${process.pid} is running`);
+
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+
+  cluster.on('exit', (worker, code, signal) => {
+    console.log(`Worker ${worker.process.pid} died`);
+    cluster.fork(); // Respawn
+  });
+} else {
+  // Workers share the same port!
+  http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end(`Hello from worker ${process.pid}\n`);
+  }).listen(8000);
+
+  console.log(`Worker ${process.pid} started`);
+}
+
+// Запуск: node cluster.js
+// Все воркеры слушают порт 8000, kernel распределяет соединения (SO_REUSEPORT)
+```
+
+---
+
+## 7. Diagnostics & Observability
+
+### 7.1 Async Hooks — Tracking Async Resources
+```javascript
+const async_hooks = require('async_hooks');
+const fs = require('fs');
+
+// Создание hook:
+const hook = async_hooks.createHook({
+  init(asyncId, type, triggerAsyncId, resource) {
+    // asyncId — уникальный ID асинхронной операции
+    // type: 'TIMERWRAP', 'TCPWRAP', 'FSREQCALLBACK', 'PROMISE', etc.
+    // triggerAsyncId — ID родительской async операции
+    fs.writeSync(1, `Init: ${type} (${asyncId}) triggered by ${triggerAsyncId}\n`);
+  },
+  before(asyncId) { fs.writeSync(1, `Before: ${asyncId}\n`); },
+  after(asyncId) { fs.writeSync(1, `After: ${asyncId}\n`); },
+  destroy(asyncId) { fs.writeSync(1, `Destroy: ${asyncId}\n`); },
+  promiseResolve(asyncId) { fs.writeSync(1, `PromiseResolve: ${asyncId}\n`); }
+});
+
+hook.enable();
+
+// Execution context:
+const eid = async_hooks.executionAsyncId(); // current asyncId
+const tid = async_hooks.triggerAsyncId();   // trigger asyncId
+
+// AsyncLocalStorage (Node 13.10+) — правильный способ контекста:
+const { AsyncLocalStorage } = require('async_hooks');
+const als = new AsyncLocalStorage();
+
+function getRequestId() {
+  return als.getStore()?.requestId || 'unknown';
+}
+
+async function handleRequest(req) {
+  return als.run({ requestId: req.id }, async () => {
+    await processRequest(); // getRequestId() доступен везде внутри!
+  });
+}
+```
+
+### 7.2 Performance Hooks & Tracing
+```javascript
+const { PerformanceObserver, performance } = require('perf_hooks');
+
+// User timing marks:
+performance.mark('start:db-query');
+await db.query('SELECT * FROM users');
+performance.mark('end:db-query');
+performance.measure('db-query', 'start:db-query', 'end:db-query');
+
+// Observer:
+const obs = new PerformanceObserver((list) => {
+  for (const entry of list.getEntries()) {
+    console.log(`${entry.name}: ${entry.duration.toFixed(2)}ms`);
+  }
+});
+obs.observe({ entryTypes: ['measure', 'function'] });
+
+// Function wrapping:
+const { wrap } = require('perf_hooks');
+const measuredFn = wrap(function myFunction() { /* ... */ });
+
+// Node.js tracing (--trace-event-categories):
+// node --trace-event-categories=v8,node,async_ops app.js
+// → trace.json → chrome://tracing
+```
+
+### 7.3 Heap Snapshots & Memory Profiling
+```bash
+# CLI флаги:
+node --inspect app.js                    # DevTools inspector
+node --heapsnapshot-signal=SIGUSR2 app.js # Heap snapshot на сигнал
+node --trace-gc app.js                   # GC логи
+node --trace-gc-verbose app.js           # Подробные GC логи
+
+# Programmatic heap snapshot:
+const { writeHeapSnapshot } = require('v8');
+writeHeapSnapshot('./heap.heapsnapshot'); // Можно открыть в Chrome DevTools
+
+# Memory usage:
+process.memoryUsage()
+// { rss: 35M, heapTotal: 8M, heapUsed: 5M, external: 2M, arrayBuffers: 1M }
+```
+
+---
+
+## 8. Node.js Specific Modules Deep Dive
+
+### 8.1 Module System Internals
+```javascript
+// require() algorithm (simplified):
+function require(id) {
+  // 1. Core modules: 'fs', 'path', 'http' → NativeModule
+  // 2. Relative: './foo', '../bar' → file resolution
+  // 3. Absolute: '/foo' → file resolution
+  // 4. Bare: 'lodash' → node_modules resolution (walking up)
+
+  // Caching: require.cache[resolvedPath] → module.exports
+  // Module wrapper: (function(exports, require, module, __filename, __dirname) { ... });
+}
+
+// ES Modules в Node.js:
+// - "type": "module" в package.json
+// - .mjs extension
+// - import/export syntax
+// - import.meta.url доступен
+// - Top-level await
+// - Module namespace objects (нельзя мутировать)
+```
+
+### 8.2 EventEmitter Internals
+```javascript
+const EventEmitter = require('events');
+
+class MyEmitter extends EventEmitter {
+  constructor() {
+    super();
+    // Увеличиваем лимит слушателей (default 10)
+    this.setMaxListeners(100);
+  }
+}
+
+// Error handling — НЕ ИГНОРИРУЙТЕ!
+emitter.on('error', err => console.error('Error:', err));
+// Без error handler: uncaughtException → crash!
+
+// once() — однократный слушатель
+emitter.once('start', () => console.log('Started'));
+
+// raw listeners (без wrapper):
+emitter.rawListeners('event'); // возвращает массив функций
+
+// eventNames() — список всех событий
+emitter.eventNames(); // ['start', 'data', 'error']
+```
+
+---
+
+## 9. Browser vs Node.js: Key Differences Summary
+
+| Feature | Browser | Node.js |
+|---------|---------|---------|
+| **Event Loop** | HTML Spec (microtask/macrotask) | libuv (phases: timers, pending, idle, prepare, poll, check, close) |
+| **process.nextTick** | Нет (queueMicrotask) | Да, highest priority microtask |
+| **setImmediate** | Нет (setTimeout 0) | Да, Check phase |
+| **Globals** | window, document, fetch | global, process, require, Buffer, __dirname |
+| **Modules** | ES Modules only | CommonJS + ES Modules |
+| **Streams** | Web Streams API | Node Streams + Web Streams (17+) |
+| **Buffers** | ArrayBuffer, Uint8Array | Buffer (extends Uint8Array) |
+| **Workers** | Web Workers | Worker Threads (shared memory!) |
+| **Child Processes** | Нет | child_process (spawn, fork, exec) |
+| **File System** | Origin Private FS API | fs (sync/async), direct OS access |
+| **Debugging** | DevTools | --inspect, DevTools, ndb |
+
+---
+
+## 10. Упражнения
+
+### Упражнение 1: Event Loop Tracing
+```javascript
+// Напишите скрипт, который логирует порядок выполнения:
+// setTimeout, setImmediate, process.nextTick, Promise, queueMicrotask
+// В контексте: sync, I/O callback, setTimeout callback, setImmediate callback
+// Предскажите вывод перед запуском!
+```
+
+### Упражнение 2: Transform Stream — CSV Parser
+```javascript
+// Создайте Transform stream, который:
+// - Принимает CSV строки (через pipe от fs.createReadStream)
+// - Парсит в объекты (header row = keys)
+// - Обрабатывает quoted fields, escaped quotes
+// - Выдаёт объекты в objectMode
+// Протестируйте на 10MB файле — память не должна расти!
+```
+
+### Упражнение 3: Worker Threads — Image Processing
+```javascript
+// Main thread: загружает изображение (sharp/jimp), разбивает на тайлы
+// Worker pool: каждый воркёр обрабатывает тайл (resize, filter)
+// Результат собирается обратно, сохраняется
+// Используйте SharedArrayBuffer для zero-copy передачи пикселей
+```
+
+### Упражнение 4: Child Process Pipeline
+```javascript
+// Реализуйте: cat file.txt | grep "pattern" | wc -l
+// Используя spawn с pipe между процессами
+// Обработайте ошибки, exit codes, stderr
+```
+
+---
+
+## 11. Дополнительные ресурсы
+
+- **Node.js Event Loop**: https://nodejs.org/en/docs/guides/event-loop-timers-and-nexttick/
+- **libuv Design**: http://docs.libuv.org/en/v1.x/design.html
+- **Streams API**: https://nodejs.org/api/stream.html
+- **Worker Threads**: https://nodejs.org/api/worker_threads.html
+- **Async Hooks**: https://nodejs.org/api/async_hooks.html
+- **Performance Hooks**: https://nodejs.org/api/perf_hooks.html
+- **"Node.js Internals" Deep Dive** — articles on nearform.com, blog.insiderattack.net
+
+---
+
+## 12. Контрольные вопросы
+
+1. В чём разница между фазами Poll и Check в libuv event loop?
+2. Почему process.nextTick выполняется до Promise microtasks?
+3. Как работает backpressure в stream.pipeline()?
+4. В чём разница между Buffer.alloc() и Buffer.allocUnsafe()? Когда что использовать?
+5. Как Worker Threads делят память через SharedArrayBuffer? Что такое Atomics?
+6. Чем fork() отличается от spawn() для Node.js скриптов?
+7. Как AsyncLocalStorage помогает передавать контекст через async границы?
+8. Что показывает process.memoryUsage() и что такое external memory?
+
+---
+
+## 📝 Саммари
+
+| Концепция | Ключевой момент |
+|-----------|-----------------|
+| **Event Loop (libuv)** | 7 фаз: timers → pending → idle/prepare → poll → check → close; microtasks между фазами |
+| **Streams** | Readable/Writable/Duplex/Transform; pipeline() для backpressure и error handling |
+| **Buffers** | Raw memory outside V8 heap; zero-copy slices с subarray; allocUnsafe для perf |
+| **Worker Threads** | Настоящий параллелизм (отдельные V8 isolates); SharedArrayBuffer + Atomics для shared memory |
+| **Child Processes** | spawn (streaming), exec (buffered), fork (IPC channel); cluster для HTTP servers |
+| **Diagnostics** | AsyncLocalStorage для контекста, perf_hooks для измерений, --inspect для профилирования |
+
+---
+
+*Следующий урок: 28 — Performance: profiling, memory leaks, rendering, JIT concepts, data structures*

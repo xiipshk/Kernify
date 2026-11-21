@@ -1,0 +1,328 @@
+{
+  "title": "Урок 11: Проект",
+  "slug": "urok-11-замыкания-и-итераторы",
+  "short_description": "Fn/FnMut/FnOnce, capture, move, Iterator, adaptors, collect, fold, lazy evaluation",
+  "goals": [
+    "Понимать основы: Fn/FnMut/FnOnce, capture, move, Iterator, adaptors, collect, fold, lazy evaluation",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 11: Проект уровня Beginner — Консольный Todo-менеджер"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели проекта"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Переменные, типы, контроль потока",
+        "Функции, замыкания",
+        "Ownership, borrowing, slices",
+        "Строки, Vec, HashMap",
+        "Structs, Enums, Pattern Matching",
+        "Обработка ошибок (Result, ?)",
+        "Модули, Cargo",
+        "Трейты, дженерики"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Закрепить все изученные навыки:\n\n\n\n\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Требования к приложению"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`add \"text\"` — добавить задачу",
+        "`list` — показать все задачи",
+        "`done <id>` — отметить выполненной",
+        "`remove <id>` — удалить",
+        "`help` — справка",
+        "`quit` — выход"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Консольное приложение для управления задачами с командами:\n\n\n\n\n\n\n\nДанные сохраняются в JSON файл.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Структура проекта"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "todo_cli/\n├── Cargo.toml\n├── src/\n│   ├── main.rs\n│   ├── lib.rs\n│   ├── models/\n│   │   ├── mod.rs\n│   │   └── task.rs\n│   ├── storage/\n│   │   ├── mod.rs\n│   │   └── json_storage.rs\n│   └── commands/\n│       ├── mod.rs\n│       ├── add.rs\n│       ├── list.rs\n│       ├── done.rs\n│       └── remove.rs"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: serde**\n\n**Что делает:** Фреймворк сериализации/десериализации (derive-макросы)\n\n**Зачем нужно:** Декларативный, быстрый, поддерживает JSON/TOML/YAML/bincode, zero-copy\n\n**Как работает:** [derive(Serialize, Deserialize)] struct User { name: String, age: u32 }"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[package]\nname = \"todo_cli\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde = { version = \"1.0\", features = [\"derive\"] }\nserde_json = \"1.0\"\nanyhow = \"1.0\"\nclap = { version = \"4.4\", features = [\"derive\"] }"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/models/task.rs"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use serde::{Deserialize, Serialize};\nuse std::fmt;\n\n#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]\npub struct Task {\n    pub id: u64,\n    pub text: String,\n    pub completed: bool,\n    pub created_at: String,\n}\n\nimpl Task {\n    pub fn new(id: u64, text: String) -> Self {\n        use chrono::Local;\n        Task {\n            id,\n            text,\n            completed: false,\n            created_at: Local::now().format(\"%Y-%m-%d %H:%M\").to_string(),\n        }\n    }\n}\n\nimpl fmt::Display for Task {\n    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {\n        let status = if self.completed { \"✓\" } else { \"○\" };\n        write!(f, \"[{}] {}: {} ({})\", status, self.id, self.text, self.created_at)\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/storage/json_storage.rs"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use anyhow::Result;\nuse serde::{Deserialize, Serialize};\nuse std::collections::HashMap;\nuse std::fs;\nuse std::path::Path;\n\nuse crate::models::Task;\n\n#[derive(Serialize, Deserialize, Default)]\npub struct TaskStore {\n    tasks: HashMap<u64, Task>,\n    next_id: u64,\n}\n\npub struct JsonStorage {\n    path: String,\n}\n\nimpl JsonStorage {\n    pub fn new(path: impl Into<String>) -> Self {\n        Self { path: path.into() }\n    }\n\n    fn load(&self) -> Result<TaskStore> {\n        if !Path::new(&self.path).exists() {\n            return Ok(TaskStore::default());\n        }\n        let content = fs::read_to_string(&self.path)?;\n        if content.trim().is_empty() {\n            return Ok(TaskStore::default());\n        }\n        Ok(serde_json::from_str(&content)?)\n    }\n\n    fn save(&self, store: &TaskStore) -> Result<()> {\n        let content = serde_json::to_string_pretty(store)?;\n        fs::write(&self.path, content)?;\n        Ok(())\n    }\n\n    pub fn get_all(&self) -> Result<Vec<Task>> {\n        let store = self.load()?;\n        let mut tasks: Vec<_> = store.tasks.into_values().collect();\n        tasks.sort_by_key(|t| t.id);\n        Ok(tasks)\n    }\n\n    pub fn add(&self, text: String) -> Result<Task> {\n        let mut store = self.load()?;\n        let task = Task::new(store.next_id, text);\n        store.tasks.insert(store.next_id, task.clone());\n        store.next_id += 1;\n        self.save(&store)?;\n        Ok(task)\n    }\n\n    pub fn complete(&self, id: u64) -> Result<()> {\n        let mut store = self.load()?;\n        if let Some(task) = store.tasks.get_mut(&id) {\n            task.completed = true;\n            self.save(&store)?;\n            Ok(())\n        } else {\n            Err(anyhow::anyhow!(\"Task {} not found\", id))\n        }\n    }\n\n    pub fn remove(&self, id: u64) -> Result<()> {\n        let mut store = self.load()?;\n        if store.tasks.remove(&id).is_some() {\n            self.save(&store)?;\n            Ok(())\n        } else {\n            Err(anyhow::anyhow!(\"Task {} not found\", id))\n        }\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/commands/*.rs (пример add.rs)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/commands/add.rs\nuse anyhow::Result;\nuse crate::storage::JsonStorage;\n\npub fn execute(storage: &JsonStorage, text: String) -> Result<()> {\n    let task = storage.add(text)?;\n    println!(\"Added task: {}\", task);\n    Ok(())\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/commands/mod.rs"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub mod add;\npub mod list;\npub mod done;\npub mod remove;\n\nuse anyhow::Result;\nuse crate::storage::JsonStorage;\n\npub enum Command {\n    Add(String),\n    List,\n    Done(u64),\n    Remove(u64),\n    Help,\n    Quit,\n}\n\npub fn parse(input: &str) -> Option<Command> {\n    let parts: Vec<_> = input.split_whitespace().collect();\n    match parts.as_slice() {\n        [\"add\", rest @ ..] if !rest.is_empty() => Some(Command::Add(rest.join(\" \"))),\n        [\"list\"] => Some(Command::List),\n        [\"done\", id] => id.parse().ok().map(Command::Done),\n        [\"remove\" | \"rm\", id] => id.parse().ok().map(Command::Remove),\n        [\"help\"] => Some(Command::Help),\n        [\"quit\" | \"exit\"] => Some(Command::Quit),\n        _ => None,\n    }\n}\n\npub fn execute(cmd: Command, storage: &JsonStorage) -> Result<bool> {\n    match cmd {\n        Command::Add(text) => add::execute(storage, text).map(|_| true),\n        Command::List => list::execute(storage).map(|_| true),\n        Command::Done(id) => done::execute(storage, id).map(|_| true),\n        Command::Remove(id) => remove::execute(storage, id).map(|_| true),\n        Command::Help => { print_help(); Ok(true) }\n        Command::Quit => Ok(false),\n    }\n}\n\nfn print_help() {\n    println!(r#\"\nTodo CLI — управление задачами\n\nCommands:\n  add \"text\"     — добавить задачу\n  list           — показать все задачи\n  done <id>      — отметить выполненной\n  remove <id>    — удалить задачу\n  help           — эта справка\n  quit           — выход\n\"#);\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/lib.rs"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub mod models;\npub mod storage;\npub mod commands;\n\npub use models::Task;\npub use storage::JsonStorage;\npub use commands::{Command, parse, execute};"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "src/main.rs"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use anyhow::Result;\nuse todo_cli::{JsonStorage, Command, parse, execute};\nuse std::io::{self, Write};\n\nconst STORAGE_PATH: &str = \"tasks.json\";\n\nfn main() -> Result<()> {\n    let storage = JsonStorage::new(STORAGE_PATH);\n    println!(\"Todo CLI — type 'help' for commands\");\n\n    loop {\n        print!(\"> \");\n        io::stdout().flush()?;\n\n        let mut input = String::new();\n        io::stdin().read_line(&mut input)?;\n        let input = input.trim();\n\n        if input.is_empty() { continue; }\n\n        match parse(input) {\n            Some(cmd) => {\n                let continue_loop = execute(cmd, &storage)?;\n                if !continue_loop { break; }\n            }\n            None => println!(\"Unknown command. Type 'help' for usage.\"),\n        }\n    }\n\n    println!(\"Goodbye!\");\n    Ok(())\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Запуск и тестирование"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo run"
+    },
+    {
+      "type": "text",
+      "content": "Пример сессии:"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "> add \"Learn Rust\"\nAdded task: [○] 1: Learn Rust (2024-01-15 10:30)\n\n> add \"Build a project\"\nAdded task: [○] 2: Build a project (2024-01-15 10:31)\n\n> list\n[○] 1: Learn Rust (2024-01-15 10:30)\n[○] 2: Build a project (2024-01-15 10:31)\n\n> done 1\nTask 1 marked as done\n\n> list\n[✓] 1: Learn Rust (2024-01-15 10:30)\n[○] 2: Build a project (2024-01-15 10:31)\n\n> remove 2\nTask 2 removed\n\n> quit\nGoodbye!"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Дополнительные задания (для углубления)"
+    },
+    {
+      "type": "text",
+      "content": "1. **Фильтрация**: `list --pending` / `list --completed`\n2. **Редактирование**: `edit <id> \"new text\"`\n3. **Приоритеты**: добавить поле `priority: u8` (1-3)\n4. **Теги**: `add \"task\" #work #urgent`\n5. **Поиск**: `search \"keyword\"`\n6. **Экспорт**: `export csv` / `export markdown`\n7. **TUI**: использовать `ratatui` для интерфейса в терминале\n8. **Тесты**: написать unit-тесты для storage и commands\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Чек-лист навыков (проверь себя)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] Создал проект с `cargo new`",
+        "[ ] Разбил код на модули (`mod`, `pub`, `use`)",
+        "[ ] Использовал `struct` + `impl` + `#[derive]`",
+        "[ ] Работал с `Option` / `Result` / `?`",
+        "[ ] Сериализовал данные через `serde`",
+        "[ ] Использовал `HashMap` для хранения",
+        "[ ] Обработал ошибки с `anyhow`",
+        "[ ] Парсил CLI аргументы (ручной парсинг или `clap`)",
+        "[ ] Читал/писал файлы",
+        "[ ] Запускал `cargo run`, `cargo test`, `cargo build --release`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме Beginner-уроков"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубокое погружение в ownership",
+        "Продвинутые типы и трейты",
+        "Итераторы и функциональный стиль",
+        "Архитектура приложений",
+        "Умные указатели",
+        "Тестирование",
+        "Файлы, сеть, сериализация",
+        "Async Rust",
+        "Concurrency",
+        "Проект Intermediate"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "✅ **Вы изучили:**\n1. Введение, установка, Cargo\n2. Переменные, типы, shadowing, константы\n3. `if`/`else`, `loop`/`while`/`for`, `break`/`continue`, `match`\n4. Функции, замыкания, `fn` pointers, `!` type\n5. Ownership, move, clone, references, borrowing rules, slices, lifetimes\n6. `String`/`&str`, `Vec`, `HashMap`, `HashSet`\n7. `struct`/`enum`, pattern matching, `Option`/`Result`\n8. `panic!` vs `Result`, `?`, custom errors, `thiserror`/`anyhow`\n9. Modules, visibility, `Cargo.toml`, workspace, editions\n10. Traits, generics, associated types, `impl Trait`, `dyn Trait`\n\n---\n\n**Следующий уровень:** Intermediate (уроки 12-22)"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Замыкания и итераторы",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Замыкания и итераторы' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Rust",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-rust на GitHub",
+    "Конференции и митапы по Rust"
+  ],
+  "key_takeaways": [
+    "Главная идея: Fn/FnMut/FnOnce, capture, move, Iterator, adaptors, collect, fold, lazy evaluation — это фундамент для Ownership, Borrowing, Lifetimes.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "rust",
+  "lesson_order": 11,
+  "name_en": "Lesson: Замыкания и итераторы",
+  "short_description_en": "Learn Замыкания и итераторы in Rust with detailed explanations and examples"
+}

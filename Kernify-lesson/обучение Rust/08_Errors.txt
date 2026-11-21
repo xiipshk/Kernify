@@ -1,0 +1,457 @@
+# Урок 8: Обработка ошибок
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Понимать философию обработки ошибок в Rust (нет исключений)
+- Использовать `Result<T, E>` для восстанавливаемых ошибок
+- Использовать `panic!` для невосстанавливаемых ошибок
+- Применять оператор `?` для распространения ошибок
+- Создавать собственные типы ошибок
+- Использовать трейт `std::error::Error`
+- Работать с `anyhow` и `thiserror` (внешние крейты)
+
+---
+
+## 1. Два типа ошибок в Rust
+
+### Невосстанавливаемые (Unrecoverable) — `panic!`
+- Баги в коде: выход за границы массива, деление на ноль, логические ошибки
+- Программа должна остановиться
+- `panic!` разворачивает стек (unwind) или прерывает (abort)
+
+```rust
+fn main() {
+    let v = vec![1, 2, 3];
+    // v[99]; // PANIC: index out of bounds
+
+    // Явный panic
+    // panic!("Something went wrong!");
+}
+```
+
+### Восстанавливаемые (Recoverable) — `Result<T, E>`
+- Ожидаемые ошибки: файл не найден, парсинг, сеть, ввод пользователя
+- Программа может обработать и продолжить
+
+```rust
+use std::fs::File;
+
+fn main() {
+    let f = File::open("hello.txt");
+    let f = match f {
+        Ok(file) => file,
+        Err(error) => {
+            panic!("Problem opening file: {:?}", error);
+        }
+    };
+}
+```
+
+---
+
+## 2. `Result<T, E>` детально
+
+### Определение
+```rust
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+```
+
+### Основные методы
+```rust
+fn main() {
+    let ok: Result<i32, &str> = Ok(5);
+    let err: Result<i32, &str> = Err("error");
+
+    // Проверка
+    println!("is_ok: {}", ok.is_ok());   // true
+    println!("is_err: {}", err.is_err()); // true
+
+    // Извлечение (опасно — PANIC при Err/None)
+    println!("unwrap: {}", ok.unwrap());
+    println!("expect: {}", ok.expect("must exist"));
+
+    // Безопасные альтернативы
+    println!("unwrap_or: {}", err.unwrap_or(0));
+    println!("unwrap_or_else: {}", err.unwrap_or_else(|| 42));
+
+    // Трансформация
+    println!("map: {:?}", ok.map(|x| x * 2));           // Ok(10)
+    println!("map_err: {:?}", err.map_err(|e| e.len())); // Err(5)
+
+    // Цепочки
+    println!("and_then: {:?}", ok.and_then(|x| Ok(x + 1))); // Ok(6)
+    println!("or_else: {:?}", err.or_else(|_| Ok(10)));     // Ok(10)
+
+    // Итераторы
+    let results = vec![Ok(1), Err("e"), Ok(3)];
+    let values: Vec<_> = results.into_iter().filter_map(|r| r.ok()).collect();
+    println!("{:?}", values); // [1, 3]
+}
+```
+
+---
+
+## 3. Оператор `?` — распространение ошибки
+
+### Базовое использование
+```rust
+use std::fs::File;
+use std::io::{self, Read};
+
+fn read_username() -> Result<String, io::Error> {
+    let mut file = File::open("config.txt")?; // Возвращает Err если ошибка
+    let mut username = String::new();
+    file.read_to_string(&mut username)?;      // Возвращает Err если ошибка
+    Ok(username)
+}
+```
+
+### Эквивалент без `?`
+```rust
+fn read_username_verbose() -> Result<String, io::Error> {
+    let mut file = match File::open("config.txt") {
+        Ok(f) => f,
+        Err(e) => return Err(e),
+    };
+    let mut username = String::new();
+    match file.read_to_string(&mut username) {
+        Ok(_) => Ok(username),
+        Err(e) => Err(e),
+    }
+}
+```
+
+### `?` с `Option`
+```rust
+fn first_char(s: &str) -> Option<char> {
+    s.chars().next()? // None если строка пуста
+}
+```
+
+### `?` в `main` (Rust 1.26+)
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let f = File::open("hello.txt")?;
+    Ok(())
+}
+```
+
+---
+
+## 4. Создание собственных типов ошибок
+
+### Простой enum ошибки
+```rust
+#[derive(Debug)]
+enum AppError {
+    NotFound(String),
+    PermissionDenied,
+    Io(std::io::Error),
+    Parse(std::num::ParseIntError),
+}
+
+fn find_user(id: u32) -> Result<String, AppError> {
+    if id == 0 {
+        return Err(AppError::NotFound("User not found".into()));
+    }
+    Ok("Alice".into())
+}
+```
+
+### Реализация `std::error::Error`
+```rust
+use std::fmt;
+use std::error::Error;
+
+#[derive(Debug)]
+struct MyError {
+    message: String,
+    code: i32,
+}
+
+impl fmt::Display for MyError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[Code {}] {}", self.code, self.message)
+    }
+}
+
+impl Error for MyError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None // Нет вложенной ошибки
+    }
+}
+
+fn risky() -> Result<(), MyError> {
+    Err(MyError { message: "oops".into(), code: 42 })
+}
+
+fn main() {
+    match risky() {
+        Err(e) => eprintln!("Error: {}", e), // Display
+        Ok(_) => (),
+    }
+}
+```
+
+### `From` для автоматического конвертирования
+```rust
+impl From<std::io::Error> for AppError {
+    fn from(err: std::io::Error) -> Self {
+        AppError::Io(err)
+    }
+}
+
+impl From<std::num::ParseIntError> for AppError {
+    fn from(err: std::num::ParseIntError) -> Self {
+        AppError::Parse(err)
+    }
+}
+
+// Теперь ? работает автоматически!
+fn parse_config() -> Result<i32, AppError> {
+    let content = std::fs::read_to_string("config.txt")?; // io::Error -> AppError
+    let num = content.trim().parse::<i32>()?;              // ParseIntError -> AppError
+    Ok(num)
+}
+```
+
+---
+
+## 5. Библиотеки для ошибок: `thiserror` и `anyhow`
+
+### `thiserror` — для библиотек (derive Error)
+```toml
+# Cargo.toml
+[dependencies]
+thiserror = "1.0"
+```
+
+```rust
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum DataError {
+    #[error("file not found: {path}")]
+    NotFound { path: String },
+
+    #[error("permission denied")]
+    PermissionDenied,
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
+    #[error("parse error: {0}")]
+    Parse(#[from] std::num::ParseIntError),
+}
+```
+
+### `anyhow` — для приложений (упрощённая обработка)
+```toml
+# Cargo.toml
+[dependencies]
+anyhow = "1.0"
+```
+
+```rust
+use anyhow::{Result, Context, bail};
+
+fn read_config() -> Result<i32> {
+    let content = std::fs::read_to_string("config.txt")
+        .context("Failed to read config.txt")?;
+    let value = content.trim().parse()
+        .context("Failed to parse integer")?;
+    if value < 0 {
+        bail!("Value must be positive, got {}", value);
+    }
+    Ok(value)
+}
+
+fn main() -> Result<()> {
+    let v = read_config()?;
+    println!("Config: {}", v);
+    Ok(())
+}
+```
+
+---
+
+## 6. Стратегии обработки ошибок
+
+| Стратегия | Когда использовать | Пример |
+|-----------|-------------------|--------|
+| `match` / `if let` | Нужна разная логика для Ok/Err | UI, retry logic |
+| `unwrap_or` / `unwrap_or_else` | Есть разумное значение по умолчанию | Конфиг с дефолтами |
+| `expect` | Ошибка = баг, сообщение для разработчика | Внутренние инварианты |
+| `?` | Проброс наверх | Большинство функций |
+| `map_err` / `map` | Трансформация ошибки/значения | Адаптация типов |
+| `and_then` / `or_else` | Цепочки с изменением типа ошибки | Комбинаторы |
+
+---
+
+## 7. `panic!` хуки и настройка
+
+### Пользовательский panic hook
+```rust
+use std::panic;
+
+fn main() {
+    panic::set_hook(Box::new(|info| {
+        eprintln!("Custom panic: {}", info);
+        // Логирование, отправка в Sentry и т.д.
+    }));
+
+    panic!("Intentional panic!");
+}
+```
+
+### `std::panic::catch_unwind` — перехват паники
+```rust
+use std::panic;
+
+fn main() {
+    let result = panic::catch_unwind(|| {
+        panic!("boom!");
+    });
+
+    match result {
+        Ok(_) => println!("No panic"),
+        Err(_) => println!("Caught panic!"),
+    }
+}
+```
+
+### Профиль `panic = "abort"` (Cargo.toml)
+```toml
+[profile.release]
+panic = "abort" # Меньший бинарник, быстрее, нет unwind
+```
+
+---
+
+## 8. Практические упражнения
+
+### Упражнение 1: Собственный тип ошибки с `thiserror`
+```rust
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+enum CalculatorError {
+    #[error("division by zero")]
+    DivByZero,
+    #[error("overflow: {0} * {1}")]
+    Overflow(i64, i64),
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+}
+
+fn safe_div(a: i64, b: i64) -> Result<i64, CalculatorError> {
+    if b == 0 { return Err(CalculatorError::DivByZero); }
+    a.checked_div(b).ok_or(CalculatorError::Overflow(a, b))
+}
+
+fn safe_mul(a: i64, b: i64) -> Result<i64, CalculatorError> {
+    a.checked_mul(b).ok_or(CalculatorError::Overflow(a, b))
+}
+
+fn main() {
+    println!("{:?}", safe_div(10, 0));
+    println!("{:?}", safe_mul(1_000_000_000, 1_000_000_000));
+}
+```
+
+### Упражнение 2: Цепочка ошибок с контекстом (`anyhow`)
+```rust
+use anyhow::{Result, Context};
+
+fn parse_config() -> Result<Config> {
+    let path = "config.json";
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("reading {}", path))?;
+    let config: Config = serde_json::from_str(&content)
+        .context("parsing JSON")?;
+    Ok(config)
+}
+
+#[derive(serde::Deserialize)]
+struct Config { port: u16 }
+
+fn main() -> Result<()> {
+    let cfg = parse_config()?;
+    println!("Port: {}", cfg.port);
+    Ok(())
+}
+```
+
+### Упражнение 3: Комбинаторы Result
+```rust
+fn parse_numbers(input: &str) -> Result<Vec<i32>, std::num::ParseIntError> {
+    input.split(',')
+        .map(|s| s.trim().parse())
+        .collect() // Result<Vec<i32>, E> через FromIterator
+}
+
+fn main() {
+    match parse_numbers("1, 2, 3") {
+        Ok(nums) => println!("Sum: {}", nums.iter().sum::<i32>()),
+        Err(e) => eprintln!("Parse error: {}", e),
+    }
+}
+```
+
+---
+
+## 9. Типичные ошибки новичков
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `unwrap()` на `Err` | Необработанная ошибка | Используйте `match`, `?`, `unwrap_or` |
+| `?` в функции возвращающей `()` | `?` работает только с `Result`/`Option` | Измените возвращаемый тип на `Result<(), E>` |
+| `the trait `From` is not implemented` | Нет конвертации между типами ошибок | Реализуйте `From` или используйте `map_err` |
+| `expected enum Result, found ()` | Забыли `Ok()` в успешной ветке | Добавьте `Ok(value)` |
+| `cannot use ? in main` | main должен возвращать `Result` | `fn main() -> Result<(), Box<dyn Error>>` |
+
+---
+
+## 10. Шпаргалка: методы Result/Option
+
+| Задача | Result | Option |
+|--------|--------|--------|
+| Получить значение или panic | `unwrap()` | `unwrap()` |
+| Получить с сообщением | `expect("msg")` | `expect("msg")` |
+| Значение по умолчанию | `unwrap_or(default)` | `unwrap_or(default)` |
+| Ленивое значение по умолчанию | `unwrap_or_else(|| ...)` | `unwrap_or_else(|| ...)` |
+| Трансформация значения | `map(|x| ...)` | `map(|x| ...)` |
+| Трансформация ошибки | `map_err(|e| ...)` | — |
+| Цепочка с новым Result | `and_then(|x| ...)` | `and_then(|x| ...)` |
+| Альтернатива при ошибке | `or_else(|e| ...)` | `or_else(|| ...)` |
+| Проверка | `is_ok()` / `is_err()` | `is_some()` / `is_none()` |
+
+---
+
+## 11. Полезные ресурсы
+
+- **The Book — Error Handling**: https://doc.rust-lang.org/book/ch09-00-error-handling.html
+- **The Book — Result**: https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html
+- **thiserror docs**: https://docs.rs/thiserror/
+- **anyhow docs**: https://docs.rs/anyhow/
+- **std::error::Error**: https://doc.rust-lang.org/std/error/trait.Error.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- Две категории ошибок: `panic!` (баги) и `Result` (ожидаемые)
+- `Result<T, E>` — enum с `Ok(T)` и `Err(E)`
+- Оператор `?` — идиоматичное распространение ошибок
+- Методы: `map`, `and_then`, `unwrap_or`, `map_err`, `or_else`
+- Собственные ошибки: `enum` + `impl Error` + `impl From`
+- `thiserror` для библиотек, `anyhow` для приложений
+- `panic` хуки и профиль `panic = "abort"`
+
+---
+
+**Следующий урок:** Модули и Cargo (`09_Modules_Cargo.txt`)

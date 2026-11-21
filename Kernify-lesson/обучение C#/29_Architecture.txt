@@ -1,0 +1,697 @@
+# Урок 3.7: Architecture — DI, Middleware, Clean Architecture, CQRS, API Design
+
+## Цели урока
+- Глубоко понимать Dependency Injection: lifetimes, scopes, factory patterns
+- Писать кастомный Middleware в ASP.NET Core
+- Применять Clean Architecture, Vertical Slice, Modular Monolith
+- Понимать CQRS, Event Sourcing, Mediator pattern
+- Проектировать API: REST, gRPC, GraphQL, versioning, OpenAPI
+
+---
+
+## 1. Dependency Injection — Advanced
+
+### Lifetimes и Scopes
+```csharp
+// Transient — новый экземпляр каждый раз
+services.AddTransient<ITransientService, TransientService>();
+
+// Scoped — один экземпляр на scope (HTTP request в ASP.NET Core)
+services.AddScoped<IScopedService, ScopedService>();
+
+// Singleton — один экземпляр на всё приложение
+services.AddSingleton<ISingletonService, SingletonService>();
+
+// Проблема: Captive Dependency
+// Singleton не должен зависеть от Scoped/Transient!
+// ПРАВИЛЬНО: Scoped зависит от Singleton
+// НЕПРАВИЛЬНО: Singleton зависит от Scoped
+```
+
+### Advanced Registration Patterns
+```csharp
+// Factory pattern
+services.AddTransient<Func<IService>>(sp => () => sp.GetRequiredService<IService>());
+
+// Lazy initialization
+services.AddSingleton<Lazy<IHeavyService>>(sp => new Lazy<IHeavyService>(() => sp.GetRequiredService<IHeavyService>()));
+
+// Keyed Services (.NET 8+)
+services.AddKeyedSingleton<ICache, RedisCache>("redis");
+services.AddKeyedSingleton<ICache, MemoryCache>("memory");
+
+public class Service([FromKeyedServices("redis")] ICache cache) { }
+
+// Decorator pattern
+services.AddScoped<IRepository, Repository>();
+services.Decorate<IRepository, LoggingRepositoryDecorator>();
+services.Decorate<IRepository, CachingRepositoryDecorator>();
+
+// Generic registration
+services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+services.AddScoped(typeof(IPipelineBehavior<,>), typeof(LoggingBehavior<,>));
+
+// Conditional registration
+if (config.UseRedis)
+    services.AddSingleton<ICache, RedisCache>();
+else
+    services.AddSingleton<ICache, MemoryCache>();
+```
+
+### IServiceScopeFactory и ручное управление scope
+```csharp
+public class BackgroundWorker : BackgroundService
+{
+    private readonly IServiceScopeFactory _scopeFactory;
+
+    public BackgroundWorker(IServiceScopeFactory scopeFactory)
+        => _scopeFactory = scopeFactory;
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var service = scope.ServiceProvider.GetRequiredService<IProcessingService>();
+            await service.ProcessAsync(ct);
+            await Task.Delay(TimeSpan.FromMinutes(5), ct);
+        }
+    }
+}
+```
+
+### Валидация DI контейнера
+```csharp
+// Проверка на старте
+var provider = services.BuildServiceProvider();
+using (var scope = provider.CreateScope())
+{
+    // Пытаемся резолвить все зарегистрированные сервисы
+    foreach (var sd in services)
+    {
+        if (sd.ServiceType.IsInterface && !sd.ServiceType.IsGenericTypeDefinition)
+        {
+            scope.ServiceProvider.GetRequiredService(sd.ServiceType);
+        }
+    }
+}
+
+// Или используйте: services.ValidateOnBuild() в .NET 8+
+```
+
+---
+
+## 2. Middleware Pipeline
+
+### Кастомный Middleware
+```csharp
+public class RequestLoggingMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<RequestLoggingMiddleware> _logger;
+
+    public RequestLoggingMiddleware(RequestDelegate next, ILogger<RequestLoggingMiddleware> logger)
+    {
+        _next = next;
+        _logger = logger;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var sw = Stopwatch.StartNew();
+        var requestId = context.TraceIdentifier;
+
+        _logger.LogInformation("Request {RequestId} {Method} {Path} started",
+            requestId, context.Request.Method, context.Request.Path);
+
+        try
+        {
+            await _next(context);
+            _logger.LogInformation("Request {RequestId} completed in {Elapsed}ms with {StatusCode}",
+                requestId, sw.ElapsedMilliseconds, context.Response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Request {RequestId} failed after {Elapsed}ms", requestId, sw.ElapsedMilliseconds);
+            throw;
+        }
+    }
+}
+
+// Регистрация
+public static class MiddlewareExtensions
+{
+    public static IApplicationBuilder UseRequestLogging(this IApplicationBuilder app)
+        => app.UseMiddleware<RequestLoggingMiddleware>();
+}
+
+// В Program.cs
+app.UseRequestLogging();
+```
+
+### Middleware с опциями
+```csharp
+public class RateLimitingMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly RateLimitOptions _options;
+    private readonly IMemoryCache _cache;
+
+    public RateLimitingMiddleware(RequestDelegate next, IOptions<RateLimitOptions> options, IMemoryCache cache)
+    {
+        _next = next;
+        _options = options.Value;
+        _cache = cache;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var key = $"ratelimit:{ip}";
+
+        var count = _cache.GetOrCreate(key, entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
+            return 0;
+        });
+
+        if (count >= _options.MaxRequestsPerMinute)
+        {
+            context.Response.StatusCode = 429;
+            await context.Response.WriteAsync("Rate limit exceeded");
+            return;
+        }
+
+        _cache.Set(key, count + 1);
+        await _next(context);
+    }
+}
+
+public class RateLimitOptions
+{
+    public int MaxRequestsPerMinute { get; set; } = 100;
+}
+
+// Регистрация с опциями
+services.Configure<RateLimitOptions>(config.GetSection("RateLimiting"));
+app.UseMiddleware<RateLimitingMiddleware>();
+```
+
+### Terminal Middleware (Short-circuiting)
+```csharp
+public class HealthCheckMiddleware
+{
+    private readonly RequestDelegate _next;
+
+    public HealthCheckMiddleware(RequestDelegate next) => _next = next;
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        if (context.Request.Path == "/health")
+        {
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync("""{"status":"healthy"}""");
+            return; // Не вызываем _next!
+        }
+        await _next(context);
+    }
+}
+```
+
+---
+
+## 3. Clean Architecture
+
+### Структура проекта
+```
+src/
+├── Domain/              // Enterprise Business Rules
+│   ├── Entities/
+│   ├── ValueObjects/
+│   ├── Events/
+│   └── Interfaces/      // Repository interfaces
+├── Application/         // Application Business Rules
+│   ├── Commands/
+│   ├── Queries/
+│   ├── Handlers/
+│   ├── DTOs/
+│   └── Interfaces/      // External services interfaces
+├── Infrastructure/      // Frameworks & Drivers
+│   ├── Persistence/     // EF Core, Dapper
+│   ├── Services/        // Email, SMS, Payment
+│   └── Repositories/    // Implementations
+└── WebAPI/              // Interface Adapters
+    ├── Controllers/
+    ├── Middleware/
+    └── Filters/
+```
+
+### Domain Layer — чистый, без зависимостей
+```csharp
+// Domain/Entities/Order.cs
+public class Order : AggregateRoot<Guid>
+{
+    public CustomerId CustomerId { get; private set; }
+    public OrderStatus Status { get; private set; }
+    private readonly List<OrderItem> _items = new();
+    public IReadOnlyCollection<OrderItem> Items => _items.AsReadOnly();
+
+    private Order() { } // EF Core
+
+    public static Order Create(CustomerId customerId, IEnumerable<OrderItemData> items)
+    {
+        var order = new Order
+        {
+            Id = Guid.NewGuid(),
+            CustomerId = customerId,
+            Status = OrderStatus.Pending
+        };
+        order.AddItems(items);
+        order.AddDomainEvent(new OrderCreatedEvent(order.Id));
+        return order;
+    }
+
+    public void AddItems(IEnumerable<OrderItemData> itemsData)
+    {
+        foreach (var data in itemsData)
+            _items.Add(new OrderItem(data.ProductId, data.Quantity, data.UnitPrice));
+    }
+}
+
+// Domain/Events/OrderCreatedEvent.cs
+public record OrderCreatedEvent(Guid OrderId) : IDomainEvent;
+```
+
+### Application Layer — Use Cases
+```csharp
+// Application/Commands/CreateOrderCommand.cs
+public record CreateOrderCommand(Guid CustomerId, List<OrderItemDto> Items) : IRequest<Guid>;
+
+// Application/Handlers/CreateOrderHandler.cs
+public class CreateOrderHandler : IRequestHandler<CreateOrderCommand, Guid>
+{
+    private readonly IOrderRepository _repository;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IDomainEventDispatcher _dispatcher;
+
+    public CreateOrderHandler(IOrderRepository repository, IUnitOfWork unitOfWork, IDomainEventDispatcher dispatcher)
+    {
+        _repository = repository;
+        _unitOfWork = unitOfWork;
+        _dispatcher = dispatcher;
+    }
+
+    public async Task<Guid> Handle(CreateOrderCommand request, CancellationToken ct)
+    {
+        var order = Order.Create(new CustomerId(request.CustomerId),
+            request.Items.Select(i => new OrderItemData(i.ProductId, i.Quantity, i.Price)));
+
+        await _repository.AddAsync(order, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+        await _dispatcher.DispatchAsync(order.DomainEvents, ct);
+
+        return order.Id;
+    }
+}
+```
+
+### Infrastructure Layer — Implementation
+```csharp
+// Infrastructure/Persistence/OrderRepository.cs
+public class OrderRepository : IOrderRepository
+{
+    private readonly AppDbContext _context;
+
+    public OrderRepository(AppDbContext context) => _context = context;
+
+    public async Task<Order?> GetByIdAsync(Guid id, CancellationToken ct)
+        => await _context.Orders
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == id, ct);
+
+    public async Task AddAsync(Order order, CancellationToken ct)
+        => await _context.Orders.AddAsync(order, ct);
+}
+```
+
+---
+
+## 4. CQRS и Mediator
+
+### MediatR — реализация Mediator pattern
+```csharp
+// Commands — изменяют состояние
+public record CreateUserCommand(string Email, string Name) : IRequest<UserDto>;
+public record UpdateUserCommand(Guid Id, string Name) : IRequest;
+public record DeleteUserCommand(Guid Id) : IRequest;
+
+// Queries — только чтение
+public record GetUserQuery(Guid Id) : IRequest<UserDto>;
+public record GetUsersQuery(int Page, int PageSize) : IRequest<PagedResult<UserDto>>;
+
+// Handler для Command
+public class CreateUserHandler : IRequestHandler<CreateUserCommand, UserDto>
+{
+    private readonly IUserRepository _repo;
+    private readonly IUnitOfWork _uow;
+
+    public async Task<UserDto> Handle(CreateUserCommand request, CancellationToken ct)
+    {
+        var user = User.Create(request.Email, request.Name);
+        await _repo.AddAsync(user, ct);
+        await _uow.SaveChangesAsync(ct);
+        return user.ToDto();
+    }
+}
+
+// Handler для Query
+public class GetUserHandler : IRequestHandler<GetUserQuery, UserDto>
+{
+    private readonly IReadOnlyUserRepository _repo;
+
+    public async Task<UserDto> Handle(GetUserQuery request, CancellationToken ct)
+    {
+        var user = await _repo.GetByIdAsync(request.Id, ct);
+        return user?.ToDto() ?? throw new NotFoundException($"User {request.Id}");
+    }
+}
+
+// Pipeline Behaviors — cross-cutting concerns
+public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
+{
+    private readonly IEnumerable<IValidator<TRequest>> _validators;
+
+    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    {
+        var context = new ValidationContext<TRequest>(request);
+        var failures = _validators.Select(v => v.Validate(context))
+            .SelectMany(r => r.Errors)
+            .Where(e => e != null)
+            .ToList();
+
+        if (failures.Any())
+            throw new ValidationException(failures);
+
+        return await next(ct);
+    }
+}
+
+// Logging Behavior
+public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+{
+    private readonly ILogger<LoggingBehavior<TRequest, TResponse>> _logger;
+
+    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    {
+        _logger.LogInformation("Handling {RequestType}", typeof(TRequest).Name);
+        var response = await next(ct);
+        _logger.LogInformation("Handled {RequestType}", typeof(TRequest).Name);
+        return response;
+    }
+}
+
+// Регистрация
+services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(LoggingBehavior<,>));
+```
+
+---
+
+## 5. Event Sourcing
+
+### Event Store
+```csharp
+// Domain Events
+public abstract record DomainEvent(Guid AggregateId, DateTimeOffset Timestamp)
+{
+    public int Version { get; init; }
+}
+
+public record UserRegistered(Guid AggregateId, string Email, string Name) : DomainEvent(AggregateId, DateTimeOffset.UtcNow);
+public record UserNameChanged(Guid AggregateId, string NewName) : DomainEvent(AggregateId, DateTimeOffset.UtcNow);
+
+// Aggregate Root
+public class User : AggregateRoot
+{
+    public string Email { get; private set; }
+    public string Name { get; private set; }
+
+    public static User Register(string email, string name)
+    {
+        var user = new User();
+        user.RaiseEvent(new UserRegistered(Guid.NewGuid(), email, name));
+        return user;
+    }
+
+    public void ChangeName(string newName)
+    {
+        if (Name == newName) return;
+        RaiseEvent(new UserNameChanged(Id, newName));
+    }
+
+    protected override void When(IDomainEvent @event)
+    {
+        switch (@event)
+        {
+            case UserRegistered e: Email = e.Email; Name = e.Name; break;
+            case UserNameChanged e: Name = e.NewName; break;
+        }
+    }
+}
+
+// Event Store
+public interface IEventStore
+{
+    Task AppendAsync(Guid aggregateId, IEnumerable<IDomainEvent> events, int expectedVersion, CancellationToken ct);
+    Task<IReadOnlyList<IDomainEvent>> GetEventsAsync(Guid aggregateId, CancellationToken ct);
+}
+
+public class EfEventStore : IEventStore
+{
+    private readonly EventStoreDbContext _context;
+
+    public async Task AppendAsync(Guid aggregateId, IEnumerable<IDomainEvent> events, int expectedVersion, CancellationToken ct)
+    {
+        var eventEntities = events.Select((e, i) => new EventEntity
+        {
+            AggregateId = aggregateId,
+            Version = expectedVersion + i + 1,
+            Type = e.GetType().AssemblyQualifiedName!,
+            Data = JsonSerializer.Serialize(e),
+            Timestamp = e.Timestamp
+        });
+
+        _context.Events.AddRange(eventEntities);
+        await _context.SaveChangesAsync(ct);
+    }
+}
+```
+
+---
+
+## 6. API Design
+
+### REST Best Practices
+```csharp
+// Controllers — тонкие, делегируют в Mediator
+[ApiController]
+[Route("api/v{version:apiVersion}/users")]
+[ApiVersion("1.0")]
+[ApiVersion("2.0")]
+public class UsersController : ControllerBase
+{
+    private readonly IMediator _mediator;
+
+    [HttpGet("{id:guid}")]
+    [MapToApiVersion("1.0")]
+    public async Task<ActionResult<UserDto>> GetV1(Guid id, CancellationToken ct)
+        => await _mediator.Send(new GetUserQuery(id), ct);
+
+    [HttpGet("{id:guid}")]
+    [MapToApiVersion("2.0")]
+    public async Task<ActionResult<UserDtoV2>> GetV2(Guid id, CancellationToken ct)
+        => await _mediator.Send(new GetUserQueryV2(id), ct);
+
+    [HttpPost]
+    public async Task<ActionResult<Guid>> Create(CreateUserCommand command, CancellationToken ct)
+    {
+        var id = await _mediator.Send(command, ct);
+        return CreatedAtAction(nameof(GetV1), new { id, version = "1.0" }, id);
+    }
+}
+```
+
+### Result Pattern для ошибок
+```csharp
+public record Result<T>
+{
+    public T? Value { get; }
+    public Error? Error { get; }
+    public bool IsSuccess => Error is null;
+
+    private Result(T value) => Value = value;
+    private Result(Error error) => Error = error;
+
+    public static Result<T> Success(T value) => new(value);
+    public static Result<T> Failure(Error error) => new(error);
+}
+
+public record Error(string Code, string Message);
+
+// В контроллере
+[HttpGet("{id}")]
+public async Task<ActionResult<UserDto>> Get(Guid id, CancellationToken ct)
+{
+    var result = await _mediator.Send(new GetUserQuery(id), ct);
+    return result.IsSuccess ? Ok(result.Value) : HandleError(result.Error);
+}
+
+private ActionResult HandleError(Error error) => error.Code switch
+{
+    "NotFound" => NotFound(error.Message),
+    "Validation" => BadRequest(error.Message),
+    _ => StatusCode(500, error.Message)
+};
+```
+
+### gRPC
+```protobuf
+// user.proto
+syntax = "proto3";
+package user;
+
+service UserService {
+    rpc GetUser(GetUserRequest) returns (User);
+    rpc CreateUser(CreateUserRequest) returns (User);
+    rpc GetUsers(GetUsersRequest) returns (stream User);
+}
+
+message User {
+    string id = 1;
+    string email = 2;
+    string name = 3;
+}
+```
+
+```csharp
+// GrpcService
+public class UserGrpcService : UserService.UserServiceBase
+{
+    private readonly IMediator _mediator;
+
+    public override async Task<User> GetUser(GetUserRequest request, ServerCallContext context)
+    {
+        var result = await _mediator.Send(new GetUserQuery(Guid.Parse(request.Id)), context.CancellationToken);
+        return result.ToProto();
+    }
+}
+
+// Program.cs
+app.MapGrpcService<UserGrpcService>();
+```
+
+---
+
+## 7. Modular Monolith
+
+### Module Structure
+```
+src/
+├── Modules/
+│   ├── Users/
+│   │   ├── Domain/
+│   │   ├── Application/
+│   │   ├── Infrastructure/
+│   │   └── Api/
+│   ├── Orders/
+│   └── Products/
+├── Shared/
+│   ├── Kernel/          // Base classes, interfaces
+│   └── BuildingBlocks/  // MediatR, EF Core extensions
+└── WebHost/             // Composition root
+```
+
+### Module Registration
+```csharp
+// Shared/BuildingBlocks/ModuleRegistration.cs
+public interface IModule
+{
+    void RegisterServices(IServiceCollection services, IConfiguration config);
+    void ConfigurePipeline(IApplicationBuilder app);
+}
+
+// Modules/Users/UsersModule.cs
+public class UsersModule : IModule
+{
+    public void RegisterServices(IServiceCollection services, IConfiguration config)
+    {
+        services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(UsersModule).Assembly));
+        services.AddDbContext<UsersDbContext>(opt => opt.UseNpgsql(config.GetConnectionString("Users")));
+        services.AddScoped<IUserRepository, UserRepository>();
+    }
+
+    public void ConfigurePipeline(IApplicationBuilder app)
+    {
+        // Module-specific middleware
+    }
+}
+
+// WebHost/Program.cs
+var modules = new IModule[]
+{
+    new UsersModule(),
+    new OrdersModule(),
+    new ProductsModule()
+};
+
+foreach (var module in modules)
+    module.RegisterServices(services, config);
+
+var app = builder.Build();
+
+foreach (var module in modules)
+    module.ConfigurePipeline(app);
+```
+
+---
+
+## 8. Практические задания
+
+1. **DI Container Benchmark**: Сравните производительность `Microsoft.Extensions.DI`, `Autofac`, `DryIoc`, `Lamar` для resolve сценариев
+
+2. **Custom Middleware Pipeline**: Реализуйте middleware для: request/response logging, correlation ID propagation, global exception handling, rate limiting, request/response compression
+
+3. **Clean Architecture Sample**: Постройте приложение "Task Management" с Domain, Application, Infrastructure, API слоями. Используйте MediatR, FluentValidation, EF Core
+
+4. **CQRS + Event Sourcing**: Реализуйте "Bank Account" с Event Sourcing: события AccountOpened, MoneyDeposited, MoneyWithdrawn, AccountClosed. Проекции для read model
+
+5. **API Versioning Strategy**: Реализуйте версионирование через URL, Header, Query String. Напишите OpenAPI/Swagger документацию с примерами
+
+---
+
+## 9. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Singleton зависит от Scoped | Инвертируйте зависимости, используйте `IServiceScopeFactory` |
+| Бизнес-логика в контроллерах | Контроллеры — только HTTP mapping, логика в Application |
+| Анемичная доменная модель | Богатая доменная модель с инвариантами в конструкторе/методах |
+| CQRS везде | CQRS только где есть сложность (разные модели read/write) |
+| Отсутствие валидации в pipeline | Pipeline Behavior для FluentValidation |
+| Жесткая связность модулей | Modules общаются через события/контракты, не через прямые ссылки |
+
+---
+
+## 10. Полезные ресурсы
+
+- **Clean Architecture** — Jason Taylor (GitHub: jasonmclean/clean-architecture)
+- **MediatR** — https://github.com/jbogard/MediatR
+- **ASP.NET Core Middleware** — https://learn.microsoft.com/aspnet/core/fundamentals/middleware
+- **CQRS** — Martin Fowler, Greg Young
+- **Event Sourcing** — https://eventstore.com/docs/
+- **API Design Guide** — Microsoft REST API Guidelines
+- **Modular Monolith** — Kamil Grzybek, "Modular Monolith Architecture"
+- **Enterprise Integration Patterns** — Gregor Hohpe (книга)

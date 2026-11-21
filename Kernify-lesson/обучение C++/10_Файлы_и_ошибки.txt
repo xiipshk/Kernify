@@ -1,0 +1,321 @@
+# Урок 10: Файлы и обработка ошибок
+
+## Цели урока
+- Изучить потоки ввода/вывода: `iostream`, `fstream`, `sstream`
+- Научиться читать и писать файлы (текстовые и бинарные)
+- Понять обработку ошибок: исключения, коды ошибок, `std::expected` (C++23)
+- Освоить работу с несколькими исходными файлами: заголовочные, компиляция, линковка
+- Разобраться с RAII для ресурсов (файлы, мьютексы, сокеты)
+
+---
+
+## Теория
+
+### Потоки (streams) — иерархия
+```
+ios_base
+  └── ios
+       ├── istream (ввод)  ← cin, ifstream, istringstream
+       ├── ostream (вывод) ← cout, ofstream, ostringstream
+       └── iostream (ввод/вывод) ← fstream, stringstream
+```
+
+### Работа с файлами (fstream)
+```cpp
+#include <fstream>
+#include <iostream>
+#include <string>
+
+int main() {
+    // Запись в текстовый файл
+    {
+        std::ofstream out("data.txt"); // RAII: автоматически закроется при выходе из области
+        if (!out) {
+            std::cerr << "Не удалось открыть файл для записи\n";
+            return 1;
+        }
+        out << "Привет, мир!\n";
+        out << 42 << ' ' << 3.14 << '\n';
+        // out.close() — не обязательно, деструктор закроет
+    }
+
+    // Чтение из текстового файла
+    {
+        std::ifstream in("data.txt");
+        if (!in) {
+            std::cerr << "Файл не найден\n";
+            return 1;
+        }
+
+        std::string line;
+        while (std::getline(in, line)) { // читает строку до '\n'
+            std::cout << "Line: " << line << '\n';
+        }
+
+        // Или по токенам (разделены пробелом/переводом строки)
+        in.clear(); in.seekg(0); // сброс флагов и возврат в начало
+        std::string word;
+        int num; double d;
+        in >> word >> num >> d; // "Привет," 42 3.14
+    }
+
+    // Бинарные файлы
+    {
+        std::vector<int> data = {1, 2, 3, 4, 5};
+        // Запись
+        std::ofstream bin_out("data.bin", std::ios::binary);
+        bin_out.write(reinterpret_cast<const char*>(data.data()),
+                      data.size() * sizeof(int));
+
+        // Чтение
+        std::ifstream bin_in("data.bin", std::ios::binary);
+        bin_in.seekg(0, std::ios::end);
+        size_t size = bin_in.tellg() / sizeof(int);
+        bin_in.seekg(0);
+        std::vector<int> read_data(size);
+        bin_in.read(reinterpret_cast<char*>(read_data.data()),
+                    size * sizeof(int));
+    }
+}
+```
+
+### Режимы открытия файла
+```cpp
+std::ofstream out("file.txt", std::ios::app);      // append (дописывать в конец)
+std::ofstream out("file.txt", std::ios::trunc);    // очистить (по умолчанию)
+std::fstream io("file.txt", std::ios::in | std::ios::out | std::ios::binary);
+```
+
+### stringstream — работа со строками как с потоками
+```cpp
+#include <sstream>
+#include <vector>
+
+std::string data = "10 20 30 40 50";
+std::istringstream iss(data);
+std::vector<int> v;
+int x;
+while (iss >> x) v.push_back(x); // {10,20,30,40,50}
+
+// Форматированный вывод в строку
+std::ostringstream oss;
+oss << "Result: " << 42 << " items";
+std::string result = oss.str(); // "Result: 42 items"
+```
+
+### Манипуляторы форматирования
+```cpp
+#include <iomanip>
+
+std::cout << std::fixed << std::setprecision(2) << 3.14159; // 3.14
+std::cout << std::hex << 255;     // ff
+std::cout << std::oct << 255;     // 377
+std::cout << std::setw(10) << std::setfill('0') << 42;      // 0000000042
+std::cout << std::boolalpha << true; // "true" вместо 1
+std::cout << std::showbase << std::hex << 42; // 0x2a
+```
+
+### Обработка ошибок: исключения (exceptions)
+```cpp
+#include <stdexcept>
+#include <fstream>
+
+void read_config(const std::string& filename) {
+    std::ifstream f(filename);
+    if (!f) {
+        throw std::runtime_error("Cannot open " + filename);
+    }
+    // ...
+}
+
+int main() {
+    try {
+        read_config("config.txt");
+    } catch (const std::runtime_error& e) {
+        std::cerr << "Runtime error: " << e.what() << '\n';
+    } catch (const std::exception& e) { // базовый класс всех стандартных исключений
+        std::cerr << "Error: " << e.what() << '\n';
+    } catch (...) { // ловит всё остальное
+        std::cerr << "Unknown error\n";
+    }
+}
+```
+
+### Стандартные исключения (из `<stdexcept>`)
+```
+std::exception
+  ├── std::logic_error (ошибки программирования)
+  │    ├── std::invalid_argument
+  │    ├── std::domain_error
+  │    ├── std::length_error
+  │    └── std::out_of_range
+  └── std::runtime_error (ошибки времени выполнения)
+       ├── std::range_error
+       ├── std::overflow_error
+       └── std::underflow_error
+```
+
+### noexcept и спецификация исключений
+```cpp
+void never_throws() noexcept;           // гарантирует: не бросает
+void may_throw() noexcept(false);       // может бросать (по умолчанию)
+
+void func() noexcept {
+    // если внутри бросят — std::terminate!
+    std::vector<int> v;
+    v.push_back(1); // может бросить bad_alloc → terminate!
+}
+```
+
+### Коды ошибок (error codes) — альтернатива исключениям
+```cpp
+#include <system_error>
+
+std::error_code ec;
+std::filesystem::remove("file.txt", ec); // не бросает, заполняет ec
+if (ec) {
+    std::cerr << "Error: " << ec.message() << " (" << ec.value() << ")\n";
+}
+
+// Свои коды ошибок (C++11)
+enum class MyErrc { Success = 0, NotFound, PermissionDenied };
+// специализация std::is_error_code_enum<MyErrc> = true;
+// make_error_code(MyErrc::NotFound) -> std::error_code
+```
+
+### std::expected (C++23) — значение или ошибка
+```cpp
+#include <expected>
+
+std::expected<int, std::error_code> divide(int a, int b) {
+    if (b == 0) return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+    return a / b;
+}
+
+auto result = divide(10, 0);
+if (result) {
+    std::cout << *result; // значение
+} else {
+    std::cerr << result.error().message(); // ошибка
+}
+```
+
+### Множественные файлы проекта
+```cpp
+// math.h — заголовочный файл (объявления)
+#pragma once // или include guards
+#ifndef MATH_H
+#define MATH_H
+
+int add(int a, int b);        // объявление
+double pi();                  // constexpr лучше в заголовочном
+
+#endif
+
+// math.cpp — реализация
+#include "math.h"
+int add(int a, int b) { return a + b; }
+constexpr double pi() { return 3.1415926535; }
+
+// main.cpp — использование
+#include "math.h"
+#include <iostream>
+int main() { std::cout << add(2,3); }
+
+// Компиляция:
+// g++ -std=c++20 -c math.cpp -o math.o      // компиляция в объектный файл
+// g++ -std=c++20 -c main.cpp -o main.o
+// g++ math.o main.o -o app                   // линковка
+// Или одной командой:
+// g++ -std=c++20 math.cpp main.cpp -o app
+```
+
+### Заголовочные файлы — лучшие практики
+```cpp
+// Хорошо: только объявления, inline/constexpr функции, шаблоны
+#pragma once
+#include <string>
+
+namespace utils {
+    constexpr int max_size = 100;
+    inline void log(const std::string& msg) { std::clog << msg << '\n'; }
+    template<typename T> T square(T x) { return x * x; }
+}
+
+// Плохо: определения не-inline функций, using namespace std, определения переменных
+```
+
+### RAII для файлов и ресурсов
+```cpp
+class ScopedFile {
+    FILE* f_;
+public:
+    ScopedFile(const char* name, const char* mode) : f_(std::fopen(name, mode)) {
+        if (!f_) throw std::runtime_error("fopen failed");
+    }
+    ~ScopedFile() { if (f_) std::fclose(f_); }
+    // Запрет копирования, разрешение move
+    ScopedFile(const ScopedFile&) = delete;
+    ScopedFile& operator=(const ScopedFile&) = delete;
+    ScopedFile(ScopedFile&& other) noexcept : f_(other.f_) { other.f_ = nullptr; }
+    FILE* get() const { return f_; }
+};
+
+// Использование:
+void process() {
+    ScopedFile f("data.txt", "r");
+    // работа с f.get()
+    // гарантированно закроется даже при исключении
+}
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Конфигурационный файл
+Напишите программу, читающую `config.ini` формата:
+```
+[section]
+key=value
+```
+Храните в `std::map<std::string, std::map<std::string, std::string>>`.
+
+### Задание 2: Бинарная сериализация
+Создайте структуру `Student {int id; char name[32]; float gpa;}`.
+Запишите массив студентов в бинарный файл, прочитайте обратно. Проверьте корректность.
+
+### Задание 3: Логирование с RAII
+Сделайте класс `Logger`, открывающий файл в конструкторе, пишущий с таймстемпами, закрывающий в деструкторе. Используйте `std::chrono` для времени.
+
+### Задание 4: Обработка ошибок без исключений
+Перепишите чтение файла с использованием `std::expected<std::string, std::error_code>` (или `std::pair<bool, string>` если нет C++23). Верните ошибку вместо throw.
+
+### Задание 5: Многофайловый проект
+Создайте проект из 3 файлов: `geometry.h`, `geometry.cpp`, `main.cpp`.
+В geometry: классы `Point`, `Circle`, `Rectangle` с методами `area()`.
+В main: создайте фигуры, выведите площади.
+
+### Задание 6: CSV парсер с ошибками
+Напишите функцию `std::expected<std::vector<std::vector<std::string>>, Error> parse_csv(const std::string& filename)`.
+Обработайте: файл не найден, пустой файл, разное число колонок в строках.
+
+---
+
+## Типичные ошибки новичка
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `while (!in.eof())` | eof устанавливается ПОСЛЕ неудачного чтения | `while (std::getline(in, line))` или `while (in >> x)` |
+| Текстовый режим на Windows: `\r\n` | Читаются `\r` в конце строк | Открывайте в бинарном режиме или убирайте `\r` вручную |
+| Исключение в деструкторе | `std::terminate` | Деструкторы должны быть `noexcept`; ловите исключения внутри |
+| `using namespace std` в заголовочном | Загрязняет глобальное пространство во всех includers | Никогда не делайте это в .h файлах |
+| Циклические включения заголовков | Ошибки компиляции | Используйте `#pragma once` или include guards, forward declarations |
+| Бинарная запись non-POD типов (string, vector) | Запишутся указатели, не данные | Сериализуйте вручную или используйте библиотеки (cereal, boost::serialization) |
+
+---
+
+## Ресурсы
+- cppreference: [I/O library](https://en.cppreference.com/w/cpp/io), [Exceptions](https://en.cppreference.com/w/cpp/error), [Filesystem (C++17)](https://en.cppreference.com/w/cpp/filesystem)
+- C++ Core Guidelines: [I/O](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#io-streams), [Error handling](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#e-error-handling)
+- [C++23 std::expected](https://en.cppreference.com/w/cpp/utility/expected)

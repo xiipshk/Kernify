@@ -1,0 +1,237 @@
+# Урок 1.6: Массивы и строки — arrays, std::array, std::string, индексы, перебор
+
+## Цели урока
+- Работать с C-массивами и std::array
+- Использовать std::string для работы с текстом
+- Понимать разницу между массивами и контейнерами
+- Безопасно обращаться к элементам
+
+---
+
+## 1. C-массивы (встроенные)
+
+```cpp
+// Объявление
+int arr[5];              // неинициализирован (мусор)
+int arr2[5] = {1, 2, 3}; // {1, 2, 3, 0, 0} — остальное value-initialized
+int arr3[] = {1, 2, 3, 4, 5}; // размер выводится автоматически
+
+// Доступ
+arr[0] = 10;
+int x = arr[2];          // без проверки границ!
+// arr[10] = 5;          // UB: выход за границы
+
+// Размер
+sizeof(arr) / sizeof(arr[0])  // 5 (только для массивов, не указателей!)
+std::size(arr)                // C++17, работает и для массивов, и для контейнеров
+```
+
+### Многомерные массивы
+```cpp
+int matrix[3][4] = {
+    {1, 2, 3, 4},
+    {5, 6, 7, 8},
+    {9, 10, 11, 12}
+};
+matrix[1][2] = 42;  // строка 1, столбец 2
+```
+
+### Ухудшение до указателя (array decay)
+```cpp
+void func(int* ptr, size_t size);  // принимает указатель
+
+int arr[5] = {1,2,3,4,5};
+func(arr, 5);  // arr неявно преобразуется в int* (утеря размера!)
+// Внутри func: sizeof(ptr) == sizeof(int*), а не 5*sizeof(int)
+```
+
+---
+
+## 2. std::array (C++11) — обёртка над C-массивом
+
+```cpp
+#include <array>
+
+std::array<int, 5> arr = {1, 2, 3, 4, 5};  // размер — часть типа!
+std::array<int, 5> arr2{1, 2, 3, 4, 5};    // uniform init
+
+// Методы
+arr.size()       // 5 (compile-time)
+arr.max_size()   // 5
+arr.empty()      // false
+arr.front()      // 1
+arr.back()       // 5
+arr.data()       // указатель на первый элемент (int*)
+
+// Доступ с проверкой границ
+arr.at(2)        // 3, бросает std::out_of_range при ошибке
+arr[2]           // 3, без проверки (быстрее)
+
+// Присваивание и сравнение (в отличие от C-массивов!)
+std::array<int, 5> a = {1,2,3,4,5};
+std::array<int, 5> b = a;  // копирование!
+bool eq = (a == b);        // true
+```
+
+### std::array vs C-массив
+| Особенность | C-массив | std::array |
+|-------------|----------|------------|
+| Размер в типе | Нет | Да (template параметр) |
+| Копирование | Нет (ухудшение к указателю) | Да |
+| Сравнение | Нет | Да |
+| Методы | Нет | size(), at(), front(), back() |
+| Итераторы | Нет | begin(), end() |
+| Накладные расходы | 0 | 0 (zero-overhead abstraction) |
+
+---
+
+## 3. std::string
+
+```cpp
+#include <string>
+
+std::string s1;           // пустая
+std::string s2 = "hello"; // из строкового литерала
+std::string s3(5, 'x');   // "xxxxx"
+std::string s4(s2, 1, 3); // подстрока: "ell"
+std::string s5 = s2;      // копия
+```
+
+### Основные операции
+```cpp
+std::string s = "hello";
+
+s.size()          // 5 (байт)
+s.length()        // 5 (синоним)
+s.empty()         // false
+s.front()         // 'h'
+s.back()          // 'o'
+
+s[0]              // 'h' (нет проверки)
+s.at(0)           // 'h' (с проверкой)
+
+s += " world";    // "hello world"
+s.append("!");    // "hello world!"
+s.push_back('?'); // "hello world!?"
+```
+
+### Поиск и подстроки
+```cpp
+std::string s = "hello world hello";
+
+s.find("world")        // 6 (позиция первого вхождения)
+s.rfind("hello")       // 12 (последнее вхождение)
+s.find("xxx")          // std::string::npos (не найдено)
+
+s.substr(6, 5)         // "world" (pos, len)
+s.substr(6)            // "world hello" (до конца)
+```
+
+### Модификация
+```cpp
+std::string s = "hello";
+
+s.insert(5, " world");   // "hello world"
+s.erase(5, 6);           // "hello" (pos, count)
+s.replace(0, 5, "Hi");   // "Hi world"
+s.clear();               // ""
+```
+
+### Сравнение
+```cpp
+std::string a = "apple", b = "banana";
+a == b    // false
+a < b     // true (лексикографическое)
+a.compare(b) < 0  // true
+```
+
+### Конвертация
+```cpp
+std::string s = "42";
+int x = std::stoi(s);      // 42
+double d = std::stod("3.14"); // 3.14
+
+std::string s2 = std::to_string(42);      // "42"
+std::string s3 = std::to_string(3.14);    // "3.140000"
+```
+
+### Raw string literals (C++11)
+```cpp
+std::string path = R"(C:\Users\Name\Documents)";  // без экранирования
+std::string json = R"({"key": "value"})";         // удобно для JSON
+```
+
+---
+
+## 4. Перебор (итерация)
+
+### C-массив
+```cpp
+int arr[] = {1, 2, 3, 4, 5};
+
+for (int i = 0; i < 5; ++i) { ... }
+for (int x : arr) { ... }  // range-based for работает!
+```
+
+### std::array
+```cpp
+std::array<int, 5> arr = {1,2,3,4,5};
+for (int& x : arr) x *= 2;  // модификация
+```
+
+### std::string
+```cpp
+std::string s = "hello";
+for (char c : s) std::cout << c << ' ';  // h e l l o
+for (auto& c : s) c = std::toupper(c);   // HELLO
+```
+
+---
+
+## 5. char* vs std::string vs std::string_view (C++17)
+
+```cpp
+// std::string_view — не владеющий взгляд на строку (zero-copy)
+#include <string_view>
+
+void print(std::string_view sv) {  // принимает string, char*, string_view
+    std::cout << sv << '\n';
+}
+
+std::string s = "hello";
+print(s);           // OK
+print("world");     // OK
+print(std::string_view(s, 2, 3)); // "llo"
+```
+
+---
+
+## Практические задания
+
+1. **C-массив**: Создайте массив 10 int, заполните случайными числами, найдите max/min
+2. **std::array**: То же самое с std::array, используйте .at() для безопасного доступа
+3. **std::string**: Напишите функцию, подсчитывающую гласные в строке
+4. **string_view**: Напишите функцию split(string_view, delimiter) → vector<string_view>
+5. **Сравнение**: Сравните производительность конкатенации через += vs std::ostringstream
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `std::string s[5];` — массив строк | `std::vector<std::string>` или `std::array<std::string, 5>` |
+| `arr[10] = 5` (UB) | `arr.at(10)` — exception, или проверка `if (i < size)` |
+| `sizeof(ptr) / sizeof(ptr[0])` для указателя | Передавайте размер отдельно или используйте контейнеры |
+| `char* s = "hello"; s[0] = 'H';` (UB: string literal read-only) | `std::string s = "hello"; s[0] = 'H';` |
+| `std::string s = "hello" + " world";` (pointer arithmetic!) | `std::string s = "hello" + std::string(" world");` |
+
+---
+
+## Полезные ресурсы
+
+- **cppreference: std::array** — https://en.cppreference.com/w/cpp/container/array
+- **cppreference: std::string** — https://en.cppreference.com/w/cpp/string/basic_string
+- **cppreference: std::string_view** — https://en.cppreference.com/w/cpp/string/basic_string_view
+- **C++ Core Guidelines: SL.str.1** — Use std::string for owning strings
+- **C++ Core Guidelines: SL.str.2** — Use std::string_view for non-owning strings

@@ -1,0 +1,348 @@
+# Урок 30: Профессиональные инструменты — packaging, линтеры, форматтеры, type checkers, CI
+
+## Цели урока
+- Упаковывать и публиковать пакеты на PyPI (pyproject.toml, build, twine)
+- Настраивать линтеры (ruff), форматтеры (black), статические анализаторы (mypy)
+- Конфигурировать pre-commit хуки
+- Строить CI/CD пайплайны (GitHub Actions)
+
+---
+
+## 1. Современная упаковка: pyproject.toml (PEP 621)
+
+```toml
+# pyproject.toml — единый файл конфигурации проекта
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my_package"
+version = "1.0.0"
+description = "Краткое описание"
+readme = "README.md"
+authors = [{name = "Имя", email = "you@example.com"}]
+license = {text = "MIT"}
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "requests>=2.31",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+    "pre-commit>=3.0",
+]
+docs = ["sphinx>=7.0", "furo>=2023"]
+
+[project.scripts]
+mycli = "my_package.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["my_package*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "T20"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --cov=my_package --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["src/my_package"]
+```
+
+---
+
+## 2. Сборка и публикация
+
+```bash
+# Установка инструментов
+pip install build twine
+
+# Сборка (создаёт dist/*.whl и dist/*.tar.gz)
+python -m build
+
+# Проверка артефактов
+twine check dist/*
+
+# Публикация на TestPyPI (для теста)
+twine upload --repository testpypi dist/*
+
+# Публикация на PyPI
+twine upload dist/*
+```
+
+### Установка в editable-режиме (для разработки)
+```bash
+pip install -e .           # базовая
+pip install -e ".[dev]"    # с dev-зависимостями
+pip install -e ".[dev,docs]" # несколько extra
+```
+
+---
+
+## 3. Линтинг и форматирование
+
+### Ruff — быстрый линтер (на Rust, заменяет flake8, isort, pyupgrade, и др.)
+```bash
+pip install ruff
+
+# Проверка
+ruff check src/
+
+# Автоисправление
+ruff check --fix src/
+
+# Только форматирование (аналог black)
+ruff format src/
+```
+
+**Конфиг в pyproject.toml** (см. выше) — настраивает правила, длину строки, таргет-версию.
+
+### Black — опинайтед форматтер
+```bash
+pip install black
+black src/ tests/
+# Или через ruff format (быстрее, тот же стиль)
+```
+
+### isort — сортировка импортов (встроен в ruff)
+```bash
+# ruff делает это автоматически при format/check
+```
+
+---
+
+## 4. Статическая типизация: mypy
+
+```bash
+pip install mypy
+mypy src/
+```
+
+**Строгий режим** (рекомендуется для новых проектов):
+```toml
+[tool.mypy]
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+```
+
+**Игнорирование строки**: `# type: ignore[code]`
+**Inline-ignore для блока**: `# mypy: disable-error-code="attr-defined"`
+
+### Типы для сторонних библиотек
+```bash
+pip install types-requests types-PyYAML  # stubs для популярных пакетов
+# или
+pip install mypy-stubs  # общий набор
+```
+
+---
+
+## 5. Pre-commit хуки
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+```
+
+```bash
+# Установка и активация
+pip install pre-commit
+pre-commit install
+pre-commit run --all-files  # прогон вручную
+```
+
+---
+
+## 6. CI/CD: GitHub Actions
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run Ruff
+        run: ruff check src/ tests/
+
+      - name: Run Ruff format
+        run: ruff format --check src/ tests/
+
+      - name: Run mypy
+        run: mypy src/
+
+      - name: Run tests with coverage
+        run: pytest --cov=my_package --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build package
+        run: |
+          pip install build twine
+          python -m build
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+```
+
+---
+
+## 7. Полезные инструменты экосистемы
+
+| Категория | Инструмент | Назначение |
+|-----------|------------|------------|
+| **Зависимости** | `pip-tools` | Компиляция requirements.txt из .in файлов |
+| | `pip-audit` | Проверка уязвимостей в зависимостях |
+| | `deptry` | Поиск неиспользуемых/отсутствующих зависимостей |
+| **Документация** | `sphinx` + `furo` | Генерация docs |
+| | `mkdocs` + `mkdocstrings` | Альтернатива, markdown-based |
+| **Профилирование** | `py-spy` | Сэмплинг профайлер (без изменений кода) |
+| | `scalene` | CPU/GPU/мемори профайлер |
+| **Безопасность** | `bandit` | Статический анализ безопасности |
+| | `safety` | Проверка известных CVE в зависимостях |
+| **Прочее** | `pytest-xdist` | Параллельный запуск тестов (`-n auto`) |
+| | `hypothesis` | Property-based testing |
+| | `nox` | Тестирование в нескольких окружениях |
+
+---
+
+## 8. Чек-лист готового проекта
+
+- [ ] `pyproject.toml` с метаданными, зависимостями, optional-deps
+- [ ] `src/` layout (изоляция кода)
+- [ ] `README.md` с badges (build, coverage, version, license)
+- [ ] `LICENSE` (MIT/Apache-2.0/BSD)
+- [ ] `.gitignore` (venv, __pycache__, .pytest_cache, dist, *.egg-info)
+- [ ] `.pre-commit-config.yaml` + `pre-commit install`
+- [ ] `ruff` + `black` (или `ruff format`) настроены
+- [ ] `mypy` в strict режиме проходит
+- [ ] `pytest` с coverage ≥ 80%
+- [ ] GitHub Actions: lint → typecheck → test → build → publish
+- [ ] `pip-audit` / `bandit` в CI
+- [ ] Версионирование: SemVer, changelog (Keep a Changelog)
+
+---
+
+## Практические задания
+
+1. **Инициализируйте проект**: `python -m venv venv`, создайте `pyproject.toml`, `src/mypkg/`, `tests/`
+2. **Настройте pre-commit**: ruff, mypy, базовые хуки
+3. **Напишите CI**: matrix testing 3.10-3.12, coverage upload
+4. **Опубликуйте на TestPyPI**: `twine upload --repository testpypi dist/*`
+5. **Добавьте dependabot**: `.github/dependabot.yml` для автообновлений
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `setup.py` + `setup.cfg` вместо `pyproject.toml` | Только `pyproject.toml` (PEP 621) |
+| Код в корне проекта | Используйте `src/` layout |
+| Жёсткие версии в `dependencies` | Минимальные версии (`>=`), закрепляйте в `requirements.txt` через `pip-tools` |
+| `black` + `isort` + `flake8` отдельно | `ruff` делает всё это быстрее |
+| `mypy` без `strict` | Включайте `strict = true` с первого дня |
+
+---
+
+## Полезные ресурсы
+
+- **Python Packaging User Guide** — https://packaging.python.org/
+- **pyproject.toml spec (PEP 621)** — https://packaging.python.org/en/latest/specifications/pyproject-toml/
+- **Ruff docs** — https://docs.astral.sh/ruff/
+- **mypy docs** — https://mypy.readthedocs.io/
+- **pre-commit.com** — https://pre-commit.com/
+- **GitHub Actions for Python** — https://docs.github.com/en/actions/use-cases-and-examples/building-and-testing-python

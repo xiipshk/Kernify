@@ -1,0 +1,427 @@
+{
+  "title": "Урок 12: Модель объектов",
+  "slug": "urok-12-обработка-исключений",
+  "short_description": "try/except/else/finally, raise, custom exceptions, exception groups (3.11+)",
+  "goals": [
+    "Понимать основы: try/except/else/finally, raise, custom exceptions, exception groups (3.11+)",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 2.1: Модель объектов — ссылки, изменяемость, истинность, is и =="
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать, как Python хранит объекты в памяти",
+        "Различать изменяемые и неизменяемые типы",
+        "Правильно использовать `is` vs `==`",
+        "Знать про интернирование и кэширование"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Объектная модель Python"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Всё — объект"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "type(42)          # <class 'int'>\ntype(\"hello\")     # <class 'str'>\ntype([1, 2])      # <class 'list'>\ntype(len)         # <class 'builtin_function_or_method'>\ntype(type)        # <class 'type'>  (метакласс)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура объекта (упрощённо)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "PyObject_HEAD\n- refcount (счётчик ссылок)\n- type pointer (указатель на тип)\n- данные объекта"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Ссылки и присваивание"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Присваивание — создание НОВОЙ ССЫЛКИ на ТОТ ЖЕ объект"
+    },
+    {
+      "type": "text",
+      "content": "a = [1, 2, 3]\nb = a          # b ссылается на ТОТ ЖЕ список\nb.append(4)\nprint(a)       # [1, 2, 3, 4] — a изменился!"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Неизменяемые объекты — \"изменение\" создаёт НОВЫЙ объект"
+    },
+    {
+      "type": "text",
+      "content": "x = 10\ny = x\ny = y + 1      # создаётся НОВЫЙ int 11\nprint(x)       # 10 (не изменился)\nprint(y)       # 11\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "id() — адрес объекта в памяти"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "a = [1, 2]\nb = a\nc = [1, 2]\n\nprint(id(a) == id(b))  # True (один объект)\nprint(id(a) == id(c))  # False (разные объекты)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Изменяемые vs Неизменяемые типы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Неизменяемые (immutable)"
+    },
+    {
+      "type": "table",
+      "content": "| Тип | Описание |\n|-----|----------|\n| `int`, `float`, `complex` | Числа |\n| `str` | Строки |\n| `tuple` | Кортежи |\n| `frozenset` | Неизменяемые множества |\n| `bytes` | Байты |\n| `bool`, `None` | Булевы, None |\n\n```python\ns = \"hello\""
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "s[0] = \"H\"  # TypeError!"
+    },
+    {
+      "type": "text",
+      "content": "s = \"Hello\"    # новый объект\n\nt = (1, 2, 3)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "t.append(4)  # AttributeError!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Изменяемые (mutable)"
+    },
+    {
+      "type": "table",
+      "content": "| Тип | Описание |\n|-----|----------|\n| `list` | Списки |\n| `dict` | Словари |\n| `set` | Множества |\n| `bytearray` | Изменяемые байты |\n| Пользовательские классы | По умолчанию изменяемые |"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "lst = [1, 2]\nlst.append(3)      # тот же объект, изменён на месте\nlst[0] = 10        # тот же объект\n\nd = {\"a\": 1}\nd[\"b\"] = 2         # изменён на месте"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Опасность изменяемых аргументов по умолчанию"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ПРОБЛЕМА"
+    },
+    {
+      "type": "text",
+      "content": "def add_item(item, lst=[]):\n    lst.append(item)\n    return lst\n\nprint(add_item(1))  # [1]\nprint(add_item(2))  # [1, 2] — список общий!"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "РЕШЕНИЕ"
+    },
+    {
+      "type": "text",
+      "content": "def add_item(item, lst=None):\n    if lst is None:\n        lst = []\n    lst.append(item)\n    return lst\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Копирование объектов"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Поверхностная копия (shallow)"
+    },
+    {
+      "type": "text",
+      "content": "shallow = original.copy()        # или list(original), original[:]\nshallow[0] = 99                  # OK\nshallow[1].append(999)           # ПРОБЛЕМА: вложенный список общий!\nprint(original[1])               # [2, 3, 999]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Глубокая копия (deep)"
+    },
+    {
+      "type": "text",
+      "content": "deep = copy.deepcopy(original)\ndeep[1].append(888)\nprint(original[1])               # [2, 3, 999] — исходник не затронут\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. is vs =="
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "== — равенство ЗНАЧЕНИЯ (value equality)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "[1, 2] == [1, 2]     # True\n\"hello\" == \"hello\"   # True"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "is — тождество ОБЪЕКТА (identity)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "a = [1, 2]\nb = a\nc = [1, 2]\n\na is b   # True (один и тот же объект)\na is c   # False (разные объекты, но равны по значению)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда использовать is:"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Только для None, True, False, и одиночных объектов (sentinel)"
+    },
+    {
+      "type": "text",
+      "content": "if x is None:\n    ..."
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Сравнение с константами"
+    },
+    {
+      "type": "text",
+      "content": "if value is True:    # не value == True\n    ...\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Интернирование (кэширование) малых объектов"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Целые числа от -5 до 256 заранее созданы"
+    },
+    {
+      "type": "text",
+      "content": "a = 256\nb = 256\nprint(a is b)   # True\n\nc = 257\nd = 257\nprint(c is d)   # False (в CPython может быть True в одном блоке кода!)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Строки — иногда интернируются"
+    },
+    {
+      "type": "text",
+      "content": "s1 = \"hello\"\ns2 = \"hello\"\nprint(s1 is s2)   # True (короткие идентификаторы)\n\ns3 = \"hello world!\"\ns4 = \"hello world!\"\nprint(s3 is s4)   # False (обычно)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Принудительное интернирование"
+    },
+    {
+      "type": "text",
+      "content": "import sys\nsys.intern(\"hello world!\")  # возвращает интернированную версию\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Истинность (Truthy / Falsy)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Falsy (ложь в булевом контексте)"
+    },
+    {
+      "type": "text",
+      "content": "bool(False)      # False\nbool(None)       # False\nbool(0)          # False\nbool(0.0)        # False\nbool(\"\")         # False\nbool([])         # False\nbool({})         # False\nbool(set())      # False\nbool(())         # False\nbool(range(0))   # False"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Truthy — всё остальное"
+    },
+    {
+      "type": "text",
+      "content": "bool(True)       # True\nbool(1)          # True\nbool(-1)         # True\nbool(\" \")        # True (пробел!)\nbool([None])     # True (непустой список)\nbool({0: 0})     # True\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "__bool__ и __len__"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Container:\n    def __init__(self, items):\n        self.items = items\n\n    def __len__(self):\n        return len(self.items)\n\n    # Если нет __bool__, используется __len__: 0 -> False, >0 -> True\n    # Можно переопределить:\n    def __bool__(self):\n        return len(self.items) > 0\n\nc = Container([1, 2])\nif c:    # работает благодаря __len__ или __bool__\n    print(\"Непустой\")"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Сборка мусора (Garbage Collection)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Счётчик ссылок — основной механизм"
+    },
+    {
+      "type": "text",
+      "content": "a = []\nprint(sys.getrefcount(a))  # >= 2 (переменная + аргумент функции)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Циклические ссылки — требуют GC"
+    },
+    {
+      "type": "text",
+      "content": "class Node:\n    def __init__(self):\n        self.ref = None\n\nn1 = Node()\nn2 = Node()\nn1.ref = n2\nn2.ref = n1  # цикл!\ndel n1, n2   # __del__ не вызовется сразу, ждёт gc.collect()\n\ngc.collect()  # принудительная сборка\ngc.get_count()  # (generation0, gen1, gen2) объекты на сборе\ngc.get_threshold()  # пороги запуска автосборки\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Weak References — слабые ссылки"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Объект удалится, когда на него не останется сильных ссылок"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Счётчик ссылок**: напишите функцию, показывающую refcount объекта (через ctypes или sys.getrefcount)\n2. **Immutable wrapper**: создайте класс, делающий любой объект неизменяемым (перехватывайте атрибуты)\n3. **Cache с weakref**: реализуйте кэш, не удерживающий объекты в памяти\n4. **Deep equal**: напишите функцию глубокого сравнения двух структур данных\n5. **Memory leak hunt**: создайте циклическую ссылку, покажите, что gc.collect() её убирает\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `if x == None:` | `if x is None:` |\n| `def f(lst=[]):` | `def f(lst=None): if lst is None: lst = []` |\n| `copy.copy()` для вложенных структур | `copy.deepcopy()` |\n| Использование `is` для сравнения чисел/строк | `==` для значений, `is` только для None/True/False/sentinel |\n| Модификация аргумента-списка внутри функции | Создавайте копию или документируйте side effect |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Docs: Data Model** — https://docs.python.org/3/reference/datamodel.html",
+        "**Real Python: Python \"is\" vs \"==\"** — https://realpython.com/python-is-vs-equality/",
+        "**Real Python: Copying Objects** — https://realpython.com/copying-python-objects/",
+        "**Python GC docs** — https://docs.python.org/3/library/gc.html",
+        "**Pymotw: weakref** — https://pymotw.com/3/weakref/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Обработка исключений",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Обработка исключений' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: try/except/else/finally, raise, custom exceptions, exception groups (3.11+) — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 12,
+  "name_en": "Lesson: Обработка исключений",
+  "short_description_en": "Learn Обработка исключений in Python with detailed explanations and examples"
+}

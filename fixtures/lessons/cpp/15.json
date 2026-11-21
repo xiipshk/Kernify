@@ -1,0 +1,307 @@
+{
+  "title": "Урок 15: Templates",
+  "slug": "urok-15-файловый-i-o-и-сериализация",
+  "short_description": "fstream, filesystem (C++17), JSON (nlohmann/json), binary, memory-mapped files",
+  "goals": [
+    "Понимать основы: fstream, filesystem (C++17), JSON (nlohmann/json), binary, memory-mapped files",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 15: Шаблоны — function/class templates, specialization, constexpr, concepts"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Освоить функциональные и классовые шаблоны",
+        "Понять специализацию (полную и частичную)",
+        "Использовать `constexpr` и `consteval` для compile-time вычислений",
+        "Применить Concepts (C++20) для ограничения шаблонных параметров",
+        "Избежать типичных ошибок: code bloat, ODR violations, substitution failures"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Function Templates"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iostream>\n#include <type_traits>\n\n// Базовый шаблон функции\ntemplate<typename T>\nT max(T a, T b) {\n    return (a > b) ? a : b;\n}\n\n// Явное указание типов\nvoid funcTemplateDemo() {\n    std::cout << max(3, 5) << '\\n';           // T = int\n    std::cout << max(3.14, 2.71) << '\\n';     // T = double\n    std::cout << max('a', 'z') << '\\n';       // T = char\n    std::cout << max<std::string>(\"a\", \"b\") << '\\n'; // Явное T = string\n}\n\n// Несколько параметров\ntemplate<typename T, typename U>\nauto add(T a, U b) -> decltype(a + b) {       // Trailing return type (C++11)\n    return a + b;\n}\n\n// C++14: auto возвращаемый тип\ntemplate<typename T, typename U>\nauto multiply(T a, U b) {\n    return a * b;\n}\n\n// C++20: abbreviated function template (как generic lambda)\nauto subtract = [](auto a, auto b) { return a - b; }; // Не функция, но похоже"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Class Templates"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <memory>\n#include <algorithm>\n\n// Простой контейнер\ntemplate<typename T, size_t N>\nclass FixedArray {\n    T data_[N];\npublic:\n    constexpr FixedArray() = default;\n\n    constexpr T& operator[](size_t i) { return data_[i]; }\n    constexpr const T& operator[](size_t i) const { return data_[i]; }\n    constexpr size_t size() const { return N; }\n\n    // Итераторы для range-based for\n    constexpr T* begin() { return data_; }\n    constexpr const T* begin() const { return data_; }\n    constexpr T* end() { return data_ + N; }\n    constexpr const T* end() const { return data_ + N; }\n};\n\nvoid classTemplateDemo() {\n    FixedArray<int, 5> arr;\n    for (size_t i = 0; i < arr.size(); ++i) arr[i] = i * 2;\n    for (auto x : arr) std::cout << x << ' '; // 0 2 4 6 8\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Template Specialization"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <string>\n#include <type_traits>\n\n// Primary template\ntemplate<typename T>\nstruct TypeInfo {\n    static constexpr const char* name = \"unknown\";\n    static constexpr bool is_integral = false;\n};\n\n// Full specialization для int\ntemplate<>\nstruct TypeInfo<int> {\n    static constexpr const char* name = \"int\";\n    static constexpr bool is_integral = true;\n};\n\n// Full specialization для double\ntemplate<>\nstruct TypeInfo<double> {\n    static constexpr const char* name = \"double\";\n    static constexpr bool is_integral = false;\n};\n\n// Partial specialization для указателей\ntemplate<typename T>\nstruct TypeInfo<T*> {\n    static constexpr const char* name = \"pointer\";\n    static constexpr bool is_integral = false;\n};\n\n// Partial specialization для массивов\ntemplate<typename T, size_t N>\nstruct TypeInfo<T[N]> {\n    static constexpr const char* name = \"array\";\n    static constexpr bool is_integral = false;\n};\n\nvoid specializationDemo() {\n    std::cout << TypeInfo<int>::name << '\\n';        // int\n    std::cout << TypeInfo<double>::name << '\\n';     // double\n    std::cout << TypeInfo<int*>::name << '\\n';       // pointer\n    std::cout << TypeInfo<int[10]>::name << '\\n';    // array\n    std::cout << TypeInfo<std::string>::name << '\\n'; // unknown (primary)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Variable Templates (C++14)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: templates**\n\n**Что делает:** Параметризованные типы и функции (шаблоны)\n\n**Зачем нужно:** Пишем код один раз для любых типов, compile-time полиморфизм, ноль оверхеда\n\n**Как работает:** template<typename T> T max(T a, T b) { return a > b ? a : b; }"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <type_traits>\n\n// Variable template — удобная обёртка над type traits\ntemplate<typename T>\nconstexpr bool is_integral_v = std::is_integral<T>::value;\n\n// Свои variable templates\ntemplate<typename T>\nconstexpr size_t type_size_v = sizeof(T);\n\nvoid variableTemplateDemo() {\n    std::cout << is_integral_v<int> << '\\n';      // 1\n    std::cout << is_integral_v<double> << '\\n';   // 0\n    std::cout << type_size_v<int[10]> << '\\n';    // 40 (на 64-бит)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "constexpr и consteval (C++11/14/20)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <array>\n#include <iostream>\n\n// constexpr функция — может вычисляться на этапе компиляции\nconstexpr int factorial(int n) {\n    return (n <= 1) ? 1 : n * factorial(n - 1);\n}\n\n// consteval — ГАРАНТИРОВАННО compile-time (C++20)\nconsteval int compileTimeOnly(int n) {\n    return n * n;\n}\n\n// constexpr конструктор и методы\nstruct Point {\n    int x, y;\n    constexpr Point(int x_, int y_) : x(x_), y(y_) {}\n    constexpr Point operator+(const Point& other) const {\n        return Point{x + other.x, y + other.y};\n    }\n    constexpr int manhattan() const { return (x >= 0 ? x : -x) + (y >= 0 ? y : -y); }\n};\n\nvoid constexprDemo() {\n    constexpr int f5 = factorial(5);        // Вычисляется на этапе компиляции\n    constexpr Point p1(3, 4);\n    constexpr Point p2 = p1 + Point(1, 2);  // (4, 6)\n    constexpr int dist = p2.manhattan();    // 10\n\n    // consteval — ошибка если не compile-time\n    // int runtime = 5;\n    // compileTimeOnly(runtime); // CE: не constant expression\n\n    std::array<int, factorial(4)> arr;      // Размер массива constexpr\n    static_assert(factorial(5) == 120);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Concepts (C++20) — ограничения для шаблонов"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <concepts>\n#include <iterator>\n#include <vector>\n#include <iostream>\n\n// Стандартные concepts\ntemplate<std::integral T>\nT gcd(T a, T b) {\n    while (b != 0) { T t = b; b = a % b; a = t; }\n    return a;\n}\n\n// Комбинирование concepts\ntemplate<typename T>\nconcept Numeric = std::integral<T> || std::floating_point<T>;\n\ntemplate<Numeric T>\nT abs_val(T x) {\n    return x < 0 ? -x : x;\n}\n\n// Custom concept\ntemplate<typename T>\nconcept Hashable = requires(T a) {\n    { std::hash<T>{}(a) } -> std::convertible_to<size_t>;\n    { a == a } -> std::convertible_to<bool>;\n};\n\n// Concept с вложенными требованиями\ntemplate<typename T>\nconcept Container = requires(T c) {\n    typename T::value_type;\n    typename T::iterator;\n    { c.begin() } -> std::same_as<typename T::iterator>;\n    { c.end() } -> std::same_as<typename T::iterator>;\n    { c.size() } -> std::convertible_to<size_t>;\n};\n\ntemplate<Container C>\nvoid printContainer(const C& c) {\n    for (const auto& x : c) std::cout << x << ' ';\n    std::cout << '\\n';\n}\n\n// requires clause (альтернативный синтаксис)\ntemplate<typename T>\nrequires std::sortable<T>\nvoid sortAndPrint(T& container) {\n    std::sort(container.begin(), container.end());\n    for (const auto& x : container) std::cout << x << ' ';\n    std::cout << '\\n';\n}\n\nvoid conceptsDemo() {\n    std::cout << gcd(48, 18) << '\\n';           // 6\n    // gcd(3.14, 2.71); // CE: double не integral\n\n    std::cout << abs_val(-42) << '\\n';          // 42\n    std::cout << abs_val(-3.14) << '\\n';        // 3.14\n\n    std::vector<int> v = {3, 1, 4, 1, 5};\n    printContainer(v);                          // 3 1 4 1 5\n    sortAndPrint(v);                            // 1 1 3 4 5\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SFINAE и `requires` выражения"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <type_traits>\n#include <utility>\n\n// Старый способ (SFINAE) — до C++20\ntemplate<typename T, typename = std::enable_if_t<std::is_integral_v<T>>>\nT oldWay(T x) { return x * 2; }\n\n// Новый способ (C++20) — requires expression\ntemplate<typename T>\nrequires std::is_integral_v<T>\nT newWay(T x) { return x * 2; }\n\n// requires expression в теле функции\ntemplate<typename T>\nauto serialize(const T& obj) {\n    if constexpr (requires { obj.toString(); }) {\n        return obj.toString();\n    } else if constexpr (requires { std::to_string(obj); }) {\n        return std::to_string(obj);\n    } else {\n        return std::string(\"?\");\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Fold Expressions (C++17) — вариадические шаблоны"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iostream>\n\n// Сумма всех аргументов\ntemplate<typename... Args>\nauto sum(Args... args) {\n    return (args + ...); // unary right fold\n}\n\n// Печать с разделителем\ntemplate<typename... Args>\nvoid printAll(Args... args) {\n    (std::cout << ... << args) << '\\n'; // binary left fold\n}\n\n// Логическое И/ИЛИ\ntemplate<typename... Args>\nbool allTrue(Args... args) {\n    return (args && ...);\n}\ntemplate<typename... Args>\nbool anyTrue(Args... args) {\n    return (args || ...);\n}\n\nvoid foldDemo() {\n    std::cout << sum(1, 2, 3, 4, 5) << '\\n';        // 15\n    printAll(\"a\", \"b\", \"c\");                        // abc\n    std::cout << allTrue(true, true, false) << '\\n'; // 0\n    std::cout << anyTrue(false, false, true) << '\\n'; // 1\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Template Template Parameters"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <vector>\n#include <list>\n#include <deque>\n\n// Template template parameter\ntemplate<template<typename...> class Container, typename T, typename... Args>\nContainer<T> makeContainer(Args&&... args) {\n    return Container<T>(std::forward<Args>(args)...);\n}\n\nvoid templateTemplateDemo() {\n    auto v = makeContainer<std::vector, int>(5, 42);    // vector<int> с 5 элементами 42\n    auto l = makeContainer<std::list, double>(3, 1.5);  // list<double>\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Реализация `Optional<T>` с концептами"
+    },
+    {
+      "type": "text",
+      "content": "Создайте `MyOptional<T>` с концептом `Movable<T>` (требует move-constructible). Добавьте `value_or(U&& default_value)` с концептом `ConvertibleTo<T, U>`."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Compile-time парсер"
+    },
+    {
+      "type": "text",
+      "content": "Напишите `constexpr` функцию `parseInt(const char*)`, которая на этапе компиляции парсит строку в `int`. Используйте `consteval` для гарантии. Обрабатывайте ошибки через `static_assert`."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Type-erased wrapper (type erasure)"
+    },
+    {
+      "type": "text",
+      "content": "Создайте класс `AnyDrawable`, хранящий любой тип с методом `draw() const`. Используйте template конструктор + виртуальный интерфейс внутри (как `std::function`). Демонстрируйте с `Circle`, `Rectangle`, лямбдой."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Concept для Range"
+    },
+    {
+      "type": "text",
+      "content": "Определите concept `Range<R>` требующий `begin()`, `end()`, итераторы которых удовлетворяют `std::input_iterator`. Напишите `algorithm` работающий с любым `Range`: `find`, `count`, `transform`."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Variadic template — tuple-like"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Хранением через рекурсивное наследование",
+        "`get<I>()` возвращающим I-й элемент",
+        "`size()` — количество элементов",
+        "Конструктором с perfect forwarding"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте `MyTuple<Types...>` с:\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| Code bloat | Много инстанциаций для разных типов | Используйте type erasure, `void*` базу, или концепты для ограничения |\n| ODR violation | Шаблон в .cpp, не в заголовке | Шаблоны — в заголовках (или explicit instantiation в .cpp) |\n| `typename` пропущен | Зависимое имя типа (`T::type`) | Всегда `typename T::type` в шаблонах |\n| `template` пропущен | Зависимый template метод (`obj.template func<U>()`) | `obj.template func<U>()` |\n| Специализация в другом namespace | Частичная специализация не в namespace шаблона | Специализируйте в том же namespace |\n| Concept не компилируется | `requires` выражение невалидно | Проверяйте через `requires { ... }` синтаксис |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[cppreference: Templates](https://en.cppreference.com/w/cpp/language/templates)",
+        "[cppreference: Concepts](https://en.cppreference.com/w/cpp/language/constraints)",
+        "**Книга:** Vandevoorde/Josuttis \"C++ Templates: The Complete Guide\" (2nd ed.)",
+        "**Книга:** Meyers \"Effective Modern C++\", Items 1-11, 41-43",
+        "**CppCon:** \"Concepts in C++20\" (Andrew Sutton)",
+        "**CppCon:** \"Template Metaprogramming Made Easy\" (Louis Dionne)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Файловый I/O и сериализация",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Файловый I/O и сериализация' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C++",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c++ на GitHub",
+    "Конференции и митапы по C++"
+  ],
+  "key_takeaways": [
+    "Главная идея: fstream, filesystem (C++17), JSON (nlohmann/json), binary, memory-mapped files — это фундамент для RAII, Move semantics, Perfect forwarding.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "cpp",
+  "lesson_order": 15,
+  "name_en": "Lesson: Файловый I/O и сериализация",
+  "short_description_en": "Learn Файловый I/O и сериализация in C++ with detailed explanations and examples"
+}

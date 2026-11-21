@@ -1,0 +1,650 @@
+{
+  "title": "Урок 26: Безопасность",
+  "slug": "urok-26-веб-фреймворки-fastapi-flask-django",
+  "short_description": "Routing, dependency injection, middleware, background tasks",
+  "goals": [
+    "Понимать основы: Routing, dependency injection, middleware, background tasks",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.4: Безопасность — OWASP, инъекции, криптография, аутентификация, аудит"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать OWASP Top 10 для веб-приложений",
+        "Защищаться от инъекций (SQL, NoSQL, команда, LDAP)",
+        "Правильно использовать криптографию (hashing, encryption, signing)",
+        "Реализовывать безопасную аутентификацию и авторизацию",
+        "Проводить аудит зависимостей и кода"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. OWASP Top 10 (2021)"
+    },
+    {
+      "type": "table",
+      "content": "| # | Уязвимость | Описание |\n|---|------------|----------|\n| A01 | Broken Access Control | Нарушение контроля доступа |\n| A02 | Cryptographic Failures | Ошибки криптографии |\n| A03 | Injection | Инъекции (SQL, NoSQL, OS, LDAP) |\n| A04 | Insecure Design | Небезопасный дизайн |\n| A05 | Security Misconfiguration | Ошибки конфигурации |\n| A06 | Vulnerable Components | Уязвимые компоненты |\n| A07 | Authentication Failures | Ошибки аутентификации |\n| A08 | Software Integrity Failures | Нарушение целостности ПО |\n| A09 | Logging Failures | Недостаточное логирование |\n| A10 | SSRF | Server-Side Request Forgery |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Защита от инъекций"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SQL Injection — параметризованные запросы"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ПЛОХО"
+    },
+    {
+      "type": "text",
+      "content": "cursor.execute(f\"SELECT * FROM users WHERE name = '{name}'\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ХОРОШО — параметры"
+    },
+    {
+      "type": "text",
+      "content": "cursor.execute(\"SELECT * FROM users WHERE name = ?\", (name,))"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "SQLAlchemy ORM — безопасно"
+    },
+    {
+      "type": "text",
+      "content": "session.query(User).filter(User.name == name).first()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Raw SQL в SQLAlchemy — text() с bindparams"
+    },
+    {
+      "type": "text",
+      "content": "from sqlalchemy import text\nsession.execute(text(\"SELECT * FROM users WHERE name = :name\"), {\"name\": name})\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "NoSQL Injection (MongoDB)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ПЛОХО"
+    },
+    {
+      "type": "text",
+      "content": "db.users.find({\"username\": username, \"password\": password})"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ХОРОШО — валидация типов"
+    },
+    {
+      "type": "text",
+      "content": "db.users.find({\"username\": {\"$eq\": username}, \"password\": {\"$eq\": password}})"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Или используйте ODM (Beanie, Motor) с моделями"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Command Injection"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ПЛОХО"
+    },
+    {
+      "type": "text",
+      "content": "os.system(f\"ping {host}\")\nsubprocess.run(f\"ping {host}\", shell=True)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ХОРОШО — без shell, список аргументов"
+    },
+    {
+      "type": "text",
+      "content": "import subprocess\nsubprocess.run([\"ping\", \"-c\", \"3\", host], capture_output=True)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "shlex.quote для экранирования (если нужен shell)"
+    },
+    {
+      "type": "text",
+      "content": "import shlex\ncmd = f\"ping {shlex.quote(host)}\"\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "LDAP Injection"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ПЛОХО"
+    },
+    {
+      "type": "text",
+      "content": "filter = f\"(cn={user_input})\""
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ХОРОШО — escape"
+    },
+    {
+      "type": "text",
+      "content": "import ldap3\nfrom ldap3.utils.conv import escape_filter_chars\nfilter = f\"(cn={escape_filter_chars(user_input)})\"\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Криптография"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Хэширование паролей — bcrypt/argon2"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install passlib[bcrypt] argon2-cffi"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Использование"
+    },
+    {
+      "type": "text",
+      "content": "hashed = hash_password(\"secret123\")  # $2b$12$...\nverify_password(\"secret123\", hashed)  # True\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Симметричное шифрование — Fernet (AES-128)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install cryptography"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from cryptography.fernet import Fernet\n\nkey = Fernet.generate_key()  # сохранить в секрете!\nf = Fernet(key)\n\ntoken = f.encrypt(b\"секретные данные\")\ndata = f.decrypt(token)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Асимметричное шифрование — RSA"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Генерация ключей"
+    },
+    {
+      "type": "text",
+      "content": "private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)\npublic_key = private_key.public_key()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Шифрование (публичный ключ)"
+    },
+    {
+      "type": "text",
+      "content": "ciphertext = public_key.encrypt(\n    b\"secret\",\n    padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)\n)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Расшифрование (приватный ключ)"
+    },
+    {
+      "type": "text",
+      "content": "plaintext = private_key.decrypt(\n    ciphertext,\n    padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)\n)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Подпись — HMAC / Ed25519"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "HMAC для проверки целостности"
+    },
+    {
+      "type": "text",
+      "content": "secret = b\"shared-secret\"\nmessage = b\"data\"\nsig = hmac.new(secret, message, hashlib.sha256).hexdigest()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Проверка"
+    },
+    {
+      "type": "text",
+      "content": "hmac.compare_digest(sig, hmac.new(secret, message, hashlib.sha256).hexdigest())"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "python"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Ed25519 (современное, быстрое)"
+    },
+    {
+      "type": "text",
+      "content": "from cryptography.hazmat.primitives.asymmetric import ed25519\n\nprivate_key = ed25519.Ed25519PrivateKey.generate()\npublic_key = private_key.public_key()\n\nsig = private_key.sign(b\"message\")\npublic_key.verify(sig, b\"message\")  # исключение если неверно\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "JWT (JSON Web Tokens)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install python-jose[cryptography]"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from jose import jwt, JWTError\nfrom datetime import datetime, timedelta\n\nSECRET = \"your-256-bit-secret\"\nALGORITHM = \"HS256\"\n\ndef create_token(user_id: str, expires_minutes: int = 30) -> str:\n    payload = {\n        \"sub\": user_id,\n        \"exp\": datetime.utcnow() + timedelta(minutes=expires_minutes),\n        \"iat\": datetime.utcnow()\n    }\n    return jwt.encode(payload, SECRET, algorithm=ALGORITHM)\n\ndef decode_token(token: str) -> dict:\n    return jwt.decode(token, SECRET, algorithms=[ALGORITHM])"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Аутентификация и авторизация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Безопасные cookies"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi import Response, Cookie\n\nresponse.set_cookie(\n    key=\"session\",\n    value=token,\n    httponly=True,      # недоступен JS\n    secure=True,        # только HTTPS\n    samesite=\"lax\",     # CSRF защита\n    max_age=3600\n)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CSRF защита"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install fastapi-csrf-protect"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi_csrf_protect import CsrfProtect\nfrom pydantic import BaseModel\n\nclass CsrfSettings(BaseModel):\n    secret_key: str = \"csrf-secret-key\"\n\n@CsrfProtect.load_config\ndef get_csrf_config():\n    return CsrfSettings()\n\n@app.post(\"/form\")\ndef submit_form(csrf_protect: CsrfProtect = Depends()):\n    csrf_protect.validate_csrf(request)\n    ..."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Rate Limiting"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install slowapi"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from slowapi import Limiter, _rate_limit_exceeded_handler\nfrom slowapi.util import get_remote_address\nfrom slowapi.errors import RateLimitExceeded\n\nlimiter = Limiter(key_func=get_remote_address)\napp.state.limiter = limiter\napp.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)\n\n@app.get(\"/api\")\n@limiter.limit(\"10/minute\")\ndef api(request: Request):\n    return {\"ok\": True}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Content Security Policy"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi import Response\n\n@app.middleware(\"http\")\nasync def add_csp(request, call_next):\n    response = await call_next(request)\n    response.headers[\"Content-Security-Policy\"] = \"default-src 'self'; script-src 'self'\"\n    response.headers[\"X-Frame-Options\"] = \"DENY\"\n    response.headers[\"X-Content-Type-Options\"] = \"nosniff\"\n    response.headers[\"Referrer-Policy\"] = \"strict-origin-when-cross-origin\"\n    return response"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Безопасность зависимостей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "pip-audit"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pip-audit\npip-audit\npip-audit -r requirements.txt --fix"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Safety"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install safety\nsafety check\nsafety check -r requirements.txt"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dependabot / Renovate (GitHub)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".github/dependabot.yml"
+    },
+    {
+      "type": "text",
+      "content": "version: 2\nupdates:\n  - package-ecosystem: \"pip\"\n    directory: \"/\"\n    schedule:\n      interval: \"weekly\"\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Sigstore / SLSA — подпись пакетов"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install sigstore\nsigstore sign dist/*\nsigstore verify dist/*"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Безопасная работа с секретами"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "python-dotenv (только для dev!)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install python-dotenv"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from dotenv import load_dotenv\nimport os\n\nload_dotenv()  # .env файл НЕ в git!\nSECRET_KEY = os.getenv(\"SECRET_KEY\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Продакшн: переменные окружения / Secret Manager"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "AWS Secrets Manager"
+    },
+    {
+      "type": "text",
+      "content": "import boto3\nclient = boto3.client('secretsmanager')\nsecret = client.get_secret_value(SecretId=\"prod/db-password\")['SecretString']"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "HashiCorp Vault"
+    },
+    {
+      "type": "text",
+      "content": "import hvac\nclient = hvac.Client(url=\"https://vault.example.com\")\nsecret = client.secrets.kv.v2.read_secret_version(path=\"app/config\")\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ".gitignore"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ".env\n*.key\n*.pem\nsecrets/"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Аудит кода"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Bandit — статический анализ безопасности"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install bandit\nbandit -r src/\nbandit -r src/ -f json -o report.json"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Semgrep — паттерны безопасности"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install semgrep\nsemgrep --config=auto src/"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pre-commit hooks"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".pre-commit-config.yaml"
+    },
+    {
+      "type": "list",
+      "items": [
+        "repo: https://github.com/PyCQA/bandit",
+        "id: bandit",
+        "repo: https://github.com/returntocorp/semgrep",
+        "id: semgrep"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "repos:\n\n    rev: 1.7.5\n    hooks:\n\n        args: [\"-r\", \"src/\"]\n\n    rev: v1.0.0\n    hooks:\n\n        args: [\"--config=auto\", \"src/\"]\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Logging и Monitoring"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Логирование событий безопасности"
+    },
+    {
+      "type": "text",
+      "content": "logger = logging.getLogger(\"security\")\nlogger.warning(\"Failed login attempt\", extra={\"ip\": \"1.2.3.4\", \"user\": \"admin\"})\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **SQLi Demo**: создайте уязвимый эндпоинт, эксплуатируйте, исправьте\n2. **Password Hashing**: реализуйте регистрацию/логин с argon2\n3. **JWT Auth**: access + refresh tokens, revocation через Redis\n4. **Dependency Scan**: настройте pip-audit + dependabot в CI\n5. **Secrets**: внедрите Vault или AWS Secrets Manager\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| MD5/SHA1 для паролей | bcrypt / argon2 / scrypt |\n| Секреты в коде / git | Переменные окружения / Secret Manager |\n| `shell=True` в subprocess | Список аргументов без shell |\n| Отсутствие rate limiting | Лимиты на логин, API, формы |\n| Логирование паролей/токенов | Фильтрация чувствительных полей |\n| Старые зависимости | Регулярные pip-audit / dependabot |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**OWASP Top 10** — https://owasp.org/www-project-top-ten/",
+        "**OWASP Python** — https://owasp.org/www-project-python-security/",
+        "**Cryptography.io** — https://cryptography.io/",
+        "**passlib** — https://passlib.readthedocs.io/",
+        "**Bandit** — https://bandit.readthedocs.io/",
+        "**Semgrep Rules** — https://semgrep.dev/explore"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Веб-фреймворки (FastAPI/Flask/Django)",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Веб-фреймворки (FastAPI/Flask/Django)' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: Routing, dependency injection, middleware, background tasks — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 26,
+  "name_en": "Lesson: Веб-фреймворки (FastAPI/Flask/Django)",
+  "short_description_en": "Learn Веб-фреймворки (FastAPI/Flask/Django) in Python with detailed explanations and examples"
+}

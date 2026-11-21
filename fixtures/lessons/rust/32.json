@@ -1,0 +1,590 @@
+{
+  "title": "Урок 32: Performance Reliability",
+  "slug": "urok-32-fuzz-testing-и-property-based-testing",
+  "short_description": "cargo-fuzz, libfuzzer, proptest, quickcheck, arbitraries, shrinking",
+  "goals": [
+    "Понимать основы: cargo-fuzz, libfuzzer, proptest, quickcheck, arbitraries, shrinking",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 32: Производительность и надёжность"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Писать бенчмарки с Criterion и сравнивать разные реализации",
+        "Профилировать аллокации памяти с аллокаторами (jemalloc, mimalloc) и инструментами (heaptrack, dhat, massif, flamegraph)",
+        "Валидировать unsafe код с Miri (поиск UB) и Loom (конкурентность, data races)",
+        "Писать фазз-тесты с cargo-fuzz",
+        "Писать property-based тесты с proptest и quickcheck",
+        "Интегрировать все эти проверки в CI/CD"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "После изучения этого урока вы сможете:\n\n\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Бенчмаркирование с Criterion"
+    },
+    {
+      "type": "text",
+      "content": "Criterion — де-факто стандарт для бенчмарков в Rust. В отличие от встроенного `test::Bencher` (работает только на ночном компиляторе), Criterion работает на стабильном компиляторе, статистически корректно обрабатывает результаты (разогрев, несколько итераций, доверительные интервалы) и генерирует HTML-отчёты."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Подключение"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[dev-dependencies]\ncriterion = \"0.5\"\n\n[[bench]]\nname = \"my_bench\"\nharness = false\n```\n\n`harness = false` обязателен: Criterion сам управляет запускомベンчмарков."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый бенчмарк"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: borrowing**\n\n**Что делает:** Заимствование (&T, &mut T) — временный доступ без передачи владения\n\n**Зачем нужно:** Позволяет читать/менять данные без передачи владения, проверки на этапе компиляции\n\n**Как работает:** fn read(s: &String) { println!(\"{}\", s); } let s = String::from(\"hi\"); read(&s);"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// benches/my_bench.rs\nuse criterion::{black_box, criterion_group, criterion_main, Criterion};\n\nfn fibonacci(n: u64) -> u64 {\n    match n {\n        0 => 0,\n        1 => 1,\n        _ => fibonacci(n - 1) + fibonacci(n - 2),\n    }\n}\n\nfn criterion_benchmark(c: &mut Criterion) {\n    c.bench_function(\"fibonacci 20\", |b| b.iter(|| fibonacci(black_box(20))));\n}\n\ncriterion_group!(benches, criterion_benchmark);\ncriterion_main!(benches);"
+    },
+    {
+      "type": "text",
+      "content": "Запуск:\n```bash\ncargo bench"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "HTML-отчёт: target/criterion/reports/"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Группа с параметрами"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn bench_sort(c: &mut Criterion) {\n    let mut group = c.benchmark_group(\"sort\");\n    group.sample_size(100);               // больше итераций — точнее результат\n    group.warm_up_time(std::time::Duration::from_millis(100));\n    group.measurement_time(std::time::Duration::from_secs(5));\n\n    for size in [10, 100, 1000, 10_000] {\n        group.bench_with_input(format!(\"vec_{}\", size), &size, |b, &size| {\n            let mut v: Vec<i32> = (0..size as i32).collect();\n            v.reverse();\n            b.iter(|| {\n                let mut v = v.clone();\n                v.sort_unstable();\n                black_box(&v);\n            });\n        });\n    }\n    group.finish();\n}\n\ncriterion_group!(benches, criterion_benchmark, bench_sort);\ncriterion_main!(benches);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение двух реализаций"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn sum_fast(input: &[i32]) -> i32 {\n    input.iter().sum()\n}\n\nfn sum_slow(input: &[i32]) -> i32 {\n    let mut s = 0;\n    for &x in input {\n        s += x;\n    }\n    s\n}\n\nfn bench_comparison(c: &mut Criterion) {\n    let data: Vec<i32> = (0..1000).collect();\n    c.bench_function(\"sum fast\", |b| b.iter(|| sum_fast(black_box(&data))));\n    c.bench_function(\"sum slow\", |b| b.iter(|| sum_slow(black_box(&data))));\n}"
+    },
+    {
+      "type": "text",
+      "content": "Отчёты сохраняются в `target/criterion/reports/` в виде HTML. Для CI полезно сохранять базовые результаты и сравнивать:\n```bash\ncargo bench -- --save-baseline baseline"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "позже:"
+    },
+    {
+      "type": "text",
+      "content": "cargo bench -- --baseline baseline\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Async бенчмарки"
+    },
+    {
+      "type": "text",
+      "content": "Criterion не поддерживает `async` напрямую. Для async-кода используйте обёртку над рантаймом (например, `tokio::test` внутри бенчмарка) или क्रейт `criterion-async`.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Профилирование аллокаций памяти"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Замена системного аллокатора"
+    },
+    {
+      "type": "text",
+      "content": "По умолчанию Rust использует системный аллокатор (`System`). Для продакшена можно заменить на jemalloc, mimalloc или snmalloc.\n\n```toml"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[dependencies]\ntikv-jemallocator = \"0.6\""
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "mimalloc = \"0.1\""
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "rust\n// src/lib.rs (самый верх, перед остальными использованиями аллокатора)\n#[global_allocator]\nstatic GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Узнать текущий аллокатор:"
+    },
+    {
+      "type": "text",
+      "content": "rust\nuse std::alloc::System;\n#[global_allocator]\nstatic GLOBAL: System = System;\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "heaptrack (KDE)"
+    },
+    {
+      "type": "text",
+      "content": "Инструмент для профилирования аллокаций: показывает, кто и когда выделяет память, и где происходят пики.\n\n```bash"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Linux: sudo apt install heaptrack"
+    },
+    {
+      "type": "text",
+      "content": "heaptrack ./target/release/my_binary\nheaptrack --analyze heaptrack.my_binary.*.gz\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "dhat (Dynamic Heap Analysis)"
+    },
+    {
+      "type": "text",
+      "content": "Встроенный в компилятор профилировщик аллокаций (ночной инструмент):\n\n```bash\nRUSTFLAGS=\"-Zdhat\" cargo run --release"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "генерирует dhat-*.json, можно открыть в онлайн-вьюере dhat"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Valgrind Massif"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "valgrind --tool=massif ./target/release/my_binary\nms_print massif.out.<pid>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пламяграфик (flamegraph)"
+    },
+    {
+      "type": "text",
+      "content": "Показывает, сколько времени тратится в каждой функции (CPU профилирование):\n\n```bash\ncargo install cargo-flamegraph\ncargo flamegraph --binary my_binary"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "результат: target/flamegraph.svg — открыть в браузере"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Валидация unsafe кода (Miri, Loom)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Miri — поиск неопределённого поведения (UB)"
+    },
+    {
+      "type": "text",
+      "content": "Miri запускает Rust-код в интерпретаторе и发现 неинициализированную память, use-after-free, нарушение правил aliasing, невалидные указатели и другие виды UB."
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "rustup component add miri\ncargo miri test        # все тесты под Miri\ncargo miri run         # запуск бинаря под Miri\ncargo miri test --package my_crate"
+    },
+    {
+      "type": "text",
+      "content": "Ограничения: Miri медленный, и не поддерживает FFI (вызовы внешних C-функций будут ошибкой).\n\nПример кода, который Miri поймает:"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let x = Box::new(42);\n    let raw = Box::into_raw(x);\n    drop(unsafe { Box::from_raw(raw) }); // память освобождена\n    unsafe { *raw = 0; } // Miri: use-after-free!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Loom — тестирование конкурентности"
+    },
+    {
+      "type": "text",
+      "content": "Loom моделирует все возможные переключения потоков и помогает найти data races и deadlocks в конкурентном/unsafe коде.\n\n```toml"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[dev-dependencies]\nloom = \"0.11\""
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "list",
+      "items": [
+        "Не используйте `unsafe`, где можно обойтись безопасными абстракциями.",
+        "Весь unsafe-код оборачивайте в безопасный API и документируйте инварианты.",
+        "Прогоняйте unsafe-тесты под Miri, а конкурентный код — под Loom."
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "rust\nuse loom::sync::Mutex;\nuse std::sync::Arc;\n\n#[test]\nfn test_mutex_concurrency() {\n    loom::model(|| {\n        let data = Arc::new(Mutex::new(0));\n        let data1 = data.clone();\n        let data2 = data.clone();\n\n        loom::spawn(move || {\n            let mut g = data1.lock().unwrap();\n            *g += 1;\n        });\n        loom::spawn(move || {\n            let mut g = data2.lock().unwrap();\n            *g += 1;\n        });\n    });\n}\n```\n\nЗапуск: `cargo test --release` (Loom перебирает много перестановок, лучше в release).\n\nПрактика:\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Фаззинг (cargo-fuzz)"
+    },
+    {
+      "type": "text",
+      "content": "Фаззинг — автоматическая генерация случайных и некорректных входных данных для поиска паник и UB."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo install cargo-fuzz\ncargo fuzz init"
+    },
+    {
+      "type": "text",
+      "content": "Создаётся папка `fuzz/` с целями фаззинга."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Цель фаззинга"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// fuzz/fuzz_targets/parse_input.rs\n#![no_main]\nuse libfuzzer_sys::fuzz_target;\n\nfuzz_target!(|data: &[u8]| {\n    // попробуем обработать произвольные входные байты\n    if let Ok(s) = std::str::from_utf8(data) {\n        let _ = s.parse::<i32>();\n    }\n    // любая паника здесь = баг, который нужно исправить\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Запуск"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo fuzz run parse_input            # фаззинг цели\ncargo fuzz run parse_input -r 1000    # ограниченное число запусков\ncargo fuzz run parse_input -- -max_len=4096"
+    },
+    {
+      "type": "text",
+      "content": "Кейсы, вызвавшие паник, сохраняются в `fuzz/corpus/parse_input/`."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генерация структур через `arbitrary`"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[dependencies]\narbitrary = \"1.0\""
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use arbitrary::Arbitrary;\n\n#[derive(Arbitrary, Debug)]\nstruct MyInput {\n    flag: bool,\n    count: u8,\n    name: String,\n}\n\nfuzz_target!(|data: &[u8]| {\n    if let Ok(input) = MyInput::arbitrary_from(data) {\n        // обработать input\n    }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Интеграция в CI"
+    },
+    {
+      "type": "text",
+      "content": "Фаззинг лучше запускать с ограничением по времени или числу итераций:"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "- run: cargo fuzz run parse_input -r 10000"
+    },
+    {
+      "type": "text",
+      "content": "Для открытых проектов можно подключить OSS-Fuzz (Google) — постоянный фаззинг в облаке.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Property-based тесты (proptest, quickcheck)"
+    },
+    {
+      "type": "text",
+      "content": "Property-based тестирование генерирует случайные входные данные и проверяет, что某种 свойство (инвариант) выполняется для всех них. При падении теста автоматически выполняется shrinking — сокращение примера до минимального воспроизведения."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "proptest"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[dev-dependencies]\nproptest = \"1.0\""
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "list",
+      "items": [
+        "`(0..100)` — диапазон чисел",
+        "`proptest::collection::vec(any, 0..100)` — вектор",
+        "`\"[a-z0-9]*\"` — строка по регулярному выражению",
+        "`proptest::option::of(0..100)` — `Option`",
+        "`proptest::result::of(0..100, \"-100..-1\")` — `Result`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "rust\n#[cfg(test)]\nmod prop_tests {\n    use proptest::prelude::*;\n\n    proptest! {\n        #[test]\n        fn add_commutative(a: i32, b: i32) {\n            prop_assert_eq!(add(a, b), add(b, a));\n        }\n\n        #[test]\n        fn sort_preserves_length(v in proptest::collection::vec(0..1000, 0..100)) {\n            let mut sorted = v.clone();\n            sorted.sort_unstable();\n            prop_assert_eq!(v.len(), sorted.len());\n        }\n\n        #[test]\n        fn reverse_twice_is_identity(v in proptest::collection::vec(0..100, 0..50)) {\n            let mut v1 = v.clone();\n            v1.reverse();\n            v1.reverse();\n            prop_assert_eq!(v, v1);\n        }\n    }\n}\n```\n\nСтратегии генерации:"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "quickcheck"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[dev-dependencies]\nquickcheck = \"1.0\"\nquickcheck_macros = \"1.0\""
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "rust\n#[quickcheck]\nfn prop_reverse_twice(v: Vec<i32>) -> bool {\n    let mut v1 = v.clone();\n    v1.reverse();\n    v1.reverse();\n    v == v1\n}\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение proptest и quickcheck"
+    },
+    {
+      "type": "table",
+      "content": "| Критерий | proptest | quickcheck |\n|----------|----------|------------|\n| Shrinking (сокращение counterexample) | ✅ встроенный | ✅ |\n| Гибкие стратегии генерации | ✅ комбинаторы | проще |\n| Поддержка async | ✅ (через рантайм) | ограничена |\n| Популярность в экосистеме | выше | ниже |\n\nРекомендация: используйте `proptest` для новых проектов.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Бенчмарк**: Добавьте Criterion-бенчмарк для какой-нибудь функции в вашем проекте (сортировка, парсинг, вычисление). Сравните две реализации, запустите `cargo bench` и приложите HTML-отчёт.\n\n2. **Аллокатор**: Замените системный аллокатор на `tikv-jemallocator` или `mimalloc` в бинарном крейте. Запустите `heaptrack` (или `cargo flamegraph`) и найдите самое тяжёлое место аллокации.\n\n3. **Miri**: Напишите небольшой unsafe-код с intentional UB (use-after-free или неинициализированная память) и докажите, что `cargo miri test` его ловит. Затем исправьте код.\n\n4. **Фаззинг**: Настройте `cargo fuzz init`, добавьте одну цель фаззинга для функции, принимающей `&[u8]` (например, парсер), и запустите её на 1000 итераций.\n\n5. **Property-тест**: Напишите proptest-тест для свойства вашего кода (например, «сортировка не меняет длину», «десериализация обратна сериализации»).\n\n6. **CI**: Добавьте в GitHub Actions шаги: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo bench`, `cargo miri test`, `cargo audit`.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| Бенчмарк показывает ноль или нестабильно | Компилятор оптимизировал код, либо шум системы | Оберните вход в `black_box`, запускайте на выделенной машине, используйте `--profile bench` |\n| `cargo miri` падает на FFI | Мiri не поддерживает вызовы внешних C-функций | Изолируйте FFI, не прогоняйте его под Miri, или используйте заглушки |\n| Loom'explodes state space | Много потоков и мьютексов в модели | Ограничьте модель, тестируйте небольшие фрагменты конкурентного кода |\n| Фаззинг не находится багов | Слишком простая цель фаззинга | Генерируйте и валидные, и невалидные данные, используйте `arbitrary` |\n| Property-тест падает на редком входе | Недостаточно сгенерировано примеров | Увеличьте число тестов (`#![proptest::cases = 1000]`) или сузьте диапазоны |\n| `cargo bench` не видит бенчмарков | `harness = false` не указан в `[[bench]]` | Добавьте `harness = false` для целейベンчмарков |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Шпаргалка: Инструменты производительности и надёжности"
+    },
+    {
+      "type": "table",
+      "content": "| Категория | Инструмент | Команда / использование |\n|-----------|------------|-------------------------|\n| Бенчмарки | `criterion` | `cargo bench`, отчёт в `target/criterion/reports/` |\n| Аллокатор | `tikv-jemallocator` / `mimalloc` | `#[global_allocator]` |\n| Профайлер аллокаций | `heaptrack` | `heaptrack ./binary`, `heaptrack --analyze` |\n| DHAT профайлер | `dhat` | `RUSTFLAGS=\"-Zdhat\" cargo run` |\n| Пламяграфик | `cargo-flamegraph` | `cargo flamegraph` |\n| Поиск UB | `miri` | `cargo miri test / run` |\n| Конкурентность | `loom` | `loom::model(|| { ... })` |\n| Фаззинг | `cargo-fuzz` | `cargo fuzz init`, `cargo fuzz run <target>` |\n| Property-тесты | `proptest` / `quickcheck` | `proptest! { ... }`, `#[quickcheck]` |\n| Аудит зависимостей | `cargo-audit` | `cargo audit` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Criterion**: https://github.com/bheisler/criterion.rs",
+        "**Miri**: https://github.com/rust-lang/miri",
+        "**Loom**: https://github.com/tokio-rs/loom",
+        "**cargo-fuzz**: https://github.com/rust-fuzz/cargo-fuzz",
+        "**OSS-Fuzz**: https://github.com/google/oss-fuzz",
+        "**proptest**: https://github.com/AltSysrq/proptest",
+        "**quickcheck**: https://github.com/BurntSushi/quickcheck",
+        "**arbitrary**: https://github.com/rust-fuzz/arbitrary",
+        "**tikv-jemallocator**: https://github.com/tikv/jemallocator",
+        "**heaptrack**: https://github.com/KDE/heaptrack",
+        "**cargo-flamegraph**: https://github.com/flamegraph-rs/cargo-flamegraph",
+        "**Rustonomicon (UB)**: https://doc.rust-lang.org/nomicon/"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Criterion**: бенчмаркирование, `black_box`, группы, параметризация, сравнение реализаций, отчёты",
+        "**Профилирование аллокаций**: замена аллокатора (jemalloc/mimalloc), `heaptrack`, `dhat`, `massif`, `cargo-flamegraph`",
+        "**Валидация unsafe**: `miri` (поиск UB), `loom` (конкурентность, data races), инварианты unsafe",
+        "**Фаззинг**: `cargo-fuzz`, цели фаззинга, `arbitrary`, интеграция в CI, OSS-Fuzz",
+        "**Property-тесты**: `proptest` и `quickcheck`, стратегии, shrinking, сравнение"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "✅ **Что мы изучили:**\n\n\n\n\n\n\n---\n\n**Следующий урок:** Проект (`33_Project.txt`)"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Fuzz testing и property-based testing",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Fuzz testing и property-based testing' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Rust",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-rust на GitHub",
+    "Конференции и митапы по Rust"
+  ],
+  "key_takeaways": [
+    "Главная идея: cargo-fuzz, libfuzzer, proptest, quickcheck, arbitraries, shrinking — это фундамент для Ownership, Borrowing, Lifetimes.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "rust",
+  "lesson_order": 32,
+  "name_en": "Lesson: Fuzz testing и property-based testing",
+  "short_description_en": "Learn Fuzz testing и property-based testing in Rust with detailed explanations and examples"
+}

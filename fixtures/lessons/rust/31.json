@@ -1,0 +1,1129 @@
+{
+  "title": "Урок 31: Cargo Ecosystem",
+  "slug": "urok-31-производительность-zero-copy,-simd,-arena-allocation",
+  "short_description": "bytes, bytes::Buf, simd, packed_simd, bumpalo, slab, object pools",
+  "goals": [
+    "Понимать основы: bytes, bytes::Buf, simd, packed_simd, bumpalo, slab, object pools",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 31: Cargo Ecosystem (Экосистема Cargo)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Настраивать Cargo workspaces для монолитических репозиториев",
+        "Использовать features для условной компиляции и optional dependencies",
+        "Настраивать cross-compilation: `rustup target add`, `.cargo/config.toml`",
+        "Публиковать крейты на crates.io: версионирование, `cargo publish`, `cargo yank`",
+        "Работать с Cargo.toml: dependencies, dev-dependencies, build-dependencies, patch, replace",
+        "Использовать cargo plugins: `cargo-expand`, `cargo-audit`, `cargo-outdated`, `cargo-deny`",
+        "Настраивать профили сборки: release, dev, bench, test, custom profiles",
+        "Работать с приватными реестрами и альтернативными registry sources",
+        "Использовать `cargo-make`, `just`, `xtask` для автоматизации задач"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "После изучения этого урока вы сможете:\n\n\n\n\n\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Cargo Workspaces"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовая настройка workspace"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml (корень workspace)"
+    },
+    {
+      "type": "text",
+      "content": "[workspace]\nresolver = \"2\"  # Рекомендуется для новых проектов\nmembers = [\n    \"core\",\n    \"cli\",\n    \"web-api\",\n    \"shared-utils\",\n]\nexclude = [\"old-crate\"]  # Исключить из workspace\n\n[workspace.dependencies]\nserde = { version = \"1.0\", features = [\"derive\"] }\ntokio = { version = \"1.0\", features = [\"full\"] }\nanyhow = \"1.0\"\nthiserror = \"1.0\"\ntracing = \"0.1\""
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "toml"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "core/Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[package]\nname = \"myapp-core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde = { workspace = true }\nanyhow = { workspace = true }\nthiserror = { workspace = true }\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Виртуальный манифест vs package"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Виртуальный манифест (только workspace, нет [package])"
+    },
+    {
+      "type": "text",
+      "content": "[workspace]\nmembers = [\"crate-a\", \"crate-b\"]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Обычный package с workspace"
+    },
+    {
+      "type": "text",
+      "content": "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\n\n[workspace]\nmembers = [\"sub-crate\"]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dependency resolution в workspace"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Все крейты используют ОДНУ версию serde"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.lock общий для всего workspace"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "resolver = \"2\" — более строгий, избегает diamond dependencies"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cargo metadata` для инструментов"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo metadata --format-version=1 | jq '.packages[] | {name, version, dependencies}'"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Features (Фичи)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовые features"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Optional dependencies"
+    },
+    {
+      "type": "text",
+      "content": "[dependencies]\nserde = { version = \"1.0\", optional = true, features = [\"derive\"] }\ntokio = { version = \"1.0\", optional = true, features = [\"full\"] }\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование features в коде"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// cfg для условной компиляции\n#[cfg(feature = \"serde\")]\nuse serde::{Serialize, Deserialize};\n\n#[cfg(feature = \"async\")]\nmod async_api {\n    use tokio::net::TcpStream;\n    // ...\n}\n\n// Компиляция только при включённой фиче\n#[cfg(feature = \"full\")]\npub fn full_functionality() {}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Feature unity / additive features"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Фичи аддитивны: включение нескольких = объединение зависимостей"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "НЕЛЬЗЯ использовать features для mutually exclusive вариантов"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Для этого используйте отдельные крейты или cfg"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Плохо:"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "features = [\"backend-postgres\", \"backend-mysql\"]  # конфликт!"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Хорошо:"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Отдельные крейты: myapp-postgres, myapp-mysql"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Или: feature = \"backend\" + cfg(backend = \"postgres\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`dep:` синтаксис (Rust 1.60+)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Включает optional dependency \"serde\""
+    },
+    {
+      "type": "text",
+      "content": "serde = [\"dep:serde\"]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Включает optional dependency И её features"
+    },
+    {
+      "type": "text",
+      "content": "serde_json = [\"dep:serde\", \"dep:serde_json\"]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`weak` dependencies (Rust 1.73+)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Слабая зависимость: не тянет автоматически, но доступна через feature"
+    },
+    {
+      "type": "text",
+      "content": "some_crate = { version = \"1.0\", optional = true, weak = true }\n\n[features]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Если включить \"some_crate\" — подтянется"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Если НЕ включить — но другой крейт в workspace требует — подтянется"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`required-features` для документации"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Документация собирается с этими features"
+    },
+    {
+      "type": "text",
+      "content": "documentation = [\"docs-rs\"]\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Cross-Compilation (Кросс-компиляция)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Добавление таргетов"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Список доступных таргетов"
+    },
+    {
+      "type": "text",
+      "content": "rustup target list"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Добавление таргетов"
+    },
+    {
+      "type": "text",
+      "content": "rustup target add x86_64-unknown-linux-musl      # статический Linux\nrustup target add aarch64-unknown-linux-gnu      # ARM64 Linux\nrustup target add armv7-unknown-linux-gnueabihf  # ARM32 Linux\nrustup target add wasm32-unknown-unknown         # WebAssembly\nrustup target add x86_64-pc-windows-gnu          # Windows (MinGW)\nrustup target add thumbv7em-none-eabihf          # Cortex-M (embedded)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`.cargo/config.toml` для кросс-компиляции"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".cargo/config.toml"
+    },
+    {
+      "type": "text",
+      "content": "[build]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Цель по умолчанию"
+    },
+    {
+      "type": "text",
+      "content": "target = \"x86_64-unknown-linux-musl\"\n\n[target.x86_64-unknown-linux-musl]\nlinker = \"x86_64-linux-musl-gcc\"\nrunner = \"qemu-x86_64\"  # для запуска тестов\n\n[target.aarch64-unknown-linux-gnu]\nlinker = \"aarch64-linux-gnu-gcc\"\nrunner = \"qemu-aarch64\"\n\n[target.wasm32-unknown-unknown]\nlinker = \"wasm-ld\"\nrustflags = [\"-C\", \"link-arg=-s\"]  # strip\n\n[target.thumbv7em-none-eabihf]\nrunner = \"probe-rs run --chip STM32F407VG\"\nrustflags = [\n    \"-C\", \"link-arg=-Tlink.x\",\n    \"-C\", \"opt-level=z\",\n]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кросс-компиляция с `cross` (Docker-based)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Сборка для Linux musl из macOS/Windows"
+    },
+    {
+      "type": "text",
+      "content": "cross build --target x86_64-unknown-linux-musl --release"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "cross автоматически использует Docker образы с тулчейнами"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`zig cc` как универсальный линкер (Rust 1.70+)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".cargo/config.toml"
+    },
+    {
+      "type": "text",
+      "content": "[target.x86_64-unknown-linux-musl]\nlinker = \"zig cc\"\nrustflags = [\"-C\", \"linker=zig cc\"]\n\n[target.aarch64-linux-android]\nlinker = \"zig cc\"\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проверка таргета в коде"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[cfg(target_os = \"linux\")]\nfn linux_only() {}\n\n#[cfg(target_arch = \"wasm32\")]\nfn wasm_only() {}\n\n#[cfg(all(target_os = \"windows\", target_env = \"gnu\"))]\nfn mingw_only() {}\n\n// В build.rs\nfn main() {\n    let target = std::env::var(\"TARGET\").unwrap();\n    if target.contains(\"musl\") {\n        println!(\"cargo:rustc-cfg=musl_target\");\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Профили сборки (Profiles)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стандартные профили"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[profile.dev]\nopt-level = 0\ndebug = true\noverflow-checks = true\nlto = false\npanic = \"unwind\"\nsplit-debuginfo = \"unpacked\"  # macOS/Windows\n\n[profile.release]\nopt-level = 3\ndebug = false\noverflow-checks = false\nlto = \"thin\"  # или \"fat\" / \"off\"\npanic = \"abort\"\ncodegen-units = 1\nstrip = true  # strip symbols\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кастомные профили (Rust 1.57+)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[profile.ci]\ninherits = \"release\"\ndebug = true  # с debug info для профилирования\noverflow-checks = true\n\n[profile.bench]\ninherits = \"release\"\ndebug = true\n\n[profile.test]\ninherits = \"dev\"\nopt-level = 1  # быстрее тесты\n\n[profile.release-lto]\ninherits = \"release\"\nlto = \"fat\"\ncodegen-units = 1"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование профилей"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Переопределение параметров"
+    },
+    {
+      "type": "text",
+      "content": "cargo build --release -Z build-std=std,panic_abort\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Per-package profile overrides"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[profile.release.package.\"*\"]\nopt-level = 3\n\n[profile.release.package.\"heavy-crate\"]\nopt-level = \"s\"  # optimize for size\nlto = \"fat\"\n\n[profile.release.package.\"fast-crate\"]\nopt-level = 3"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Публикация на crates.io"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Подготовка к публикации"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[package]\nname = \"my-awesome-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\nauthors = [\"Your Name <email@example.com>\"]\ndescription = \"Short description (max 1 line)\"\nreadme = \"README.md\"\nlicense = \"MIT OR Apache-2.0\"\nrepository = \"https://github.com/user/repo\"\nhomepage = \"https://docs.rs/my-awesome-crate\"\ndocumentation = \"https://docs.rs/my-awesome-crate\"\nkeywords = [\"async\", \"web\", \"http\"]\ncategories = [\"web-programming\", \"asynchronous\"]\nexclude = [\n    \"**/tests/fixtures/**\",\n    \"**/*.md\",\n    \".github/**\",\n    \"benches/**\",\n]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Версионирование (SemVer)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Правила:"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "0.y.z — initial development, breaking changes allowed"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "1.0.0 — stable API"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "MAJOR — breaking changes"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "MINOR — new features, backward compatible"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "PATCH — bug fixes, backward compatible"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Pre-release versions"
+    },
+    {
+      "type": "text",
+      "content": "version = \"1.0.0-alpha.1\"\nversion = \"1.0.0-beta.2\"\nversion = \"1.0.0-rc.1\"\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Публикация"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Проверка перед публикацией"
+    },
+    {
+      "type": "text",
+      "content": "cargo package --list          # что войдёт в пакет\ncargo package                 # создаёт .crate в target/package/\ncargo publish --dry-run       # симуляция"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Публикация"
+    },
+    {
+      "type": "text",
+      "content": "cargo login                   # токен с crates.io\ncargo publish"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Публикация конкретного крейта в workspace"
+    },
+    {
+      "type": "text",
+      "content": "cargo publish -p my-crate\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cargo yank` — отзыв версии"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Отзыв (не удаление!) версии"
+    },
+    {
+      "type": "text",
+      "content": "cargo yank --vers 1.0.1"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Восстановление"
+    },
+    {
+      "type": "text",
+      "content": "cargo yank --vers 1.0.1 --undo"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Yanked версии не скачиваются по умолчанию"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Но можно принудительно: cargo update -p crate@1.0.1"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cargo owner` — управление владельцами"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo owner --add github:org:team\ncargo owner --remove user\ncargo owner --list"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Приватные реестры и альтернативные источники"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Настройка альтернативного registry"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".cargo/config.toml"
+    },
+    {
+      "type": "text",
+      "content": "[registries]\nmy-private = { index = \"https://git.example.com/crates-index\" }"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "или git:"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "my-private = { index = \"git+https://git.example.com/crates-index.git\" }"
+    },
+    {
+      "type": "text",
+      "content": "[source.crates-io]\nreplace-with = \"my-private\"  # полностью заменить crates.io\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование приватного реестра"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[dependencies]\nmy-private-crate = { version = \"1.0\", registry = \"my-private\" }\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Авторизация для приватных реестров"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Token-based"
+    },
+    {
+      "type": "text",
+      "content": "cargo login --registry=my-private"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Git SSH"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Настройте SSH ключи для git@example.com"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cargo-vendor` — vendoring зависимостей"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Создаёт vendor/ со всеми зависимостями"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".cargo/config.toml для использования vendor"
+    },
+    {
+      "type": "text",
+      "content": "[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.vendored-sources]\ndirectory = \"vendor\"\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Cargo Plugins и инструменты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Полезные плагины"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Анализ кода"
+    },
+    {
+      "type": "text",
+      "content": "cargo install cargo-expand       # раскрыть макросы\ncargo install cargo-asm          # показать ассемблер\ncargo install cargo-llvm-lines   # LLVM IR lines"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Безопасность"
+    },
+    {
+      "type": "text",
+      "content": "cargo install cargo-audit        # проверка уязвимостей (RustSec)\ncargo install cargo-deny         # лицензии, бани, advisories"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Обновления"
+    },
+    {
+      "type": "text",
+      "content": "cargo install cargo-outdated     # показать устаревшие зависимости\ncargo install cargo-upgrades     # интерактивное обновление"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Размер бинарника"
+    },
+    {
+      "type": "text",
+      "content": "cargo install cargo-bloat        # что занимает место\ncargo install cargo-size         # размер секций"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Документация"
+    },
+    {
+      "type": "text",
+      "content": "cargo install cargo-doc2dash     # docset для Dash/Zeal\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cargo-deny` конфигурация"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "deny.toml"
+    },
+    {
+      "type": "text",
+      "content": "[advisories]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "vulnerability = \"deny\""
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "unmaintained = \"warn\""
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "yanked = \"warn\""
+    },
+    {
+      "type": "text",
+      "content": "[licenses]\nallow = [\"MIT\", \"Apache-2.0\", \"BSD-3-Clause\"]\ndeny = [\"GPL-3.0-only\", \"AGPL-3.0\"]\n\n[bans]\nmultiple-versions = \"warn\"\nwildcards = \"deny\"\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cargo-make` для задач сборки"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Makefile.toml"
+    },
+    {
+      "type": "text",
+      "content": "[tasks.build-all]\ncommand = \"cargo\"\nargs = [\"build\", \"--workspace\", \"--release\"]\n\n[tasks.test-all]\ncommand = \"cargo\"\nargs = [\"test\", \"--workspace\", \"--all-features\"]\n\n[tasks.clippy]\ncommand = \"cargo\"\nargs = [\"clippy\", \"--workspace\", \"--all-targets\", \"--all-features\", \"--\", \"-D\", \"warnings\"]\n\n[tasks.fmt]\ncommand = \"cargo\"\nargs = [\"fmt\", \"--all\", \"--check\"]\n\n[tasks.ci]\ndependencies = [\"fmt\", \"clippy\", \"test-all\"]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`xtask` паттерн (встроенные задачи)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// xtask/src/main.rs\nuse clap::{Parser, Subcommand};\n\n#[derive(Parser)]\nstruct Cli {\n    #[command(subcommand)]\n    command: Command,\n}\n\n#[derive(Subcommand)]\nenum Command {\n    /// Генерация кода\n    Codegen,\n    /// Релиз: обновление версии, тег, публикация\n    Release { version: String },\n    /// Бенчмарки с сохранением результатов\n    Bench { save: bool },\n}\n\nfn main() -> anyhow::Result<()> {\n    let cli = Cli::parse();\n    match cli.command {\n        Command::Codegen => codegen()?,\n        Command::Release { version } => release(version)?,\n        Command::Bench { save } => bench(save)?,\n    }\n    Ok(())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Использование"
+    },
+    {
+      "type": "text",
+      "content": "cargo xtask codegen\ncargo xtask release --version 1.2.0\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Build Scripts (`build.rs`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый `build.rs`"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// build.rs\nfn main() {\n    // Пересборка при изменении файлов\n    println!(\"cargo:rerun-if-changed=src/bindings.h\");\n    println!(\"cargo:rerun-if-changed=build.rs\");\n\n    // Генерация кода\n    generate_bindings();\n\n    // Компиляция C кода\n    cc::Build::new()\n        .file(\"src/native.c\")\n        .compile(\"native\");\n\n    // Передача путей линкеру\n    println!(\"cargo:rustc-link-search=native={}\", out_dir());\n    println!(\"cargo:rustc-link-lib=static=native\");\n\n    // cfg флаги\n    println!(\"cargo:rustc-cfg=feature=\\\"my_feature\\\"\");\n\n    // Переменные окружения для рантайма\n    println!(\"cargo:rustc-env=MY_ENV=value\");\n}\n\nfn generate_bindings() {\n    let bindings = bindgen::Builder::default()\n        .header(\"src/bindings.h\")\n        .generate()\n        .expect(\"Unable to generate bindings\");\n\n    let out_path = std::path::PathBuf::from(std::env::var(\"OUT_DIR\").unwrap());\n    bindings.write_to_file(out_path.join(\"bindings.rs\")).unwrap();\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование `OUT_DIR`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// В коде крейта\ninclude!(concat!(env!(\"OUT_DIR\"), \"/bindings.rs\"));"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cc` крейт для C/C++ компиляции"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[build-dependencies]\ncc = \"1.0\"\nbindgen = \"0.69\"\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Dependency Management (Управление зависимостями)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`patch` — локальные исправления"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml (в workspace root)"
+    },
+    {
+      "type": "text",
+      "content": "[patch.crates-io]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Использовать локальную версию вместо crates.io"
+    },
+    {
+      "type": "text",
+      "content": "broken-crate = { path = \"../fixed-broken-crate\" }"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Или git с конкретным коммитом"
+    },
+    {
+      "type": "text",
+      "content": "another-crate = { git = \"https://github.com/user/repo\", rev = \"abc123\" }\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`replace` — замена зависимостей (устарело, используйте patch)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[replace]\n\"old-crate:1.0.0\" = { path = \"../new-crate\" }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Версионирование в workspace"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml (workspace root)"
+    },
+    {
+      "type": "text",
+      "content": "[workspace.package]\nversion = \"0.1.0\"  # общая версия для всех members\n\n[workspace.dependencies]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Централизованные версии"
+    },
+    {
+      "type": "text",
+      "content": "serde = \"1.0\"\ntokio = { version = \"1.0\", features = [\"full\"] }\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`cargo update` стратегии"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Обновить все до последних совместимых"
+    },
+    {
+      "type": "text",
+      "content": "cargo update"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Обновить конкретный крейт"
+    },
+    {
+      "type": "text",
+      "content": "cargo update -p serde"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Обновить до latest (игнорируя SemVer)"
+    },
+    {
+      "type": "text",
+      "content": "cargo update -p serde --precise 2.0.0"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Агрессивное обновление (разрешает breaking changes)"
+    },
+    {
+      "type": "text",
+      "content": "cargo update --aggressive\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Настройка workspace с фичами"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml (root)"
+    },
+    {
+      "type": "text",
+      "content": "[workspace]\nresolver = \"2\"\nmembers = [\"core\", \"cli\", \"web\", \"macros\"]\n\n[workspace.dependencies]\nserde = { version = \"1.0\", features = [\"derive\"] }\ntokio = { version = \"1.0\", features = [\"full\"] }\nclap = { version = \"4.0\", features = [\"derive\", \"env\"] }"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "core/Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[package]\nname = \"myapp-core\"\nversion = { workspace = true }\n\n[dependencies]\nserde = { workspace = true }\nthiserror = \"1.0\"\n\n[features]\ndefault = [\"std\"]\nstd = []\nasync = [\"dep:tokio\"]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Cross-compilation для embedded"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".cargo/config.toml"
+    },
+    {
+      "type": "text",
+      "content": "[target.thumbv7em-none-eabihf]\nrunner = \"probe-rs run --chip STM32F407VG\"\nrustflags = [\n    \"-C\", \"link-arg=-Tlink.x\",\n    \"-C\", \"opt-level=z\",\n    \"-C\", \"panic=abort\",\n]\n\n[build]\ntarget = \"thumbv7em-none-eabihf\""
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".cargo/config.toml (для CI)"
+    },
+    {
+      "type": "text",
+      "content": "[target.x86_64-unknown-linux-musl]\nlinker = \"zig cc\"\nrustflags = [\"-C\", \"target-feature=+crt-static\"]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Автоматизация релиза с xtask"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: optional chaining**\n\n**Что делает:** ?. безопасный доступ к вложенным свойствам\n\n**Зачем нужно:** Предотвращает ошибки 'Cannot read property of undefined', короче чем &&\n\n**Как работает:** user?.profile?.name вместо user && user.profile && user.profile.name"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// xtask/src/release.rs\nuse anyhow::Result;\nuse std::process::Command;\n\npub fn release(version: &str) -> Result<()> {\n    // 1. Обновить версии во всех Cargo.toml\n    update_versions(version)?;\n\n    // 2. Запустить тесты\n    Command::new(\"cargo\").args([\"test\", \"--workspace\"]).status()?;\n\n    // 3. Собрать релиз\n    Command::new(\"cargo\").args([\"build\", \"--workspace\", \"--release\"]).status()?;\n\n    // 4. Создать git tag\n    Command::new(\"git\").args([\"tag\", \"-a\", &format!(\"v{}\", version), \"-m\", &format!(\"Release {}\", version)]).status()?;\n\n    // 5. Push\n    Command::new(\"git\").args([\"push\", \"--tags\"]).status()?;\n\n    // 6. Публикация (по порядку зависимостей)\n    publish_order()?.iter().for_each(|crate_name| {\n        Command::new(\"cargo\").args([\"publish\", \"-p\", crate_name]).status().ok();\n    });\n\n    Ok(())\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| `failed to select version` | Конфликт версий в workspace | `resolver = \"2\"`, единые версии в `[workspace.dependencies]` |\n| `feature not found` | Опечатка в имени фичи | Проверьте `[features]` в Cargo.toml зависимости |\n| `linker not found` | Нет кросс-линкера | Установите toolchain: `x86_64-linux-musl-gcc`, `zig cc` |\n| `crate not found` | Приватный крейт без авторизации | `cargo login --registry=name` |\n| `yanked version` | Зависимость отозвана | `cargo update -p crate@version` или обновите зависимость |\n| `multiple versions` | Diamond dependency | `cargo deny check bans`, `patch` section |\n| `build script failed` | Ошибка в build.rs | `cargo build -v` для деталей, проверьте `OUT_DIR` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Шпаргалка: Cargo Commands"
+    },
+    {
+      "type": "table",
+      "content": "| Категория | Команда | Описание |\n|-----------|---------|----------|\n| **Сборка** | `cargo build [--release] [--profile name]` | Сборка |\n| | `cargo check` | Только type-check |\n| | `cargo clean` | Очистка target/ |\n| **Тестирование** | `cargo test [--lib] [--bins] [--all-targets]` | Запуск тестов |\n| | `cargo bench` | Бенчмарки |\n| **Зависимости** | `cargo add serde@1.0 -F derive` | Добавление зависимости |\n| | `cargo update [-p name] [--precise ver]` | Обновление |\n| | `cargo tree [-i crate] [-d]` | Дерево зависимостей |\n| | `cargo metadata` | JSON метаданные |\n| **Публикация** | `cargo publish [--dry-run] [-p name]` | Публикация |\n| | `cargo yank --vers X.Y.Z` | Отзыв версии |\n| | `cargo owner --add user` | Добавление владельца |\n| **Анализ** | `cargo expand` | Раскрытие макросов |\n| | `cargo audit` | Проверка уязвимостей |\n| | `cargo deny check` | Политики (лицензии, баны) |\n| | `cargo outdated` | Устаревшие зависимости |\n| | `cargo bloat` | Анализ размера бинарника |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Cargo Book**: https://doc.rust-lang.org/cargo/",
+        "**Cargo Reference**: https://doc.rust-lang.org/cargo/reference/",
+        "**SemVer**: https://semver.org/",
+        "**crates.io**: https://crates.io/",
+        "**docs.rs**: https://docs.rs/ (автодокументация)",
+        "**RustSec Advisory DB**: https://rustsec.org/",
+        "**cargo-deny**: https://github.com/EmbarkStudios/cargo-deny",
+        "**cross**: https://github.com/cross-rs/cross",
+        "**zig cc**: https://github.com/rust-lang/rust/issues/98349",
+        "**xtask pattern**: https://github.com/matklad/cargo-xtask"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Workspaces**: виртуальные манифесты, общий Cargo.lock, `resolver = \"2\"`, `workspace.dependencies`",
+        "**Features**: optional dependencies, `dep:` синтаксис, аддитивность, `weak` deps, условная компиляция `cfg`",
+        "**Cross-compilation**: `rustup target add`, `.cargo/config.toml`, `zig cc`, `cross`, embedded targets",
+        "**Profiles**: dev, release, bench, test, custom profiles, per-package overrides, LTO, strip",
+        "**Publishing**: SemVer, `cargo package`, `cargo publish`, `cargo yank`, `cargo owner`, `exclude`",
+        "**Private registries**: альтернативные sources, `replace-with`, `cargo-vendor`, авторизация",
+        "**Plugins**: `cargo-expand`, `cargo-audit`, `cargo-deny`, `cargo-outdated`, `cargo-bloat`",
+        "**Build scripts**: `build.rs`, `cc` крейт, `bindgen`, `OUT_DIR`, `rerun-if-changed`",
+        "**Automation**: `cargo-make`, `xtask` паттерн, CI интеграция"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "✅ **Что мы изучили:**\n\n\n\n\n\n\n\n\n\n\n---\n\n**Следующий урок:** Performance & Reliability (`32_Performance_Reliability.txt`)"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Производительность: zero-copy, SIMD, arena allocation",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Производительность: zero-copy, SIMD, arena allocation' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Rust",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-rust на GitHub",
+    "Конференции и митапы по Rust"
+  ],
+  "key_takeaways": [
+    "Главная идея: bytes, bytes::Buf, simd, packed_simd, bumpalo, slab, object pools — это фундамент для Ownership, Borrowing, Lifetimes.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "rust",
+  "lesson_order": 31,
+  "name_en": "Lesson: Производительность: zero-copy, SIMD, arena allocation",
+  "short_description_en": "Learn Производительность: zero-copy, SIMD, arena allocation in Rust with detailed explanations and examples"
+}

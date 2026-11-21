@@ -1,0 +1,670 @@
+# Урок 3.5: DevOps и CI/CD — контейнеры, оркестрация, пайплайны, мониторинг
+
+## Цели урока
+- Создавать Docker образы для Python приложений
+- Настраивать CI/CD пайплайны (GitHub Actions, GitLab CI)
+- Работать с Kubernetes (k8s) — Deployments, Services, Ingress
+- Использовать Helm для управления релизами
+- Настраивать мониторинг (Prometheus, Grafana) и логирование (ELK/Loki)
+
+---
+
+## 1. Docker для Python
+
+### Базовый Dockerfile
+```dockerfile
+# Используем slim образ для меньшего размера
+FROM python:3.11-slim
+
+# Не запускать от root
+RUN useradd --create-home appuser
+WORKDIR /home/appuser
+
+# Копируем только файлы зависимостей для кэширования слоя
+COPY --chown=appuser:appuser pyproject.toml poetry.lock* ./
+
+# Устанавливаем poetry и зависимости
+RUN pip install --no-cache-dir poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --only=main --no-interaction --no-ansi
+
+# Копируем код приложения
+COPY --chown=appuser:appuser src/ ./src/
+
+USER appuser
+
+EXPOSE 8000
+
+CMD ["uvicorn", "myapp.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### Multi-stage build (меньший итоговый образ)
+```dockerfile
+# Stage 1: builder
+FROM python:3.11-slim AS builder
+WORKDIR /app
+COPY pyproject.toml poetry.lock* ./
+RUN pip install --no-cache-dir poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --only=main --no-interaction --no-ansi
+
+# Stage 2: runtime
+FROM python:3.11-slim
+RUN useradd --create-home appuser
+WORKDIR /home/appuser
+
+# Копируем установленные пакеты из builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+COPY --chown=appuser:appuser src/ ./src/
+
+USER appuser
+EXPOSE 8000
+CMD ["uvicorn", "myapp.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### .dockerignore
+```
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.venv
+venv
+.env
+.git
+.gitignore
+README.md
+tests/
+docs/
+*.log
+```
+
+### docker-compose.yml для разработки
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/home/appuser/src  # hot reload
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/app
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    command: uvicorn myapp.main:app --reload --host 0.0.0.0
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:
+```
+
+---
+
+## 2. GitHub Actions CI/CD
+
+### Базовый workflow
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          poetry config virtualenvs.create false
+          poetry install --with=dev --no-interaction
+
+      - name: Run linters
+        run: |
+          poetry run ruff check src/
+          poetry run black --check src/
+          poetry run mypy src/
+
+      - name: Run tests
+        run: |
+          poetry run pytest --cov=src --cov-report=xml --cov-fail-under=80
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+```
+
+### Build и Push Docker образа
+```yaml
+# .github/workflows/docker.yml
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+---
+
+## 3. Kubernetes — манифесты
+
+### Deployment
+```yaml
+# k8s/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  labels:
+    app: myapp
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+    spec:
+      containers:
+        - name: myapp
+          image: ghcr.io/user/myapp:v1.2.3
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: myapp-secrets
+            - configMapRef:
+                name: myapp-config
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+```
+
+### Service
+```yaml
+# k8s/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+spec:
+  selector:
+    app: myapp
+  ports:
+    - port: 80
+      targetPort: 8000
+  type: ClusterIP
+```
+
+### Ingress
+```yaml
+# k8s/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: myapp
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+spec:
+  tls:
+    - hosts:
+        - api.example.com
+      secretName: myapp-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: myapp
+                port:
+                  number: 80
+```
+
+### ConfigMap и Secret
+```yaml
+# k8s/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: myapp-config
+data:
+  LOG_LEVEL: "INFO"
+  WORKERS: "4"
+---
+# k8s/secret.yaml (значения в base64!)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: myapp-secrets
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://user:pass@postgres:5432/app"
+  SECRET_KEY: "your-secret-key"
+  REDIS_URL: "redis://redis:6379/0"
+```
+
+---
+
+## 4. Helm — пакетный менеджер k8s
+
+### Структура чарта
+```
+myapp/
+├── Chart.yaml
+├── values.yaml
+├── templates/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   ├── configmap.yaml
+│   ├── secret.yaml
+│   └── hpa.yaml
+└── charts/
+```
+
+### Chart.yaml
+```yaml
+apiVersion: v2
+name: myapp
+description: My Python Application
+version: 1.2.3
+appVersion: "1.2.3"
+keywords:
+  - python
+  - fastapi
+maintainers:
+  - name: Dev Team
+    email: dev@example.com
+```
+
+### values.yaml
+```yaml
+replicaCount: 3
+
+image:
+  repository: ghcr.io/user/myapp
+  tag: "v1.2.3"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: api.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: myapp-tls
+      hosts:
+        - api.example.com
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+env:
+  - name: LOG_LEVEL
+    value: "INFO"
+  - name: WORKERS
+    value: "4"
+
+envFromSecrets:
+  - name: myapp-secrets
+```
+
+### HPA (Horizontal Pod Autoscaler)
+```yaml
+# templates/hpa.yaml
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "myapp.fullname" . }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "myapp.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+```
+
+### Установка
+```bash
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency update ./myapp
+helm install myapp ./myapp -n production --create-namespace
+helm upgrade myapp ./myapp -n production
+```
+
+---
+
+## 5. Мониторинг и логирование
+
+### Prometheus метрики в Python
+```bash
+pip install prometheus-client
+```
+
+```python
+# metrics.py
+from prometheus_client import Counter, Histogram, Gauge, generate_latest
+from fastapi import Response
+
+REQUEST_COUNT = Counter('http_requests_total', 'Total HTTP Requests',
+                        ['method', 'endpoint', 'status'])
+REQUEST_LATENCY = Histogram('http_request_duration_seconds', 'HTTP Request Latency',
+                            ['method', 'endpoint'])
+ACTIVE_CONNECTIONS = Gauge('active_connections', 'Active connections')
+
+# Middleware
+@app.middleware("http")
+async def metrics_middleware(request, call_next):
+    ACTIVE_CONNECTIONS.inc()
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+        REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
+        return response
+    finally:
+        REQUEST_LATENCY.labels(request.method, request.url.path).observe(time.perf_counter() - start)
+        ACTIVE_CONNECTIONS.dec()
+
+@app.get("/metrics")
+def metrics():
+    return Response(content=generate_latest(), media_type="text/plain")
+```
+
+### Prometheus Config
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'myapp'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+```
+
+### Grafana Dashboard (JSON импорт)
+```json
+{
+  "title": "MyApp Metrics",
+  "panels": [
+    {
+      "title": "Request Rate",
+      "type": "graph",
+      "targets": [{"expr": "rate(http_requests_total[5m])"}]
+    },
+    {
+      "title": "Latency (p95)",
+      "type": "graph",
+      "targets": [{"expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))"}]
+    },
+    {
+      "title": "Error Rate",
+      "type": "graph",
+      "targets": [{"expr": "rate(http_requests_total{status=~\"5..\"}[5m])"}]
+    }
+  ]
+}
+```
+
+### Логирование — Loki + Promtail
+```yaml
+# docker-compose.logging.yml
+version: '3.8'
+services:
+  loki:
+    image: grafana/loki:2.9
+    ports: ["3100:3100"]
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:2.9
+    volumes:
+      - /var/log:/var/log
+      - ./promtail-config.yaml:/etc/promtail/config.yaml
+    depends_on: [loki]
+
+  grafana:
+    image: grafana/grafana:10.0
+    ports: ["3000:3000"]
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+    volumes:
+      - ./grafana-dashboards:/etc/grafana/provisioning/dashboards
+```
+
+---
+
+## 6. Blue-Green / Canary Deployments
+
+### Argo Rollouts (Canary)
+```yaml
+# rollout.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: myapp
+spec:
+  replicas: 10
+  strategy:
+    canary:
+      steps:
+        - setWeight: 10
+        - pause: {duration: 5m}
+        - setWeight: 30
+        - pause: {duration: 5m}
+        - setWeight: 50
+        - pause: {duration: 10m}
+        - setWeight: 100
+      canaryMetadata:
+        labels:
+          role: canary
+      stableMetadata:
+        labels:
+          role: stable
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+    spec:
+      containers:
+        - name: myapp
+          image: ghcr.io/user/myapp:v1.2.3
+```
+
+```bash
+kubectl argo rollouts set image myapp myapp=ghcr.io/user/myapp:v1.2.4
+kubectl argo rollouts promote myapp
+kubectl argo rollouts abort myapp
+```
+
+---
+
+## Практические задания
+
+1. **Dockerize**: создайте multi-stage Dockerfile для FastAPI приложения
+2. **CI Pipeline**: настройте GitHub Actions с тестами, линтерами, coverage
+3. **K8s Deploy**: напишите манифесты Deployment, Service, Ingress, HPA
+4. **Helm Chart**: упакуйте приложение в Helm чарт с values для dev/staging/prod
+5. **Monitoring**: добавьте /metrics, настройте Prometheus + Grafana дашборд
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Запуск контейнера от root | `USER appuser` в Dockerfile |
+| Нет health checks | livenessProbe + readinessProbe |
+| Хардкод секретов в манифестах | Secret / External Secrets Operator |
+| Нет resource limits | requests/limits на CPU и память |
+| Один реплика в продакшене | Минимум 3, HPA настроен |
+| Отсутствие 롤лбэка | Стратегия деплоя (RollingUpdate/Canary) |
+
+---
+
+## Полезные ресурсы
+- **Docker Best Practices** — https://docs.docker.com/develop/develop-images/dockerfile_best-practices/
+- **Kubernetes Docs** — https://kubernetes.io/docs/home/
+- **Helm Docs** — https://helm.sh/docs/
+- **GitHub Actions** — https://docs.github.com/en/actions
+- **Prometheus Python Client** — https://github.com/prometheus/client_python
+- **Argo Rollouts** — https://argoproj.github.io/argo-rollouts/
+- **12 Factor App** — https://12factor.net/

@@ -1,0 +1,544 @@
+{
+  "title": "Урок 24: C расширения и Cython",
+  "slug": "urok-24-конфигурация-pydantic-settings,-environs",
+  "short_description": "env vars, .env, settings management, validation",
+  "goals": [
+    "Понимать основы: env vars, .env, settings management, validation",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.2: C-расширения и Cython — ускорение Python, FFI, PyO3"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать, когда нужен C-код",
+        "Писать расширения на C (Python C API)",
+        "Использовать Cython для типизированного Python",
+        "Работать с ctypes/cffi для вызова C-библиотек",
+        "Знать про Rust/PyO3 как современную альтернативу"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Зачем C-расширения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Узкие места Python"
+    },
+    {
+      "type": "list",
+      "items": [
+        "GIL — только один поток выполняет байт-код",
+        "Динамическая типизация — накладные расходы",
+        "Интерпретатор — медленнее нативного кода"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда стоит использовать"
+    },
+    {
+      "type": "text",
+      "content": "✅ Тяжёлые вычисления (матрицы, криптография, парсинг)\n✅ Интеграция с C/C++ библиотеками\n✅ Real-time системы\n❌ Обычный веб-бэкенд (I/O bound)\n❌ Прототипирование\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Python C API — ручное написание"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Минимальное расширение"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "c",
+      "content": "// mymodule.c\n#include <Python.h>\n\nstatic PyObject* hello(PyObject* self, PyObject* args) {\n    const char* name;\n    if (!PyArg_ParseTuple(args, \"s\", &name))\n        return NULL;\n    return PyUnicode_FromFormat(\"Hello, %s!\", name);\n}\n\nstatic PyMethodDef methods[] = {\n    {\"hello\", hello, METH_VARARGS, \"Greet someone\"},\n    {NULL, NULL, 0, NULL}\n};\n\nstatic struct PyModuleDef module = {\n    PyModuleDef_HEAD_INIT,\n    \"mymodule\",\n    \"Example module\",\n    -1,\n    methods\n};\n\nPyMODINIT_FUNC PyInit_mymodule(void) {\n    return PyModule_Create(&module);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Компиляция (setup.py)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "setup.py"
+    },
+    {
+      "type": "text",
+      "content": "from setuptools import setup, Extension\n\nmodule = Extension('mymodule', sources=['mymodule.c'])\n\nsetup(\n    name='mymodule',\n    version='1.0',\n    ext_modules=[module],\n)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "bash\npip install -e ."
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "или"
+    },
+    {
+      "type": "text",
+      "content": "python setup.py build_ext --inplace\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import mymodule\nprint(mymodule.hello(\"World\"))  # Hello, World!"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Cython — Python с типизацией"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install cython"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый пример"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "fast.pyx"
+    },
+    {
+      "type": "text",
+      "content": "def fib(int n):\n    cdef int a = 0, b = 1, i\n    for i in range(n):\n        a, b = b, a + b\n    return a\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "setup.py для Cython"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from setuptools import setup\nfrom Cython.Build import cythonize\n\nsetup(\n    ext_modules=cythonize(\"fast.pyx\", compiler_directives={'language_level': 3})\n)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Типизация для скорости"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "typed.pyx"
+    },
+    {
+      "type": "text",
+      "content": "import numpy as np\ncimport numpy as np\n\ndef process(np.ndarray[np.int32_t, ndim=1] arr):\n    cdef int n = arr.shape[0]\n    cdef int i, total = 0\n    for i in range(n):\n        total += arr[i]\n    return total\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "memoryview — быстрый доступ к буферам"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Работает с bytes, bytearray, array.array, numpy"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "nogil — освобождение GIL"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: list comprehension**\n\n**Что делает:** Создание списков через выражение в квадратных скобках\n\n**Зачем нужно:** Быстрее цикла for, читаемее map/filter, питоничный стиль\n\n**Как работает:** [x*2 for x in range(10) if x%2==0] вместо цикла с append"
+    },
+    {
+      "type": "code",
+      "language": "cython",
+      "content": "from cython.parallel import prange\n\ndef parallel_sum(int[:] data):\n    cdef int total = 0\n    cdef int i\n    for i in prange(data.shape[0], nogil=True):\n        total += data[i]\n    return total"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. ctypes — встроенный FFI"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Загрузка библиотеки"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Функция: int add(int a, int b)"
+    },
+    {
+      "type": "text",
+      "content": "lib.add.argtypes = [ctypes.c_int, ctypes.c_int]\nlib.add.restype = ctypes.c_int\n\nresult = lib.add(2, 3)  # 5\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структуры"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Point(ctypes.Structure):\n    _fields_ = [(\"x\", ctypes.c_double), (\"y\", ctypes.c_double)]\n\nlib.distance.argtypes = [ctypes.POINTER(Point), ctypes.POINTER(Point)]\nlib.distance.restype = ctypes.c_double\n\np1 = Point(0, 0)\np2 = Point(3, 4)\nprint(lib.distance(ctypes.byref(p1), ctypes.byref(p2)))  # 5.0"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Callback функции"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "CMPFUNC = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_int)\n\ndef py_compare(a, b):\n    return a - b\n\ncmp_func = CMPFUNC(py_compare)\nlib.qsort(array, len(array), ctypes.sizeof(ctypes.c_int), cmp_func)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. cffi — удобный FFI"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install cffi"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ABI mode (динамическая загрузка)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from cffi import FFI\n\nffi = FFI()\nffi.cdef(\"\"\"\n    int add(int a, int b);\n    double distance(double x1, double y1, double x2, double y2);\n\"\"\")\n\nlib = ffi.dlopen(\"./mylib.so\")  # или .dll/.dylib\nprint(lib.add(2, 3))"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "API mode (генерация C-кода)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "build.py"
+    },
+    {
+      "type": "text",
+      "content": "from cffi import FFI\n\nffi = FFI()\nffi.set_source(\"_mylib\",\n    '#include \"mylib.h\"',\n    libraries=['mylib'],\n    library_dirs=['.'],\n)\nffi.cdef(\"\"\"\n    int add(int a, int b);\n\"\"\")\n\nif __name__ == \"__main__\":\n    ffi.compile()"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "bash\npython build.py"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Создаёт _mylib.cpython-*.so"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "python\nfrom _mylib import ffi, lib\nprint(lib.add(2, 3))\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. PyO3 — Rust + Python"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Или cargo install maturin"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура проекта"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "maturin new --bindings pyo3 my_rust_lib\ncd my_rust_lib"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[package]\nname = \"my_rust_lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"my_rust_lib\"\ncrate-type = [\"cdylib\"]\n\n[dependencies]\npyo3 = { version = \"0.20\", features = [\"extension-module\"] }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Rust код"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/lib.rs\nuse pyo3::prelude::*;\n\n#[pyfunction]\nfn fib(n: usize) -> usize {\n    let mut a = 0;\n    let mut b = 1;\n    for _ in 0..n {\n        let tmp = a + b;\n        a = b;\n        b = tmp;\n    }\n    a\n}\n\n#[pymodule]\nfn my_rust_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {\n    m.add_function(wrap_pyfunction!(fib, m)?)?;\n    Ok(())\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сборка и использование"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "maturin develop --release"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import my_rust_lib\nprint(my_rust_lib.fib(10))  # 55"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Параллелизм без GIL"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use pyo3::prelude::*;\nuse rayon::prelude::*;\n\n#[pyfunction]\nfn parallel_sum(data: Vec<usize>) -> usize {\n    data.par_iter().sum()  // Rayon использует все ядра!\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Numba — JIT компиляция"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install numba"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: list comprehension**\n\n**Что делает:** Создание списков через выражение в квадратных скобках\n\n**Зачем нужно:** Быстрее цикла for, читаемее map/filter, питоничный стиль\n\n**Как работает:** [x*2 for x in range(10) if x%2==0] вместо цикла с append"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from numba import jit, prange\nimport numpy as np\n\n@jit(nopython=True)\ndef fast_fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n\n@jit(nopython=True, parallel=True)\ndef parallel_sum(arr):\n    total = 0\n    for i in prange(arr.shape[0]):\n        total += arr[i]\n    return total\n\narr = np.arange(10_000_000)\nprint(parallel_sum(arr))"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Сравнение подходов"
+    },
+    {
+      "type": "table",
+      "content": "| Подход | Сложность | Скорость | GIL | Зависимости |\n|--------|-----------|----------|-----|-------------|\n| C API | Очень высокая | Максимальная | Ручное | Нет |\n| Cython | Средняя | Высокая | nogil | Cython |\n| ctypes | Низкая | Средняя | Да | Встроен |\n| cffi | Низкая | Высокая | Да | cffi |\n| PyO3/Rust | Средняя | Максимальная | Нет (по умолчанию) | Rust toolchain |\n| Numba | Очень низкая | Высокая (числ.) | Нет (nogil) | LLVM |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Профилирование C-кода"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "perf для Linux"
+    },
+    {
+      "type": "text",
+      "content": "perf record python script.py\nperf report"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "gprof для Cython"
+    },
+    {
+      "type": "text",
+      "content": "cython -a fast.pyx  # генерирует HTML с аннотацией\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Cython**: ускорьте пузырьковую сортировку с типизацией и nogil\n2. **ctypes**: вызовите функцию из системной библиотеки (libc)\n3. **cffi**: оберните простую C-библиотеку (например, для хэширования)\n4. **PyO3**: напишите параллельный парсер JSON на Rust\n5. **Numba**: JIT-скомпилируйте численное моделирование\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| Cython без типов — как обычный Python | Используйте `cdef`, типы аргументов, memoryview |\n| Забыли `nogil=True` в prange | GIL не отпустится! |\n| ctypes без argtypes/restype | UB, краши, неверные результаты |\n| Передача Python объектов в C без incref | Утечки памяти / use-after-free |\n| Смешивание аллокаторов (malloc/free vs PyMem) | Используйте PyMem_Malloc/PyMem_Free |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Cython Docs** — https://cython.readthedocs.io/",
+        "**Python C API** — https://docs.python.org/3/c-api/",
+        "**cffi Docs** — https://cffi.readthedocs.io/",
+        "**PyO3 Guide** — https://pyo3.rs/",
+        "**Numba Docs** — https://numba.readthedocs.io/",
+        "**Extending Python with C/C++** — https://docs.python.org/3/extending/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Конфигурация (pydantic-settings, environs)",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Конфигурация (pydantic-settings, environs)' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: env vars, .env, settings management, validation — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 24,
+  "name_en": "Lesson: Конфигурация (pydantic-settings, environs)",
+  "short_description_en": "Learn Конфигурация (pydantic-settings, environs) in Python with detailed explanations and examples"
+}

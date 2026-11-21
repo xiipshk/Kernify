@@ -1,0 +1,157 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block extrastyle %}{{ block.super }}
+<link rel="stylesheet" href="{% static 'admin/lesson_editor.css' %}">
+{% endblock %}
+
+{% block bodyclass %}{{ block.super }} le-body{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Главная</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">Обучение</a>
+    &rsaquo; <a href="{{ change_url }}">{{ lesson.name }}</a>
+    &rsaquo; Редактор
+</div>
+{% endblock %}
+
+{% block content %}
+{{ editor_payload|json_script:"le-payload" }}
+
+<div id="leApp"
+     class="le-app"
+     data-save-url="{{ save_url }}"
+     data-lesson-url="{{ lesson_url }}"
+     data-change-url="{{ change_url }}"
+     data-lesson-id="{{ lesson.pk }}"
+     data-can-change="{{ can_change|yesno:'1,0' }}">
+
+    <div class="le-topbar">
+        <div class="le-topbar-left">
+            <a class="le-back" href="{{ change_url }}">← К уроку</a>
+            <span class="le-title" id="leTitle">{{ lesson.name }}</span>
+            <span class="le-chip" id="leVersionChip">v{{ lesson.version }}</span>
+            <span class="le-stats" id="leStats"></span>
+        </div>
+        <div class="le-topbar-right">
+            <span class="le-save-state" id="leSaveState">Готово</span>
+            <button type="button" class="le-btn" id="lePreviewBtn" title="Показать, как урок выглядит на сайте">Предпросмотр</button>
+            <a class="le-btn" href="{{ lesson_url }}" target="_blank" rel="noopener">Открыть на сайте ↗</a>
+            <button type="button" class="le-btn le-btn-primary" id="leSaveBtn" {% if not can_change %}disabled title="Нет прав на изменение"{% endif %}>
+                Сохранить
+            </button>
+        </div>
+    </div>
+
+    {% if not can_change %}
+    <div class="le-banner le-banner-warn">
+        У вас нет прав на изменение этого урока — доступен только просмотр.
+    </div>
+    {% endif %}
+
+    <div class="le-layout">
+        <aside class="le-sidebar">
+            <section class="le-card">
+                <h2 class="le-card-title">Урок</h2>
+                <label class="le-field">
+                    <span>Название</span>
+                    <input id="leName" class="le-input" type="text" maxlength="200" autocomplete="off">
+                </label>
+                <label class="le-field">
+                    <span>Краткое описание</span>
+                    <textarea id="leShort" class="le-input" rows="2" maxlength="1000"></textarea>
+                </label>
+                <div class="le-row">
+                    <label class="le-field">
+                        <span>Статус</span>
+                        <select id="leStatus" class="le-input"></select>
+                    </label>
+                    <label class="le-field">
+                        <span>Тип урока</span>
+                        <select id="leType" class="le-input"></select>
+                    </label>
+                </div>
+                <div class="le-row">
+                    <label class="le-field">
+                        <span>Сложность</span>
+                        <select id="leDifficulty" class="le-input"></select>
+                    </label>
+                    <label class="le-field">
+                        <span>XP</span>
+                        <input id="leXp" class="le-input" type="number" min="0" max="10000">
+                    </label>
+                    <label class="le-field">
+                        <span>Минут</span>
+                        <input id="leMinutes" class="le-input" type="number" min="1" max="600">
+                    </label>
+                </div>
+            </section>
+
+            <section class="le-card">
+                <h2 class="le-card-title">Оформление текста</h2>
+                <label class="le-field">
+                    <span>Шрифт</span>
+                    <select id="leFont" class="le-input"></select>
+                </label>
+                <label class="le-field">
+                    <span>Размер текста: <b id="leSizeVal">17</b> px</span>
+                    <input id="leSize" type="range" min="12" max="28" step="1">
+                </label>
+                <label class="le-field">
+                    <span>Межстрочный интервал: <b id="leLhVal">1.7</b></span>
+                    <input id="leLh" type="range" min="1.2" max="2.4" step="0.05">
+                </label>
+                <label class="le-field">
+                    <span>Ширина строки: <b id="leWidthVal">68</b> символов</span>
+                    <input id="leWidth" type="range" min="40" max="120" step="1">
+                </label>
+                <button type="button" class="le-btn le-btn-small" id="leResetDisplay">Сбросить оформление</button>
+                <p class="le-hint">Шрифт применяется к тексту урока на сайте. Примеры кода всегда остаются моноширинными.</p>
+            </section>
+
+            <section class="le-card">
+                <h2 class="le-card-title">Блоки <span id="leBlockCount" class="le-muted"></span></h2>
+                <div id="leOutline" class="le-outline"></div>
+                <p class="le-hint">Нажмите на блок в списке, чтобы перейти к нему.</p>
+            </section>
+        </aside>
+
+        <main class="le-main">
+            <div id="leCarry" class="le-carry"></div>
+            <div id="leBlocks" class="le-blocks"></div>
+            <div id="leEmpty" class="le-empty" hidden>
+                <p>В уроке пока нет блоков.</p>
+                <p class="le-muted">Добавьте первый блок кнопками ниже.</p>
+            </div>
+            <div id="leAddBar" class="le-addbar"></div>
+            <div id="lePreview" class="le-preview" hidden></div>
+        </main>
+    </div>
+
+    <datalist id="leLanguages">
+        <option value="python"></option>
+        <option value="javascript"></option>
+        <option value="typescript"></option>
+        <option value="rust"></option>
+        <option value="csharp"></option>
+        <option value="cpp"></option>
+        <option value="css"></option>
+        <option value="html"></option>
+        <option value="bash"></option>
+        <option value="sql"></option>
+        <option value="json"></option>
+        <option value="yaml"></option>
+        <option value="toml"></option>
+        <option value="xml"></option>
+        <option value="http"></option>
+        <option value="text"></option>
+    </datalist>
+
+    <div id="leToast" class="le-toast" hidden></div>
+</div>
+
+<form id="leCsrf" style="display:none;">{% csrf_token %}</form>
+
+<script src="{% static 'admin/lesson_editor.js' %}"></script>
+{% endblock %}

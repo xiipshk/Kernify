@@ -1,0 +1,409 @@
+{
+  "title": "Урок 23: Метаклассы и дескрипторы",
+  "slug": "urok-23-логирование",
+  "short_description": "logging, structlog, уровни, handlers, formatters, rotation",
+  "goals": [
+    "Понимать основы: logging, structlog, уровни, handlers, formatters, rotation",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.1: Метаклассы и дескрипторы — продвинутая объектная модель"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать, что такое type и как создаются классы",
+        "Писать собственные метаклассы",
+        "Использовать __prepare__, __new__, __init__ в метаклассах",
+        "Создавать дескрипторы (data/non-data)",
+        "Применять __get__, __set__, __delete__, __set_name__"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Всё — объект, классы тоже"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "MyClass — экземпляр type"
+    },
+    {
+      "type": "text",
+      "content": "type(MyClass)          # <class 'type'>\nisinstance(MyClass, type)  # True"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "type — это метакласс (класс класса)"
+    },
+    {
+      "type": "text",
+      "content": "type(type)             # <class 'type'>\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Как создаётся класс"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "class Foo: ..."
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Эквивалентно:"
+    },
+    {
+      "type": "text",
+      "content": "Foo = type('Foo', (), {'attr': 42})"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "type(name, bases, namespace) -> class"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Метаклассы — кастомизация создания классов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый метакласс"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Вывод:"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Создаём класс MyClass"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Класс MyClass инициализирован"
+    },
+    {
+      "type": "text",
+      "content": "print(MyClass.created_at)  # 'just now'\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "__prepare__ — кастомный namespace (Python 3+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class OrderedMeta(type):\n    @classmethod\n    def __prepare__(mcs, name, bases):\n        from collections import OrderedDict\n        return OrderedDict()  # сохраняет порядок атрибутов!\n\n    def __new__(mcs, name, bases, namespace):\n        cls = super().__new__(mcs, name, bases, dict(namespace))\n        cls._field_order = list(namespace.keys())\n        return cls\n\nclass Form(metaclass=OrderedMeta):\n    name = \"field1\"\n    email = \"field2\"\n    age = \"field3\"\n\nprint(Form._field_order)  # ['__module__', '__qualname__', 'name', 'email', 'age']"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Практические примеры метаклассов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Singleton метакласс"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class SingletonMeta(type):\n    _instances = {}\n\n    def __call__(cls, *args, **kwargs):\n        if cls not in cls._instances:\n            cls._instances[cls] = super().__call__(*args, **kwargs)\n        return cls._instances[cls]\n\nclass Database(metaclass=SingletonMeta):\n    def __init__(self):\n        self.connected = False\n\ndb1 = Database()\ndb2 = Database()\nprint(db1 is db2)  # True"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Автоматическая регистрация классов"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class PluginMeta(type):\n    plugins = {}\n\n    def __new__(mcs, name, bases, namespace):\n        cls = super().__new__(mcs, name, bases, namespace)\n        if name != 'BasePlugin':\n            PluginMeta.plugins[name] = cls\n        return cls\n\nclass BasePlugin(metaclass=PluginMeta):\n    pass\n\nclass AuthPlugin(BasePlugin):\n    pass\n\nclass CachePlugin(BasePlugin):\n    pass\n\nprint(PluginMeta.plugins)  # {'AuthPlugin': <class...>, 'CachePlugin': <class...>}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Валидация атрибутов класса"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class ValidatedMeta(type):\n    def __new__(mcs, name, bases, namespace):\n        for key, value in namespace.items():\n            if key.startswith('MAX_') and not isinstance(value, int):\n                raise TypeError(f\"{key} должен быть int\")\n        return super().__new__(mcs, name, bases, namespace)\n\nclass Config(metaclass=ValidatedMeta):\n    MAX_USERS = 100\n    # MAX_SIZE = \"big\"  # TypeError!"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Дескрипторы — протокол доступа к атрибутам"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое дескриптор"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Дескриптор — объект с __get__, __set__, __delete__"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Data descriptor: есть __set__ или __delete__"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Non-data descriptor: только __get__"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый дескриптор"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Descriptor:\n    def __get__(self, obj, objtype=None):\n        print(\"__get__ вызван\")\n        return self.value\n\n    def __set__(self, obj, value):\n        print(f\"__set__ вызван с {value}\")\n        self.value = value\n\n    def __delete__(self, obj):\n        print(\"__delete__ вызван\")\n        del self.value\n\nclass MyClass:\n    attr = Descriptor()\n\nobj = MyClass()\nobj.attr = 42      # __set__ вызван с 42\nprint(obj.attr)    # __get__ вызван, 42\ndel obj.attr       # __delete__ вызван"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "__set_name__ (Python 3.6+) — имя атрибута"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "u.age = -5  # ValueError!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Типы дескрипторов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Data descriptor (приоритет над __dict__)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Но если в __dict__ есть 'non_data', оно перекроет дескриптор!"
+    },
+    {
+      "type": "text",
+      "content": "t.__dict__['non_data'] = \"from dict\"\nprint(t.non_data)  # \"from dict\" — __dict__ побеждает non-data!\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "property — это дескриптор!"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Property:\n    def __init__(self, fget=None, fset=None, fdel=None):\n        self.fget, self.fset, self.fdel = fget, fset, fdel\n\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        if self.fget is None:\n            raise AttributeError(\"unreadable attribute\")\n        return self.fget(obj)\n\n    def __set__(self, obj, value):\n        if self.fset is None:\n            raise AttributeError(\"can't set attribute\")\n        self.fset(obj, value)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Продвинутые паттерны"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ленивая инициализация"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class LazyProperty:\n    def __init__(self, func):\n        self.func = func\n        self.name = func.__name__\n\n    def __set_name__(self, owner, name):\n        self.name = name\n\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        value = self.func(obj)\n        setattr(obj, self.name, value)  # кэшируем\n        return value\n\nclass Expensive:\n    @LazyProperty\n    def data(self):\n        print(\"Вычисляем...\")\n        return [i**2 for i in range(1000000)]\n\ne = Expensive()\nprint(e.data)  # Вычисляем... [0, 1, 4, ...]\nprint(e.data)  # [0, 1, 4, ...] — мгновенно!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Типизированные атрибуты (как в dataclass)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "p.age = \"25\"  # TypeError!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Дескриптор только для чтения"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "c.VERSION = \"2.0\"  # AttributeError!"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Метаклассы vs Дескрипторы"
+    },
+    {
+      "type": "table",
+      "content": "| | Метакласс | Дескриптор |\n|---|---|---|\n| Уровень | Класс | Атрибут |\n| Когда срабатывает | Создание класса | Доступ к атрибуту экземпляра |\n| Использование | Изменение структуры класса | Контроль доступа к данным |\n| Примеры | Singleton, Registry, Validation | property, classmethod, ORM fields |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. __init_subclass__ — альтернатива метаклассам (Python 3.6+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class Base:\n    subclasses = []\n\n    def __init_subclass__(cls, **kwargs):\n        super().__init_subclass__(**kwargs)\n        Base.subclasses.append(cls)\n        print(f\"Зарегистрирован подкласс: {cls.__name__}\")\n\nclass ChildA(Base):\n    pass\n\nclass ChildB(Base):\n    pass\n\nprint(Base.subclasses)  # [<class 'ChildA'>, <class 'ChildB'>]"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **ORM поля**: реализуйте `IntegerField`, `StringField`, `ForeignKey` как дескрипторы\n2. **Observed attributes**: дескриптор, вызывающий коллбеки при изменении\n3. **Auto-register**: метакласс для автоматической регистрации обработчиков команд\n4. **Immutable classes**: метакласс, делающий все атрибуты read-only после init\n5. **Deprecated fields**: дескриптор, выдающий предупреждение при доступе\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| Забыли `super().__new__` в метаклассе | Всегда вызывайте родительский метод |\n| Дескриптор хранит состояние на себе | Храните в `obj.__dict__` под уникальным ключом |\n| `__set_name__` не определён | Нужен для знания имени атрибута (Python 3.6+) |\n| Конфликт data/non-data дескрипторов | Data descriptor побеждает __dict__, non-data — проигрывает |\n| Метакласс для простых задач | Используйте `__init_subclass__` или декораторы классов |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Docs: Metaclasses** — https://docs.python.org/3/reference/datamodel.html#metaclasses",
+        "**Python Docs: Descriptors** — https://docs.python.org/3/howto/descriptor.html",
+        "**Real Python: Metaclasses** — https://realpython.com/python-metaclasses/",
+        "**Real Python: Descriptors** — https://realpython.com/python-descriptors/",
+        "**PEP 487 — Simpler customization of class creation** — https://peps.python.org/pep-0487/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Логирование",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Логирование' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: logging, structlog, уровни, handlers, formatters, rotation — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 23,
+  "name_en": "Lesson: Логирование",
+  "short_description_en": "Learn Логирование in Python with detailed explanations and examples"
+}

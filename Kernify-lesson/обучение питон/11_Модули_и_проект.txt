@@ -1,0 +1,417 @@
+# Урок 1.11: Модули и проект — импорт, пакеты, pip, консольное приложение
+
+## Цели урока
+- Понимать модули и пакеты
+- Правильно импортировать (import, from ... import)
+- Создавать свои пакеты
+- Работать с pip и виртуальными окружениями
+- Структурировать проект
+- Создавать консольные приложения
+
+---
+
+## 1. Модули
+
+### Что такое модуль
+Модуль — это `.py` файл с кодом. Имя модуля = имя файла (без .py).
+
+```python
+# my_module.py
+PI = 3.14159
+
+def circle_area(radius):
+    return PI * radius ** 2
+
+class Circle:
+    def __init__(self, radius):
+        self.radius = radius
+```
+
+### Импорт
+```python
+# Вариант 1: импорт всего модуля
+import my_module
+print(my_module.PI)
+print(my_module.circle_area(5))
+c = my_module.Circle(5)
+
+# Вариант 2: импорт конкретных имен
+from my_module import PI, circle_area
+print(PI)
+print(circle_area(5))
+
+# Вариант 3: с псевдонимом (alias)
+import my_module as mm
+mm.circle_area(5)
+
+# Вариант 4: всё сразу (НЕ РЕКОМЕНДУЕТСЯ)
+from my_module import *  # загрязняет namespace
+```
+
+### Поиск модулей
+Python ищет в:
+1. Текущая папка (где запущен скрипт)
+2. Переменная окружения `PYTHONPATH`
+3. Стандартная библиотека
+4. `site-packages` (установленные пакеты)
+
+```python
+import sys
+print(sys.path)  # список путей поиска
+```
+
+---
+
+## 2. Пакеты
+
+Пакет — папка с `__init__.py` (может быть пустым) и модулями внутри.
+
+```
+my_project/
+├── main.py
+└── mypackage/
+    ├── __init__.py
+    ├── utils.py
+    └── models/
+        ├── __init__.py
+        └── user.py
+```
+
+### __init__.py — публичный API пакета
+```python
+# mypackage/__init__.py
+from .utils import helper_function
+from .models.user import User
+
+__all__ = ["helper_function", "User"]  # что экспортируется при from mypackage import *
+```
+
+### Импорт из пакета
+```python
+# Абсолютный импорт (рекомендуется)
+from mypackage import helper_function
+from mypackage.models.user import User
+
+# Относительный импорт (ТОЛЬКО внутри пакета!)
+from . import helper_function      # тот же пакет
+from .. import something          # родительский пакет
+from ..models.user import User    # соседний пакет
+```
+
+---
+
+## 3. Виртуальные окружения
+
+Изоляция зависимостей проекта.
+
+```bash
+# Создание
+python -m venv venv
+
+# Активация
+# Windows:
+venv\Scripts\activate
+# Linux/macOS:
+source venv/bin/activate
+
+# Деактивация
+deactivate
+```
+
+### Почему нужны:
+- Разные проекты — разные версии библиотек
+- Не засоряют системный Python
+- Воспроизводимость
+
+---
+
+## 4. pip — менеджер пакетов
+
+```bash
+# Установка
+pip install requests
+pip install requests==2.31.0      # конкретная версия
+pip install 'requests>=2.30'      # минимальная версия
+pip install -r requirements.txt   # из файла
+
+# Обновление
+pip install --upgrade requests
+pip list --outdated               # что устарело
+
+# Удаление
+pip uninstall requests
+
+# Информация
+pip show requests
+pip list
+
+# Сохранение зависимостей
+pip freeze > requirements.txt
+```
+
+### requirements.txt
+```
+requests==2.31.0
+django>=4.2,<5.0
+numpy
+# комментарий
+```
+
+---
+
+## 5. pyproject.toml — современный стандарт (PEP 621)
+
+```toml
+[project]
+name = "my_project"
+version = "1.0.0"
+description = "Мой проект"
+authors = [{name = "Иван", email = "ivan@example.com"}]
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "ruff>=0.1",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+```
+
+Установка в режиме разработки:
+```bash
+pip install -e .         # базовый
+pip install -e ".[dev]"  # с dev-зависимостями
+```
+
+---
+
+## 6. Структура проекта (Best Practices)
+
+```
+my_project/
+├── pyproject.toml          # конфигурация проекта
+├── README.md               # описание
+├── LICENSE                 # лицензия
+├── .gitignore              # исключения для git
+├── src/                    # исходный код (src layout)
+│   └── mypackage/
+│       ├── __init__.py
+│       ├── core.py
+│       ├── utils/
+│       │   ├── __init__.py
+│       │   └── helpers.py
+│       └── cli.py          # точка входа CLI
+├── tests/                  # тесты
+│   ├── __init__.py
+│   ├── test_core.py
+│   └── conftest.py         # pytest fixtures
+├── docs/                   # документация
+└── scripts/                # служебные скрипты
+```
+
+### src layout — почему лучше
+- Изоляция кода от корня проекта
+- Тесты импортируют установленный пакет, не локальный
+- Чёткое разделение: что распространяется, что нет
+
+---
+
+## 7. Консольные приложения
+
+### entry_points в pyproject.toml
+```toml
+[project.scripts]
+myapp = "mypackage.cli:main"
+```
+
+После `pip install -e .` команда `myapp` доступна везде.
+
+### click — популярная библиотека для CLI
+```python
+# mypackage/cli.py
+import click
+
+@click.group()
+def cli():
+    """Мое приложение."""
+    pass
+
+@cli.command()
+@click.argument("name")
+@click.option("--count", "-c", default=1, help="Количество приветствий")
+def greet(name, count):
+    """Приветствует пользователя."""
+    for _ in range(count):
+        click.echo(f"Привет, {name}!")
+
+@cli.command()
+@click.option("--verbose", "-v", is_flag=True)
+def info(verbose):
+    """Информация о приложении."""
+    if verbose:
+        click.echo("Версия 1.0.0")
+    else:
+        click.echo("MyApp v1.0")
+
+if __name__ == "__main__":
+    cli()
+```
+
+### argparse — в стандартной библиотеке
+```python
+# cli.py
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser(description="Мое приложение")
+    parser.add_argument("name", help="Имя пользователя")
+    parser.add_argument("-c", "--count", type=int, default=1)
+    parser.add_argument("-v", "--verbose", action="store_true")
+
+    args = parser.parse_args()
+
+    for _ in range(args.count):
+        print(f"Привет, {args.name}!")
+
+if __name__ == "__main__":
+    main()
+```
+
+Запуск:
+```bash
+python -m mypackage.cli Иван -c 3
+python cli.py Иван --count 3
+```
+
+---
+
+## 8. __main__.py — запуск пакета как скрипта
+
+```
+mypackage/
+├── __init__.py
+├── __main__.py      # python -m mypackage
+└── core.py
+```
+
+```python
+# __main__.py
+from .cli import main
+main()
+```
+
+---
+
+## 9. Относительные импорты и запуск
+
+### Проблема
+```bash
+python mypackage/utils/helpers.py  # ошибка импорта!
+```
+
+### Решения
+1. Запуск как модуль: `python -m mypackage.utils.helpers`
+2. Использовать `src layout` и `pip install -e .`
+3. Добавить корень в PYTHONPATH
+
+---
+
+## 10. Полезные инструменты
+
+### Форматирование и линтинг
+```bash
+# black — автоформатирование
+pip install black
+black src/ tests/
+
+# ruff — быстрый линтер (заменяет flake8, isort, и др.)
+pip install ruff
+ruff check src/
+ruff check --fix src/
+
+# mypy — статическая типизация
+pip install mypy
+mypy src/
+```
+
+### pre-commit — хуки перед коммитом
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+  - repo: https://github.com/psf/black
+    rev: 23.0.0
+    hooks:
+      - id: black
+```
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+---
+
+## 11. Публикация на PyPI
+
+```bash
+# Сборка
+pip install build
+python -m build
+
+# Проверка
+pip install twine
+twine check dist/*
+
+# Публикация (нужен аккаунт на PyPI)
+twine upload dist/*
+```
+
+---
+
+## Практические задания
+
+1. **Создайте пакет**: `calculator` с модулями `arithmetic`, `geometry`, `stats`
+2. **CLI калькулятор**: `calc add 2 3`, `calc circle-area 5` (click или argparse)
+3. **Настройте проект**: pyproject.toml, venv, black, ruff, mypy, pre-commit
+4. **Тесты**: напишите pytest для функций калькулятора
+5. **Зависимости**: добавьте `requests`, сделайте команду, качающую данные из API
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `import *` в продакшн-коде | Явные импорты |
+| Код в корне проекта без src layout | Используйте `src/` layout |
+| Жёсткие версии в requirements без закрепления | `pip freeze > requirements.txt` или `pip-tools` |
+| Относительные импорты при запуске файла напрямую | `python -m package.module` или `pip install -e .` |
+| Забыли `__init__.py` | Нужно для пакетов (в 3.3+ не обязательно, но лучше иметь) |
+
+---
+
+## Полезные ресурсы
+- **Python.org Tutorial: Modules** — https://docs.python.org/3/tutorial/modules.html
+- **Real Python: Python Modules and Packages** — https://realpython.com/python-modules-packages/
+- **Packaging Python Projects** — https://packaging.python.org/
+- **Click docs** — https://click.palletsprojects.com/
+- **pyproject.toml spec** — https://packaging.python.org/en/latest/specifications/pyproject-toml/

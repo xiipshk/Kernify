@@ -1,0 +1,662 @@
+# Урок 28: Advanced Concurrency (Продвинутый параллелизм)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Использовать lock-free структуры данных
+- Работать с `crossbeam` epoch-based reclamation
+- Понимать memory ordering детально (Acquire, Release, AcqRel, SeqCst, Relaxed)
+- Использовать `parking_lot` для быстрых примитивов синхронизации
+- Работать с `dashmap` / `dashmap` для concurrent hash maps
+- Понимать wait-free и lock-free алгоритмы
+- Использовать `loom` для тестирования concurrent кода
+- Применять RCU (Read-Copy-Update) паттерны
+
+---
+
+## 1. Lock-free программирование
+
+### Что такое lock-free
+```rust
+// Lock-free: хотя бы один поток делает прогресс за конечное время
+// Wait-free: КАЖДЫЙ поток делает прогресс за конечное время
+// Obstruction-free: поток делает прогресс, если он один выполняется
+
+// Пример: lock-free stack с Treiber algorithm
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::ptr;
+
+struct Node<T> {
+    value: T,
+    next: AtomicPtr<Node<T>>,
+}
+
+pub struct LockFreeStack<T> {
+    head: AtomicPtr<Node<T>>,
+}
+
+impl<T> LockFreeStack<T> {
+    pub fn new() -> Self {
+        LockFreeStack { head: AtomicPtr::new(ptr::null_mut()) }
+    }
+
+    pub fn push(&self, value: T) {
+        let node = Box::into_raw(Box::new(Node {
+            value,
+            next: AtomicPtr::new(ptr::null_mut()),
+        }));
+
+        loop {
+            let head = self.head.load(Ordering::Acquire);
+            unsafe { (*node).next.store(head, Ordering::Relaxed); }
+            match self.head.compare_exchange_weak(
+                head, node,
+                Ordering::Release,
+                Ordering::Acquire
+            ) {
+                Ok(_) => return,
+                Err(_) => continue, // retry
+            }
+        }
+    }
+
+    pub fn pop(&self) -> Option<T> {
+        loop {
+            let head = self.head.load(Ordering::Acquire);
+            if head.is_null() { return None; }
+
+            let next = unsafe { (*head).next.load(Ordering::Acquire) };
+            match self.head.compare_exchange_weak(
+                head, next,
+                Ordering::Release,
+                Ordering::Acquire
+            ) {
+                Ok(_) => {
+                    let node = unsafe { Box::from_raw(head) };
+                    return Some(node.value);
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+}
+```
+
+### ABA Problem
+```rust
+// ПРОБЛЕМА ABA:
+// Thread 1: читает head = A, next = B
+// Thread 2: pop A, pop B, push A (тот же адрес!)
+// Thread 1: CAS(head=A, next=B) — УСПЕХ, но стек изменился!
+
+// РЕШЕНИЯ:
+// 1. Tagged pointers (версия в указателе)
+// 2. Hazard pointers
+// 3. Epoch-based reclamation (crossbeam)
+```
+
+---
+
+## 2. Crossbeam Epoch-based Reclamation
+
+### Установка
+```toml
+[dependencies]
+crossbeam = "0.8"
+crossbeam-epoch = "0.9"
+```
+
+### Базовое использование
+```rust
+use crossbeam_epoch::{self as epoch, Atomic, Owned, Guard};
+
+struct Stack<T> {
+    head: Atomic<Node<T>>,
+}
+
+struct Node<T> {
+    value: T,
+    next: Atomic<Node<T>>,
+}
+
+impl<T> Stack<T> {
+    fn new() -> Self {
+        Stack { head: Atomic::null() }
+    }
+
+    fn push(&self, value: T, guard: &Guard) {
+        let node = Owned::new(Node { value, next: Atomic::null() });
+        let mut head = self.head.load(Ordering::Acquire, guard);
+
+        loop {
+            node.next.store(head, Ordering::Relaxed);
+            match self.head.compare_exchange(
+                head, node, Ordering::Release, Ordering::Acquire, guard
+            ) {
+                Ok(_) => return,
+                Err(e) => head = e.current,
+            }
+        }
+    }
+
+    fn pop(&self, guard: &Guard) -> Option<T> {
+        let mut head = self.head.load(Ordering::Acquire, guard);
+
+        loop {
+            let node = unsafe { head.as_ref()? };
+            let next = node.next.load(Ordering::Acquire, guard);
+
+            match self.head.compare_exchange(
+                head, next, Ordering::Release, Ordering::Acquire, guard
+            ) {
+                Ok(_) => {
+                    unsafe { guard.defer_destroy(head); }
+                    return Some(node.value);
+                }
+                Err(e) => head = e.current,
+            }
+        }
+    }
+}
+```
+
+### Pin и defer_destroy
+```rust
+// Guard::pin() — вход в epoch
+// defer_destroy — отложенное удаление после выхода из epoch
+
+fn example() {
+    let stack = Stack::new();
+    let guard = epoch::pin(); // Входим в epoch
+
+    stack.push(42, &guard);
+    if let Some(val) = stack.pop(&guard) {
+        println!("Popped: {}", val);
+    }
+    // При выходе из scope guard дропается, память освобождается
+}
+```
+
+---
+
+## 3. Memory Ordering — детально
+
+### Порядок памяти
+```rust
+use std::sync::atomic::Ordering;
+
+// Relaxed — никаких гарантий порядка, только атомарность
+// Acquire — загрузка: видит все записи перед Release в другом потоке
+// Release — запись: все предыдущие записи видны после Acquire в другом потоке
+// AcqRel — комбинация для RMW (compare_exchange, fetch_add)
+// SeqCst — полная последовательная согласованность (самое строгое)
+```
+
+### Пример: Message Passing
+```rust
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::thread;
+
+static DATA: AtomicI32 = AtomicI32::new(0);
+static READY: AtomicBool = AtomicBool::new(false);
+
+fn writer() {
+    DATA.store(42, Ordering::Relaxed);     // Данные
+    READY.store(true, Ordering::Release);  // Флаг готовности (Release)
+}
+
+fn reader() {
+    while !READY.load(Ordering::Acquire) { // Ждём флаг (Acquire)
+        thread::yield_now();
+    }
+    println!("Data: {}", DATA.load(Ordering::Relaxed)); // Гарантированно 42
+}
+```
+
+### Пример: Reference Counting
+```rust
+struct ArcInner<T> {
+    strong: AtomicUsize,
+    weak: AtomicUsize,
+    data: T,
+}
+
+impl<T> ArcInner<T> {
+    fn inc_strong(&self) {
+        self.strong.fetch_add(1, Ordering::Relaxed); // Только атомарность
+    }
+
+    fn dec_strong(&self) -> bool {
+        // AcqRel: нужен Acquire для загрузки данных, Release для store
+        self.strong.fetch_sub(1, Ordering::AcqRel) == 1
+    }
+
+    fn inc_weak(&self) {
+        self.weak.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn dec_weak(&self) {
+        if self.weak.fetch_sub(1, Ordering::AcqRel) == 1 {
+            // Последняя weak ссылка, можно удалять сам ArcInner
+        }
+    }
+}
+```
+
+---
+
+## 4. Parking Lot — быстрые примитивы
+
+### Установка
+```toml
+[dependencies]
+parking_lot = "0.12"
+```
+
+### Mutex / RwLock
+```rust
+use parking_lot::{Mutex, RwLock, Condvar};
+
+// Быстрее std::sync::Mutex:
+// - Нет системного вызова для uncontended case
+// - Адаптивный спин
+// - Fairness опционально
+
+let mutex = Mutex::new(0);
+let mut guard = mutex.lock(); // Не блокирует поток ядра если свободен
+*guard += 1;
+
+// Condvar
+let cvar = Condvar::new();
+let mut lock = mutex.lock();
+cvar.wait(&mut lock); // Разблокирует и ждёт
+```
+
+### RawMutex для no_std
+```rust
+use parking_lot::RawMutex;
+
+static MY_LOCK: RawMutex = RawMutex::new();
+
+fn critical_section() {
+    MY_LOCK.lock();
+    // ...
+    MY_LOCK.unlock();
+}
+```
+
+---
+
+## 5. DashMap — Concurrent HashMap
+
+### Установка
+```toml
+[dependencies]
+dashmap = "5"
+```
+
+### Использование
+```rust
+use dashmap::DashMap;
+use std::thread;
+
+let map: DashMap<String, i32> = DashMap::new();
+
+// Множественные писатели
+thread::scope(|s| {
+    for i in 0..10 {
+        s.spawn(move || {
+            map.insert(format!("key{}", i), i);
+        });
+    }
+});
+
+// Читатели не блокируют писателей и наоборот
+let val = map.get(&"key5".to_string());
+println!("{:?}", val); // Some(5)
+
+// Entry API
+map.entry("counter".to_string()).and_modify(|v| *v += 1).or_insert(1);
+```
+
+### Shards
+```rust
+// DashMap использует шардирование (по умолчанию 32 shards)
+// Каждый shard имеет свой RwLock
+// Можно настроить:
+let map = DashMap::with_shard_amount(64);
+```
+
+---
+
+## 6. Wait-free алгоритмы
+
+### Пример: Wait-free counter
+```rust
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct WaitFreeCounter {
+    counters: Vec<AtomicUsize>,
+}
+
+impl WaitFreeCounter {
+    fn new(num_threads: usize) -> Self {
+        WaitFreeCounter {
+            counters: (0..num_threads).map(|_| AtomicUsize::new(0)).collect(),
+        }
+    }
+
+    fn increment(&self, thread_id: usize) {
+        self.counters[thread_id].fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn get(&self) -> usize {
+        self.counters.iter()
+            .map(|c| c.load(Ordering::Relaxed))
+            .sum()
+    }
+}
+```
+
+### Wait-free queue (Michael-Scott)
+```rust
+// Упрощённая идея: каждый поток имеет свой локальный буфер
+// При переполнении — атомарно добавляет в общую очередь
+// Чтение — сначала из локального, потом из общей
+```
+
+---
+
+## 7. RCU (Read-Copy-Update)
+
+### Паттерн RCU
+```rust
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::ptr;
+
+struct RcuProtected<T> {
+    ptr: AtomicPtr<T>,
+}
+
+impl<T> RcuProtected<T> {
+    fn new(value: T) -> Self {
+        RcuProtected { ptr: AtomicPtr::new(Box::into_raw(Box::new(value))) }
+    }
+
+    // Читатели — БЕЗ блокировок!
+    fn read<F, R>(&self, f: F) -> R where F: FnOnce(&T) -> R {
+        let ptr = self.ptr.load(Ordering::Acquire);
+        let result = unsafe { f(&*ptr) };
+        result
+    }
+
+    // Писатель — копирует, меняет, атомарно заменяет
+    fn update<F>(&self, mut f: F) where F: FnMut(&mut T) {
+        let old = self.ptr.load(Ordering::Acquire);
+        let mut new = Box::new(unsafe { (*old).clone() });
+        f(&mut new);
+        let new_ptr = Box::into_raw(new);
+
+        // Atomic swap
+        let old_ptr = self.ptr.swap(new_ptr, Ordering::AcqRel);
+        // Старый указатель нужно удалить (после grace period)
+        // В простом случае — сразу:
+        unsafe { drop(Box::from_raw(old_ptr)); }
+    }
+}
+```
+
+---
+
+## 8. Loom — тестирование concurrent кода
+
+### Установка
+```toml
+[dev-dependencies]
+loom = "0.7"
+```
+
+### Использование
+```rust
+#[cfg(test)]
+mod tests {
+    use loom::sync::atomic::{AtomicUsize, Ordering};
+    use loom::thread;
+
+    #[test]
+    fn test_atomic_increment() {
+        loom::model(|| {
+            let counter = AtomicUsize::new(0);
+            let handles: Vec<_> = (0..3).map(|_| {
+                let counter = counter.clone();
+                thread::spawn(move || {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                })
+            }).collect();
+
+            for h in handles { h.join().unwrap(); }
+            assert_eq!(counter.load(Ordering::SeqCst), 3);
+        });
+    }
+}
+```
+
+### Запуск
+```bash
+cargo test --features loom
+# Loom перебирает все возможные interleavings!
+```
+
+---
+
+## 9. Каналы без блокировок
+
+### Crossbeam Channel
+```rust
+use crossbeam_channel::{bounded, unbounded, select};
+
+let (tx, rx) = bounded(100);
+
+// select! — мультиплексирование
+select! {
+    recv(rx) -> msg => println!("Got: {:?}", msg),
+    default => println!("Empty"),
+}
+```
+
+### SPSC Queue (Single Producer Single Consumer)
+```rust
+use crossbeam_queue::SegQueue;
+
+let queue = SegQueue::new();
+queue.push(1);
+queue.push(2);
+
+while let Some(v) = queue.pop() {
+    println!("{}", v);
+}
+```
+
+### ArrayQueue (bounded, lock-free)
+```rust
+use crossbeam_queue::ArrayQueue;
+
+let queue = ArrayQueue::new(10);
+queue.push(1).ok(); // Result<(), T>
+if let Ok(v) = queue.pop() { println!("{}", v); }
+```
+
+---
+
+## 10. Практические упражнения
+
+### Упражнение 1: Lock-free HashMap (упрощённая)
+```rust
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::ptr;
+use crossbeam_epoch::{self as epoch, Atomic, Owned, Guard};
+
+struct AtomicEntry<K, V> {
+    key: K,
+    value: V,
+    next: Atomic<AtomicEntry<K, V>>,
+}
+
+struct LockFreeMap<K, V> {
+    buckets: Vec<Atomic<AtomicEntry<K, V>>>,
+}
+
+impl<K: Eq + Clone, V: Clone> LockFreeMap<K, V> {
+    fn new(capacity: usize) -> Self {
+        let mut buckets = Vec::with_capacity(capacity);
+        for _ in 0..capacity {
+            buckets.push(Atomic::null());
+        }
+        LockFreeMap { buckets }
+    }
+
+    fn get(&self, key: &K, guard: &Guard) -> Option<V> {
+        let idx = hash(key) % self.buckets.len();
+        let mut curr = self.buckets[idx].load(Ordering::Acquire, guard);
+
+        while let Some(entry) = unsafe { curr.as_ref() } {
+            if entry.key == *key {
+                return Some(entry.value.clone());
+            }
+            curr = entry.next.load(Ordering::Acquire, guard);
+        }
+        None
+    }
+}
+```
+
+### Упражнение 2: MPSC с epoch reclamation
+```rust
+use crossbeam_epoch::{self as epoch, Atomic, Owned, Guard};
+
+struct Node<T> {
+    value: T,
+    next: Atomic<Node<T>>,
+}
+
+pub struct MpscQueue<T> {
+    head: Atomic<Node<T>>,
+    tail: Atomic<Node<T>>,
+}
+
+impl<T> MpscQueue<T> {
+    pub fn new() -> Self {
+        let stub = Owned::new(Node { value: None, next: Atomic::null() });
+        let head = Atomic::from(stub);
+        let tail = head.clone();
+        MpscQueue { head, tail }
+    }
+
+    pub fn push(&self, value: T, guard: &Guard) {
+        let node = Owned::new(Node { value: Some(value), next: Atomic::null() });
+        let prev_tail = self.tail.swap(node, Ordering::AcqRel, guard);
+        unsafe { (*prev_tail.as_raw()).next.store(node, Ordering::Release); }
+    }
+
+    pub fn pop(&self, guard: &Guard) -> Option<T> {
+        let head = self.head.load(Ordering::Acquire, guard);
+        let next = unsafe { (*head.as_raw()).next.load(Ordering::Acquire, guard) };
+
+        if next.is_null() { return None; }
+
+        self.head.store(next, Ordering::Release);
+        let value = unsafe { (*head.as_raw()).value.take() };
+        unsafe { guard.defer_destroy(head); }
+        value
+    }
+}
+```
+
+### Упражнение 3: Read-mostly кэш с RCU
+```rust
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::collections::HashMap;
+
+struct RcuCache<K, V> {
+    map: AtomicPtr<HashMap<K, V>>,
+}
+
+impl<K: Eq + std::hash::Hash + Clone, V: Clone> RcuCache<K, V> {
+    fn new() -> Self {
+        let map = Box::new(HashMap::new());
+        RcuCache { map: AtomicPtr::new(Box::into_raw(map)) }
+    }
+
+    fn get(&self, key: &K) -> Option<V> {
+        let map_ptr = self.map.load(Ordering::Acquire);
+        let map = unsafe { &*map_ptr };
+        map.get(key).cloned()
+    }
+
+    fn insert(&self, key: K, value: V) {
+        let old_ptr = self.map.load(Ordering::Acquire);
+        let mut new_map = unsafe { (*old_ptr).clone() };
+        new_map.insert(key, value);
+        let new_ptr = Box::into_raw(Box::new(new_map));
+
+        let old = self.map.swap(new_ptr, Ordering::AcqRel);
+        // В реальности: defer free через epoch
+        unsafe { drop(Box::from_raw(old)); }
+    }
+}
+```
+
+---
+
+## 11. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `ABA problem` | CAS успевает, но данные изменились | Tagged pointers, epoch reclamation |
+| `memory leak` | Не вызван `defer_destroy` | Всегда используйте `guard.defer_destroy` |
+| `use after free` | Доступ к объекту после удаления | Epoch guards, hazard pointers |
+| `data race в Relaxed` | Недостаточный ordering | Используйте Acquire/Release пары |
+| `deadlock в parking_lot` | Рекурсивный lock | `Mutex::try_lock` или `RwLock` |
+
+---
+
+## 12. Шпаргалка: Advanced Concurrency
+
+| Категория | Крейты/Типы |
+|-----------|-------------|
+| Lock-free | `crossbeam-epoch`, `AtomicPtr`, `compare_exchange` |
+| Epoch reclamation | `crossbeam_epoch::Guard`, `defer_destroy` |
+| Memory ordering | `Ordering::{Relaxed,Acquire,Release,AcqRel,SeqCst}` |
+| Fast locks | `parking_lot::{Mutex,RwLock,Condvar,RawMutex}` |
+| Concurrent maps | `dashmap::DashMap` |
+| Testing | `loom` |
+| Channels | `crossbeam_channel`, `crossbeam_queue` |
+
+---
+
+## 13. Полезные ресурсы
+
+- **Crossbeam**: https://github.com/crossbeam-rs/crossbeam
+- **Parking Lot**: https://github.com/Amanieu/parking_lot
+- **DashMap**: https://github.com/xacrimon/dashmap
+- **Loom**: https://github.com/tokio-rs/loom
+- **Memory Ordering**: https://doc.rust-lang.org/nomicon/atomics.html
+- **Lock-free Rust**: https://docs.rs/crossbeam-epoch/
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- **Lock-free**: Treiber stack, ABA problem, решения
+- **Epoch reclamation**: `crossbeam_epoch`, `Guard`, `defer_destroy`
+- **Memory Ordering**: Relaxed, Acquire, Release, AcqRel, SeqCst с примерами
+- **Parking Lot**: быстрые `Mutex`, `RwLock`, `Condvar`, `RawMutex`
+- **DashMap**: sharded concurrent HashMap
+- **Wait-free**: счетчики, идеи очередей
+- **RCU**: Read-Copy-Update паттерн для read-mostly workloads
+- **Loom**: модель-чекер для concurrent кода
+- **Lock-free channels**: `crossbeam_channel`, `SegQueue`, `ArrayQueue`
+
+---
+
+**Следующий урок:** Macros (`29_Macros.txt`)

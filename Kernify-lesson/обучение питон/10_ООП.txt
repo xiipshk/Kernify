@@ -1,0 +1,442 @@
+# Урок 1.10: ООП — классы, объекты, __init__, атрибуты, методы, наследование, композиция
+
+## Цели урока
+- Создавать классы и объекты
+- Работать с __init__, self, атрибутами экземпляра и класса
+- Писать методы (обычные, классовые, статические)
+- Реализовывать наследование и композицию
+- Понимать инкапсуляцию и свойства (property)
+
+---
+
+## 1. Базовый класс
+
+```python
+class Dog:
+    # Атрибут класса (общий для всех экземпляров)
+    species = "Canis familiaris"
+    count = 0
+
+    def __init__(self, name: str, age: int):
+        # Атрибуты экземпляра (уникальны для каждого)
+        self.name = name
+        self.age = age
+        Dog.count += 1
+
+    def bark(self):
+        print(f"{self.name}: Гав!")
+
+    def __str__(self):
+        return f"Dog({self.name}, {self.age} лет)"
+
+    def __repr__(self):
+        return f"Dog(name='{self.name}', age={self.age})"
+
+
+dog1 = Dog("Бобик", 3)
+dog2 = Dog("Шарик", 5)
+
+dog1.bark()          # Бобик: Гав!
+print(dog1)          # Dog(Бобик, 3 лет)
+print(repr(dog1))    # Dog(name='Бобик', age=3)
+print(Dog.count)     # 2
+```
+
+---
+
+## 2. self — ссылка на экземпляр
+
+```python
+class Counter:
+    def __init__(self):
+        self.value = 0
+
+    def increment(self):
+        self.value += 1
+        return self  # для цепочек вызовов
+
+c = Counter()
+c.increment().increment().increment()
+print(c.value)  # 3
+```
+
+---
+
+## 3. Атрибуты класса vs экземпляра
+
+```python
+class Employee:
+    company = "Google"      # классовый атрибут
+    total_employees = 0
+
+    def __init__(self, name, salary):
+        self.name = name    # экземпляр
+        self.salary = salary
+        Employee.total_employees += 1
+
+e1 = Employee("Анна", 100000)
+e2 = Employee("Борис", 120000)
+
+print(e1.company)      # Google
+print(Employee.company) # Google
+e1.company = "Microsoft"  # создаёт атрибут ЭКЗЕМПЛЯРА, скрывает классовый!
+print(e1.company)      # Microsoft
+print(e2.company)      # Google
+print(Employee.company) # Google
+```
+
+---
+
+## 4. Свойства (property) — контролируемый доступ
+
+```python
+class BankAccount:
+    def __init__(self, balance=0):
+        self._balance = balance  # соглашение: _ — "защищённый"
+
+    @property
+    def balance(self):
+        return self._balance
+
+    @balance.setter
+    def balance(self, value):
+        if value < 0:
+            raise ValueError("Баланс не может быть отрицательным")
+        self._balance = value
+
+    @balance.deleter
+    def balance(self):
+        print("Удаление баланса...")
+        self._balance = 0
+
+acc = BankAccount(100)
+print(acc.balance)      # 100 (getter)
+acc.balance = 200       # setter
+# acc.balance = -50    # ValueError!
+del acc.balance         # deleter
+```
+
+---
+
+## 5. Методы класса и статические методы
+
+```python
+class MathUtils:
+    pi = 3.14159
+
+    @staticmethod
+    def add(a, b):
+        return a + b
+
+    @classmethod
+    def circle_area(cls, radius):
+        return cls.pi * radius ** 2
+
+    @classmethod
+    def from_diameter(cls, diameter):
+        return cls(diameter / 2)
+
+# Использование
+MathUtils.add(2, 3)           # 5 (без класса/экземпляра)
+MathUtils.circle_area(5)      # 78.54
+# Можно вызывать и от экземпляра
+m = MathUtils()
+m.add(1, 2)                   # 3
+```
+
+---
+
+## 6. Магические методы (dunder methods)
+
+```python
+class Vector:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    # Строковое представление
+    def __str__(self):
+        return f"({self.x}, {self.y})"
+
+    def __repr__(self):
+        return f"Vector({self.x}, {self.y})"
+
+    # Сравнение
+    def __eq__(self, other):
+        if not isinstance(other, Vector):
+            return NotImplemented
+        return self.x == other.x and self.y == other.y
+
+    # Арифметика
+    def __add__(self, other):
+        return Vector(self.x + other.x, self.y + other.y)
+
+    def __mul__(self, scalar):
+        return Vector(self.x * scalar, self.y * scalar)
+
+    # Индексация
+    def __getitem__(self, index):
+        if index == 0:
+            return self.x
+        elif index == 1:
+            return self.y
+        raise IndexError("Vector has only 2 components")
+
+    def __len__(self):
+        return 2
+
+    # Контекстный менеджер
+    def __enter__(self):
+        print("Вход в контекст")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print("Выход из контекста")
+
+
+v1 = Vector(1, 2)
+v2 = Vector(3, 4)
+v3 = v1 + v2          # Vector(4, 6)
+v4 = v1 * 3           # Vector(3, 6)
+print(v1)             # (1, 2)
+print(v1[0])          # 1
+print(len(v1))        # 2
+print(v1 == Vector(1, 2))  # True
+```
+
+---
+
+## 7. Наследование
+
+```python
+class Animal:
+    def __init__(self, name):
+        self.name = name
+
+    def speak(self):
+        raise NotImplementedError("Подкласс должен реализовать speak()")
+
+    def __str__(self):
+        return f"{self.__class__.__name__}({self.name})"
+
+
+class Dog(Animal):
+    def speak(self):
+        return "Гав!"
+
+    def fetch(self):
+        return f"{self.name} приносит палку"
+
+
+class Cat(Animal):
+    def speak(self):
+        return "Мяу!"
+
+
+# Использование
+animals = [Dog("Бобик"), Cat("Мурка"), Dog("Шарик")]
+for a in animals:
+    print(f"{a.name}: {a.speak()}")
+
+# super() — вызов родительского метода
+class Puppy(Dog):
+    def __init__(self, name, mother):
+        super().__init__(name)  # Animal.__init__
+        self.mother = mother
+
+    def speak(self):
+        return super().speak() + " (тихо)"
+```
+
+---
+
+## 8. Множественное наследование и MRO
+
+```python
+class Flyer:
+    def fly(self):
+        return "Лечу!"
+
+class Swimmer:
+    def swim(self):
+        return "Плыву!"
+
+class Duck(Flyer, Swimmer):
+    pass
+
+d = Duck()
+print(d.fly())   # Лечу!
+print(d.swim())  # Плыву!
+
+# MRO (Method Resolution Order)
+print(Duck.__mro__)
+# (<class 'Duck'>, <class 'Flyer'>, <class 'Swimmer'>, <class 'object'>)
+
+# Diamond problem
+class A: pass
+class B(A): pass
+class C(A): pass
+class D(B, C): pass
+print(D.__mro__)  # D, B, C, A, object
+```
+
+---
+
+## 9. Композиция (вместо наследования)
+
+```python
+class Engine:
+    def start(self):
+        return "Двигатель запущен"
+
+    def stop(self):
+        return "Двигатель остановлен"
+
+
+class Wheel:
+    def __init__(self, position):
+        self.position = position
+
+    def rotate(self):
+        return f"Колёсо {self.position} вращается"
+
+
+class Car:
+    def __init__(self, model):
+        self.model = model
+        self.engine = Engine()                    # композиция
+        self.wheels = [Wheel(p) for p in ["FL", "FR", "RL", "RR"]]
+
+    def drive(self):
+        print(self.engine.start())
+        for w in self.wheels:
+            print(w.rotate())
+        print(f"{self.model} едет!")
+
+    def stop(self):
+        print(self.engine.stop())
+
+
+car = Car("Toyota")
+car.drive()
+car.stop()
+```
+
+---
+
+## 10. Абстрактные базовые классы (ABC)
+
+```python
+from abc import ABC, abstractmethod
+
+class Shape(ABC):
+    @abstractmethod
+    def area(self) -> float:
+        pass
+
+    @abstractmethod
+    def perimeter(self) -> float:
+        pass
+
+    def describe(self):
+        return f"Площадь: {self.area():.2f}, Периметр: {self.perimeter():.2f}"
+
+
+class Circle(Shape):
+    def __init__(self, radius):
+        self.radius = radius
+
+    def area(self):
+        return 3.14159 * self.radius ** 2
+
+    def perimeter(self):
+        return 2 * 3.14159 * self.radius
+
+
+# s = Shape()  # TypeError: Can't instantiate abstract class
+c = Circle(5)
+print(c.describe())  # Площадь: 78.54, Периметр: 31.42
+```
+
+---
+
+## 11. Dataclasses (Python 3.7+) — меньше boilerplate
+
+```python
+from dataclasses import dataclass, field
+from typing import List
+
+@dataclass
+class Student:
+    name: str
+    age: int
+    grades: List[int] = field(default_factory=list)
+    gpa: float = 0.0
+
+    def add_grade(self, grade: int):
+        self.grades.append(grade)
+        self.gpa = sum(self.grades) / len(self.grades)
+
+    def __post_init__(self):
+        if self.age < 0:
+            raise ValueError("Возраст не может быть отрицательным")
+
+s = Student("Анна", 20)
+s.add_grade(5)
+s.add_grade(4)
+print(s)  # Student(name='Анна', age=20, grades=[5, 4], gpa=4.5)
+```
+
+---
+
+## 12. __slots__ — экономия памяти
+
+```python
+class WithoutSlots:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+class WithSlots:
+    __slots__ = ('x', 'y')  # фиксированные атрибуты, нет __dict__
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+import sys
+a = WithoutSlots(1, 2)
+b = WithSlots(1, 2)
+print(sys.getsizeof(a), sys.getsizeof(a.__dict__))  # ~104 + 104 байт
+print(sys.getsizeof(b))  # ~56 байт (без __dict__)
+```
+
+---
+
+## Практические задания
+
+1. **Иерархия сотрудников**: Employee → Manager, Developer, Intern с разными бонусами
+2. **Игровые сущности**: Entity → Player, Enemy, NPC с композицией (Inventory, Equipment)
+3. **Фигуры**: абстрактный Shape → Circle, Rectangle, Triangle с area/perimeter
+4. **Банковская система**: Account → SavingsAccount, CheckingAccount с лимитами
+5. **Паттерн Стратегия**: разные алгоритмы сортировки/оплаты через композицию
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `class Child(Parent): pass` без `super().__init__()` | Вызывайте `super().__init__()` в `__init__` потомка |
+| `self.attr = []` в классе (не в __init__) | Атрибуты экземпляра только в `__init__` |
+| Наследование там, где нужна композиция | "Has-a" вместо "Is-a" |
+| Забыли `@abstractmethod` | ABC не даст создать экземпляр без реализации |
+
+---
+
+## Полезные ресурсы
+- **Python.org Tutorial: Classes** — https://docs.python.org/3/tutorial/classes.html
+- **Real Python: OOP in Python** — https://realpython.com/python3-object-oriented-programming/
+- **Real Python: Inheritance** — https://realpython.com/inheritance-composition-python/
+- **Real Python: Properties** — https://realpython.com/python-property/
+- **Dataclasses docs** — https://docs.python.org/3/library/dataclasses.html

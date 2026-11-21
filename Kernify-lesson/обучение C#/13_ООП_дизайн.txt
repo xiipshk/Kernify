@@ -1,0 +1,446 @@
+# Урок 13: ООП и дизайн — interfaces, abstract classes, polymorphism, composition, generics
+
+## Цели урока
+- Понимать разницу между интерфейсами и абстрактными классами
+- Применять полиморфизм и принцип подстановки Лисков (LSP)
+- Использовать композицию вместо наследования
+- Работать с обобщениями (generics) и constraints
+- Знать принципы SOLID на практике
+
+---
+
+## 1. Интерфейсы vs Абстрактные классы
+
+### Интерфейс (Interface)
+```csharp
+// Контракт без реализации (до C# 8)
+public interface IDisposable
+{
+    void Dispose();
+}
+
+// C# 8+: default implementation
+public interface ILogger
+{
+    void Log(string message);
+
+    // Default implementation — не ломает существующие реализации
+    void LogInfo(string message) => Log($"[INFO] {message}");
+    void LogError(string message) => Log($"[ERROR] {message}");
+}
+
+// C# 11+: static virtual members в интерфейсах (для generic math)
+public interface INumber<T> where T : INumber<T>
+{
+    static abstract T Zero { get; }
+    static abstract T operator +(T left, T right);
+}
+```
+
+### Абстрактный класс (Abstract Class)
+```csharp
+public abstract class Animal
+{
+    // Может иметь состояние
+    public string Name { get; protected set; }
+
+    // Абстрактный метод — обязательно переопределить
+    public abstract void MakeSound();
+
+    // Виртуальный метод — можно переопределить
+    public virtual void Sleep() => Console.WriteLine($"{Name} sleeps");
+
+    // Обычный метод
+    public void Eat() => Console.WriteLine($"{Name} eats");
+
+    // Конструктор (нельзя создать экземпляр Animal)
+    protected Animal(string name) => Name = name;
+}
+
+public class Dog : Animal
+{
+    public Dog(string name) : base(name) { }
+
+    public override void MakeSound() => Console.WriteLine("Woof!");
+
+    public override void Sleep() => Console.WriteLine($"{Name} dreams of bones");
+}
+```
+
+### Когда что использовать
+
+| Сценарий | Выбор |
+|----------|-------|
+| Контракт для не связанных типов | `interface` |
+| Общая реализация + состояние | `abstract class` |
+| Множественная реализация | `interface` (класс — только одно наследование) |
+| Версионирование (добавление методов) | `interface` с default implementation |
+| Generic constraints с операторами | `interface` (C# 11+) |
+
+---
+
+## 2. Полиморфизм и LSP (Liskov Substitution Principle)
+
+### Ad-hoc полиморфизм (перегрузка)
+```csharp
+public class Calculator
+{
+    public int Add(int a, int b) => a + b;
+    public double Add(double a, double b) => a + b;
+    public string Add(string a, string b) => a + b;
+}
+```
+
+### Параметрический полиморфизм (Generics)
+```csharp
+public class Repository<T> where T : class
+{
+    public T GetById(int id) => default!;
+    public void Add(T entity) { }
+}
+```
+
+### Подтипный полиморфизм (Subtyping) + LSP
+```csharp
+// ПЛОХО: нарушение LSP
+public class Rectangle
+{
+    public virtual int Width { get; set; }
+    public virtual int Height { get; set; }
+}
+
+public class Square : Rectangle
+{
+    public override int Width
+    {
+        set { base.Width = base.Height = value; }
+    }
+    public override int Height
+    {
+        set { base.Width = base.Height = value; }
+    }
+}
+
+// Использование — неожиданное поведение
+void Resize(Rectangle r, int w, int h)
+{
+    r.Width = w;
+    r.Height = h;
+    // Если r — Square, Width и Height будут = h!
+}
+
+// ХОРОШО: композиция или отдельные типы
+public interface IShape { int Area(); }
+public readonly record struct Rectangle(int Width, int Height) : IShape
+{
+    public int Area() => Width * Height;
+}
+public readonly record struct Square(int Size) : IShape
+{
+    public int Area() => Size * Size;
+}
+```
+
+### Covariance и Contravariance (in/out)
+```csharp
+// out — ковариантность (возврат) — "производный можно вернуть как базовый"
+public interface IReadOnlyRepository<out T>
+{
+    T GetById(int id);
+    IEnumerable<T> GetAll();
+}
+
+// in — контрвариантность (параметр) — "базовый можно передать вместо производного"
+public interface IWriteOnlyRepository<in T>
+{
+    void Add(T entity);
+    void Remove(T entity);
+}
+
+// Пример
+IReadOnlyRepository<Animal> animals = new DogRepository(); // OK (Dog -> Animal)
+// IWriteOnlyRepository<Animal> animalWriter = new DogWriter(); // Ошибка!
+IWriteOnlyRepository<Dog> dogWriter = new AnimalWriter(); // OK (Animal -> Dog)
+```
+
+---
+
+## 3. Композиция вместо наследования (Composition over Inheritance)
+
+### Проблема глубокого наследования
+```csharp
+// Сложная иерархия — трудно менять
+public abstract class Vehicle { }
+public class Car : Vehicle { }
+public class FlyingCar : Car { } // что если не все машины летают?
+public class AmphibiousCar : Car { }
+```
+
+### Решение: Композиция через интерфейсы
+```csharp
+// Поведения как отдельные компоненты
+public interface IEngine { void Start(); void Stop(); }
+public interface IFlyable { void Fly(); float Altitude { get; } }
+public interface ISwimmable { void Swim(); float Depth { get; } }
+
+// Реализации
+public class ElectricEngine : IEngine { /* ... */ }
+public class JetEngine : IEngine, IFlyable { /* ... */ }
+public class Propeller : IFlyable { /* ... */ }
+public class PropellerDrive : ISwimmable { /* ... */ }
+
+// Композиция
+public class Vehicle
+{
+    public IEngine Engine { get; }
+    public IFlyable? FlyBehavior { get; }
+    public ISwimmable? SwimBehavior { get; }
+
+    public Vehicle(IEngine engine, IFlyable? fly = null, ISwimmable? swim = null)
+    {
+        Engine = engine;
+        FlyBehavior = fly;
+        SwimBehavior = swim;
+    }
+
+    public void Fly() => FlyBehavior?.Fly();
+    public void Swim() => SwimBehavior?.Swim();
+}
+
+// Использование
+var flyingCar = new Vehicle(new ElectricEngine(), new Propeller());
+var submarine = new Vehicle(new ElectricEngine(), swim: new PropellerDrive());
+```
+
+### Strategy Pattern (стратегия)
+```csharp
+public interface IPaymentStrategy
+{
+    void Pay(decimal amount);
+}
+
+public class CreditCardPayment : IPaymentStrategy { /* ... */ }
+public class PayPalPayment : IPaymentStrategy { /* ... */ }
+public class CryptoPayment : IPaymentStrategy { /* ... */ }
+
+public class OrderService
+{
+    private readonly IPaymentStrategy _payment;
+
+    public OrderService(IPaymentStrategy payment) => _payment = payment;
+
+    public void Checkout(decimal amount) => _payment.Pay(amount);
+}
+
+// Runtime swap
+var service = new OrderService(new CreditCardPayment());
+// Позже можно сменить: service = new OrderService(new PayPalPayment());
+```
+
+---
+
+## 4. Generics (Обобщения) — продвинутый уровень
+
+### Constraints (Ограничения)
+```csharp
+// where T : class — reference type
+// where T : struct — value type (не nullable)
+// where T : new() — public parameterless constructor
+// where T : BaseClass — наследование
+// where T : IInterface — реализация интерфейса
+// where T : unmanaged — без указателей/ссылок (blittable)
+// where T : notnull — не nullable (C# 8+)
+// where T : default — для default(T) в generic коде
+// where T : allows ref struct — C# 11+ для ref struct
+
+public class GenericRepository<T>
+    where T : class, IEntity, new()
+{
+    public T Create() => new T();
+    public void Save(T entity) { }
+}
+
+// Multiple constraints
+public void Process<TFirst, TSecond>(TFirst a, TSecond b)
+    where TFirst : IComparable<TFirst>
+    where TSecond : struct, IEquatable<TSecond>
+{ }
+```
+
+### Generic Math (C# 11+ / .NET 7+)
+```csharp
+using System.Numerics;
+
+// Работает с любым числовым типом
+public T Add<T>(T a, T b) where T : INumber<T>
+{
+    return a + b;
+}
+
+// Сложный пример: статистика
+public StatisticsResult<T> CalculateStats<T>(IEnumerable<T> values)
+    where T : INumber<T>, IComparisonOperators<T, T, bool>
+{
+    var list = values.ToList();
+    T sum = T.Zero;
+    T min = list[0];
+    T max = list[0];
+
+    foreach (var v in list)
+    {
+        sum += v;
+        if (v < min) min = v;
+        if (v > max) max = v;
+    }
+
+    return new StatisticsResult<T>(sum, min, max, list.Count);
+}
+```
+
+### Variance в delegates и func
+```csharp
+// Func<in T, out TResult> — вход контравариантен, выход ковариантен
+Func<Dog, Animal> func1 = d => d; // Dog -> Animal (OK)
+// Func<Animal, Dog> func2 = a => new Dog(); // Ошибка!
+
+// Action<in T> — только контрвариантность
+Action<Animal> act1 = a => Console.WriteLine(a);
+Action<Dog> act2 = act1; // OK: Action<Animal> можно использовать как Action<Dog>
+```
+
+---
+
+## 5. Паттерны проектирования в C#
+
+### Factory Method
+```csharp
+public abstract class Document
+{
+    public abstract void Open();
+    public abstract void Save();
+}
+
+public class WordDocument : Document { /* ... */ }
+public class PdfDocument : Document { /* ... */ }
+
+public abstract class DocumentCreator
+{
+    public abstract Document CreateDocument();
+
+    public void Process()
+    {
+        var doc = CreateDocument();
+        doc.Open();
+        doc.Save();
+    }
+}
+
+public class WordCreator : DocumentCreator
+{
+    public override Document CreateDocument() => new WordDocument();
+}
+```
+
+### Builder Pattern
+```csharp
+public class HttpClientBuilder
+{
+    private string _baseUrl = "";
+    private TimeSpan _timeout = TimeSpan.FromSeconds(30);
+    private Dictionary<string, string> _headers = new();
+
+    public HttpClientBuilder WithBaseUrl(string url) { _baseUrl = url; return this; }
+    public HttpClientBuilder WithTimeout(TimeSpan t) { _timeout = t; return this; }
+    public HttpClientBuilder AddHeader(string k, string v) { _headers[k] = v; return this; }
+
+    public HttpClient Build()
+    {
+        var client = new HttpClient { BaseAddress = new Uri(_baseUrl), Timeout = _timeout };
+        foreach (var (k, v) in _headers) client.DefaultRequestHeaders.Add(k, v);
+        return client;
+    }
+}
+
+// Использование
+var client = new HttpClientBuilder()
+    .WithBaseUrl("https://api.example.com")
+    .WithTimeout(TimeSpan.FromSeconds(10))
+    .AddHeader("Authorization", "Bearer token")
+    .Build();
+```
+
+### Decorator Pattern
+```csharp
+public interface INotifier
+{
+    void Send(string message);
+}
+
+public class EmailNotifier : INotifier
+{
+    public void Send(string message) => Console.WriteLine($"Email: {message}");
+}
+
+// Декоратор
+public class SmsNotifierDecorator : INotifier
+{
+    private readonly INotifier _inner;
+    public SmsNotifierDecorator(INotifier inner) => _inner = inner;
+
+    public void Send(string message)
+    {
+        _inner.Send(message);
+        Console.WriteLine($"SMS: {message}");
+    }
+}
+
+// Цепочка
+INotifier notifier = new SmsNotifierDecorator(new EmailNotifier());
+notifier.Send("Hello"); // Email + SMS
+```
+
+---
+
+## 6. SOLID принципы на примерах
+
+| Принцип | Суть | C# пример |
+|---------|------|-----------|
+| **S**ingle Responsibility | Класс — одна причина для изменения | `UserService` не отправляет email, использует `IEmailService` |
+| **O**pen/Closed | Открыт для расширения, закрыт для изменения | `IPaymentStrategy` + новые реализации без изменения `OrderService` |
+| **L**iskov Substitution | Подтип заменяет базовый тип | `Square` не наследует `Rectangle` |
+| **I**nterface Segregation | Мелкие интерфейсы лучше одного большого | `IReadable`, `IWritable` вместо `IRepository` |
+| **D**ependency Inversion | Зависимость от абстракций, не конретных классов | `OrderService` зависит от `IPaymentStrategy`, не `CreditCardPayment` |
+
+---
+
+## Практические задания
+
+1. **LSP violation fix**: рефакторите иерархию `Rectangle`/`Square` с использованием композиции
+2. **Generic Repository**: реализуйте `IRepository<T>` с ковариантностью для чтения и контрвариантностью для записи
+3. **Strategy Pattern**: создайте систему валидации с разными стратегиями (FluentValidation style)
+4. **Decorator**: реализуйте кэширующий декоратор для `IUserRepository`
+5. **SOLID audit**: найдите нарушения SOLID в legado-коде и исправьте
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Глубокое наследование (3+ уровней) | Композиция, интерфейсы |
+| `abstract class` там, где нужен `interface` | `interface` для контрактов |
+| Игнорирование LSP | Проверяйте: "можно ли подтип использовать везде, где базовый?" |
+| God Object (один класс делает всё) | Разбивайте на маленькие сервисы с DI |
+| Generic без constraints там, где нужны методы | `where T : IInterface` |
+| `new()` constraint для struct | `struct` уже имеет default constructor |
+
+---
+
+## Полезные ресурсы
+
+- **C# Interfaces** — https://learn.microsoft.com/dotnet/csharp/fundamentals/types/interfaces
+- **Abstract Classes** — https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/abstract
+- **Generics Constraints** — https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/where-generic-type-constraint
+- **Generic Math** — https://learn.microsoft.com/dotnet/standard/generics/math
+- **SOLID Principles in C#** — https://learn.microsoft.com/dotnet/architecture/modern-web-apps-azure/common-web-application-architectures#solid-principles
+- **Design Patterns in C#** — https://refactoring.guru/design-patterns/csharp

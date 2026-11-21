@@ -1,0 +1,301 @@
+{
+  "title": "Урок 08: Указатели и ссылки",
+  "slug": "urok-08-шаблоны-функции-и-классы",
+  "short_description": "template, typename, specialization, variadic templates, fold expressions",
+  "goals": [
+    "Понимать основы: template, typename, specialization, variadic templates, fold expressions",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 8: Указатели и ссылки"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять адреса памяти, операторы `&` (address-of) и `*` (dereference)",
+        "Изучить указатели: арифметика, nullptr, void*, указатели на функции",
+        "Освоить ссылки: lvalue, rvalue, const ссылки, привязка к временным",
+        "Научиться работать с динамической памятью: `new`, `delete`, `new[]`, `delete[]`",
+        "Понять базовую безопасность: владение, RAII, умные указатели (введение)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Адреса и указатели"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iostream>\n\nint main() {\n    int x = 42;\n    int* ptr = &x;        // ptr хранит адрес x\n    std::cout << ptr;     // адрес (например, 0x7ffc1234)\n    std::cout << *ptr;    // 42 — разыменование (доступ к значению)\n\n    *ptr = 100;           // меняет x через указатель\n    std::cout << x;       // 100\n\n    // Нулевой указатель (C++11)\n    int* p1 = nullptr;    // лучше чем NULL или 0\n    int* p2 = nullptr;\n    if (!p1) std::cout << \"nullptr\\n\";\n\n    // void* — указатель на любой тип (нужен static_cast для разыменования)\n    void* vp = &x;\n    int* ip = static_cast<int*>(vp);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Указательная арифметика"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int arr[5] = {10, 20, 30, 40, 50};\nint* p = arr;           // p указывает на arr[0]\n\np + 1;      // адрес arr[1] (смещение на sizeof(int) байт)\np + 2;      // адрес arr[2]\n*(p + 2);   // 30 — то же что arr[2]\n\np++;        // теперь p указывает на arr[1]\n++p;        // arr[2]\np += 2;     // arr[4]\n\n// Разница указателей — количество элементов между ними\nint* p2 = arr + 4;\nstd::cout << p2 - p;    // 4 (ptrdiff_t)\n\n// Сравнение\np < p2;     // true"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ссылки"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int x = 10;\nint& ref = x;       // ref — другое имя для x (алиас)\nref = 20;           // x становится 20\n\n// Ссылка должна быть инициализирована при объявлении\n// int& bad; // ОШИБКА\n\n// const ссылка — может привязываться к временным и литералам\nconst int& cref = 42;           // OK: продлевает время жизни временного\nconst int& cref2 = x + y;       // OK\n// int& r = 42;                 // ОШИБКА: не-const ссылка не привязывается к rvalue\n\n// Ссылки не могут быть null, не могут быть перепривязаны"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "rvalue-ссылки (C++11) — основа move semantics"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: move semantics**\n\n**Что делает:** Перемещение ресурсов вместо копирования (std::move, rvalue references)\n\n**Зачем нужно:** Избегает дорогого глубокого копирования, передаёт владение ресурсом\n\n**Как работает:** std::vector<int> v2 = std::move(v1); // v1 пуст, v2 забирает данные"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int x = 10;\nint&& rref = 42;        // привязывается к rvalue (временному)\nint&& rref2 = std::move(x); // приведение lvalue к rvalue\n\n// std::move — не перемещает, а кастует к rvalue-ссылке\nstd::string s1 = \"hello\";\nstd::string s2 = std::move(s1); // s1 теперь в \"valid but unspecified state\"\n// s1 может быть пустой, но деструктор безопасен"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Указатели на функции"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int add(int a, int b) { return a + b; }\nint sub(int a, int b) { return a - b; }\n\nint (*func_ptr)(int, int) = add;  // тип: указатель на функцию(int,int)->int\nfunc_ptr = sub;                   // можно переназначать\n\nstd::cout << func_ptr(5, 3);      // 2\n\n// Использование с алгоритмами\n#include <algorithm>\n#include <vector>\nstd::vector<int> v = {3,1,4,1,5};\nstd::sort(v.begin(), v.end(), [](int a, int b){ return a > b; });\n// lambda неявно конвертируется в указатель на функцию (если не захватывает)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Динамическая память"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <iostream>\n\n// Одиночный объект\nint* p = new int(42);     // выделяет память, вызывает конструктор\nstd::cout << *p;          // 42\ndelete p;                 // вызывает деструктор, освобождает память\np = nullptr;              // хорошая практика после delete\n\n// Массив\nint* arr = new int[5]{1,2,3,4,5};\ndelete[] arr;             // ВАЖНО: delete[] для массивов!\narr = nullptr;\n\n// Опасности:\n// 1. Утечка памяти: забыли delete\n// 2. Double delete: delete дважды\n// 3. Use after delete: обращение через висячий указатель\n// 4. Mismatch: new[] с delete или new с delete[]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Умные указатели (C++11) — RAII для памяти"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: smart pointers**\n\n**Что делает:** unique_ptr, shared_ptr, weak_ptr — умные указатели с автоматическим управлением памятью\n\n**Зачем нужно:** Исключают утечки памяти, dangling pointers, double free; владеют объектом\n\n**Как работает:** auto ptr = std::make_unique<Widget>(); // unique_ptr — единственный владелец"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <memory>\n#include <iostream>\n\nclass Resource {\npublic:\n    Resource() { std::cout << \"Acquired\\n\"; }\n    ~Resource() { std::cout << \"Released\\n\"; }\n    void use() { std::cout << \"Using\\n\"; }\n};\n\nvoid demo() {\n    // unique_ptr — единственное владение (не копируется, только move)\n    std::unique_ptr<Resource> u1 = std::make_unique<Resource>();\n    u1->use();\n    // std::unique_ptr<Resource> u2 = u1; // ОШИБКА: копирование запрещено\n    std::unique_ptr<Resource> u2 = std::move(u1); // OK: передача владения\n    // u1 теперь nullptr\n\n    // shared_ptr — совместное владение (reference counting)\n    std::shared_ptr<Resource> s1 = std::make_shared<Resource>();\n    std::shared_ptr<Resource> s2 = s1; // копируется, счётчик = 2\n    std::cout << s1.use_count(); // 2\n    // Память освободится когда последний shared_ptr умрёт\n\n    // weak_ptr — слабая ссылка (не увеличивает счётчик, для кэшей, родителей)\n    std::weak_ptr<Resource> w = s1;\n    if (auto locked = w.lock()) { locked->use(); } // проверка жив ли объект\n}\n\n// Правила:\n// - По умолчанию используйте unique_ptr\n// - shared_ptr когда нужно совместное владение\n// - Никогда не делайте new/shared_ptr вручную — используйте make_unique/make_shared\n// - Избегайте raw new/delete в современном C++"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "RAII (Resource Acquisition Is Initialization)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Принцип: ресурс приобретается в конструкторе, освобождается в деструкторе\n// Гарантирует: никаких утечек при исключениях, раннем return и т.д.\n\nclass FileHandle {\n    FILE* f;\npublic:\n    FileHandle(const char* name) : f(std::fopen(name, \"r\")) {\n        if (!f) throw std::runtime_error(\"Cannot open\");\n    }\n    ~FileHandle() { if (f) std::fclose(f); }\n    // Запрет копирования\n    FileHandle(const FileHandle&) = delete;\n    FileHandle& operator=(const FileHandle&) = delete;\n    // Move разрешен\n    FileHandle(FileHandle&& other) noexcept : f(other.f) { other.f = nullptr; }\n    FILE* get() const { return f; }\n};\n\nvoid func() {\n    FileHandle f(\"data.txt\"); // при выходе из области — автоматическое закрытие\n    // даже если брошено исключение!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "this указатель"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "struct Counter {\n    int count = 0;\n    Counter& increment() {\n        ++count;\n        return *this; // возврат ссылки на себя для чейнинга\n    }\n    void print() const { std::cout << count; }\n};\n\nCounter c;\nc.increment().increment().print(); // 2"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: Указательная арифметика"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Выведите все элементы",
+        "Найдите максимум",
+        "Реверсните массив на месте"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Дан `int arr[10] = {1,2,3,4,5,6,7,8,9,10};`\nИспользуя только указатели (не индексы `[]`):"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Swap через указатели и ссылки"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте `void swap_ptr(int* a, int* b)` и `void swap_ref(int& a, int& b)`.\nКакая версия безопаснее? Почему?"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Динамический массив вручную"
+    },
+    {
+      "type": "text",
+      "content": "Реализуйте класс `DynamicArray` с `new[]`/`delete[]`, конструктором копирования, оператором присваивания, move-семантикой. Правило трёх/пяти."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: unique_ptr vs shared_ptr"
+    },
+    {
+      "type": "text",
+      "content": "Создайте `std::vector<std::unique_ptr<Resource>>` с 1000 элементов. Замерьте время создания и уничтожения. Сравните с `shared_ptr`."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Функция, возвращающая указатель"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int* create_array(int n, int init) {\n    // вернуть динамический массив, заполненный init\n}"
+    },
+    {
+      "type": "text",
+      "content": "Кто отвечает за `delete[]`? Как улучшить с `unique_ptr<int[]>`?"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: this и method chaining"
+    },
+    {
+      "type": "text",
+      "content": "Создайте класс `Builder` с методами `set_name`, `set_age`, `set_email`, возвращающими `*this`. Постройте объект одной цепочкой.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки новичка"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| Разыменование nullptr | UB, краш | Проверяйте `if (ptr)` перед использованием |\n| `delete` вместо `delete[]` для массива | UB, утечка/краш | Всегда `new[]` ↔ `delete[]`, `new` ↔ `delete` |\n| Возврат указателя на локальную переменную | Висячий указатель | Возвращайте `unique_ptr` или по значению |\n| Копирование `unique_ptr` | Ошибка компиляции | Используйте `std::move` |\n| Циклические `shared_ptr` | Утечка памяти (счётчик никогда не 0) | Используйте `weak_ptr` для обратных ссылок |\n| `new` без `delete` в исключительной ситуации | Утечка | Используйте умные указатели / RAII |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "cppreference: [Pointers](https://en.cppreference.com/w/cpp/language/pointer), [References](https://en.cppreference.com/w/cpp/language/reference), [Smart pointers](https://en.cppreference.com/w/cpp/memory)",
+        "C++ Core Guidelines: [R. Resource management](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r-resource-management)",
+        "[Rule of Zero/Five](https://en.cppreference.com/w/cpp/language/rule_of_three) — когда нужны специальные функции-члены"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Шаблоны: функции и классы",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Шаблоны: функции и классы' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C++",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c++ на GitHub",
+    "Конференции и митапы по C++"
+  ],
+  "key_takeaways": [
+    "Главная идея: template, typename, specialization, variadic templates, fold expressions — это фундамент для RAII, Move semantics, Perfect forwarding.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "cpp",
+  "lesson_order": 8,
+  "name_en": "Lesson: Шаблоны: функции и классы",
+  "short_description_en": "Learn Шаблоны: функции и классы in C++ with detailed explanations and examples"
+}

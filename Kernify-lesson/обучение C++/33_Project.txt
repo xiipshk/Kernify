@@ -1,0 +1,697 @@
+# Урок 33: Проект — library/system app with tests, performance measurements and docs
+
+## Цели урока
+- Объединить все знания в комплексном проекте
+- Построить production-ready C++ библиотеку/приложение
+- Настроить полноценный CI/CD pipeline
+- Написать comprehensive тесты (unit, integration, property-based, fuzz)
+- Реализовать бенчмарки и performance regression testing
+- Создать документацию: API reference, guides, architecture docs
+
+---
+
+## 1. Project Specification: High-Performance Log Processing Library
+
+### Requirements
+```
+Name: fastlog — high-throughput structured logging library
+Target: C++20, cross-platform (Linux, Windows, macOS)
+Performance: >10M logs/sec single-threaded, lock-free async backend
+Features:
+  - Structured logging (key-value pairs, not just strings)
+  - Multiple sinks: file, stdout, syslog, network, custom
+  - Log levels: trace, debug, info, warn, error, critical
+  - Filtering by level, module, custom predicates
+  - Formatters: JSON, text, binary (protobuf/flatbuffers)
+  - Async processing with bounded queue (backpressure)
+  - Zero-cost when disabled (compile-time level filtering)
+  - Thread-safe, lock-free hot path
+  - Header-only core + compiled backend
+```
+
+### Architecture Overview
+```
+fastlog/
+├── include/fastlog/           # Public API (header-only)
+│   ├── logger.hpp
+│   ├── record.hpp
+│   ├── sink.hpp
+│   ├── formatter.hpp
+│   ├── level.hpp
+│   └── macros.hpp             # FASTLOG_INFO(logger, "msg", kv...)
+├── src/                       # Implementation
+│   ├── backend/
+│   │   ├── async_worker.hpp/cpp
+│   │   ├── ring_buffer.hpp
+│   │   └── backpressure.hpp
+│   ├── sinks/
+│   │   ├── file_sink.cpp
+│   │   ├── stdout_sink.cpp
+│   │   ├── rotating_file_sink.cpp
+│   │   └── network_sink.cpp
+│   ├── formatters/
+│   │   ├── json_formatter.cpp
+│   │   ├── text_formatter.cpp
+│   │   └── binary_formatter.cpp
+│   └── detail/
+│       ├── thread_pool.hpp
+│       └── atomic_queue.hpp
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   ├── property/              # RapidCheck / libfuzzer
+│   ├── bench/
+│   └── fuzz/
+├── bench/                     # Google Benchmark suite
+├── docs/
+│   ├── api/                   # Doxygen + m.css
+│   ├── guides/
+│   └── architecture/
+├── examples/
+├── cmake/
+├── .github/workflows/
+├── CMakeLists.txt
+├── conanfile.py
+├── vcpkg.json
+└── README.md
+```
+
+---
+
+## 2. Core Implementation Highlights
+
+### Zero-Cost Macros
+```cpp
+// macros.hpp
+#define FASTLOG_TRACE(logger, msg, ...) \
+    FASTLOG_LOG(logger, fastlog::Level::Trace, msg, ##__VA_ARGS__)
+
+#define FASTLOG_LOG(logger, level, msg, ...) \
+    do { \
+        if (FASTLOG_LIKELY((logger).should_log(level))) { \
+            (logger).log(level, __FILE__, __LINE__, __FUNCTION__, msg, ##__VA_ARGS__); \
+        } \
+    } while(0)
+
+// Compile-time level filtering
+template <fastlog::Level GlobalLevel = fastlog::Level::Info>
+class CompileTimeFilter {
+public:
+    static constexpr bool should_log(fastlog::Level lvl) noexcept {
+        return lvl >= GlobalLevel;
+    }
+};
+```
+
+### Lock-Free Ring Buffer (SPSC)
+```cpp
+// ring_buffer.hpp
+template <typename T, size_t Capacity>
+class RingBuffer {
+    static_assert((Capacity & (Capacity - 1)) == 0, "Power of 2");
+    alignas(64) std::atomic<size_t> head_{0};
+    alignas(64) std::atomic<size_t> tail_{0};
+    T buffer_[Capacity];
+public:
+    bool try_push(T&& item) noexcept {
+        size_t head = head_.load(std::memory_order_relaxed);
+        size_t next = (head + 1) & (Capacity - 1);
+        if (next == tail_.load(std::memory_order_acquire)) return false;
+        buffer_[head] = std::move(item);
+        head_.store(next, std::memory_order_release);
+        return true;
+    }
+    bool try_pop(T& item) noexcept {
+        size_t tail = tail_.load(std::memory_order_relaxed);
+        if (tail == head_.load(std::memory_order_acquire)) return false;
+        item = std::move(buffer_[tail]);
+        tail_.store((tail + 1) & (Capacity - 1), std::memory_order_release);
+        return true;
+    }
+};
+```
+
+### Async Worker with Backpressure
+```cpp
+// async_worker.hpp
+class AsyncWorker {
+    RingBuffer<LogRecord, 65536> queue_;
+    std::thread worker_;
+    std::atomic<bool> running_{true};
+    std::unique_ptr<Sink> sink_;
+    std::unique_ptr<Formatter> formatter_;
+    BackpressurePolicy policy_;
+
+    void run() {
+        LogRecord record;
+        while (running_.load(std::memory_order_acquire)) {
+            if (queue_.try_pop(record)) {
+                auto formatted = formatter_->format(record);
+                sink_->write(formatted);
+            } else {
+                std::this_thread::yield(); // или wait/notify
+            }
+        }
+        // Drain remaining
+        while (queue_.try_pop(record)) {
+            sink_->write(formatter_->format(record));
+        }
+    }
+public:
+    bool try_log(LogRecord&& record) {
+        if (!queue_.try_push(std::move(record))) {
+            return policy_.handle_overflow(*this, std::move(record));
+        }
+        return true;
+    }
+};
+```
+
+---
+
+## 3. Testing Strategy
+
+### Unit Tests (Catch2 / GoogleTest)
+```cpp
+// tests/unit/level_test.cpp
+#include <catch2/catch_test_macros.hpp>
+#include <fastlog/level.hpp>
+
+TEST_CASE("Level comparison") {
+    using fastlog::Level;
+    REQUIRE(Level::Trace < Level::Debug);
+    REQUIRE(Level::Error > Level::Warn);
+    REQUIRE(Level::Critical == Level::Critical);
+}
+
+TEST_CASE("Level from string") {
+    REQUIRE(fastlog::level_from_string("debug") == Level::Debug);
+    REQUIRE(fastlog::level_from_string("INVALID") == Level::Info); // default
+}
+```
+
+```cpp
+// tests/unit/ring_buffer_test.cpp
+TEST_CASE("RingBuffer SPSC") {
+    RingBuffer<int, 1024> rb;
+    REQUIRE(rb.try_push(42));
+    int val;
+    REQUIRE(rb.try_pop(val));
+    REQUIRE(val == 42);
+    REQUIRE_FALSE(rb.try_pop(val));
+}
+
+TEST_CASE("RingBuffer overflow") {
+    RingBuffer<int, 4> rb;
+    for (int i = 0; i < 4; ++i) REQUIRE(rb.try_push(i));
+    REQUIRE_FALSE(rb.try_push(99)); // full
+}
+```
+
+### Property-Based Testing (RapidCheck)
+```cpp
+// tests/property/formatter_property.cpp
+#include <rapidcheck/catch.h>
+#include <fastlog/formatters/json_formatter.hpp>
+
+PROP("JSON formatter roundtrip") {
+    auto record = *rc::gen::arbitrary<LogRecord>();
+    std::string json = JsonFormatter::format(record);
+    auto parsed = JsonFormatter::parse(json);
+    RC_ASSERT(parsed.has_value());
+    RC_ASSERT(parsed->message == record.message);
+    RC_ASSERT(parsed->level == record.level);
+}
+```
+
+### Integration Tests
+```cpp
+// tests/integration/end_to_end_test.cpp
+TEST_CASE("Full logging pipeline") {
+    auto sink = std::make_shared<MemorySink>();
+    auto logger = fastlog::Logger::create("test")
+        .sink(sink)
+        .level(fastlog::Level::Debug)
+        .build();
+
+    FASTLOG_INFO(logger, "Hello {}", "world");
+    FASTLOG_DEBUG(logger, "Debug {}", 42);
+
+    sink->flush();
+    auto logs = sink->get_logs();
+    REQUIRE(logs.size() == 2);
+    REQUIRE(logs[0].message == "Hello world");
+    REQUIRE(logs[1].message == "Debug 42");
+}
+```
+
+### Fuzzing Targets
+```cpp
+// tests/fuzz/fuzz_formatter.cpp
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+    std::string_view input(reinterpret_cast<const char*>(data), size);
+    fastlog::TextFormatter::format(input); // не должно падать
+    fastlog::JsonFormatter::format(input);
+    return 0;
+}
+```
+
+---
+
+## 4. Benchmarking & Performance Regression
+
+### Google Benchmark Suite
+```cpp
+// bench/log_throughput.cpp
+#include <benchmark/benchmark.h>
+#include <fastlog/logger.hpp>
+
+static void BM_SyncLogging(benchmark::State& state) {
+    auto logger = fastlog::Logger::create("bench")
+        .sink(std::make_shared<NullSink>())
+        .level(fastlog::Level::Info)
+        .build();
+
+    for (auto _ : state) {
+        FASTLOG_INFO(logger, "Message {}", "with args");
+    }
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(BM_SyncLogging);
+
+static void BM_AsyncLogging(benchmark::State& state) {
+    auto logger = fastlog::Logger::create("bench")
+        .async(65536)
+        .sink(std::make_shared<NullSink>())
+        .level(fastlog::Level::Info)
+        .build();
+
+    for (auto _ : state) {
+        FASTLOG_INFO(logger, "Message {}", "with args");
+    }
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(BM_AsyncLogging);
+
+static void BM_DisabledLogging(benchmark::State& state) {
+    auto logger = fastlog::Logger::create("bench")
+        .level(fastlog::Level::Warn)  // Info disabled
+        .build();
+
+    for (auto _ : state) {
+        FASTLOG_INFO(logger, "This should be no-op");
+    }
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(BM_DisabledLogging);
+
+BENCHMARK_MAIN();
+```
+
+### Performance Regression in CI
+```yaml
+# .github/workflows/benchmark.yml
+name: Benchmark
+on: [push, pull_request]
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCH=ON
+          cmake --build build --target fastlog_bench
+      - name: Run benchmarks
+        run: ./build/bench/fastlog_bench --benchmark_out=results.json --benchmark_out_format=json
+      - name: Compare with baseline
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'googletest'
+          output-file-path: results.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alert-threshold: '10%'  # fail if >10% regression
+```
+
+---
+
+## 5. Documentation
+
+### Doxygen + m.css
+```cpp
+// include/fastlog/logger.hpp
+/**
+ * @file logger.hpp
+ * @brief Main logger interface
+ */
+
+namespace fastlog {
+
+/**
+ * @class Logger
+ * @brief Thread-safe structured logger with async support
+ *
+ * Example usage:
+ * @code
+ * auto logger = Logger::create("myapp")
+ *     .async(65536)
+ *     .sink(std::make_shared<FileSink>("app.log"))
+ *     .level(Level::Info)
+ *     .build();
+ *
+ * FASTLOG_INFO(logger, "User logged in", "user_id", 42);
+ * @endcode
+ */
+class Logger {
+public:
+    /**
+     * @brief Create logger builder
+     * @param name Logger name (used in output)
+     * @return LoggerBuilder for fluent configuration
+     */
+    static LoggerBuilder create(std::string_view name);
+
+    /**
+     * @brief Log a message at specified level
+     * @tparam Args Key-value pairs (key, value, key, value...)
+     * @param level Log level
+     * @param file Source file (__FILE__)
+     * @param line Source line (__LINE__)
+     * @param func Source function (__FUNCTION__)
+     * @param message Format string
+     * @param args Key-value arguments
+     */
+    template <typename... Args>
+    void log(Level level, const char* file, int line, const char* func,
+             std::string_view message, Args&&... args);
+};
+
+} // namespace fastlog
+```
+
+```bash
+# Doxyfile + m.css theme
+doxygen Doxyfile
+# Генерация красивого HTML в docs/api/
+```
+
+### Markdown Guides
+```
+docs/
+├── guides/
+│   ├── getting-started.md
+│   ├── configuration.md
+│   ├── async-logging.md
+│   ├── custom-sinks.md
+│   ├── custom-formatters.md
+│   ├── performance-tuning.md
+│   └── migration-v1-to-v2.md
+├── architecture/
+│   ├── overview.md
+│   ├── thread-model.md
+│   ├── memory-model.md
+│   └── extension-points.md
+└── api/
+    └── (generated by Doxygen)
+```
+
+### README.md
+```markdown
+# fastlog ⚡
+
+High-performance structured logging for C++20.
+
+## Features
+- **Fast**: >10M logs/sec single-threaded
+- **Structured**: Key-value pairs, not strings
+- **Async**: Lock-free ring buffer, backpressure
+- **Zero-cost**: Compile-time level filtering
+- **Portable**: Linux, Windows, macOS
+
+## Quick Start
+```cpp
+#include <fastlog/logger.hpp>
+#include <fastlog/sinks/file_sink.hpp>
+
+int main() {
+    auto logger = fastlog::Logger::create("app")
+        .sink(std::make_shared<fastlog::FileSink>("app.log"))
+        .level(fastlog::Level::Info)
+        .build();
+
+    FASTLOG_INFO(logger, "Hello fastlog!", "version", "1.0.0");
+}
+```
+
+## Benchmarks
+| Scenario | Throughput |
+|----------|------------|
+| Sync (disabled) | 2.5B ops/sec |
+| Sync (enabled) | 15M logs/sec |
+| Async | 25M logs/sec |
+
+## Install
+```bash
+vcpkg install fastlog
+# or
+conan install fastlog/1.0@
+```
+
+## License
+MIT
+```
+
+---
+
+## 6. CI/CD Pipeline
+
+### GitHub Actions Full Pipeline
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        compiler: [gcc-12, gcc-13, clang-15, clang-16, msvc]
+        include:
+          - os: ubuntu-latest
+            compiler: gcc-12
+          - os: ubuntu-latest
+            compiler: clang-15
+          - os: windows-latest
+            compiler: msvc
+          - os: macos-latest
+            compiler: clang-16
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          # vcpkg / conan / apt / brew
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_SANITIZERS=ON -DBUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure -j4
+      - name: Integration tests
+        run: ctest --test-dir build -L integration --output-on-failure
+      - name: Fuzzing (nightly only)
+        if: github.event_name == 'schedule'
+        run: |
+          cmake -B build-fuzz -DSANITIZE_FUZZ=ON
+          cmake --build build-fuzz --target fuzz_formatter
+          ./build-fuzz/tests/fuzz/fuzz_formatter -max_total_time=300
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build docs
+        run: |
+          pip install doxygen m.css
+          doxygen Doxyfile
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/api/html
+
+  release:
+    needs: [build-test, docs]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+      - name: Publish to vcpkg/Conan
+        run: |
+          # vcpkg port submission / conan upload
+```
+
+---
+
+## 7. Packaging & Distribution
+
+### vcpkg Port
+```cmake
+# ports/fastlog/portfile.cmake
+vcpkg_from_git(
+    OUT_SOURCE_PATH SOURCE_PATH
+    REPO https://github.com/username/fastlog
+    REF v1.0.0
+    SHA512 <hash>
+)
+
+vcpkg_cmake_install(
+    SOURCE_PATH ${SOURCE_PATH}
+    OPTIONS
+        -DBUILD_TESTS=OFF
+        -DBUILD_EXAMPLES=OFF
+        -DBUILD_DOCS=OFF
+)
+```
+
+### Conan v2 Recipe
+```python
+# conanfile.py
+from conan import ConanFile
+from conan.tools.cmake import CMake, cmake_layout
+
+class FastlogConan(ConanFile):
+    name = "fastlog"
+    version = "1.0.0"
+    license = "MIT"
+    url = "https://github.com/username/fastlog"
+    settings = "os", "compiler", "build_type", "arch"
+    options = {
+        "shared": [True, False],
+        "fPIC": [True, False],
+        "async": [True, False],
+    }
+    default_options = {
+        "shared": False,
+        "fPIC": True,
+        "async": True,
+    }
+    exports_sources = "src/*", "include/*", "CMakeLists.txt", "cmake/*"
+
+    def layout(self):
+        cmake_layout(self)
+
+    def requirements(self):
+        self.requires("fmt/10.2.1")
+        if self.options.async:
+            self.requires("concurrentqueue/1.0.3")
+
+    def build(self):
+        cmake = CMake(self)
+        cmake.configure(variables={"BUILD_TESTS": False})
+        cmake.build()
+
+    def package(self):
+        cmake = CMake(self)
+        cmake.install()
+
+    def package_info(self):
+        self.cpp_info.libs = ["fastlog"]
+        if self.settings.os == "Linux":
+            self.cpp_info.system_libs = ["pthread", "dl"]
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Build the Library
+Создайте проект `fastlog` по спецификации выше. Реализуйте:
+- Header-only public API
+- Lock-free ring buffer
+- Async worker с backpressure
+- 3 sinks (file, stdout, rotating file)
+- 2 formatters (JSON, text)
+
+### Задание 2: Test Coverage
+Настройте тестирование:
+- Unit tests > 90% coverage (lcov/llvm-cov)
+- Property-based tests для форматтеров
+- Integration tests для полного pipeline
+- Fuzzing targets для парсеров/форматтеров
+- Запуск в CI на каждой PR
+
+### Задание 3: Benchmark Suite
+Напишите бенчмарки:
+- Sync vs async throughput
+- Latency percentiles (p50, p99, p999)
+- Memory allocation tracking
+- Scalability: 1..N threads
+- Regression detection в CI
+
+### Задание 4: Documentation
+Сгенерируйте:
+- API reference (Doxygen + современная тема)
+- Getting started guide
+- Architecture documentation
+- Migration guide
+- Примеры для всех фич
+
+### Задание 5: Release Automation
+Настройте:
+- Semantic versioning (Conventional Commits)
+- Автоматические changelog
+- GitHub Release с artifacts
+- Публикация в vcpkg / Conan Center Index
+- SBOM генерация
+
+### Задание 6: Production Hardening
+Добавьте в проект:
+- Structured logging для самого fastlog (dogfooding)
+- Health checks / metrics export (Prometheus)
+- Graceful shutdown с drain
+- Configuration validation
+- Security audit (sanitizers, fuzzing, static analysis)
+
+---
+
+## Итоговый чеклист проекта
+
+- [ ] CMake 3.20+ с modern targets
+- [ ] C++20 minimum, optional C++23 features
+- [ ] Header-only public API + compiled backend
+- [ ] Zero-cost disabled logging
+- [ ] Lock-free SPSC ring buffer
+- [ ] Async worker с backpressure policies
+- [ ] Multiple sinks + formatters
+- [ ] Unit tests (Catch2/GTest) > 90% coverage
+- [ ] Property-based tests (RapidCheck)
+- [ ] Fuzzing targets (libFuzzer)
+- [ ] Benchmarks (Google Benchmark) + CI regression
+- [ ] Documentation (Doxygen + guides)
+- [ ] CI/CD (GitHub Actions): Linux/Win/macOS × GCC/Clang/MSVC
+- [ ] Sanitizers в CI (ASan, UBSan, TSan)
+- [ ] Static analysis (clang-tidy, cppcheck)
+- [ ] Packaging: vcpkg, Conan, CMake Config
+- [ ] Semantic versioning, ABI stability policy
+- [ ] SBOM, reproducible builds
+- [ ] Examples для быстрого старта
+
+---
+
+## Полезные ресурсы для проекта
+- **Catch2** — https://github.com/catchorg/Catch2
+- **Google Benchmark** — https://github.com/google/benchmark
+- **RapidCheck** — https://github.com/emil-e/rapidcheck
+- **libFuzzer** — https://llvm.org/docs/LibFuzzer.html
+- **Doxygen + m.css** — https://mcss.mosra.cz/documentation/doxygen/
+- **GitHub Actions** — https://docs.github.com/en/actions
+- **vcpkg Ports** — https://github.com/microsoft/vcpkg/tree/master/ports
+- **Conan Center Index** — https://github.com/conan-io/conan-center-index
+- **Semantic Release** — https://github.com/semantic-release/semantic-release

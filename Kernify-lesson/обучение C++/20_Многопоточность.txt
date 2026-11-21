@@ -1,0 +1,584 @@
+# Урок 20: Многопоточность — std::thread, мьютексы, атомики, condition variables, data races
+
+## Цели урока
+- Создавать и управлять потоками через `std::thread`
+- Защищать общие данные с помощью мьютексов (`mutex`, `shared_mutex`, `scoped_lock`)
+- Использовать атомарные операции (`std::atomic`) для lock-free программирования
+- Синхронизировать потоки через `condition_variable` и `latch`/`barrier` (C++20)
+- Понимать data races, happens-before, memory order и избегать UB
+
+---
+
+## Теория
+
+### std::thread — базовое управление потоками
+
+```cpp
+#include <thread>
+#include <iostream>
+#include <vector>
+#include <chrono>
+
+void worker(int id, int iterations) {
+    for (int i = 0; i < iterations; ++i) {
+        std::cout << "Thread " << id << ": " << i << '\n';
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+void threadBasics() {
+    // Создание потока
+    std::thread t1(worker, 1, 5);           // функция + аргументы
+    std::thread t2([](int n) {              // лямбда
+        for (int i = 0; i < n; ++i) std::cout << "Lambda " << i << '\n';
+    }, 3);
+
+    // join — ждём завершения (ОБЯЗАТЕЛЬНО перед уничтожением thread объекта!)
+    t1.join();
+    t2.join();
+
+    // detach — поток живёт автономно (ОСТОРОЖНО: сложнее управлять жизнью)
+    // std::thread t3(worker, 3, 10); t3.detach();
+
+    // Перемещение (thread не копируется)
+    std::thread t4(worker, 4, 2);
+    std::thread t5 = std::move(t4);  // t4 больше не валиден
+    t5.join();
+
+    // hardware_concurrency — подсказка количества ядер
+    std::cout << "Hardware threads: " << std::thread::hardware_concurrency() << '\n';
+}
+```
+
+**Правила:**
+- `join()` или `detach()` **обязательно** перед выходом из области видимости `std::thread` — иначе `std::terminate`
+- Используйте RAII-обёртку для гарантии `join()`:
+
+```cpp
+class ThreadGuard {
+    std::thread& t_;
+public:
+    explicit ThreadGuard(std::thread& t) : t_(t) {}
+    ~ThreadGuard() { if (t_.joinable()) t_.join(); }
+    ThreadGuard(const ThreadGuard&) = delete;
+    ThreadGuard& operator=(const ThreadGuard&) = delete;
+};
+
+void safeThread() {
+    std::thread t(worker, 1, 5);
+    ThreadGuard g(t);  // гарантированный join при исключении
+}
+```
+
+---
+
+### Мьютексы (Mutual Exclusion)
+
+```cpp
+#include <mutex>
+#include <shared_mutex>
+#include <vector>
+
+class ThreadSafeVector {
+    std::vector<int> data_;
+    mutable std::mutex mtx_;  // mutable для const методов
+public:
+    void push_back(int value) {
+        std::lock_guard<std::mutex> lock(mtx_);  // RAII: unlock в деструкторе
+        data_.push_back(value);
+    }
+
+    // unique_lock — более гибкий (отложенная блокировка, передача владения)
+    bool try_pop(int& out) {
+        std::unique_lock<std::mutex> lock(mtx_, std::try_to_lock);
+        if (!lock.owns_lock() || data_.empty()) return false;
+        out = data_.back();
+        data_.pop_back();
+        return true;
+    }
+
+    // shared_mutex для читателей-писателей (C++17)
+    mutable std::shared_mutex rw_mtx_;
+    std::vector<int> read_data_;
+
+    void write(int v) {
+        std::unique_lock<std::shared_mutex> lock(rw_mtx_);  // эксклюзивный
+        read_data_.push_back(v);
+    }
+
+    std::vector<int> read_all() const {
+        std::shared_lock<std::shared_mutex> lock(rw_mtx_);  // разделяемый
+        return read_data_;
+    }
+};
+```
+
+**Типы блокировок:**
+| Класс | Заголовок | Особенности |
+|-------|-----------|-------------|
+| `std::mutex` | `<mutex>` | Базовый, нерекурсивный |
+| `std::recursive_mutex` | `<mutex>` | Тот же поток может заблокировать несколько раз |
+| `std::timed_mutex` | `<mutex>` | `try_lock_for`, `try_lock_until` |
+| `std::shared_mutex` | `<shared_mutex>` | C++17, читатели/писатели |
+| `std::shared_timed_mutex` | `<shared_mutex>` | + таймауты |
+
+**RAII-обёртки:**
+| Класс | Особенности |
+|-------|-------------|
+| `std::lock_guard<M>` | Простой, некопируемый, unlock в деструкторе |
+| `std::unique_lock<M>` | Гибкий: `defer_lock`, `try_to_lock`, `adopt_lock`, перемещаемый |
+| `std::shared_lock<M>` | Для `shared_mutex`, разделяемая блокировка |
+| `std::scoped_lock<M...>` | C++17, блокирует несколько мьютексов **без дедлоков** |
+
+```cpp
+// Безопасная блокировка нескольких мьютексов (C++17)
+std::mutex m1, m2;
+
+void safeLockBoth() {
+    std::scoped_lock lock(m1, m2);  // Атомарная блокировка обоих — никаких дедлоков
+    // работа с защищёнными ресурсами
+}
+
+// До C++17 — std::lock + adopt_lock
+void oldSafeLockBoth() {
+    std::unique_lock<std::mutex> l1(m1, std::defer_lock);
+    std::unique_lock<std::mutex> l2(m2, std::defer_lock);
+    std::lock(l1, l2);  // Атомарная блокировка
+    // работа
+}
+```
+
+---
+
+### std::atomic — атомарные операции
+
+```cpp
+#include <atomic>
+#include <thread>
+#include <vector>
+#include <iostream>
+
+void atomicDemo() {
+    std::atomic<int> counter{0};
+
+    // Атомарные операции
+    counter.store(42, std::memory_order_relaxed);
+    int x = counter.load(std::memory_order_relaxed);
+
+    counter.fetch_add(1, std::memory_order_acq_rel);  // ++counter
+    counter.fetch_sub(1, std::memory_order_acq_rel);  // --counter
+
+    // Compare-and-swap (CAS) — основа lock-free алгоритмов
+    int expected = 42;
+    bool swapped = counter.compare_exchange_strong(expected, 43);  // если == expected, то 43
+    // expected обновляется на текущее значение при неудаче
+
+    // weak версия — может spuriously fail (рекомендуется в циклах)
+    expected = 43;
+    while (!counter.compare_exchange_weak(expected, 44)) {
+        // expected обновлён, пробуем снова
+    }
+}
+```
+
+#### Memory Order (Порядок памяти)
+
+```cpp
+#include <atomic>
+#include <thread>
+#include <cassert>
+
+// memory_order_relaxed — только атомарность, никакого упорядочивания
+// memory_order_acquire — load: последующие чтения/записи не перемещаются ДО
+// memory_order_release — store: предыдущие чтения/записи не перемещаются ПОСЛЕ
+// memory_order_acq_rel — combine acquire + release (для RMW: fetch_add, CAS)
+// memory_order_seq_cst — последовательная согласованность (по умолчанию, самый сильный)
+
+// Пример: передача данных между потоками (message passing)
+std::atomic<int> data{0};
+std::atomic<bool> ready{false};
+
+void producer() {
+    data.store(42, std::memory_order_relaxed);     // 1. Пишем данные
+    ready.store(true, std::memory_order_release);  // 2. Публикуем (release)
+}
+
+void consumer() {
+    while (!ready.load(std::memory_order_acquire))  // 3. Ждём (acquire)
+        std::this_thread::yield();
+    assert(data.load(std::memory_order_relaxed) == 42);  // 4. Гарантированно видим 42
+}
+
+// Пример: reference counting (acq_rel для RMW)
+struct RefCounted {
+    std::atomic<int> refs{1};
+    void add_ref() { refs.fetch_add(1, std::memory_order_relaxed); }
+    bool release() {
+        // acq_rel: acquire для чтения текущего, release для публикации удаления
+        return refs.fetch_sub(1, std::memory_order_acq_rel) == 1;
+    }
+};
+```
+
+**Таблица memory_order:**
+| Order | Load | Store | RMW (fetch_add, CAS) | Использование |
+|-------|------|-------|---------------------|---------------|
+| `relaxed` | ✓ | ✓ | ✓ | Счётчики, статистика, независимые данные |
+| `acquire` | ✓ | | | Чтение флага готовности |
+| `release` | | ✓ | | Публикация данных |
+| `acq_rel` | | | ✓ | Инкремент/декремент refcount |
+| `seq_cst` | ✓ | ✓ | ✓ | По умолчанию, глобальный порядок |
+
+---
+
+### Condition Variables — ожидание событий
+
+```cpp
+#include <condition_variable>
+#include <mutex>
+#include <queue>
+#include <thread>
+#include <chrono>
+
+template<typename T>
+class ThreadSafeQueue {
+    std::queue<T> q_;
+    mutable std::mutex mtx_;
+    std::condition_variable cv_;
+public:
+    void push(T value) {
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            q_.push(std::move(value));
+        }
+        cv_.notify_one();  // Разбудить ОДИН ожидающий поток
+    }
+
+    // Блокирующее ожидание
+    T pop() {
+        std::unique_lock<std::mutex> lock(mtx_);
+        cv_.wait(lock, [this] { return !q_.empty(); });  // Разблокирует мьютекс, ждёт notify
+        T val = std::move(q_.front());
+        q_.pop();
+        return val;
+    }
+
+    // С таймаутом
+    bool try_pop_for(T& out, std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(mtx_);
+        if (!cv_.wait_for(lock, timeout, [this] { return !q_.empty(); }))
+            return false;
+        out = std::move(q_.front());
+        q_.pop();
+        return true;
+    }
+
+    // notify_all — разбудить ВСЕ (например, при shutdown)
+    void shutdown() {
+        std::lock_guard<std::mutex> lock(mtx_);
+        cv_.notify_all();
+    }
+};
+
+// Паттерн: Producer-Consumer
+void producerConsumerDemo() {
+    ThreadSafeQueue<int> queue;
+    bool done = false;
+
+    std::thread producer([&] {
+        for (int i = 0; i < 10; ++i) {
+            queue.push(i);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        done = true;
+    });
+
+    std::thread consumer([&] {
+        while (!done || !queue.empty()) {
+            int val;
+            if (queue.try_pop_for(val, std::chrono::milliseconds(100))) {
+                std::cout << "Consumed: " << val << '\n';
+            }
+        }
+    });
+
+    producer.join();
+    consumer.join();
+}
+```
+
+**Правила condition_variable:**
+- **Всегда** используйте `unique_lock` (не `lock_guard`)
+- **Всегда** используйте predicate в `wait`/`wait_for`/`wait_until` — защита от spurious wakeups
+- `notify_one()` — для очередей задач, `notify_all()` — для broadcast (shutdown, изменение глобального состояния)
+
+---
+
+### C++20: latch, barrier, semaphore
+
+```cpp
+#include <latch>
+#include <barrier>
+#include <semaphore>
+#include <thread>
+#include <vector>
+
+// std::latch — однократный счётчик (countdown)
+void latchDemo() {
+    std::latch start_gate(1);      // Ждём сигнал старта
+    std::latch done_gate(3);       // Ждём 3 потока
+
+    auto worker = [&](int id) {
+        start_gate.wait();         // Блокируемся до start
+        std::cout << "Worker " << id << " started\n";
+        done_gate.count_down();    // Сообщаем о завершении
+    };
+
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 3; ++i) threads.emplace_back(worker, i);
+
+    std::cout << "Starting...\n";
+    start_gate.count_down();       // Пускаем всех
+    done_gate.wait();              // Ждём всех
+    std::cout << "All done\n";
+
+    for (auto& t : threads) t.join();
+}
+
+// std::barrier — повторяющийся барьер (фазы)
+void barrierDemo() {
+    std::barrier sync_point(3, []() noexcept {
+        std::cout << "--- Phase complete ---\n";  // completion function
+    });
+
+    auto worker = [&](int id) {
+        for (int phase = 0; phase < 3; ++phase) {
+            std::cout << "Worker " << id << " phase " << phase << "\n";
+            sync_point.arrive_and_wait();  // Ждём остальных
+        }
+    };
+
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 3; ++i) threads.emplace_back(worker, i);
+    for (auto& t : threads) t.join();
+}
+
+// std::counting_semaphore — семафор (C++20)
+void semaphoreDemo() {
+    std::counting_semaphore<3> pool(3);  // Макс 3 одновременных
+    std::vector<std::thread> threads;
+
+    for (int i = 0; i < 10; ++i) {
+        threads.emplace_back([&, i] {
+            pool.acquire();  // Ждём слот
+            std::cout << "Task " << i << " running\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::cout << "Task " << i << " done\n";
+            pool.release();  // Освобождаем слот
+        });
+    }
+    for (auto& t : threads) t.join();
+}
+```
+
+---
+
+### Data Races и Happens-Before
+
+```cpp
+// DATA RACE = UB!
+// Два потока обращаются к одной памяти, хотя бы один пишет, нет синхронизации
+
+int data = 0;  // НЕ атомарный!
+std::atomic<bool> flag{false};
+
+void racyWriter() { data = 42; flag.store(true, std::memory_order_release); }
+void racyReader() { while(!flag.load(std::memory_order_acquire)); assert(data == 42); }  // UB: data race на data!
+
+// ИСПРАВЛЕНО: data тоже атомарный ИЛИ защищён мьютексом
+std::atomic<int> data_fixed{0};
+void fixedWriter() { data_fixed.store(42, std::memory_order_relaxed); flag.store(true, std::memory_order_release); }
+void fixedReader() { while(!flag.load(std::memory_order_acquire)); assert(data_fixed.load(std::memory_order_relaxed) == 42); }
+
+// Happens-before правила:
+// 1. sequenced-before: в одном потоке A до B => A happens-before B
+// 2. synchronizes-with: release store -> acquire load одной и той же атомарной
+// 3. transitive: A hb B и B hb C => A hb C
+// Если нет happens-before между записью и чтением — DATA RACE => UB
+```
+
+---
+
+### Thread-local storage
+
+```cpp
+#include <thread>
+#include <iostream>
+
+thread_local int tls_counter = 0;  // У каждого потока СВОЯ копия
+
+void tlsDemo() {
+    auto worker = [](int id) {
+        for (int i = 0; i < 3; ++i) {
+            std::cout << "Thread " << id << ": tls_counter = " << ++tls_counter << '\n';
+        }
+    };
+    std::thread t1(worker, 1);
+    std::thread t2(worker, 2);
+    t1.join(); t2.join();
+    // main thread имеет свой tls_counter = 0
+}
+```
+
+---
+
+### std::async и future/promise
+
+```cpp
+#include <future>
+#include <chrono>
+#include <iostream>
+
+int heavyComputation(int n) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    return n * n;
+}
+
+void futureDemo() {
+    // std::async — запуск асинхронно (может создать поток, может выполнить в вызывающем)
+    auto fut = std::async(std::launch::async, heavyComputation, 10);
+    // std::launch::async — гарантирует новый поток
+    // std::launch::deferred — лениво при get()
+    // default — реализация решает
+
+    std::cout << "Doing other work...\n";
+    int result = fut.get();  // Блокирует до готовности
+    std::cout << "Result: " << result << '\n';
+
+    // promise/future — ручное управление
+    std::promise<int> prom;
+    std::future<int> fut2 = prom.get_future();
+
+    std::thread t([p = std::move(prom)]() mutable {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        p.set_value(42);
+    });
+
+    std::cout << "Waiting...\n";
+    std::cout << "Value: " << fut2.get() << '\n';
+    t.join();
+
+    // shared_future — множественные ожидатели
+    std::shared_future<int> sf = std::async(std::launch::async, heavyComputation, 5).share();
+    std::thread t1([sf] { std::cout << "T1: " << sf.get() << '\n'; });
+    std::thread t2([sf] { std::cout << "T2: " << sf.get() << '\n'; });
+    t1.join(); t2.join();
+}
+```
+
+---
+
+### Параллельные алгоритмы (C++17/20)
+
+```cpp
+#include <algorithm>
+#include <execution>
+#include <vector>
+#include <numeric>
+#include <chrono>
+#include <iostream>
+
+void parallelAlgoDemo() {
+    std::vector<int> v(10'000'000);
+    std::iota(v.begin(), v.end(), 1);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    // Последовательно
+    long long sum1 = std::reduce(v.begin(), v.end(), 0LL);
+    auto t1 = std::chrono::high_resolution_clock::now() - start;
+
+    start = std::chrono::high_resolution_clock::now();
+    // Параллельно (требует TBB или поддержку компилятора)
+    long long sum2 = std::reduce(std::execution::par, v.begin(), v.end(), 0LL);
+    auto t2 = std::chrono::high_resolution_clock::now() - start;
+
+    start = std::chrono::high_resolution_clock::now();
+    // Параллельно + векторизация (SIMD)
+    long long sum3 = std::reduce(std::execution::par_unseq, v.begin(), v.end(), 0LL);
+    auto t3 = std::chrono::high_resolution_clock::now() - start;
+
+    std::cout << "Seq: " << t1.count()/1e6 << "ms, Par: " << t2.count()/1e6 << "ms, ParUnseq: " << t3.count()/1e6 << "ms\n";
+    // std::execution::par, par_unseq, seq, unseq
+}
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Thread-safe queue с condition_variable
+Реализуйте `BlockingQueue<T>` с методами:
+- `push(T)` — блокирует если полная (опционально, с capacity)
+- `pop()` — блокирует пока пуста
+- `try_pop(T&, timeout)` — с таймаутом
+- `size()`, `empty()` — thread-safe
+Протестируйте с 3 производителями и 2 потребителями.
+
+### Задание 2: Параллельный map-reduce
+Напишите функцию `parallel_map_reduce(Iterator first, Iterator last, MapFunc, ReduceFunc, Init)`,
+которая разбивает диапазон на части, обрабатывает в потоках (по `hardware_concurrency()`),
+и комбинирует результаты. Используйте `std::async` или пул потоков.
+
+### Задание 3: Lock-free stack (Treiber stack)
+Реализуйте lock-free стек на `std::atomic<Node*>` с CAS:
+```cpp
+template<typename T>
+class LockFreeStack {
+    struct Node { T value; Node* next; };
+    std::atomic<Node*> head_;
+public:
+    void push(T v);
+    bool pop(T& out);
+};
+```
+Протестируйте на нескольких потоках, сравните производительность с mutex-версией.
+
+### Задание 4: Pipeline с латчами/барьерами (C++20)
+Создайте конвейер из 3 этапов: читатель -> обработчик -> писатель.
+Используйте `std::latch` для синхронизации старта и `std::barrier` для синхронизации фаз.
+Каждый этап в своём потоке, данные передаются через thread-safe очереди.
+
+### Задание 5: Поиск data races с TSan
+Напишите программу с 5 намеренными data races:
+1. Два потока инкрементят `int` без атомарности
+2. Один пишет `vector`, другой читает `size()`
+3. `shared_ptr` копируется в двух потоках без синхронизации
+4. `lazy initialization` без `call_once` / atomic
+5. Publication через `bool` флаг без memory_order
+Скомпилируйте с `-fsanitize=thread`, найдите и исправьте все.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `std::terminate` при выходе | `std::thread` деструктор без `join`/`detach` | RAII guard / всегда `join()` |
+| Дедлок | Два мьютекса захвачены в разном порядке | `std::scoped_lock` / всегда один порядок |
+| Data race | Доступ к shared data без синхронизации | `mutex` / `atomic` / `thread_local` |
+| Spurious wakeup | `cv.wait()` без predicate | Всегда `cv.wait(lock, predicate)` |
+| Утечка потоков | `detach()` + выход из main | Использовать `join()` / thread pool |
+| Производительность мьютекса | Конкуренция на горячем мьютексе | `shared_mutex` / `atomic` / lock-free / sharding |
+| ABA проблема в CAS | Указатель переиспользован | `std::shared_ptr` / tagged pointer / hazard pointers |
+| `memory_order_relaxed` там, где нужен acquire/release | Нарушение happens-before | Понять memory model, использовать seq_cst если сомневаетесь |
+
+---
+
+## Ресурсы
+- [cppreference: Thread support](https://en.cppreference.com/w/cpp/thread)
+- [C++ Core Guidelines: CP](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#cp-concurrency-and-parallelism)
+- **Книга:** Williams "C++ Concurrency in Action" (2nd ed, C++17/20)
+- **Книга:** Meyers "Effective Modern C++", Items 35-42
+- **CppCon:** "C++20 Concurrency: Latches, Barriers, and Semaphores" (Bryce Adelstein Lelbach)
+- **CppCon:** "Lock-Free Programming" (Fedor Pikus)
+- **Herb Sutter:** "atomic<> Weapons" (видео, 2 части)

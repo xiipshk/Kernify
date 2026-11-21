@@ -1,0 +1,619 @@
+# Урок 10: Проект начального уровня — Landing Page с полным адаптивом
+
+## Цели проекта
+- Закрепить все навыки уроков 1-9 в одном полном проекте
+- Построить современную Landing Page: Hero, Features, Testimonials, Pricing, Footer
+- Применить: CSS Variables, Fluid Typography, Flexbox, Grid, Container Queries
+- Сделать полностью доступный, производительный, кроссбраузерный код
+- Написать чистый, поддерживаемый CSS по методологии БЭМ
+
+---
+
+## 1. Техническое задание
+
+### Структура страницы
+```
+┌─────────────────────────────────────┐
+│ HEADER (sticky)                     │
+│  Logo | Nav Links | CTA Button      │
+├─────────────────────────────────────┤
+│ HERO                                │
+│  h1 + p + Primary CTA + Secondary  │
+│  Background: gradient + pattern     │
+├─────────────────────────────────────┤
+│ FEATURES (Grid 3→2→1)               │
+│  6 карточек: icon + h3 + p          │
+├─────────────────────────────────────┤
+│ TESTIMONIALS (Slider/Grid)          │
+│  3 карточки: avatar + quote + author│
+├─────────────────────────────────────┤
+│ PRICING (Grid 3→1)                  │
+│  3 тарифа: name + price + features  │
+├─────────────────────────────────────┤
+│ CTA SECTION                         │
+│  h2 + p + Button                    │
+├─────────────────────────────────────┤
+│ FOOTER                              │
+│  Logo + Links columns + Copyright   │
+└─────────────────────────────────────┘
+```
+
+### Требования
+| Критерий | Требование |
+|----------|------------|
+| Адаптивность | 320px – 1920px+, mobile-first |
+| Типографика | Fluid clamp(), 6 шагов |
+| Цвета | OKLCH палитра, dark mode |
+| Layout | Flexbox (header, cards), Grid (sections) |
+| Контейнеры | Container Queries для карточек |
+| Изображения | srcset/sizes, WebP/AVIF, lazy loading |
+| Доступность | WCAG AA, focus-visible, prefers-reduced-motion |
+| Производительность | LCP < 2.5s, CLS < 0.1, нет layout shifts |
+| БЭМ | Блоки: header, hero, features, testimonials, pricing, footer |
+
+---
+
+## 2. Архитектура CSS (Cascade Layers)
+
+```css
+/* 0. Layer Order — в самом начале */
+@layer reset, tokens, base, layout, components, utilities, overrides;
+
+/* 1. Reset */
+@layer reset {
+  *, *::before, *::after { box-sizing: border-box; }
+  * { margin: 0; padding: 0; }
+  img, picture, video, canvas, svg { display: block; max-width: 100%; }
+  input, button, textarea, select { font: inherit; }
+  a { color: inherit; text-decoration: none; }
+  ul, ol { list-style: none; }
+}
+
+/* 2. Design Tokens */
+@layer tokens {
+  :root {
+    /* Primitive - OKLCH */
+    --color-blue-500: oklch(0.62 0.22 264);
+    --color-blue-600: oklch(0.55 0.22 264);
+    --color-slate-900: oklch(0.21 0.006 285);
+    --color-slate-50: oklch(0.98 0.001 285);
+    /* ... полная палитра */
+
+    /* Semantic */
+    --color-primary: var(--color-blue-600);
+    --color-primary-hover: var(--color-blue-700);
+    --color-bg: var(--color-slate-50);
+    --color-text: var(--color-slate-900);
+    --color-border: oklch(0.88 0.006 285);
+
+    /* Fluid spacing */
+    --space-xs: clamp(0.25rem, 0.5vw, 0.5rem);
+    --space-sm: clamp(0.5rem, 1vw, 1rem);
+    --space-md: clamp(1rem, 2vw, 1.5rem);
+    --space-lg: clamp(1.5rem, 3vw, 3rem);
+    --space-xl: clamp(3rem, 5vw, 6rem);
+
+    /* Fluid typography */
+    --fs-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
+    --fs-sm: clamp(0.875rem, 0.8rem + 0.375vw, 1rem);
+    --fs-base: clamp(1rem, 0.9rem + 0.5vw, 1.125rem);
+    --fs-lg: clamp(1.125rem, 1rem + 0.625vw, 1.25rem);
+    --fs-xl: clamp(1.25rem, 1.1rem + 0.75vw, 1.5rem);
+    --fs-2xl: clamp(1.5rem, 1.25rem + 1.25vw, 2rem);
+    --fs-3xl: clamp(2rem, 1.5rem + 2.5vw, 3rem);
+    --fs-4xl: clamp(2.5rem, 2rem + 3vw, 4rem);
+
+    /* Container */
+    --container-max: 1200px;
+    --container-padding: clamp(1rem, 3vw, 2rem);
+    --radius: 0.5rem;
+    --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg: var(--color-slate-950);
+      --color-text: var(--color-slate-50);
+      --color-border: oklch(0.28 0.006 285);
+    }
+  }
+}
+
+/* 3. Base */
+@layer base {
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: var(--fs-base);
+    line-height: 1.6;
+    color: var(--color-text);
+    background: var(--color-bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-primary);
+    color: white;
+  }
+}
+
+/* 4. Layout */
+@layer layout {
+  .container {
+    width: 100%;
+    max-inline-size: var(--container-max);
+    margin-inline: auto;
+    padding-inline: var(--container-padding);
+  }
+
+  .section {
+    padding-block: var(--space-xl);
+  }
+
+  .grid {
+    display: grid;
+    gap: var(--space-lg);
+  }
+
+  .grid-2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .grid-3 { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+  .grid-4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+}
+
+/* 5. Components */
+@layer components {
+  /* Button */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-lg);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    border-radius: var(--radius);
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+
+  .btn--primary {
+    background: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+  }
+  .btn--primary:hover { background: var(--color-primary-hover); }
+  .btn--primary:active { transform: scale(0.98); }
+
+  .btn--secondary {
+    background: transparent;
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+  .btn--secondary:hover { background: var(--color-primary); color: white; }
+
+  .btn--ghost {
+    background: transparent;
+    color: var(--color-text);
+    border-color: transparent;
+  }
+  .btn--ghost:hover { background: var(--color-border); }
+
+  /* Card */
+  .card {
+    container-type: inline-size;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: calc(var(--radius) * 2);
+    padding: var(--space-lg);
+    transition: box-shadow 0.2s, transform 0.2s;
+  }
+  .card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+  }
+
+  @container (max-width: 350px) {
+    .card { padding: var(--space-md); }
+  }
+
+  /* Header */
+  .header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .header__inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    height: 64px;
+  }
+
+  .nav { display: none; gap: var(--space-lg); }
+  @media (min-width: 768px) { .nav { display: flex; } }
+
+  .nav__link {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--color-text);
+    transition: color 0.2s;
+  }
+  .nav__link:hover { color: var(--color-primary); }
+
+  /* Hero */
+  .hero {
+    position: relative;
+    padding-block: var(--space-xl);
+    overflow: hidden;
+  }
+
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(in oklch, var(--color-primary), color-mix(in oklch, var(--color-primary), transparent 80%));
+    opacity: 0.05;
+    pointer-events: none;
+  }
+
+  .hero__content {
+    position: relative;
+    max-inline-size: 800px;
+    text-align: center;
+    margin-inline: auto;
+  }
+
+  .hero__title { font-size: var(--fs-4xl); font-weight: 800; line-height: 1.1; margin-bottom: var(--space-md); }
+  .hero__text { font-size: var(--fs-lg); color: var(--color-text); opacity: 0.8; margin-bottom: var(--space-lg); max-inline-size: 60ch; margin-inline: auto; }
+  .hero__actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); justify-content: center; }
+
+  /* Features */
+  .features { background: var(--color-bg); }
+  .feature {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+  .feature__icon {
+    width: 48px; height: 48px;
+    display: flex; align-items: center; justify-content: center;
+    background: color-mix(in oklch, var(--color-primary), white 90%);
+    color: var(--color-primary);
+    border-radius: var(--radius);
+  }
+  .feature__title { font-size: var(--fs-xl); font-weight: 700; }
+  .feature__text { font-size: var(--fs-base); opacity: 0.7; }
+
+  /* Testimonials */
+  .testimonials { background: color-mix(in oklch, var(--color-primary), white 95%); }
+  .testimonial {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding: var(--space-lg);
+    background: var(--color-bg);
+    border-radius: calc(var(--radius) * 2);
+    border: 1px solid var(--color-border);
+  }
+  .testimonial__quote { font-size: var(--fs-lg); line-height: 1.6; }
+  .testimonial__author { display: flex; align-items: center; gap: var(--space-sm); }
+  .testimonial__avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
+  .testimonial__name { font-weight: 600; }
+  .testimonial__role { font-size: var(--fs-sm); opacity: 0.6; }
+
+  /* Pricing */
+  .pricing { }
+  .pricing__card {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-xl);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: calc(var(--radius) * 2);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .pricing__card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-lg); }
+  .pricing__card--popular { border-color: var(--color-primary); position: relative; }
+  .pricing__card--popular::before {
+    content: "Popular";
+    position: absolute;
+    top: -12px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--color-primary);
+    color: white;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .pricing__name { font-size: var(--fs-lg); font-weight: 600; margin-bottom: var(--space-xs); }
+  .pricing__price { font-size: var(--fs-4xl); font-weight: 800; margin-bottom: var(--space-lg); }
+  .pricing__period { font-size: var(--fs-base); opacity: 0.6; }
+  .pricing__features { display: flex; flex-direction: column; gap: var(--space-sm); margin-bottom: var(--space-lg); flex: 1; }
+  .pricing__feature { display: flex; align-items: flex-start; gap: var(--space-sm); font-size: var(--fs-sm); }
+  .pricing__feature::before { content: "✓"; color: var(--color-primary); font-weight: 700; flex-shrink: 0; }
+
+  /* CTA Section */
+  .cta { background: var(--color-primary); color: white; text-align: center; }
+  .cta__title { font-size: var(--fs-3xl); font-weight: 800; margin-bottom: var(--space-sm); }
+  .cta__text { font-size: var(--fs-lg); opacity: 0.9; margin-bottom: var(--space-lg); max-inline-size: 50ch; margin-inline: auto; }
+  .cta .btn--secondary { border-color: white; color: white; }
+  .cta .btn--secondary:hover { background: white; color: var(--color-primary); }
+
+  /* Footer */
+  .footer {
+    background: var(--color-slate-900);
+    color: var(--color-slate-50);
+    padding-block: var(--space-xl);
+  }
+  .footer__grid { display: grid; gap: var(--space-lg); grid-template-columns: 1fr; }
+  @media (min-width: 640px) { .footer__grid { grid-template-columns: 2fr repeat(3, 1fr); } }
+  .footer__brand { grid-column: 1 / -1; }
+  @media (min-width: 640px) { .footer__brand { grid-column: 1; } }
+  .footer__logo { font-size: var(--fs-xl); font-weight: 800; color: white; margin-bottom: var(--space-sm); }
+  .footer__tagline { font-size: var(--fs-sm); opacity: 0.7; }
+  .footer__title { font-size: var(--fs-sm); font-weight: 600; color: white; margin-bottom: var(--space-sm); }
+  .footer__links { display: flex; flex-direction: column; gap: var(--space-xs); }
+  .footer__link { font-size: var(--fs-sm); opacity: 0.7; transition: opacity 0.2s; }
+  .footer__link:hover { opacity: 1; }
+  .footer__bottom { margin-top: var(--space-xl); padding-top: var(--space-lg); border-top: 1px solid var(--color-border); text-align: center; font-size: var(--fs-xs); opacity: 0.5; }
+}
+
+/* 6. Utilities */
+@layer utilities {
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  .text-center { text-align: center; }
+  .flex { display: flex; }
+  .gap-sm { gap: var(--space-sm); }
+  .gap-md { gap: var(--space-md); }
+  .gap-lg { gap: var(--space-lg); }
+}
+
+/* 7. Overrides — page-specific fixes */
+@layer overrides {
+  /* Пусто для проекта, для демо */
+}
+```
+
+---
+
+## 3. HTML структура (ключевые фрагменты)
+
+```html
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Modern landing page built with CSS">
+  <title>Landing Page | CSS Course Project</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="header" role="banner">
+    <div class="container header__inner">
+      <a href="/" class="header__logo" aria-label="Home">Logo</a>
+      <nav class="nav" role="navigation" aria-label="Main navigation">
+        <a href="#features" class="nav__link">Features</a>
+        <a href="#testimonials" class="nav__link">Testimonials</a>
+        <a href="#pricing" class="nav__link">Pricing</a>
+      </nav>
+      <a href="#pricing" class="btn btn--primary">Get Started</a>
+      <button class="header__menu" aria-label="Menu" aria-expanded="false" aria-controls="mobile-menu">☰</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="container hero__content">
+        <h1 id="hero-title" class="hero__title">Build better products faster</h1>
+        <p class="hero__text">Modern CSS tools and techniques to create stunning, performant, accessible interfaces.</p>
+        <div class="hero__actions">
+          <a href="#pricing" class="btn btn--primary">Start Free Trial</a>
+          <a href="#features" class="btn btn--secondary">Learn More</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="section features" aria-labelledby="features-title">
+      <div class="container">
+        <header class="section__header">
+          <h2 id="features-title" class="section__title">Features</h2>
+          <p class="section__text">Everything you need to build modern interfaces</p>
+        </header>
+        <div class="grid grid-3">
+          <article class="card feature">
+            <div class="feature__icon" aria-hidden="true"><svg>...</svg></div>
+            <h3 class="feature__title">Fluid Typography</h3>
+            <p class="feature__text">Clamp-based fluid type scales that adapt smoothly across all viewports.</p>
+          </article>
+          <!-- 5 more features -->
+        </div>
+      </div>
+    </section>
+
+    <section id="testimonials" class="section testimonials" aria-labelledby="testimonials-title">
+      <div class="container">
+        <header class="section__header">
+          <h2 id="testimonials-title" class="section__title">Loved by developers</h2>
+        </header>
+        <div class="grid grid-3">
+          <article class="card testimonial">
+            <blockquote class="testimonial__quote">"This course changed how I write CSS."</blockquote>
+            <footer class="testimonial__author">
+              <img src="avatar.jpg" alt="" class="testimonial__avatar" loading="lazy">
+              <div>
+                <cite class="testimonial__name">Alex Chen</cite>
+                <p class="testimonial__role">Senior Frontend Engineer</p>
+              </div>
+            </footer>
+          </article>
+          <!-- 2 more -->
+        </div>
+      </div>
+    </section>
+
+    <section id="pricing" class="section pricing" aria-labelledby="pricing-title">
+      <div class="container">
+        <header class="section__header">
+          <h2 id="pricing-title" class="section__title">Simple, transparent pricing</h2>
+        </header>
+        <div class="grid grid-3">
+          <article class="card pricing__card">
+            <header>
+              <h3 class="pricing__name">Starter</h3>
+              <div class="pricing__price">$0<span class="pricing__period">/month</span></div>
+            </header>
+            <ul class="pricing__features">
+              <li class="pricing__feature">Up to 5 projects</li>
+              <li class="pricing__feature">Community support</li>
+              <li class="pricing__feature">Basic analytics</li>
+            </ul>
+            <button class="btn btn--secondary">Get Started</button>
+          </article>
+          <article class="card pricing__card pricing__card--popular">
+            <!-- Pro tier -->
+          </article>
+          <article class="card pricing__card">
+            <!-- Enterprise tier -->
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section cta" aria-labelledby="cta-title">
+      <div class="container">
+        <h2 id="cta-title" class="cta__title">Ready to level up your CSS?</h2>
+        <p class="cta__text">Join 10,000+ developers who have mastered modern CSS.</p>
+        <a href="#pricing" class="btn btn--secondary">Start Learning</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer" role="contentinfo">
+    <div class="container footer__grid">
+      <div class="footer__brand">
+        <p class="footer__logo">Logo</p>
+        <p class="footer__tagline">Modern CSS for modern developers.</p>
+      </div>
+      <nav class="footer__nav" aria-label="Product">
+        <h3 class="footer__title">Product</h3>
+        <ul class="footer__links">
+          <li><a href="#" class="footer__link">Features</a></li>
+          <li><a href="#" class="footer__link">Pricing</a></li>
+          <li><a href="#" class="footer__link">Changelog</a></li>
+        </ul>
+      </nav>
+      <nav class="footer__nav" aria-label="Company">
+        <h3 class="footer__title">Company</h3>
+        <ul class="footer__links">
+          <li><a href="#" class="footer__link">About</a></li>
+          <li><a href="#" class="footer__link">Blog</a></li>
+          <li><a href="#" class="footer__link">Careers</a></li>
+        </ul>
+      </nav>
+      <nav class="footer__nav" aria-label="Legal">
+        <h3 class="footer__title">Legal</h3>
+        <ul class="footer__links">
+          <li><a href="#" class="footer__link">Privacy</a></li>
+          <li><a href="#" class="footer__link">Terms</a></li>
+          <li><a href="#" class="footer__link">Cookie Policy</a></li>
+        </ul>
+      </nav>
+      <div class="footer__bottom">
+        <p>&copy; 2024 CSS Course. Built with modern CSS.</p>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
+```
+
+---
+
+## 4. Чек-лист качества (Definition of Done)
+
+### HTML
+- [ ] Семантические теги (header, main, section, article, footer, nav)
+- [ ] ARIA labels где нужно (aria-label, aria-labelledby, aria-expanded)
+- [ ] Alt тексты для всех изображений (пустые для декоративных)
+- [ ] loading="lazy" для below-the-fold, eager для LCP
+- [ ] width/height на всех img для предотвращения CLS
+
+### CSS
+- [ ] Cascade Layers в правильном порядке
+- [ ] OKLCH цвета с color-mix() для вариаций
+- [ ] Fluid typography clamp() на всех размерах
+- [ ] Fluid spacing clamp() на всех отступах
+- [ ] Container Queries для карточек
+- [ ] Grid auto-fit/minmax для responsive сеток
+- [ ] Flexbox для 1D layout (header, card innards)
+- [ ] Logical properties (margin-inline, padding-block)
+- [ ] Focus-visible стили на всех интерактивных
+- [ ] prefers-reduced-motion поддержка
+- [ ] prefers-color-scheme dark mode
+- [ ] forced-colors поддержка (transparent borders → currentColor)
+
+### Производительность
+- [ ] Критический CSS инлайн или предзагружен
+- [ ] Шрифты: font-display: swap, subset, preload
+- [ ] Изображения: WebP/AVIF, правильные размеры, srcset
+- [ ] Нет layout shifts (CLS = 0)
+- [ ] LCP элемент (hero h1) без задержек
+
+### Кодстайл
+- [ ] БЭМ нейминг: block__element--modifier
+- [ ] CSS переменные для всех повторяющихся значений
+- [ ] Комментарии к секциям
+- [ ] Нет !important (кроме utilities с комментарием)
+- [ ] Нет ID селекторов для стилей
+
+---
+
+## 5. Расширения (Bonus Tasks)
+
+1. **Анимации**: IntersectionObserver для fade-in секций
+2. **Theme Toggle**: JS переключатель light/dark с сохранением в localStorage
+3. **Mobile Menu**: Анимированное мобильное меню с focus trap
+4. **Pricing Toggle**: Monthly/Yearly переключатель с анимацией цен
+5. **Testimonials Slider**: Swiper или нативный scroll-snap carousel
+6. **Analytics**: Web Vitals измерение (LCP, CLS, FID/INP)
+7. **PWA**: manifest.json, service worker для офлайн
+
+---
+
+## 6. Ключевые выводы проекта
+
+1. **Архитектура важнее кода** — Cascade Layers, токены, утилиты дают масштабируемость.
+2. **Fluid-first подход** — clamp(), auto-fit, cqw убирают 80% медиа-запросов.
+3. **Container Queries** — компоненты становятся真正 reusable.
+4. **Доступность не опциональна** — focus-visible, reduced-motion, contrast — база.
+5. **Производительность = UX** — правильные изображения, шрифты, нет CLS.
+6. **БЭМ + Layers** = легко читать, легко менять, легко отдавать команде.
+
+---
+
+*Следующий урок: 12_Advanced_Flex_Grid.txt — Продвинутые техники Flexbox и Grid: subgrid, masonry, container queries, анимации layout*

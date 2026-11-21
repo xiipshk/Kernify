@@ -1,0 +1,290 @@
+# Урок 13: Move Semantics — семантика перемещения
+
+## Цели урока
+- Понять разницу между lvalue и rvalue
+- Освоить `std::move` и `std::forward`
+- Реализовать перемещающие конструкторы и присваивание
+- Понять perfect forwarding и universal references
+- Избегать лишних копирований и знать про RVO/NRVO
+
+---
+
+## Теория
+
+### Value Categories (Категории значений)
+
+```cpp
+int x = 42;           // x — lvalue (имеет имя, адрес, живёт до конца области)
+int& ref = x;         // lvalue reference
+int&& rref = 42;      // rvalue reference к временному (продлевает жизнь)
+int&& rref2 = std::move(x); // xvalue — "eXpiring" value
+
+// Классификация (C++11):
+// glvalue (generalized lvalue) = lvalue + xvalue
+// rvalue = prvalue + xvalue
+// prvalue (pure rvalue) — временные, литералы: 42, std::string("hi"), Foo()
+// xvalue (eXpiring value) — результат std::move, T&& функции
+```
+
+| Категория | Пример | Можно перемещать? |
+|-----------|--------|-------------------|
+| lvalue | `x`, `*ptr`, `arr[i]`, `func()` (возвращает `T&`) | Нет (нужен `std::move`) |
+| prvalue | `42`, `Foo()`, `std::string("hi")`, лямбда | Да (неявно) |
+| xvalue | `std::move(x)`, `static_cast<T&&>(x)`, `func()` (возвращает `T&&`) | Да |
+
+### `std::move` — приведение к rvalue reference
+```cpp
+#include <utility>
+#include <string>
+#include <vector>
+
+void moveDemo() {
+    std::string s1 = "hello";
+    std::string s2 = std::move(s1);  // s1 теперь в "valid but unspecified state"
+
+    std::vector<int> v1 = {1,2,3,4,5};
+    std::vector<int> v2 = std::move(v1); // v1 пуст, v2 захватил буфер
+
+    // Важно: std::move НЕ перемещает! Это просто static_cast<T&&>
+    // Перемещение происходит в перемещающем конструкторе/операторе
+}
+```
+
+### Перемещающий конструктор и присваивание
+```cpp
+#include <algorithm>
+#include <cstring>
+#include <iostream>
+
+class Buffer {
+    char* data_;
+    size_t size_;
+public:
+    // Обычный конструктор
+    Buffer(size_t n = 0) : data_(n ? new char[n] : nullptr), size_(n) {
+        std::cout << "Ctor " << size_ << '\n';
+    }
+
+    // Деструктор
+    ~Buffer() {
+        std::cout << "Dtor " << size_ << '\n';
+        delete[] data_;
+    }
+
+    // Копирование (глубокое)
+    Buffer(const Buffer& other) : data_(other.size_ ? new char[other.size_] : nullptr), size_(other.size_) {
+        std::copy(other.data_, other.data_ + size_, data_);
+        std::cout << "Copy ctor " << size_ << '\n';
+    }
+    Buffer& operator=(const Buffer& other) {
+        if (this != &other) {
+            char* newData = other.size_ ? new char[other.size_] : nullptr;
+            std::copy(other.data_, other.data_ + other.size_, newData);
+            delete[] data_;
+            data_ = newData;
+            size_ = other.size_;
+        }
+        return *this;
+    }
+
+    // ПЕРЕМЕЩЕНИЕ (noexcept — критично для STL контейнеров!)
+    Buffer(Buffer&& other) noexcept : data_(other.data_), size_(other.size_) {
+        other.data_ = nullptr;
+        other.size_ = 0;
+        std::cout << "Move ctor " << size_ << '\n';
+    }
+    Buffer& operator=(Buffer&& other) noexcept {
+        if (this != &other) {
+            delete[] data_;
+            data_ = other.data_;
+            size_ = other.size_;
+            other.data_ = nullptr;
+            other.size_ = 0;
+        }
+        return *this;
+    }
+
+    size_t size() const { return size_; }
+    char* data() { return data_; }
+};
+
+void moveCtorDemo() {
+    Buffer b1(1000);
+    Buffer b2 = std::move(b1);      // Move ctor
+    Buffer b3(2000);
+    b3 = std::move(b2);             // Move assignment
+}
+```
+
+### Правила хорошего перемещения
+1. **`noexcept`** — обязательно для перемещения в STL (vector реаллоцирует через move только если noexcept)
+2. **Оставить объект в валидном состоянии** — обычно `nullptr`/`0`/пустой контейнер
+3. **Не вызывать `std::move` на `const` объектах** — вызовет копирование
+4. **Не использовать `std::move` на lvalue, если планируете его ещё использовать**
+
+```cpp
+// Правило: noexcept по умолчанию для move
+class Good {
+    std::vector<int> v_;
+public:
+    Good(Good&&) noexcept = default;           // OK
+    Good& operator=(Good&&) noexcept = default; // OK
+};
+
+// Плохо: нет noexcept — vector будет копировать при реаллокации
+class Bad {
+    std::vector<int> v_;
+public:
+    Bad(Bad&&) { } // нет noexcept!
+};
+```
+
+### Perfect Forwarding и Universal References
+
+```cpp
+#include <utility>
+#include <iostream>
+#include <memory>
+
+// Universal reference (T&& в шаблоне с type deduction)
+template<typename T>
+void wrapper(T&& arg) {          // T&& — forwarding reference
+    process(std::forward<T>(arg)); // Сохраняет value category
+}
+
+void process(int& x) { std::cout << "lvalue: " << x << '\n'; }
+void process(int&& x) { std::cout << "rvalue: " << x << '\n'; }
+
+void forwardingDemo() {
+    int x = 10;
+    wrapper(x);        // T = int&, arg = int&, forward -> lvalue
+    wrapper(20);       // T = int, arg = int&&, forward -> rvalue
+    wrapper(std::move(x)); // T = int, arg = int&&, forward -> rvalue
+}
+
+// Реальный пример: фабрика с perfect forwarding
+template<typename T, typename... Args>
+std::unique_ptr<T> make_unique_custom(Args&&... args) {
+    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+}
+
+// std::forward работает так:
+// static_cast<T&&>(arg) если T не ссылка
+// arg (как lvalue) если T = U&
+```
+
+### Reference Collapsing Rules (Свёртывание ссылок)
+```
+T&  &  -> T&
+T&  && -> T&
+T&& &  -> T&
+T&& && -> T&&
+```
+Поэтому `T&&` в шаблоне становится:
+- `U&` если передан lvalue (T выводится как `U&`)
+- `U&&` если передан rvalue (T выводится как `U`)
+
+### RVO / NRVO / Copy Elision (C++17 гарантированное)
+```cpp
+#include <iostream>
+
+struct Noisy {
+    Noisy() { std::cout << "Default\n"; }
+    Noisy(const Noisy&) { std::cout << "Copy\n"; }
+    Noisy(Noisy&&) noexcept { std::cout << "Move\n"; }
+    ~Noisy() { std::cout << "Dtor\n"; }
+};
+
+// C++17: гарантированное copy elision (prvalue материализуется сразу в цель)
+Noisy make() {
+    return Noisy(); // Ни копирования, ни перемещения — прямой конструктор в возвращаемое значение
+}
+
+// NRVO (Named RVO) — оптимизация, не гарантированная
+Noisy makeNamed() {
+    Noisy n;
+    return n; // Компилятор МОЖЕТ сконструировать сразу в возвращаемое значение
+}
+
+void rvoDemo() {
+    Noisy n1 = make();        // 1 Default, 1 Dtor (C++17 гарантирует)
+    Noisy n2 = makeNamed();   // Обычно 1 Default, 1 Dtor (NRVO)
+}
+```
+
+### `std::forward` vs `std::move`
+```cpp
+// std::move — безусловное приведение к rvalue
+// std::forward — условное (зависит от шаблонного параметра)
+
+template<typename T>
+void setValue(T&& val) {
+    // ПЛОХО: всегда перемещает, даже если передан lvalue
+    // member_ = std::move(val);
+
+    // ХОРОШО: сохраняет категорию значения
+    member_ = std::forward<T>(val);
+}
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Реализация `Optional<T>` с move semantics
+Создайте класс `MyOptional<T>` с:
+- Хранением `aligned_storage` + флаг `has_value_`
+- Конструктором по умолчанию, от `T`, от `T&&`
+- Перемещающим конструктором/присваиванием (правильно перемещать contained value)
+- `value()`, `value_or()`, `reset()`, `emplace()`
+- `noexcept` спецификаторами, соответствующими `T`
+
+### Задание 2: Benchmark копирования vs перемещения
+Напишите программу, замеряющую время:
+- Копирования `std::vector<int>(1'000'000)`
+- Перемещения того же вектора
+- Копирования `std::string` с длинным текстом (SSO vs heap)
+Используйте `std::chrono::high_resolution_clock`.
+
+### Задание 3: Perfect forwarding factory
+Реализуйте шаблонную функцию `create<T>(Args&&... args)`, которая:
+- Принимает аргументы через universal reference
+- Перенаправляет их в конструктор `T` через `std::forward`
+- Возвращает `std::unique_ptr<T>`
+Протестируйте с классом, имеющим конструкторы: `Foo(int)`, `Foo(int, double)`, `Foo(const std::string&)`, `Foo(std::string&&)`.
+
+### Задание 4: Move-only тип
+Создайте класс `UniqueResource`, который:
+- Не копируем (deleted copy ctor/assign)
+- Перемещаем (move ctor/assign noexcept)
+- Владеет `int* data_` (выделен в конструкторе, удалён в деструкторе)
+- Имеет метод `use()`
+Поместите в `std::vector<UniqueResource>`, добавьте 3 элемента через `emplace_back`, наблюдайте за отсутствием копирований.
+
+### Задание 5: Анализ value category
+Напишите функцию `printCategory(auto&& x)`, которая выводит:
+- "lvalue" если передан lvalue
+- "prvalue" если передан prvalue
+- "xvalue" если передан xvalue
+Используйте `std::is_lvalue_reference_v<decltype(x)>` и проверку на `std::is_rvalue_reference_v`.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `std::move` на `const T&` | `const T&&` не биндится на move ctor | Не делайте `const` если нужен move |
+| Нет `noexcept` на move | STL использует копирование при реаллокации | Всегда `noexcept` для move операций |
+| `std::forward` без шаблона | Не работает в нешаблонных функциях | Используйте только в шаблонах с `T&&` |
+| Двойное `std::move` | `std::move(std::move(x))` | Бессмысленно, но безопасно |
+| Использование после move | Объект в "valid but unspecified state" | Только присваивание/деструктор после move |
+
+---
+
+## Ресурсы
+- [cppreference: Move semantics](https://en.cppreference.com/w/cpp/language/move_constructor)
+- [cppreference: Forwarding](https://en.cppreference.com/w/cpp/utility/forward)
+- **Книга:** Meyers "Effective Modern C++", Items 23-30
+- **CppCon:** "Move Semantics and Rvalue References" (Howard Hinnant)
+- **CppCon:** "Back to Basics: Move Semantics" (Klaus Iglberger)

@@ -1,0 +1,596 @@
+{
+  "title": "Урок 24: functions",
+  "slug": "urok-24-service-workers-и-pwa",
+  "short_description": "Кэширование, офлайн, push notifications, Background Sync",
+  "goals": [
+    "Понимать основы: Кэширование, офлайн, push notifications, Background Sync",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 24: Functions — Lexical Environments, this, call/apply/bind, Generators, Iterators"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Глубоко понять Lexical Environments и замыкания (closures)",
+        "Освоить `this` binding: implicit, explicit, new, arrow functions",
+        "Разобрать `call`, `apply`, `bind` и их внутреннюю реализацию",
+        "Изучить Generators (`function*`), `yield`, `yield*`, async generators",
+        "Понять Iterator и Iterable протоколы, Symbol.iterator"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Lexical Environments и Closures (Замыкания)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.1 Lexical Environment (Лексическое окружение) — Spec 8.1"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Lexical Environment = {\n//   EnvironmentRecord: DeclarativeEnvironmentRecord,\n//   Outer: LexicalEnvironment | null\n// }\n\n// Каждый блок { }, функция, модуль создаёт новое лексическое окружение\n// Outer указывает на родительское окружение (статическая вложенность)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.2 Function Object структура"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Function Object = {\n//   [[Environment]]: LexicalEnvironment,    // замыкание — ссылка на окружение создания\n//   [[FormalParameters]]: ParameterList,\n//   [[ECMAScriptCode]]: FunctionBody,\n//   [[ThisMode]]: lexical | strict | global,\n//   [[Strict]]: boolean,\n//   [[HomeObject]]: Object | undefined,    // для super\n//   [[Call]]: internal method,\n//   [[Construct]]: internal method (если не arrow)\n// }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.3 Замыкание (Closure) = функция + её [[Environment]]"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function outer(x) {\n  const secret = x * 2;\n  \n  function inner(y) {\n    return secret + y; // захватывает secret из outer EnvironmentRecord\n  }\n  \n  return inner;\n}\n\nconst fn = outer(5); // fn.[[Environment]] → outer's EnvironmentRecord\nfn(3); // 13 = 10 + 3\n\n// outer завершился, но его EnvironmentRecord жив, пока жив fn"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.4 Module Scope как Lexical Environment"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// module.mjs\nexport let counter = 0; // в Module Environment Record (Declarative)\nexport function increment() { counter++; }\n\n// Другой модуль импортирует binding, а не значение!\nimport { counter, increment } from './module.mjs';\nconsole.log(counter); // 0\nincrement();\nconsole.log(counter); // 1 — live binding!"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. This Binding (Связывание this)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.1 Четыре типа this binding (Spec 10.2.1)"
+    },
+    {
+      "type": "table",
+      "content": "| Тип | Пример | this value |\n|-----|--------|------------|\n| **Default** | `func()` | `globalThis` (sloppy) / `undefined` (strict) |\n| **Implicit** | `obj.method()` | `obj` |\n| **Explicit** | `func.call(obj)`, `func.bind(obj)` | `obj` (первый аргумент) |\n| **New** | `new Func()` | свежий объект (`this = Object.create(Func.prototype)`) |"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.2 Arrow Functions — Lexical this"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Arrow functions НЕ имеют собственного this\n// this берётся из ближайшего лексического окружения (EnvironmentRecord)\n\nconst obj = {\n  method() {\n    const arrow = () => this; // this из method()\n    return arrow();\n  }\n};\n\nobj.method() === obj; // true\n\n// Ошибка: нельзя использовать call/apply/bind для изменения this стрелочной функции\nconst arrow = () => this;\narrow.call({ x: 1 }); // this НЕ изменится!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.3 ThisMode в Function Object"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// [[ThisMode]]: \n// - \"lexical\" — arrow functions, this из окружения\n// - \"strict\" — strict mode functions, this как передано\n// - \"global\" — sloppy mode functions, this = globalThis если undefined/null\n\nfunction sloppy() { return this; }\nfunction strict() { 'use strict'; return this; }\nconst arrow = () => this;\n\nsloppy();        // globalThis\nstrict();        // undefined\narrow();         // лексическое this"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. call / apply / bind — Внутренняя реализация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.1 Function.prototype.call (Spec 19.2.3.2)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Упрощённый алгоритм:\nFunction.prototype.call = function (thisArg, ...args) {\n  // 1. Let func be this value\n  // 2. If IsCallable(func) is false, throw TypeError\n  // 3. PrepareForOrdinaryCall(func, undefined) — новый Execution Context\n  // 4. Call(func, thisArg, args) — OrdinaryCallBindThis(func, thisArg)\n  // 5. Return result\n};\n\n// OrdinaryCallBindThis(func, thisArg):\n//   if func.[[ThisMode]] === \"lexical\" → throw TypeError (arrow)\n//   if thisArg === undefined/null и func.[[ThisMode]] !== \"strict\" → globalThis\n//   else → thisArg"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.2 Function.prototype.apply (Spec 19.2.3.1)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Разница с call: второй аргумент — array-like объект\nFunction.prototype.apply = function (thisArg, argsArray) {\n  // 1. Let func be this value\n  // 2. If argsArray is null/undefined → args = []\n  // 3. Else args = CreateListFromArrayLike(argsArray)\n  // 4. Call(func, thisArg, args)\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.3 Function.prototype.bind (Spec 19.2.3.3)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// bind создаёт Bound Function Exotic Object\nFunction.prototype.bind = function (thisArg, ...boundArgs) {\n  const target = this;\n  if (!IsCallable(target)) throw TypeError;\n  \n  // Создаёт объект с внутренними слотами:\n  // [[BoundTargetFunction]]: target\n  // [[BoundThis]]: thisArg\n  // [[BoundArguments]]: boundArgs\n  \n  // При вызове bound function:\n  // Call(boundFunc, thisArg, args) →\n  //   Call(target, boundThis, [...boundArgs, ...args])\n  \n  // new boundFunc() →\n  //   Construct(target, [...boundArgs, ...args], newTarget)\n};\n\n// Важно: bind НЕ работает для arrow functions (у них [[ThisMode]]: lexical)\nconst arrow = () => this;\nconst bound = arrow.bind({ x: 1 });\nbound(); // this всё равно лексическое!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.4 Bound Function Exotic Object"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function add(a, b) { return a + b; }\nconst add5 = add.bind(null, 5);\n\nadd5(3); // 8 — как add(5, 3)\nadd5.call({x:1}, 3); // 8 — this игнорируется (boundThis = null)\n\n// new add5(3) → new add(5, 3) → this = новый объект, a=5, b=3"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Generators (function*)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.1 Синтаксис и базовое поведение"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function* generator() {\n  yield 1;\n  yield 2;\n  return 3; // значение при done: true\n}\n\nconst gen = generator();\ngen.next(); // { value: 1, done: false }\ngen.next(); // { value: 2, done: false }\ngen.next(); // { value: 3, done: true }\ngen.next(); // { value: undefined, done: true }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.2 Generator Object внутренняя структура"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Generator Object = {\n//   [[GeneratorState]]: \"suspendedStart\" | \"suspendedYield\" | \"executing\" | \"completed\"\n//   [[GeneratorContext]]: ExecutionContext | null,  // сохранённый контекст\n//   [[GeneratorBrand]]: \"%Generator%\",             // для instanceof\n//   [[GeneratorPrototype]]: %GeneratorPrototype%\n// }\n\n// Generator.prototype = {\n//   next(value),\n//   return(value),\n//   throw(exception),\n//   [Symbol.iterator]() { return this; }\n// }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.3 yield и yield* (делегирование)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function* inner() {\n  yield 'a';\n  yield 'b';\n}\n\nfunction* outer() {\n  yield 1;\n  yield* inner(); // делегирует к inner\n  yield 2;\n}\n\n[...outer()]; // [1, 'a', 'b', 2]\n\n// yield* работает с любым iterable:\nfunction* gen() {\n  yield* [1, 2, 3];\n  yield* new Map([[4, 5]]); // итерирует по entries\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.4 next(value) — передача значения в генератор"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function* gen() {\n  const a = yield 1; // первый next() игнорирует аргумент\n  const b = yield a * 2;\n  return b * 2;\n}\n\nconst g = gen();\ng.next();     // { value: 1, done: false } — paused на yield 1\ng.next(10);   // { value: 20, done: false } — a = 10, yield 20\ng.next(5);    // { value: 10, done: true }  — b = 5, return 10"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.5 return() и throw() — управление генератором"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function* gen() {\n  try {\n    yield 1;\n    yield 2;\n    yield 3;\n  } finally {\n    console.log('cleanup'); // выполняется при return/throw\n  }\n}\n\nconst g = gen();\ng.next();    // { value: 1, done: false }\ng.return(99); // { value: 99, done: true } — finally выполнится!\n// Output: cleanup\n\nconst g2 = gen();\ng2.next();\ng2.throw(new Error('oops')); // throw внутри генератора на месте yield\n// finally тоже выполнится"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Iterators и Iterables (Протоколы итерации)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.1 Iterator Protocol"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Iterator = объект с методом next() возвращающим IteratorResult\n// IteratorResult = { value: any, done: boolean }\n\nconst iterator = {\n  next() {\n    if (this.i++ < 3) return { value: this.i, done: false };\n    return { value: undefined, done: true };\n  },\n  i: 0\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.2 Iterable Protocol"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Iterable = объект с методом [Symbol.iterator]() возвращающим Iterator\n\nconst iterable = {\n  [Symbol.iterator]() {\n    let i = 0;\n    return {\n      next() {\n        return i < 3 ? { value: i++, done: false } : { value: undefined, done: true };\n      }\n    };\n  }\n};\n\nfor (const x of iterable) { console.log(x); } // 0, 1, 2\n[...iterable]; // [0, 1, 2]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.3 Built-in Iterables"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Array, String, Map, Set, TypedArray, arguments, NodeList — все iterable\n// Object — НЕ iterable (нет Symbol.iterator)\n\nconst map = new Map([[1, 'a'], [2, 'b']]);\nfor (const [k, v] of map) { /* ... */ } // итерирует по entries\n\n// String итерирует по code points (не code units!)\n'😀'.length; // 2 (UTF-16 code units)\n[...'😀'].length; // 1 (code point)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.4 Iterator Helpers (ES2025 / Stage 3)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Array.fromAsync, Iterator.from, iterator methods (map, filter, take, drop, flatMap)\n// В Node.js 20+ / браузерах (под флагом или нативно скоро)\n\nconst nums = [1, 2, 3, 4, 5];\nconst doubled = nums.values().map(x => x * 2).toArray(); // [2, 4, 6, 8, 10]\n\n// Lazy evaluation!\nfunction* infinite() { let i = 0; while (true) yield i++; }\ninfinite().map(x => x * 2).filter(x => x > 10).take(3).toArray(); // [12, 14, 16]"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Async Generators (ES2018)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.1 Синтаксис"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "async function* asyncGen() {\n  yield 1;\n  await sleep(100);\n  yield 2;\n  return 3;\n}\n\nconst gen = asyncGen();\ngen.next(); // Promise<{value: 1, done: false}>\nawait gen.next(); // { value: 1, done: false }\nawait gen.next(); // { value: 2, done: false } (после 100ms)\nawait gen.next(); // { value: 3, done: true }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.2 for await...of"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "async function* fetchPages(url) {\n  let nextUrl = url;\n  while (nextUrl) {\n    const response = await fetch(nextUrl);\n    const data = await response.json();\n    yield data.items;\n    nextUrl = data.nextPage;\n  }\n}\n\nfor await (const items of fetchPages('/api/items')) {\n  process(items); // обрабатывает страницы по мере загрузки\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.3 Async Iterator Protocol"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// AsyncIterator = { next(): Promise<IteratorResult> }\n// AsyncIterable = { [Symbol.asyncIterator](): AsyncIterator }\n\n// Symbol.asyncIterator для асинхронных источников"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Advanced Patterns"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "7.1 Coroutines с generators"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function run(generatorFunc) {\n  const gen = generatorFunc();\n  \n  function step(value) {\n    const result = gen.next(value);\n    if (result.done) return result.value;\n    return Promise.resolve(result.value).then(step);\n  }\n  \n  return step();\n}\n\n// Использование:\nrun(function* () {\n  const user = yield fetch('/user').then(r => r.json());\n  const posts = yield fetch(`/posts/${user.id}`).then(r => r.json());\n  return posts;\n}).then(console.log);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "7.2 Trampoline для хвостовой рекурсии"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function trampoline(fn) {\n  return function (...args) {\n    let result = fn(...args);\n    while (typeof result === 'function') {\n      result = result();\n    }\n    return result;\n  };\n}\n\nconst factorial = trampoline(function* (n, acc = 1) {\n  if (n <= 1) return acc;\n  yield () => factorial(n - 1, n * acc); // thunk\n});\n\nfactorial(100000); // Не переполнит стек!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "7.3 Iterable для lazy sequences"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const fibonacci = {\n  [Symbol.iterator]() {\n    let [prev, curr] = [0, 1];\n    return {\n      next() {\n        [prev, curr] = [curr, prev + curr];\n        return { value: prev, done: false };\n      }\n    };\n  }\n};\n\n[...fibonacci].slice(0, 10); // [1, 1, 2, 3, 5, 8, 13, 21, 34, 55]"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Browser vs Node.js Differences"
+    },
+    {
+      "type": "table",
+      "content": "| Feature | Браузер | Node.js |\n|---------|---------|---------|\n| **Generators** | Full support | Full support |\n| **Async Generators** | Full support | Full support (Node 10+) |\n| **for await...of** | Full support | Full support (Node 10+) |\n| **Iterator Helpers** | Behind flags / новые версии | Behind flags / новые версии |\n| **arguments object** | В sloppy функциях | В sloppy функциях |\n| **Tail Call Optimization** | Только Safari (strict mode) | Нет (V8 не реализует) |\n\n> Node.js: `require` не поддерживает top-level await в CommonJS, используйте `.mjs` или `\"type\": \"module\"`\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Closure & Lexical Environment"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Создайте функцию createCounter(), которая возвращает объект\n// с методами increment, decrement, getValue\n// Используйте замыкание для приватного счётчика"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: this binding"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const obj = {\n  value: 42,\n  getValue() { return this.value; }\n};\n\nconst getValue = obj.getValue;\nconsole.log(getValue()); // ? (strict vs sloppy)\n\nconst arrow = () => this.value;\nconsole.log(arrow.call(obj)); // ?"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Generator delegation"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Реализуйте flat() для массива любого уровня вложенности через generator\nfunction* flatten(arr) {\n  // ваш код\n}\n\n[...flatten([1, [2, [3, 4], 5]])]; // [1, 2, 3, 4, 5]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 4: Async iterator"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Создайте async iterable, который генерирует числа с задержкой\n// Используйте for await...of для потребления"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Дополнительные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**MDN: Generators** — https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Iterators_and_Generators",
+        "**MDN: this** — https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/this",
+        "**Exploring ES6: Generators** — http://exploringjs.com/es6/ch_generators.html",
+        "**TC39: Iterator Helpers** — https://github.com/tc39/proposal-iterator-helpers",
+        "**\"JavaScript Allongé\"** — про функции и замыкания"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Контрольные вопросы"
+    },
+    {
+      "type": "text",
+      "content": "1. Почему `arrow.call(obj)` не меняет `this` в стрелочной функции?\n2. В чём разница между `function*()` и `async function*()`?\n3. Что возвращает `yield*` при делегировании к другому генератору?\n4. Как работает `bind` с `new` (new boundFunc())?\n5. Почему `for await...of` ждёт Promise от `next()`?\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "📝 Саммари"
+    },
+    {
+      "type": "table",
+      "content": "| Концепция | Ключевой момент |\n|-----------|-----------------|\n| **Lexical Environment** | Статическая вложенность, EnvironmentRecord + Outer ссылка |\n| **Closure** | Функция + её [[Environment]] (ссылка на лексическое окружение создания) |\n| **this** | Определяется в момент ВЫЗОВА (кроме arrow: лексическое) |\n| **call/apply/bind** | Явное управление this; bind создаёт Bound Function Exotic Object |\n| **Generators** | Приостанавливаемые функции, сохраняют Execution Context в [[GeneratorContext]] |\n| **Iterators/Iterables** | Протоколы: next() / [Symbol.iterator](); lazy evaluation |\n\n---\n\n*Следующий урок: 25 — Async Internals: event loop, Promise resolution, cancellation, AbortController, workers, async iterators*"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Service Workers и PWA",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Service Workers и PWA' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация JavaScript",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-javascript на GitHub",
+    "Конференции и митапы по JavaScript"
+  ],
+  "key_takeaways": [
+    "Главная идея: Кэширование, офлайн, push notifications, Background Sync — это фундамент для Event Loop, Замыкания, Прототипы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "javascript",
+  "lesson_order": 24,
+  "name_en": "Lesson: Service Workers и PWA",
+  "short_description_en": "Learn Service Workers и PWA in JavaScript with detailed explanations and examples"
+}

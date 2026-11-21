@@ -1,0 +1,593 @@
+# Урок 8: Backgrounds & Effects — Градиенты, маски, clip-path, фильтры, blend modes
+
+## Цели урока
+- Освоить множественные фоны и их порядок наложения
+- Глубоко понять градиенты: linear, radial, conic, repeating
+- Изучить CSS Masks (маски) и clip-path для сложных форм
+- Освоить filter и backdrop-filter для визуальных эффектов
+- Понять mix-blend-mode и background-blend-mode для композитинга
+
+---
+
+## 1. Множественные фоны — порядок и синтаксис
+
+```css
+.multi-bg {
+  /* ПЕРВЫЙ в списке — НАИВЫСШИЙ (ближе к пользователю) */
+  background:
+    url('pattern.png') repeat,           /* Слой 1: верхний */
+    linear-gradient(45deg, #2563eb, #7c3aed),  /* Слой 2 */
+    url('hero.jpg') center/cover no-repeat;    /* Слой 3: нижний */
+
+  /* Каждый слой может иметь свои свойства */
+  background-position: center, top left, center;
+  background-size: 200px, cover, cover;
+  background-repeat: repeat, no-repeat, no-repeat;
+  background-attachment: scroll, fixed, scroll;
+}
+```
+
+### Свойства фона (можно перечислять через запятую)
+```css
+.bg {
+  background-image: url(a.png), url(b.png), linear-gradient(...);
+  background-position: center, top left, 50% 50%;
+  background-size: contain, cover, 100% 100%;
+  background-repeat: no-repeat, repeat-x, no-repeat;
+  background-attachment: scroll, fixed, local;
+  background-origin: padding-box, border-box, content-box;
+  background-clip: border-box, padding-box, content-box;
+  background-color: #fafafa;  /* Только у ПОСЛЕДНЕГО слоя! */
+}
+```
+
+### background-clip и background-origin
+```css
+.clip-demo {
+  border: 10px dashed #2563eb;
+  padding: 20px;
+  background: linear-gradient(45deg, #2563eb, #7c3aed);
+
+  /* Где рисуется фон */
+  background-origin: padding-box;   /* От padding (default) */
+  background-origin: border-box;    /* От border */
+  background-origin: content-box;   /* От content */
+
+  /* Где фон обрезается */
+  background-clip: border-box;      /* Под border (default) */
+  background-clip: padding-box;     /* До padding */
+  background-clip: content-box;     /* Только content */
+  background-clip: text;            /* ТЕКСТ! (нужен -webkit-) */
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;  /* Fallback */
+}
+```
+
+---
+
+## 2. Градиенты — полный контроль
+
+### Linear Gradient
+```css
+.linear {
+  /* Базовый */
+  background: linear-gradient(45deg, #2563eb, #7c3aed);
+
+  /* С цветовыми остановками */
+  background: linear-gradient(
+    to right,
+    #2563eb 0%,
+    #3b82f6 25%,
+    #7c3aed 50%,
+    #a855f7 75%,
+    #d946ef 100%
+  );
+
+  /* Жёсткие переходы (без интерполяции) */
+  background: linear-gradient(
+    to right,
+    #2563eb 0%,
+    #2563eb 50%,
+    #7c3aed 50%,
+    #7c3aed 100%
+  );
+
+  /* Повторяющийся */
+  background: repeating-linear-gradient(
+    45deg,
+    #2563eb 0 20px,
+    #3b82f6 20px 40px
+  );
+}
+```
+
+### Radial Gradient
+```css
+.radial {
+  /* Круг в центре */
+  background: radial-gradient(circle, #2563eb, #1e1e2e);
+
+  /* Эллипс, позиция */
+  background: radial-gradient(ellipse at top right, #2563eb, #1e1e2e);
+
+  /* С остановками */
+  background: radial-gradient(
+    circle at 30% 30%,
+    #2563eb 0%,
+    #3b82f6 50%,
+    #1e1e2e 100%
+  );
+
+  /* Ключевые слова размера */
+  background: radial-gradient(
+    closest-side at center,  /* До ближайшей стороны */
+    #2563eb, #1e1e2e
+  );
+  /* closest-corner, farthest-side, farthest-corner */
+}
+```
+
+### Conic Gradient (конический) — для pie charts, color pickers
+```css
+.conic {
+  /* Базовый */
+  background: conic-gradient(from 0deg, #2563eb, #7c3aed, #2563eb);
+
+  /* Pie chart */
+  background: conic-gradient(
+    #2563eb 0deg 90deg,      /* 25% */
+    #10b981 90deg 180deg,    /* 25% */
+    #f59e0b 180deg 270deg,   /* 25% */
+    #ef4444 270deg 360deg    /* 25% */
+  );
+
+  /* Color picker hue wheel */
+  background: conic-gradient(
+    from 0deg,
+    red, yellow, lime, cyan, blue, magenta, red
+  );
+}
+```
+
+### Интерполяция в разных цветовых пространствах
+```css
+.gradient-oklch {
+  background: linear-gradient(in oklch, #2563eb, #f472b6);
+  /* Перцептивно правильные, яркие переходы */
+}
+
+.gradient-lch {
+  background: linear-gradient(in lch, #2563eb, #f472b6);
+}
+
+.gradient-hsl {
+  background: linear-gradient(in hsl shorter hue, #2563eb, #f472b6);
+  /* shorter/longer/increasing/decreasing hue */
+}
+```
+
+---
+
+## 3. CSS Masks — маскирование
+
+### Mask Image (как background-image, но для прозрачности)
+```css
+.masked {
+  /* Градиентная маска — затухание */
+  mask-image: linear-gradient(to bottom, black, transparent);
+  /* или */
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent);
+
+  /* Изображение как маска (альфа-канал) */
+  mask-image: url('shape.svg');
+  mask-mode: alpha;        /* Использовать альфа (default) */
+  mask-mode: luminance;    /* Использовать яркость */
+}
+
+/* Маска повторяется как background */
+.mask-repeat {
+  mask-image: url('dots.png');
+  mask-repeat: repeat;
+  mask-size: 50px 50px;
+  mask-position: center;
+}
+```
+
+### Множественные маски
+```css
+.multi-mask {
+  mask-image:
+    url('frame.svg'),              /* Рамка */
+    linear-gradient(to bottom, black 80%, transparent);  /* Затухание снизу */
+  mask-composite: intersect;       /* Как комбинировать: add, subtract, intersect, exclude */
+}
+```
+
+### Mask Composite — операции над масками
+```css
+.composite {
+  mask-image: url(circle.svg), url(square.svg);
+  mask-composite: add;        /* Объединение (default) */
+  mask-composite: subtract;   /* Вычитание второго из первого */
+  mask-composite: intersect;  /* Пересечение */
+  mask-composite: exclude;    /* XOR — только непересекающиеся */
+}
+```
+
+### Практический пример: аватар с рамкой
+```css
+.avatar {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  object-fit: cover;
+
+  /* Маска для декоративной рамки */
+  mask-image:
+    radial-gradient(circle at center, black 40%, transparent 40%),
+    conic-gradient(from 0deg, #2563eb, #7c3aed, #2563eb);
+  mask-composite: intersect;
+  mask-size: 100%, 120%;
+}
+```
+
+---
+
+## 4. Clip-path — вырезание форм
+
+### Базовые формы
+```css
+.clip {
+  /* Круг */
+  clip-path: circle(50% at center);
+  clip-path: circle(50px at 50% 50%);
+
+  /* Эллипс */
+  clip-path: ellipse(50% 30% at center);
+
+  /* Полигон — произвольная форма */
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);  /* Ромб */
+  clip-path: polygon(0 0, 100% 0, 100% 75%, 50% 100%, 0 75%);  /* Стрелка */
+
+  /* Inset — прямоугольник с закруглениями */
+  clip-path: inset(10px 20px 30px 40px round 10px);
+  /* top right bottom left round radius */
+}
+
+/* SVG path для сложных форм */
+.clip-svg {
+  clip-path: path('M10 10 L90 10 L90 90 L10 90 Z');
+  /* Или ссылка на SVG */
+  clip-path: url(#myClipPath);
+}
+```
+
+### Анимация clip-path
+```css
+.reveal {
+  clip-path: inset(0 100% 0 0);  /* Скрыт справа */
+  transition: clip-path 0.5s ease;
+}
+
+.reveal.visible {
+  clip-path: inset(0 0 0 0);  /* Полностью видно */
+}
+
+/* Слайд-шоу */
+.slide {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+  transition: clip-path 0.6s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.slide.next {
+  clip-path: polygon(100% 0, 100% 0, 100% 100%, 100% 100%);
+}
+```
+
+### Clip-path генераторы
+- [bennettfeely.com/clippy](https://bennettfeely.com/clippy/) — визуальный редактор
+- [css-clip-path.com](https://css-clip-path.com/)
+
+---
+
+## 5. Filter — фильтры над элементом
+
+```css
+.filtered {
+  /* Размытие */
+  filter: blur(8px);
+
+  /* Яркость, контраст, насыщенность */
+  filter: brightness(1.2);
+  filter: contrast(1.5);
+  filter: saturate(2);        /* 200% */
+  filter: grayscale(1);       /* Чёрно-белый */
+  filter: sepia(0.5);         /* Сепия */
+  filter: hue-rotate(90deg);  /* Сдвиг оттенка */
+  filter: invert(1);          /* Инверсия */
+  filter: opacity(0.5);       /* Прозрачность */
+
+  /* Комбинация */
+  filter: blur(4px) brightness(1.1) contrast(1.2) saturate(1.5);
+
+  /* Drop-shadow — тень с учётом формы (включая прозрачность) */
+  filter: drop-shadow(0 10px 8px rgb(0 0 0 / 0.3));
+  filter: drop-shadow(0 4px 6px #2563eb);
+}
+```
+
+### SVG фильтры (продвинутые)
+```css
+.svg-filter {
+  filter: url('filters.svg#goo');  /* Goo effect, displacement, turbulence */
+}
+
+/* В SVG файле */
+<svg style="display: none;">
+  <filter id="goo">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur"/>
+    <feColorMatrix in="blur" mode="matrix" values="
+      1 0 0 0 0
+      0 1 0 0 0
+      0 0 1 0 0
+      0 0 0 18 -7
+    " result="goo"/>
+    <feBlend in="SourceGraphic" in2="goo"/>
+  </filter>
+</svg>
+```
+
+---
+
+## 6. Backdrop-filter — фильтр ПОД элементом
+
+```css
+.glass {
+  /* Frosted glass / стекло */
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);  /* Safari */
+
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 16px;
+}
+
+/* ПРИМЕЧАНИЕ: элемент должен быть НЕПРОЗРАЧНЫМ (или полупрозрачным),
+   и иметь stacking context (position, z-index, isolation) */
+.glass {
+  position: relative;  /* Создаёт stacking context */
+  z-index: 1;
+  /* Или */
+  isolation: isolate;
+}
+```
+
+### Практический пример: модальное окно с blur фоном
+```css
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 16px;
+  padding: 2rem;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+}
+```
+
+---
+
+## 7. Blend Modes — режимы наложения
+
+### background-blend-mode — слои фона друг с другом
+```css
+.blend-bg {
+  background:
+    linear-gradient(45deg, #2563eb, #7c3aed),
+    url('texture.png'),
+    #1e1e2e;
+
+  background-blend-mode: multiply, overlay, normal;
+  /* Порядок соответствует background-image */
+}
+```
+
+### mix-blend-mode — элемент с фоном РОДИТЕЛЯ
+```css
+.blend-element {
+  mix-blend-mode: multiply;    /* Умножение — затемнение */
+  mix-blend-mode: screen;      /* Экран — осветление */
+  mix-blend-mode: overlay;     /* Комбинация multiply/screen */
+  mix-blend-mode: darken;      /* Тёмнее */
+  mix-blend-mode: lighten;     /* Светлее */
+  mix-blend-mode: color-dodge; /* Осветление основы */
+  mix-blend-mode: color-burn;  /* Затемнение основы */
+  mix-blend-mode: hard-light;  /* Жёсткий свет */
+  mix-blend-mode: soft-light;  /* Мягкий свет */
+  mix-blend-mode: difference;  /* Разница */
+  mix-blend-mode: exclusion;   /* Исключение */
+  mix-blend-mode: hue;         /* Оттенок */
+  mix-blend-mode: saturation;  /* Насыщенность */
+  mix-blend-mode: color;       /* Цвет */
+  mix-blend-mode: luminosity;  /* Яркость */
+
+  /* Создаёт stacking context! */
+}
+```
+
+### Изоляция blend modes
+```css
+/* isolation: isolate — ограничивает blend mode внутри контейнера */
+.container {
+  isolation: isolate;  /* Дети не будут блендиться с фоном за контейнером */
+}
+
+/* Или создай stacking context */
+.container {
+  position: relative;
+  z-index: 0;
+}
+```
+
+### Таблица blend modes
+| Режим | Эффект | Использование |
+|-------|--------|---------------|
+| `multiply` | Умножение цветов → темнее | Тени, текстуры на фото |
+| `screen` | Инверсия × инверсия → светлее | Свечение, блики |
+| `overlay` | Multiply (тёмные) + Screen (светлые) | Контраст, текстуры |
+| `darken` | Минимум каналов | Сравнение версий |
+| `lighten` | Максимум каналов | Свечение |
+| `color` | Hue + Saturation базы + Luminosity верха | Цветные фото из ЧБ |
+| `luminosity` | Luminosity верха + Hue+Sat базы | ЧБ эффект с цветом |
+
+---
+
+## 8. Практическое задание
+
+### Задача 1: Gradient Library
+Создай библиотеку градиентов:
+- 10 linear gradients (buttons, cards, headers)
+- 5 radial gradients (spotlights, vignettes)
+- 5 conic gradients (charts, loaders, color wheels)
+- Все в OKLCH интерполяции
+- Экспорт как CSS переменные
+
+### Задача 2: Mask Gallery
+Реализуй компоненты с масками:
+- Аватар с декоративной рамкой (conic-gradient mask)
+- Карточка с затуханием контента (gradient mask)
+- Изображение в форме SVG (mask-image: url())
+- Текст с текстурой (mask-image: url(texture.png), mask-mode: luminance)
+
+### Задача 3: Clip-path Animations
+Создай анимации:
+- Кнопка: hover → clip-path меняет форму (круг → квадрат → шестиугольник)
+- Карточка: появление через reveal (inset анимация)
+- Loader: вращающийся conic gradient + clip-path sector
+- Переход между страницами: clip-path slide
+
+### Задача 4: Glassmorphism UI
+Построй UI kit в стиле glassmorphism:
+- Карточки с backdrop-filter blur
+- Навигация с полупрозрачным фоном
+- Модалка с размытым фоном
+- Тултипы с glass эффектом
+- Все компоненты с CSS переменными для тени/blur/opacity
+- Fallback для неподдерживающих браузеров (опaque background)
+
+---
+
+## 9. Производительность и доступность
+
+### Производительность
+```css
+/* Тяжёлые фильтры — только на composited layers */
+.heavy-filter {
+  will-change: filter;  /* Подсказка браузеру создать GPU layer */
+  transform: translateZ(0);  /* Принудительно создать layer */
+}
+
+/* Избегай анимировать filter напрямую */
+@keyframes bad {
+  to { filter: blur(10px); }  /* Перерисовка каждый кадр! */
+}
+
+@keyframes good {
+  to { transform: scale(1.02); }  /* Только compositor */
+}
+```
+
+### Доступность
+```css
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .animated {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .glass {
+    backdrop-filter: none;
+    background: white;
+    border: 2px solid black;
+  }
+}
+
+/* Filter может ломать контраст текста */
+.text-over-image {
+  /* Всегда проверяй контраст! */
+  text-shadow: 0 0 8px rgba(0,0,0,0.8);  /* Подложка для читаемости */
+}
+```
+
+---
+
+## 10. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| `background-clip: text` без `-webkit-` | Не работает в Safari/Chrome | Дублируй с префиксом |
+| `backdrop-filter` без stacking context | Не работает | Добавь `position: relative; z-index: 1` или `isolation: isolate` |
+| Множественные `filter` анимируются | Низкий FPS, перерисовка | Анимируй `transform`/`opacity`, используй `will-change` |
+| `mix-blend-mode` ломает текст | Текст становится нечитаемым | `isolation: isolate` на контейнере текста |
+| `clip-path` с процентами на заменённых элементах | Не работает на img/video | Обёрни в div или используй `object-fit` |
+| Градиенты в sRGB | Грязные переходы | `in oklch` или `in lch` |
+| `mask-image` без `mask-mode` | Неожиданный результат | Явно задай `alpha` или `luminance` |
+
+---
+
+## 11. Полезные ресурсы
+
+### Спецификации
+- [CSS Backgrounds and Borders Level 3](https://www.w3.org/TR/css-backgrounds-3/)
+- [CSS Masking Level 1](https://www.w3.org/TR/css-masking-1/)
+- [CSS Filter Effects Level 1](https://www.w3.org/TR/filter-effects-1/)
+- [CSS Compositing and Blending Level 1](https://www.w3.org/TR/compositing-1/)
+
+### Инструменты
+- [CSS Gradient](https://cssgradient.io/) — генератор градиентов
+- [Clippy](https://bennettfeely.com/clippy/) — clip-path редактор
+- [CSS Filters Playground](https://cssfilters.co/) — визуальный редактор фильтров
+- [Blend Mode Demo](https://codepen.io/tigt/pen/mdXeYZ) — интерактивные blend modes
+
+### Вдохновение
+- [Glassmorphism.com](https://glassmorphism.com/) — генератор glassmorphism
+- [Hero Patterns](https://heropatterns.com/) — SVG паттерны для фонов
+- [CSS Background Patterns](https://projects.verou.me/css3patterns/) — Lea Verou
+
+---
+
+## 12. Ключевые выводы
+
+1. **Множественные фоны** — первый в списке = верхний. `background-color` только у последнего.
+2. **Градиенты в OKLCH/LCH** — красивые переходы без грязных серых зон.
+3. **CSS Masks** — альфа-маскирование любого элемента, `mask-composite` для операций.
+4. **Clip-path** — любые формы без SVG в HTML, анимируется.
+5. **Filter** — на элементе, **Backdrop-filter** — под элементом (нужен stacking context).
+6. **Blend modes** — `background-blend-mode` для фонов, `mix-blend-mode` для элементов.
+7. **Производительность** — `will-change`, `transform` вместо filter анимаций.
+8. **Доступность** — `prefers-reduced-motion`, `prefers-contrast`, проверяй контраст.
+
+---
+
+*Следующий урок: 09_Responsive_Basics.txt — Media queries, container queries, responsive images, fluid layouts*

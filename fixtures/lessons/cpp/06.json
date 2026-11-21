@@ -1,0 +1,303 @@
+{
+  "title": "Урок 06: Массивы и строки",
+  "slug": "urok-06-move-semantics-и-perfect-forwarding",
+  "short_description": "rvalue references, std::move, std::forward, Rule of Five, move-only types",
+  "goals": [
+    "Понимать основы: rvalue references, std::move, std::forward, Rule of Five, move-only types",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 1.6: Массивы и строки — arrays, std::array, std::string, индексы, перебор"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Работать с C-массивами и std::array",
+        "Использовать std::string для работы с текстом",
+        "Понимать разницу между массивами и контейнерами",
+        "Безопасно обращаться к элементам"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. C-массивы (встроенные)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Объявление\nint arr[5];              // неинициализирован (мусор)\nint arr2[5] = {1, 2, 3}; // {1, 2, 3, 0, 0} — остальное value-initialized\nint arr3[] = {1, 2, 3, 4, 5}; // размер выводится автоматически\n\n// Доступ\narr[0] = 10;\nint x = arr[2];          // без проверки границ!\n// arr[10] = 5;          // UB: выход за границы\n\n// Размер\nsizeof(arr) / sizeof(arr[0])  // 5 (только для массивов, не указателей!)\nstd::size(arr)                // C++17, работает и для массивов, и для контейнеров"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Многомерные массивы"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int matrix[3][4] = {\n    {1, 2, 3, 4},\n    {5, 6, 7, 8},\n    {9, 10, 11, 12}\n};\nmatrix[1][2] = 42;  // строка 1, столбец 2"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ухудшение до указателя (array decay)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void func(int* ptr, size_t size);  // принимает указатель\n\nint arr[5] = {1,2,3,4,5};\nfunc(arr, 5);  // arr неявно преобразуется в int* (утеря размера!)\n// Внутри func: sizeof(ptr) == sizeof(int*), а не 5*sizeof(int)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. std::array (C++11) — обёртка над C-массивом"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <array>\n\nstd::array<int, 5> arr = {1, 2, 3, 4, 5};  // размер — часть типа!\nstd::array<int, 5> arr2{1, 2, 3, 4, 5};    // uniform init\n\n// Методы\narr.size()       // 5 (compile-time)\narr.max_size()   // 5\narr.empty()      // false\narr.front()      // 1\narr.back()       // 5\narr.data()       // указатель на первый элемент (int*)\n\n// Доступ с проверкой границ\narr.at(2)        // 3, бросает std::out_of_range при ошибке\narr[2]           // 3, без проверки (быстрее)\n\n// Присваивание и сравнение (в отличие от C-массивов!)\nstd::array<int, 5> a = {1,2,3,4,5};\nstd::array<int, 5> b = a;  // копирование!\nbool eq = (a == b);        // true"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::array vs C-массив"
+    },
+    {
+      "type": "table",
+      "content": "| Особенность | C-массив | std::array |\n|-------------|----------|------------|\n| Размер в типе | Нет | Да (template параметр) |\n| Копирование | Нет (ухудшение к указателю) | Да |\n| Сравнение | Нет | Да |\n| Методы | Нет | size(), at(), front(), back() |\n| Итераторы | Нет | begin(), end() |\n| Накладные расходы | 0 | 0 (zero-overhead abstraction) |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. std::string"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "#include <string>\n\nstd::string s1;           // пустая\nstd::string s2 = \"hello\"; // из строкового литерала\nstd::string s3(5, 'x');   // \"xxxxx\"\nstd::string s4(s2, 1, 3); // подстрока: \"ell\"\nstd::string s5 = s2;      // копия"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основные операции"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "std::string s = \"hello\";\n\ns.size()          // 5 (байт)\ns.length()        // 5 (синоним)\ns.empty()         // false\ns.front()         // 'h'\ns.back()          // 'o'\n\ns[0]              // 'h' (нет проверки)\ns.at(0)           // 'h' (с проверкой)\n\ns += \" world\";    // \"hello world\"\ns.append(\"!\");    // \"hello world!\"\ns.push_back('?'); // \"hello world!?\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Поиск и подстроки"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "std::string s = \"hello world hello\";\n\ns.find(\"world\")        // 6 (позиция первого вхождения)\ns.rfind(\"hello\")       // 12 (последнее вхождение)\ns.find(\"xxx\")          // std::string::npos (не найдено)\n\ns.substr(6, 5)         // \"world\" (pos, len)\ns.substr(6)            // \"world hello\" (до конца)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Модификация"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "std::string s = \"hello\";\n\ns.insert(5, \" world\");   // \"hello world\"\ns.erase(5, 6);           // \"hello\" (pos, count)\ns.replace(0, 5, \"Hi\");   // \"Hi world\"\ns.clear();               // \"\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Сравнение"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "std::string a = \"apple\", b = \"banana\";\na == b    // false\na < b     // true (лексикографическое)\na.compare(b) < 0  // true"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конвертация"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "std::string s = \"42\";\nint x = std::stoi(s);      // 42\ndouble d = std::stod(\"3.14\"); // 3.14\n\nstd::string s2 = std::to_string(42);      // \"42\"\nstd::string s3 = std::to_string(3.14);    // \"3.140000\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Raw string literals (C++11)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "std::string path = R\"(C:\\Users\\Name\\Documents)\";  // без экранирования\nstd::string json = R\"({\"key\": \"value\"})\";         // удобно для JSON"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Перебор (итерация)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "C-массив"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "int arr[] = {1, 2, 3, 4, 5};\n\nfor (int i = 0; i < 5; ++i) { ... }\nfor (int x : arr) { ... }  // range-based for работает!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::array"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "std::array<int, 5> arr = {1,2,3,4,5};\nfor (int& x : arr) x *= 2;  // модификация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "std::string"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "std::string s = \"hello\";\nfor (char c : s) std::cout << c << ' ';  // h e l l o\nfor (auto& c : s) c = std::toupper(c);   // HELLO"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. char* vs std::string vs std::string_view (C++17)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// std::string_view — не владеющий взгляд на строку (zero-copy)\n#include <string_view>\n\nvoid print(std::string_view sv) {  // принимает string, char*, string_view\n    std::cout << sv << '\\n';\n}\n\nstd::string s = \"hello\";\nprint(s);           // OK\nprint(\"world\");     // OK\nprint(std::string_view(s, 2, 3)); // \"llo\""
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **C-массив**: Создайте массив 10 int, заполните случайными числами, найдите max/min\n2. **std::array**: То же самое с std::array, используйте .at() для безопасного доступа\n3. **std::string**: Напишите функцию, подсчитывающую гласные в строке\n4. **string_view**: Напишите функцию split(string_view, delimiter) → vector<string_view>\n5. **Сравнение**: Сравните производительность конкатенации через += vs std::ostringstream\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `std::string s[5];` — массив строк | `std::vector<std::string>` или `std::array<std::string, 5>` |\n| `arr[10] = 5` (UB) | `arr.at(10)` — exception, или проверка `if (i < size)` |\n| `sizeof(ptr) / sizeof(ptr[0])` для указателя | Передавайте размер отдельно или используйте контейнеры |\n| `char* s = \"hello\"; s[0] = 'H';` (UB: string literal read-only) | `std::string s = \"hello\"; s[0] = 'H';` |\n| `std::string s = \"hello\" + \" world\";` (pointer arithmetic!) | `std::string s = \"hello\" + std::string(\" world\");` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**cppreference: std::array** — https://en.cppreference.com/w/cpp/container/array",
+        "**cppreference: std::string** — https://en.cppreference.com/w/cpp/string/basic_string",
+        "**cppreference: std::string_view** — https://en.cppreference.com/w/cpp/string/basic_string_view",
+        "**C++ Core Guidelines: SL.str.1** — Use std::string for owning strings",
+        "**C++ Core Guidelines: SL.str.2** — Use std::string_view for non-owning strings"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Move semantics и perfect forwarding",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Move semantics и perfect forwarding' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C++",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c++ на GitHub",
+    "Конференции и митапы по C++"
+  ],
+  "key_takeaways": [
+    "Главная идея: rvalue references, std::move, std::forward, Rule of Five, move-only types — это фундамент для RAII, Move semantics, Perfect forwarding.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "cpp",
+  "lesson_order": 6,
+  "name_en": "Lesson: Move semantics и perfect forwarding",
+  "short_description_en": "Learn Move semantics и perfect forwarding in C++ with detailed explanations and examples"
+}

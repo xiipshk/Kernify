@@ -1,0 +1,383 @@
+{
+  "title": "Урок 31: Testing Reliability",
+  "slug": "urok-31-roslyn-analyzers-и-source-generators",
+  "short_description": "DiagnosticAnalyzer, CodeFixProvider, IIncrementalGenerator, Incremental Generators",
+  "goals": [
+    "Понимать основы: DiagnosticAnalyzer, CodeFixProvider, IIncrementalGenerator, Incremental Generators",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.9: Testing/Reliability — Unit/Integration/Contract, Property-Based, Performance Tests, Resilience"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Писать качественные unit тесты: AAA, тестовые двойники, FluentAssertions",
+        "Integration тесты: TestContainers, WebApplicationFactory, базы данных",
+        "Contract testing: Pact для consumer-driven contracts",
+        "Property-based testing: FsCheck, генерация тестовых данных",
+        "Performance тесты: BenchmarkDotNet в CI, регрессионное тестирование",
+        "Resilience: Polly, retry, circuit breaker, timeout, bulkhead, chaos engineering"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Unit Testing — Advanced Patterns"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "AAA Pattern и FluentAssertions"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using FluentAssertions;\nusing Xunit;\n\npublic class OrderServiceTests\n{\n    private readonly Mock<IOrderRepository> _repoMock = new();\n    private readonly Mock<IEmailService> _emailMock = new();\n    private readonly OrderService _service;\n\n    public OrderServiceTests()\n    {\n        _service = new OrderService(_repoMock.Object, _emailMock.Object);\n    }\n\n    [Fact]\n    public async Task CreateOrder_ValidData_ReturnsOrderId()\n    {\n        // Arrange\n        var customerId = Guid.NewGuid();\n        var items = new[] { new OrderItemDto(ProductId: Guid.NewGuid(), Quantity: 2, Price: 10.5m) };\n        var command = new CreateOrderCommand(customerId, items);\n\n        _repoMock.Setup(r => r.AddAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()))\n            .Returns(Task.CompletedTask);\n\n        // Act\n        var result = await _service.CreateAsync(command, CancellationToken.None);\n\n        // Assert\n        result.Should().NotBeEmpty();\n        _repoMock.Verify(r => r.AddAsync(\n            It.Is<Order>(o => o.CustomerId == customerId && o.Items.Count == 1),\n            It.IsAny<CancellationToken>()),\n            Times.Once);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "AutoFixture для тестовых данных"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using AutoFixture;\nusing AutoFixture.AutoMoq;\n\npublic class OrderServiceAutoFixtureTests\n{\n    private readonly IFixture _fixture;\n\n    public OrderServiceAutoFixtureTests()\n    {\n        _fixture = new Fixture().Customize(new AutoMoqCustomization());\n        _fixture.Behaviors.OfType<ThrowingRecursionBehavior>().ToList()\n            .ForEach(b => _fixture.Behaviors.Remove(b));\n        _fixture.Behaviors.Add(new OmitOnRecursionBehavior());\n    }\n\n    [Fact]\n    public async Task CreateOrder_WithAutoFixture_Works()\n    {\n        // Arrange - автогенерация данных\n        var command = _fixture.Create<CreateOrderCommand>();\n\n        var repoMock = _fixture.Freeze<Mock<IOrderRepository>>();\n        repoMock.Setup(r => r.AddAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()))\n            .Returns(Task.CompletedTask);\n\n        var service = _fixture.Create<OrderService>();\n\n        // Act\n        var result = await service.CreateAsync(command, CancellationToken.None);\n\n        // Assert\n        result.Should().NotBeEmpty();\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Testcontainers для Integration Tests"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using Testcontainers.PostgreSql;\nusing Microsoft.AspNetCore.Mvc.Testing;\n\npublic class IntegrationTestBase : IAsyncLifetime\n{\n    private readonly PostgreSqlContainer _dbContainer = new PostgreSqlBuilder()\n        .WithImage(\"postgres:16-alpine\")\n        .WithDatabase(\"testdb\")\n        .WithUsername(\"test\")\n        .WithPassword(\"test\")\n        .Build();\n\n    protected WebApplicationFactory<Program> Factory { get; private set; } = null!;\n\n    public async Task InitializeAsync()\n    {\n        await _dbContainer.StartAsync();\n\n        Factory = new WebApplicationFactory<Program>()\n            .WithWebHostBuilder(builder =>\n            {\n                builder.ConfigureServices(services =>\n                {\n                    // Заменяем connection string на тестовый\n                    var descriptor = services.SingleOrDefault(d => d.ServiceType == typeof(DbContextOptions<AppDbContext>));\n                    if (descriptor != null) services.Remove(descriptor);\n\n                    services.AddDbContext<AppDbContext>(options =>\n                        options.UseNpgsql(_dbContainer.GetConnectionString()));\n                });\n            });\n\n        // Применяем миграции\n        using var scope = Factory.Services.CreateScope();\n        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n        await db.Database.MigrateAsync();\n    }\n\n    public async Task DisposeAsync() => await _dbContainer.DisposeAsync();\n}\n\npublic class UsersApiTests : IntegrationTestBase\n{\n    [Fact]\n    public async Task GetUsers_ReturnsOk()\n    {\n        var client = Factory.CreateClient();\n        var response = await client.GetAsync(\"/api/users\");\n        response.StatusCode.Should().Be(HttpStatusCode.OK);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "WebApplicationFactory для API тестов"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class CustomWebAppFactory : WebApplicationFactory<Program>\n{\n    protected override void ConfigureWebHost(IWebHostBuilder builder)\n    {\n        builder.ConfigureServices(services =>\n        {\n            // Mock внешние сервисы\n            services.AddSingleton<IEmailService, FakeEmailService>();\n            services.AddSingleton<IPaymentGateway, FakePaymentGateway>();\n\n            // In-memory DB для быстрых тестов\n            services.AddDbContext<AppDbContext>(options =>\n                options.UseInMemoryDatabase(\"TestDb\"));\n        });\n\n        builder.UseEnvironment(\"Testing\");\n    }\n}\n\n// Использование\npublic class OrdersApiTests : IClassFixture<CustomWebAppFactory>\n{\n    private readonly HttpClient _client;\n\n    public OrdersApiTests(CustomWebAppFactory factory)\n    {\n        _client = factory.CreateClient();\n    }\n\n    [Fact]\n    public async Task CreateOrder_ReturnsCreated()\n    {\n        var command = new { Email = \"test@test.com\", Items = new[] { new { ProductId = Guid.NewGuid(), Quantity = 1 } } };\n        var response = await _client.PostAsJsonAsync(\"/api/orders\", command);\n\n        response.StatusCode.Should().Be(HttpStatusCode.Created);\n        var location = response.Headers.Location;\n        location.Should().NotBeNull();\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Contract Testing — Pact"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Consumer-Driven Contracts"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Consumer тест (генерирует pact файл)\npublic class UserApiConsumerTests\n{\n    private readonly IPactBuilderV3 _pactBuilder;\n\n    public UserApiConsumerTests()\n    {\n        _pactBuilder = Pact.V3(\"UserConsumer\", \"UserProvider\", new PactConfig\n        {\n            PactDir = @\"..\\..\\..\\..\\pacts\",\n            LogLevel = PactLogLevel.Debug\n        });\n    }\n\n    [Fact]\n    public async Task GetUser_UserExists_ReturnsUser()\n    {\n        // Arrange\n        var expectedUser = new UserDto(Guid.NewGuid(), \"John\", \"john@example.com\");\n\n        _pactBuilder\n            .UponReceiving(\"A request for an existing user\")\n            .Given(\"User with id {id} exists\", new { id = expectedUser.Id })\n            .WithRequest(HttpMethod.Get, $\"/api/users/{expectedUser.Id}\")\n            .WillRespond()\n            .WithStatus(HttpStatusCode.OK)\n            .WithJsonBody(expectedUser);\n\n        // Act\n        await _pactBuilder.VerifyAsync(async ctx =>\n        {\n            var client = new HttpClient { BaseAddress = ctx.MockServerUri };\n            var response = await client.GetAsync($\"/api/users/{expectedUser.Id}\");\n            response.StatusCode.Should().Be(HttpStatusCode.OK);\n\n            var user = await response.Content.ReadFromJsonAsync<UserDto>();\n            user.Should().BeEquivalentTo(expectedUser);\n        });\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Provider Verification"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: pathlib**\n\n**Что делает:** Объектно-ориентированная работа с путями файлов\n\n**Зачем нужно:** Кроссплатформенно, методы вместо os.path, цепочки вызовов, читаемо\n\n**Как работает:** Path('dir') / 'file.txt', path.read_text(), path.write_text('data')"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Provider тест (проверяет pact файл)\npublic class UserApiProviderTests\n{\n    private readonly string _pactPath = Path.GetFullPath(@\"..\\..\\..\\..\\pacts\");\n\n    [Fact]\n    public void VerifyPacts()\n    {\n        var config = new PactVerifierConfig\n        {\n            ProviderVersion = \"1.0.0\",\n            PublishVerificationResults = true,\n            ProviderVersionTags = new[] { \"main\" }\n        };\n\n        IPactVerifier verifier = new PactVerifier(config);\n        verifier.ServiceProvider(\"UserProvider\", \"https://localhost:5001\")\n            .WithHttpEndpoint(\"https://localhost:5001\")\n            .WithPactBroker(\"http://localhost:9292\")\n            .WithProviderStateUrl(\"https://localhost:5001/provider-states\")\n            .Verify();\n    }\n}\n\n// Provider States endpoint\n[ApiController]\n[Route(\"provider-states\")]\npublic class ProviderStatesController : ControllerBase\n{\n    [HttpPost]\n    public IActionResult SetupState([FromBody] ProviderState state)\n    {\n        if (state.State == \"User with id {id} exists\")\n        {\n            var id = Guid.Parse(state.Params![\"id\"].ToString()!);\n            // Seed test data\n            using var scope = _scopeFactory.CreateScope();\n            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n            db.Users.Add(new User { Id = id, Name = \"John\", Email = \"john@example.com\" });\n            db.SaveChanges();\n        }\n        return Ok();\n    }\n}\n\npublic class ProviderState\n{\n    public string State { get; set; } = \"\";\n    public Dictionary<string, object>? Params { get; set; }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Property-Based Testing — FsCheck"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основы FsCheck"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: records**\n\n**Что делает:** Неизменяемые ссылочные типы с value-семантикой (C# 9+)\n\n**Зачем нужно:** Value equality, with-expressions, деконструкция, неизменяемость — идеально для DTO\n\n**Как работает:** public record User(string Name, int Age); var u = new User(\"Alex\", 25);"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using FsCheck;\nusing FsCheck.Xunit;\nusing static FsCheck.Gen;\n\npublic class StringPropertyTests\n{\n    // Property: reverse(reverse(x)) == x\n    [Property]\n    public bool ReverseTwiceIsOriginal(string s)\n    {\n        return s.Reverse().Reverse().SequenceEqual(s);\n    }\n\n    // Property: конкатенация сохраняет длину\n    [Property]\n    public bool ConcatLength(string a, string b)\n    {\n        return (a + b).Length == a.Length + b.Length;\n    }\n\n    // Custom generator\n    public static Arbitrary<Email> EmailGenerator()\n    {\n        return Arb.From(\n            from local in ArbMap.Default.GeneratorFor<string>()\n            from domain in ArbMap.Default.GeneratorFor<string>()\n            select new Email($\"{local}@{domain}.com\")\n        );\n    }\n\n    [Property(Arbitrary = new[] { typeof(EmailGenerator) })]\n    public bool EmailContainsAt(Email email)\n    {\n        return email.Value.Contains(\"@\");\n    }\n}\n\n// Record для тестов\npublic record Email(string Value);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Property-Based Testing для бизнес-логики"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class OrderPropertyTests\n{\n    // Property: добавление товара увеличивает сумму\n    [Property]\n    public Property AddingItemIncreasesTotal(Order order, OrderItem item)\n    {\n        var originalTotal = order.Total;\n        order.AddItem(item);\n        return (order.Total >= originalTotal).ToProperty();\n    }\n\n    // Property: удаление несуществующего товара не меняет заказ\n    [Property]\n    public Property RemovingNonExistentItemNoChange(Order order)\n    {\n        var nonExistentId = Guid.NewGuid();\n        var originalItems = order.Items.ToList();\n        order.RemoveItem(nonExistentId);\n        return order.Items.SequenceEqual(originalItems).ToProperty();\n    }\n\n    // Property: скидка не может быть больше суммы\n    [Property]\n    public Property DiscountCannotExceedTotal(decimal total, decimal discount)\n    {\n        return (discount <= total || discount > total)\n            .When(discount > total, () =>\n                Should.Throw<ArgumentException>(() => new Order(total, discount)))\n            .ToProperty();\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Model-Based Testing"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Состояние системы для тестирования\npublic class BankAccountModel\n{\n    public decimal Balance { get; set; }\n    public bool IsClosed { get; set; }\n}\n\npublic class BankAccountCommands : ICommand<BankAccountModel>\n{\n    public decimal Amount { get; set; }\n}\n\npublic class DepositCommand : BankAccountCommands { }\npublic class WithdrawCommand : BankAccountCommands { }\npublic class CloseCommand : ICommand<BankAccountModel> { }\n\n// Генераторы команд\npublic static Gen<ICommand<BankAccountModel>> Commands(BankAccountModel model)\n{\n    return Frequency(\n        (10, Gen.Constant(new DepositCommand { Amount = Arb.Generate<decimal>() })),\n        (10, Gen.Constant(new WithdrawCommand { Amount = Arb.Generate<decimal>() })),\n        (1, Gen.Constant(new CloseCommand()))\n    );\n}\n\n// Проверка инвариантов\npublic class BankAccountProperties\n{\n    [Property]\n    public Property BalanceNeverNegative(BankAccountModel model)\n    {\n        return (model.Balance >= 0).ToProperty();\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Performance Testing"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "BenchmarkDotNet в CI"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// PerformanceTests.cs\n[MemoryDiagnoser]\n[SimpleJob(RuntimeMoniker.Net80)]\n[MinColumn, MaxColumn, MeanColumn, MedianColumn]\npublic class ApiPerformanceTests\n{\n    private readonly HttpClient _client;\n    private readonly List<Guid> _userIds;\n\n    public ApiPerformanceTests()\n    {\n        var factory = new CustomWebAppFactory();\n        _client = factory.CreateClient();\n\n        // Seed data\n        using var scope = factory.Services.CreateScope();\n        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n        _userIds = db.Users.Select(u => u.Id).Take(100).ToList();\n    }\n\n    [Params(1, 10, 100)]\n    public int BatchSize { get; set; }\n\n    [Benchmark]\n    public async Task GetUsersBatch()\n    {\n        var tasks = _userIds.Take(BatchSize)\n            .Select(id => _client.GetAsync($\"/api/users/{id}\"));\n        await Task.WhenAll(tasks);\n    }\n}\n\n// CI Pipeline (GitHub Actions)\n/*\nname: Performance Tests\non: [push, pull_request]\njobs:\n  benchmark:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Setup .NET\n        uses: actions/setup-dotnet@v4\n        with: { dotnet-version: '8.0.x' }\n      - name: Run Benchmarks\n        run: dotnet run -c Release --project PerformanceTests.csproj -- --filter **\n      - name: Compare with baseline\n        run: |\n          # Сравнение с baseline из artifacts\n          dotnet tool install -g BenchmarkDotNet.Tool\n          benchmarkdotnet compare baseline.json current.json\n*/"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Regression Detection"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class PerformanceRegressionTests\n{\n    [Fact]\n    public void Performance_ShouldNotRegress()\n    {\n        // Baseline metrics (сохранены от предыдущих запусков)\n        var baseline = new Dictionary<string, double>\n        {\n            [\"GetUsersBatch_BatchSize_1\"] = 5.2,    // ms\n            [\"GetUsersBatch_BatchSize_10\"] = 12.8,\n            [\"GetUsersBatch_BatchSize_100\"] = 85.3\n        };\n\n        // Запуск бенчмарков программно\n        var summary = BenchmarkRunner.Run<ApiPerformanceTests>();\n\n        foreach (var report in summary.Reports)\n        {\n            var key = $\"{report.BenchmarkCase.DisplayName}\";\n            if (baseline.TryGetValue(key, out var baselineMs))\n            {\n                var currentMs = report.ResultStatistics.Mean;\n                var regression = (currentMs - baselineMs) / baselineMs * 100;\n\n                regression.Should().BeLessThan(20,\n                    $\"Performance regression detected: {key} increased by {regression:F1}%\");\n            }\n        }\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Resilience — Polly"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Retry, Circuit Breaker, Timeout"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using Polly;\nusing Polly.Extensions.Http;\n\npublic static class ResiliencePolicies\n{\n    // Retry с экспоненциальной задержкой\n    public static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy()\n    {\n        return HttpPolicyExtensions\n            .HandleTransientHttpError()\n            .OrResult(r => r.StatusCode == HttpStatusCode.TooManyRequests)\n            .WaitAndRetryAsync(\n                retryCount: 3,\n                sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt))\n                    + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 100)),\n                onRetry: (outcome, timespan, attempt, ctx) =>\n                {\n                    var logger = ctx.GetLogger();\n                    logger.LogWarning(\"Retry {Attempt} after {Delay}ms\", attempt, timespan.TotalMilliseconds);\n                });\n    }\n\n    // Circuit Breaker\n    public static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy()\n    {\n        return HttpPolicyExtensions\n            .HandleTransientHttpError()\n            .CircuitBreakerAsync(\n                handledEventsAllowedBeforeBreaking: 5,\n                durationOfBreak: TimeSpan.FromSeconds(30),\n                onBreak: (outcome, timespan) =>\n                {\n                    Log.CircuitBroken(timespan);\n                },\n                onReset: () => Log.CircuitReset(),\n                onHalfOpen: () => Log.CircuitHalfOpen());\n    }\n\n    // Timeout\n    public static IAsyncPolicy<HttpResponseMessage> GetTimeoutPolicy()\n    {\n        return Policy.TimeoutAsync<HttpResponseMessage>(TimeSpan.FromSeconds(10));\n    }\n\n    // Комбинированная политика\n    public static IAsyncPolicy<HttpResponseMessage> GetCombinedPolicy()\n    {\n        return Policy.WrapAsync(GetTimeoutPolicy(), GetRetryPolicy(), GetCircuitBreakerPolicy());\n    }\n}\n\n// Регистрация в HttpClient\nbuilder.Services.AddHttpClient<ExternalApiClient>()\n    .AddPolicyHandler(ResiliencePolicies.GetCombinedPolicy())\n    .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(3, _ => TimeSpan.FromSeconds(1)));"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Bulkhead и Rate Limiting"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Bulkhead — ограничение параллелизма\npublic static IAsyncPolicy GetBulkheadPolicy()\n{\n    return Policy.BulkheadAsync(\n        maxParallelization: 10,\n        maxQueuingActions: 20,\n        onBulkheadRejectedAsync: ctx =>\n        {\n            Log.BulkheadRejected();\n            return Task.CompletedTask;\n        });\n}\n\n// Rate Limiting с Polly\npublic static IAsyncPolicy<HttpResponseMessage> GetRateLimitPolicy()\n{\n    return Policy.RateLimitAsync<HttpResponseMessage>(\n        numberOfExecutions: 100,\n        perTimeSpan: TimeSpan.FromMinutes(1),\n        onRateLimitExceeded: (retryAfter, ctx) =>\n        {\n            Log.RateLimited(retryAfter);\n            return Task.CompletedTask;\n        });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Fallback и Degradation"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Fallback к кэшу при ошибке\npublic class ResilientUserService\n{\n    private readonly IHttpClientFactory _httpFactory;\n    private readonly IMemoryCache _cache;\n    private readonly ILogger<ResilientUserService> _logger;\n\n    public async Task<UserDto?> GetUserAsync(Guid id, CancellationToken ct)\n    {\n        var cacheKey = $\"user:{id}\";\n\n        // Try cache first\n        if (_cache.TryGetValue(cacheKey, out UserDto? cached))\n            return cached;\n\n        var policy = Policy\n            .Handle<HttpRequestException>()\n            .Or<TimeoutRejectedException>()\n            .Or<BrokenCircuitException>()\n            .FallbackAsync(\n                fallbackAction: async (ctx, ct) =>\n                {\n                    _logger.LogWarning(\"External API failed, returning stale cache\");\n                    // Попытка получить устаревший кэш\n                    return _cache.TryGetValue(cacheKey, out UserDto? stale) ? stale : null;\n                },\n                onFallbackAsync: (ex, ctx) =>\n                {\n                    _logger.LogError(ex, \"Fallback triggered for user {Id}\", id);\n                    return Task.CompletedTask;\n                });\n\n        var client = _httpFactory.CreateClient(\"UserApi\");\n        var user = await policy.ExecuteAsync(async () =>\n        {\n            var response = await client.GetAsync($\"/users/{id}\", ct);\n            response.EnsureSuccessStatusCode();\n            return await response.Content.ReadFromJsonAsync<UserDto>(cancellationToken: ct);\n        });\n\n        if (user != null)\n            _cache.Set(cacheKey, user, TimeSpan.FromMinutes(5));\n\n        return user;\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Chaos Engineering"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Simmy для Chaos Testing"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using Simmy;\nusing Simmy.ChaosEngine;\nusing Simmy.Fault;\n\npublic class ChaosTests\n{\n    [Fact]\n    public async Task Service_HandlesLatencyInjection()\n    {\n        var chaosPolicy = ChaosPolicy\n            .InjectLatencyAsync(\n                latency: TimeSpan.FromSeconds(5),\n                injectionRate: 0.3) // 30% запросов\n            .ExecuteAsync(async () =>\n            {\n                var client = _factory.CreateClient();\n                return await client.GetAsync(\"/api/users\");\n            });\n\n        // Тест должен пройти несмотря на задержки\n        var response = await chaosPolicy;\n        response.StatusCode.Should().Be(HttpStatusCode.OK);\n    }\n\n    [Fact]\n    public async Task Service_HandlesExceptionsInjection()\n    {\n        var chaosPolicy = ChaosPolicy\n            .InjectFaultAsync<HttpRequestException>(\n                new HttpRequestException(\"Chaos!\"),\n                injectionRate: 0.2)\n            .WrapAsync(ResiliencePolicies.GetRetryPolicy());\n\n        var responses = await Task.WhenAll(\n            Enumerable.Range(0, 20).Select(_ => chaosPolicy.ExecuteAsync(async () =>\n            {\n                var client = _factory.CreateClient();\n                return await client.GetAsync(\"/api/health\");\n            })));\n\n        // Большинство должны успешно повториться\n        responses.Count(r => r.IsSuccessStatusCode).Should().BeGreaterThan(15);\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Complete Test Suite**: Постройте полный набор тестов для \"Order Service\": unit (xUnit+Moq+AutoFixture), integration (Testcontainers+WebApplicationFactory), contract (Pact), property-based (FsCheck)\n\n2. **Performance Regression CI**: Настройте CI pipeline: nightly benchmarks, сохранение baseline, PR comparison, автоматический fail при регрессии > 15%\n\n3. **Resilience Patterns Demo**: Создайте сервис, вызывающий 3 внешних API с разными политиками: retry для flaky, circuit breaker для ненадежного, timeout для медленного, fallback к кэшу\n\n4. **Chaos Engineering Experiment**: Внедрите Simmy в integration тесты: latency injection, exception injection, behavior injection. Проверьте, что resilience политики работают\n\n5. **Mutation Testing**: Настройте Stryker.NET для mutation testing. Достигните mutation score > 80% для критических доменных классов\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| Тесты зависят друг от друга | Каждый тест изолирован, propre state через fixtures |\n| Мокают всё подряд | Мокают только внешние зависимости (DB, HTTP, время) |\n| Integration тесты без очистки БД | Transaction rollback или Testcontainers с fresh DB |\n| Отсутствие property-based для алгоритмов | FsCheck для инвариантов, сериализации, парсеров |\n| Бенчмарки в Debug режиме | Только Release, без отладчика |\n| Polly политики не переиспользуются | Singleton политики через `PolicyRegistry` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**xUnit** — https://xunit.net",
+        "**FluentAssertions** — https://fluentassertions.com",
+        "**AutoFixture** — https://github.com/AutoFixture/AutoFixture",
+        "**Testcontainers** — https://dotnet.testcontainers.org",
+        "**Pact .NET** — https://github.com/pact-foundation/pact-net",
+        "**FsCheck** — https://fscheck.github.io/FsCheck",
+        "**BenchmarkDotNet** — https://benchmarkdotnet.org",
+        "**Polly** — https://github.com/App-vNext/Polly",
+        "**Simmy** — https://github.com/Polly-Contrib/Simmy",
+        "**Stryker.NET** — https://stryker-mutator.io/docs/stryker-net/",
+        "**Testing Strategies** — Vladimir Khorikov \"Unit Testing Principles, Practices, and Patterns\""
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Roslyn Analyzers и Source Generators",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Roslyn Analyzers и Source Generators' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C#",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c# на GitHub",
+    "Конференции и митапы по C#"
+  ],
+  "key_takeaways": [
+    "Главная идея: DiagnosticAnalyzer, CodeFixProvider, IIncrementalGenerator, Incremental Generators — это фундамент для LINQ, Generics, Delegates/Events.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "csharp",
+  "lesson_order": 31,
+  "name_en": "Lesson: Roslyn Analyzers и Source Generators",
+  "short_description_en": "Learn Roslyn Analyzers и Source Generators in C# with detailed explanations and examples"
+}

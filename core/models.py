@@ -1,0 +1,193 @@
+"""
+Core models and mixins for the project.
+"""
+
+from django.db import models
+from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
+
+
+class TimeStampedModel(models.Model):
+    """
+    Abstract model that provides created_at and updated_at fields.
+    """
+    created_at = models.DateTimeField(_('created at'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('updated at'), auto_now=True)
+
+    class Meta:
+        abstract = True
+        ordering = ['-created_at']
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__}(pk={self.pk}, created_at={self.created_at})>"
+
+
+class OrderedModel(models.Model):
+    """
+    Abstract model that provides an order field for ordering.
+    """
+    order = models.PositiveIntegerField(_('order'), default=0)
+
+    class Meta:
+        abstract = True
+        ordering = ['order']
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__}(pk={self.pk}, order={self.order})>"
+
+
+class PublishedModel(models.Model):
+    """
+    Abstract model that provides publication status.
+    """
+    class PublishStatus(models.TextChoices):
+        DRAFT = 'draft', _('Draft')
+        PUBLISHED = 'published', _('Published')
+        HIDDEN = 'hidden', _('Hidden')
+        ARCHIVED = 'archived', _('Archived')
+
+    status = models.CharField(
+        _('status'),
+        max_length=20,
+        choices=PublishStatus.choices,
+        default=PublishStatus.DRAFT,
+    )
+    published_at = models.DateTimeField(_('published at'), null=True, blank=True)
+
+    class Meta:
+        abstract = True
+
+    def publish(self):
+        """Publish the object."""
+        self.status = self.PublishStatus.PUBLISHED
+        self.published_at = timezone.now()
+        self.save(update_fields=['status', 'published_at'])
+
+    def hide(self):
+        """Hide the object."""
+        self.status = self.PublishStatus.HIDDEN
+        self.save(update_fields=['status'])
+
+    def archive(self):
+        """Archive the object."""
+        self.status = self.PublishStatus.ARCHIVED
+        self.save(update_fields=['status'])
+
+    @property
+    def is_published(self):
+        return self.status == self.PublishStatus.PUBLISHED
+
+    @property
+    def is_visible_to_students(self):
+        return self.status == self.PublishStatus.PUBLISHED
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__}(pk={self.pk}, status={self.status})>"
+
+
+class SoftDeleteModel(models.Model):
+    """
+    Abstract model that provides soft delete functionality.
+    """
+    is_deleted = models.BooleanField(_('deleted'), default=False)
+    deleted_at = models.DateTimeField(_('deleted at'), null=True, blank=True)
+
+    class Meta:
+        abstract = True
+
+    def delete(self, using=None, keep_parents=False):
+        """Soft delete the object."""
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save(update_fields=['is_deleted', 'deleted_at'])
+
+    def hard_delete(self):
+        """Permanently delete the object."""
+        super().delete(using=using, keep_parents=keep_parents)
+
+    def restore(self):
+        """Restore a soft-deleted object."""
+        self.is_deleted = False
+        self.deleted_at = None
+        self.save(update_fields=['is_deleted', 'deleted_at'])
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__}(pk={self.pk}, is_deleted={self.is_deleted})>"
+
+
+class ActiveManager(models.Manager):
+    """Manager that returns only non-deleted objects."""
+
+    def get_queryset(self):
+        if hasattr(self.model, 'is_deleted'):
+            return super().get_queryset().filter(is_deleted=False)
+        return super().get_queryset()
+
+
+class PublishedManager(models.Manager):
+    """Manager that returns only published objects."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(status=PublishedModel.PublishStatus.PUBLISHED)
+
+
+class PublishedActiveManager(models.Manager):
+    """
+    Manager that returns only published AND non-deleted objects.
+    Combines PublishedManager and ActiveManager logic.
+    Only works on models that inherit from PublishedModel and/or SoftDeleteModel.
+    """
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # Check if model has PublishedModel's status field
+        if hasattr(self.model, 'PublishStatus'):
+            queryset = queryset.filter(status=PublishedModel.PublishStatus.PUBLISHED)
+        elif hasattr(self.model, 'status'):
+            # Fallback for models with status field but different choices
+            queryset = queryset.filter(status='published')
+        if hasattr(self.model, 'is_deleted'):
+            queryset = queryset.filter(is_deleted=False)
+        return queryset
+
+
+class TimeStampedSoftDeleteModel(TimeStampedModel, SoftDeleteModel):
+    """Combines TimeStampedModel and SoftDeleteModel."""
+
+    objects = ActiveManager()
+    all_objects = models.Manager()
+
+    class Meta:
+        abstract = True
+
+
+class PublishedSoftDeleteTimeStampedModel(TimeStampedModel, PublishedModel, SoftDeleteModel):
+    """
+    Combines TimeStampedModel, PublishedModel, and SoftDeleteModel.
+    Uses PublishedActiveManager to filter both published and non-deleted.
+    """
+
+    objects = PublishedActiveManager()
+    all_objects = models.Manager()
+
+    class Meta:
+        abstract = True
+
+
+class OrderedTimeStampedModel(TimeStampedModel, OrderedModel):
+    """Combines TimeStampedModel and OrderedModel."""
+
+    class Meta:
+        abstract = True
+        ordering = ['order', '-created_at']
+
+
+class PublishedTimeStampedModel(TimeStampedModel, PublishedModel):
+    """Combines TimeStampedModel and PublishedModel."""
+
+    objects = PublishedManager()
+    all_objects = models.Manager()
+
+    class Meta:
+        abstract = True
+        ordering = ['-created_at']

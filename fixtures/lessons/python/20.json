@@ -1,0 +1,596 @@
+{
+  "title": "Урок 20: Работа с данными",
+  "slug": "urok-20-многопоточность-и-мультипроцессинг",
+  "short_description": "threading, multiprocessing, concurrent.futures, GIL, ProcessPoolExecutor",
+  "goals": [
+    "Понимать основы: threading, multiprocessing, concurrent.futures, GIL, ProcessPoolExecutor",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 2.9: Работа с данными — JSON, CSV, SQLite, SQLAlchemy, pandas, сериализация"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Работать с JSON, CSV, YAML, TOML",
+        "Использовать SQLite через sqlite3 и SQLAlchemy",
+        "Понимать ORM (SQLAlchemy, Tortoise ORM)",
+        "Базовый анализ данных с pandas",
+        "Сериализация: pickle, msgpack, orjson"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. JSON — стандарт обмена данными"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стандартная библиотека"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "В строку"
+    },
+    {
+      "type": "text",
+      "content": "json_str = json.dumps(data, ensure_ascii=False, indent=2)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "'{\\n  \"name\": \"Анна\",\\n  \"age\": 25,\\n  \"skills\": [\"Python\", \"SQL\"]\\n}'"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Из строки"
+    },
+    {
+      "type": "text",
+      "content": "parsed = json.loads(json_str)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "В файл"
+    },
+    {
+      "type": "text",
+      "content": "with open(\"data.json\", \"w\", encoding=\"utf-8\") as f:\n    json.dump(data, f, ensure_ascii=False, indent=2)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Из файла"
+    },
+    {
+      "type": "text",
+      "content": "with open(\"data.json\", encoding=\"utf-8\") as f:\n    data = json.load(f)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кастомный энкодер"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from datetime import datetime\nfrom dataclasses import asdict\n\nclass CustomEncoder(json.JSONEncoder):\n    def default(self, obj):\n        if isinstance(obj, datetime):\n            return obj.isoformat()\n        if hasattr(obj, \"__dataclass_fields__\"):\n            return asdict(obj)\n        return super().default(obj)\n\njson.dumps({\"time\": datetime.now(), \"user\": User(\"Анна\")}, cls=CustomEncoder)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "orjson — быстрый JSON (Rust)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install orjson"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Быстрее в 2-10 раз, возвращает bytes"
+    },
+    {
+      "type": "text",
+      "content": "data = orjson.dumps({\"key\": \"value\"})\nparsed = orjson.loads(data)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Опции"
+    },
+    {
+      "type": "text",
+      "content": "orjson.dumps(data, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. CSV — табличные данные"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стандартная библиотека"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Запись"
+    },
+    {
+      "type": "text",
+      "content": "with open(\"users.csv\", \"w\", newline=\"\", encoding=\"utf-8\") as f:\n    writer = csv.writer(f)\n    writer.writerow([\"name\", \"age\", \"city\"])\n    writer.writerow([\"Анна\", 25, \"Москва\"])\n    writer.writerow([\"Борис\", 30, \"СПб\"])"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "DictWriter"
+    },
+    {
+      "type": "text",
+      "content": "with open(\"users.csv\", \"w\", newline=\"\", encoding=\"utf-8\") as f:\n    writer = csv.DictWriter(f, fieldnames=[\"name\", \"age\", \"city\"])\n    writer.writeheader()\n    writer.writerow({\"name\": \"Анна\", \"age\": 25, \"city\": \"Москва\"})"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Чтение"
+    },
+    {
+      "type": "text",
+      "content": "with open(\"users.csv\", encoding=\"utf-8\") as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        print(row)  # {'name': 'Анна', 'age': '25', 'city': 'Москва'}\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "pandas — мощный анализ"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pandas"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Фильтрация"
+    },
+    {
+      "type": "text",
+      "content": "adults = df[df[\"age\"] > 18]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Группировка"
+    },
+    {
+      "type": "text",
+      "content": "df.groupby(\"city\")[\"age\"].mean()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Запись"
+    },
+    {
+      "type": "text",
+      "content": "df.to_csv(\"output.csv\", index=False)\ndf.to_json(\"output.json\", orient=\"records\")\ndf.to_parquet(\"output.parquet\")\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. YAML и TOML — конфигурация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "YAML"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pyyaml"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: context manager**\n\n**Что делает:** with open(...) as f: — автоматическое закрытие ресурсов\n\n**Зачем нужно:** Гарантирует закрытие файлов/соединений даже при ошибках, чище try/finally\n\n**Как работает:** with open('file.txt') as f: data = f.read() — файл закроется автоматически"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import yaml\n\nconfig = {\n    \"database\": {\"host\": \"localhost\", \"port\": 5432},\n    \"debug\": True,\n    \"servers\": [\"s1\", \"s2\"]\n}\n\nwith open(\"config.yaml\", \"w\") as f:\n    yaml.dump(config, f, allow_unicode=True)\n\nwith open(\"config.yaml\") as f:\n    loaded = yaml.safe_load(f)  # safe_load — безопаснее!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "TOML (Python 3.11+ встроен)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Запись"
+    },
+    {
+      "type": "text",
+      "content": "with open(\"config.toml\", \"wb\") as f:\n    tomli_w.dump({\"key\": \"value\"}, f)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. SQLite — встроенная БД"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "sqlite3 — низкоуровневый доступ"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Создание таблицы"
+    },
+    {
+      "type": "text",
+      "content": "cursor.execute(\"\"\"\n    CREATE TABLE IF NOT EXISTS users (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        name TEXT NOT NULL,\n        email TEXT UNIQUE,\n        age INTEGER\n    )\n\"\"\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Вставка (параметризованный запрос!)"
+    },
+    {
+      "type": "text",
+      "content": "cursor.execute(\"INSERT INTO users (name, email, age) VALUES (?, ?, ?)\",\n               (\"Анна\", \"anna@example.com\", 25))\nconn.commit()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Выборка"
+    },
+    {
+      "type": "text",
+      "content": "cursor.execute(\"SELECT * FROM users WHERE age > ?\", (18,))\nfor row in cursor.fetchall():\n    print(dict(row))  # {'id': 1, 'name': 'Анна', ...}\n\nconn.close()\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контекстный менеджер"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "with sqlite3.connect(\"app.db\") as conn:\n    conn.execute(\"INSERT INTO users (name) VALUES (?)\", (\"Борис\",))\n    # авто-commit при выходе"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. SQLAlchemy — ORM и Core"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Для async"
+    },
+    {
+      "type": "text",
+      "content": "pip install sqlalchemy[asyncio] asyncpg  # PostgreSQL\npip install sqlalchemy[asyncio] aiosqlite  # SQLite async\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Declarative ORM (2.0 стиль)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Работа с сессией"
+    },
+    {
+      "type": "text",
+      "content": "with Session(engine) as session:\n    user = User(name=\"Анна\", email=\"anna@example.com\", age=25)\n    session.add(user)\n    session.commit()\n\n    # Запросы\n    users = session.scalars(select(User).where(User.age > 18)).all()\n    for u in users:\n        print(u.name, u.email)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Асинхронный SQLAlchemy"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession\nfrom sqlalchemy.orm import sessionmaker\n\nasync_engine = create_async_engine(\"sqlite+aiosqlite:///app.db\", echo=True)\nasync_session = sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)\n\nasync def get_users():\n    async with async_session() as session:\n        result = await session.execute(select(User).where(User.age > 18))\n        return result.scalars().all()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Core — SQL Expression Language"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from sqlalchemy import Table, MetaData, insert, select, update, delete\n\nmetadata = MetaData()\nusers = Table(\"users\", metadata, autoload_with=engine)\n\nwith engine.connect() as conn:\n    # Insert\n    conn.execute(insert(users).values(name=\"Виктор\", age=35))\n    conn.commit()\n\n    # Select\n    result = conn.execute(select(users.c.name, users.c.age).where(users.c.age > 20))\n    for row in result:\n        print(row)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Миграции — Alembic"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install alembic\nalembic init migrations"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "migrations/env.py — настройка target_metadata"
+    },
+    {
+      "type": "text",
+      "content": "from myapp.models import Base\ntarget_metadata = Base.metadata"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "bash"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Создать миграцию"
+    },
+    {
+      "type": "text",
+      "content": "alembic revision --autogenerate -m \"Add users table\""
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Применить"
+    },
+    {
+      "type": "text",
+      "content": "alembic upgrade head"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Откатить"
+    },
+    {
+      "type": "text",
+      "content": "alembic downgrade -1\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Сериализация объектов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "pickle — встроенный (НЕ для недоверенных данных!)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Протокол 5 (Python 3.8+) — быстрее для больших объектов"
+    },
+    {
+      "type": "text",
+      "content": "pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "msgpack — бинарный, быстрый, кроссплатформенный"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install msgpack"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import msgpack\n\ndata = {\"key\": \"value\", \"numbers\": [1, 2, 3]}\npacked = msgpack.packb(data, use_bin_type=True)\nunpacked = msgpack.unpackb(packed, raw=False)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pydantic — валидация + сериализация"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pydantic"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Парсинг с валидацией"
+    },
+    {
+      "type": "text",
+      "content": "user2 = User.model_validate({\"id\": \"2\", \"name\": \"Борис\", \"email\": \"boris@test.com\"})\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Большие данные — Parquet, Dask, Polars"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Parquet (колончатый формат)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import pandas as pd\n\ndf = pd.DataFrame({\"a\": range(1000000), \"b\": range(1000000)})\ndf.to_parquet(\"data.parquet\", compression=\"snappy\")\ndf2 = pd.read_parquet(\"data.parquet\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Polars — быстрый DataFrame (Rust)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install polars"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import polars as pl\n\ndf = pl.read_csv(\"large.csv\")\nresult = df.filter(pl.col(\"age\") > 18).group_by(\"city\").agg(pl.col(\"age\").mean())\nprint(result)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **ETL pipeline**: CSV → валидация (Pydantic) → SQLite (SQLAlchemy) → отчёт (pandas)\n2. **Конфиг система**: загрузка YAML/TOML + переменные окружения + значения по умолчанию\n3. **Кэширование**: msgpack/orjson для сериализации в Redis\n4. **Миграции**: настроить Alembic, добавить колонку, откатить\n5. **Async репозиторий**: SQLAlchemy async + aiosqlite/asyncpg\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| SQL-инъекция: `f\"SELECT * FROM t WHERE x={val}\"` | Параметризованные запросы: `execute(\"... WHERE x=?\", (val,))` |\n| `yaml.load()` без `safe_load` | Всегда `yaml.safe_load()` |\n| pickle недоверенных данных | Никогда! Используйте JSON/msgpack |\n| Открытые соединения не закрыты | `with` контекстные менеджеры / `session.close()` |\n| N+1 проблема в ORM | `selectinload`, `joinedload` для связанных данных |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**SQLAlchemy 2.0 Tutorial** — https://docs.sqlalchemy.org/en/20/tutorial/",
+        "**pandas docs** — https://pandas.pydata.org/docs/",
+        "**Pydantic docs** — https://docs.pydantic.dev/",
+        "**Alembic docs** — https://alembic.sqlalchemy.org/",
+        "**Polars docs** — https://docs.pola.rs/",
+        "**orjson** — https://github.com/ijl/orjson"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Многопоточность и мультипроцессинг",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Многопоточность и мультипроцессинг' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: threading, multiprocessing, concurrent.futures, GIL, ProcessPoolExecutor — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 20,
+  "name_en": "Lesson: Многопоточность и мультипроцессинг",
+  "short_description_en": "Learn Многопоточность и мультипроцессинг in Python with detailed explanations and examples"
+}

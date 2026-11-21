@@ -1,0 +1,481 @@
+# Урок 12: Глубокое погружение во владение (Ownership Deep Dive)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Понимать внутреннее устройство String, Vec, Box
+- Работать с частичным перемещением (partial move)
+- Использовать `mem::swap`, `mem::replace`, `mem::take`
+- Понимать drop order и Drop trait детально
+- Работать с `ManuallyDrop` и `std::mem::forget`
+- Понимать stack vs heap allocation
+- Использовать `Pin` для самозареференцирующихся структур
+
+---
+
+## 1. Внутреннее устройство умных указателей
+
+### `String` — три слова в стеке
+```rust
+// Упрощённо:
+struct String {
+    ptr: *mut u8,      // указатель на кучу
+    len: usize,        // текущая длина
+    capacity: usize,   // выделенная ёмкость
+}
+
+// При clone() — аллоцируется новая память, данные копируются
+// При move — три слова копируются (bitwise), ptr указывает на ту же кучу
+```
+
+### `Vec<T>` — аналогично
+```rust
+struct Vec<T> {
+    ptr: *mut T,
+    len: usize,
+    capacity: usize,
+}
+```
+
+### `Box<T>` — один указатель
+```rust
+struct Box<T> {
+    ptr: *mut T,  // или Unique<T> для ковариантности
+}
+```
+
+---
+
+## 2. Частичное перемещение (Partial Move)
+
+### Проблема
+```rust
+struct Person {
+    name: String,
+    age: u32,
+    address: String,
+}
+
+fn main() {
+    let p = Person {
+        name: "Alice".into(),
+        age: 30,
+        address: "123 Main St".into(),
+    };
+
+    let name = p.name; // move name
+    // p теперь частично перемещён!
+    // println!("{}", p.name); // ОШИБКА: use of moved value
+    // Но p.age и p.address всё ещё доступны!
+    println!("age: {}, address: {}", p.age, p.address);
+}
+```
+
+### Решение: `ref` / `ref mut` в паттернах
+```rust
+fn main() {
+    let p = Person { name: "Alice".into(), age: 30, address: "123".into() };
+
+    // Заимствуем поля вместо перемещения
+    let Person { ref name, ref age, address } = p;
+    // name: &String, age: &u32, address: String (moved)
+
+    println!("name: {}", name);
+    println!("age: {}", age);
+    // p.address недоступен, но p.name и p.age — да!
+}
+```
+
+### Частичное перемещение в функциях
+```rust
+fn process_name(name: String) { println!("Processing: {}", name); }
+
+fn main() {
+    let p = Person { name: "Alice".into(), age: 30, address: "123".into() };
+    process_name(p.name); // move только name
+    // p.age, p.address ещё живы
+}
+```
+
+---
+
+## 3. `std::mem` утилиты
+
+### `mem::swap` — обмен значениями
+```rust
+use std::mem;
+
+fn main() {
+    let mut a = String::from("hello");
+    let mut b = String::from("world");
+    mem::swap(&mut a, &mut b);
+    println!("a={}, b={}", a, b); // a=world, b=hello
+}
+```
+
+### `mem::replace` — замена с возвратом старого
+```rust
+use std::mem;
+
+fn main() {
+    let mut s = String::from("hello");
+    let old = mem::replace(&mut s, String::from("world"));
+    println!("old={}, new={}", old, s); // old=hello, new=world
+}
+```
+
+### `mem::take` — замена на Default
+```rust
+use std::mem;
+
+fn main() {
+    let mut v = vec![1, 2, 3];
+    let taken = mem::take(&mut v); // v становится пустым vec![]
+    println!("taken={:?}, v={:?}", taken, v); // taken=[1,2,3], v=[]
+}
+```
+
+### `mem::forget` — предотвращение drop
+```rust
+use std::mem;
+
+fn main() {
+    let s = String::from("hello");
+    mem::forget(s); // s НЕ дропается, память утекает намеренно
+    // Полезно для FFI, передачи владения в C
+}
+```
+
+---
+
+## 4. Порядок деструкции (Drop Order)
+
+### Правила
+1. Поля структуры дропаются в **обратном порядке объявления**
+2. Локальные переменные дропаются в **обратном порядке создания** (LIFO)
+3. `drop` не вызывается явно (кроме `std::mem::drop`)
+
+```rust
+struct A(&'static str);
+impl Drop for A {
+    fn drop(&mut self) { println!("drop {}", self.0); }
+}
+
+fn main() {
+    let _a = A("a");
+    let _b = A("b");
+    let _c = A("c");
+}
+// Вывод:
+// drop c
+// drop b
+// drop a
+```
+
+### Порядок полей структуры
+```rust
+struct S {
+    a: A,
+    b: A,
+    c: A,
+}
+
+fn main() {
+    let _s = S { a: A("a"), b: A("b"), c: A("c") };
+}
+// Вывод (обратный порядку объявления):
+// drop c
+// drop b
+// drop a
+```
+
+### `drop` вручную (редко нужно)
+```rust
+use std::mem;
+
+fn main() {
+    let mut s = String::from("hello");
+    drop(s); // Явный drop (std::mem::drop)
+    // s больше нельзя использовать
+}
+```
+
+---
+
+## 5. `ManuallyDrop<T>` — ручное управление жизнью
+
+```rust
+use std::mem::ManuallyDrop;
+
+fn main() {
+    let mut data = ManuallyDrop::new(String::from("hello"));
+    println!("{}", data); // Работает как обычная строка
+
+    // Ручной drop когда нам угодно
+    unsafe { ManuallyDrop::drop(&mut data) };
+    // data больше невалидна
+}
+```
+
+### Массив с `ManuallyDrop`
+```rust
+use std::mem::ManuallyDrop;
+
+fn main() {
+    let mut arr: [ManuallyDrop<String>; 3] = [
+        ManuallyDrop::new("a".into()),
+        ManuallyDrop::new("b".into()),
+        ManuallyDrop::new("c".into()),
+    ];
+
+    // Drопим в произвольном порядке
+    unsafe { ManuallyDrop::drop(&mut arr[1]); }
+    unsafe { ManuallyDrop::drop(&mut arr[0]); }
+    unsafe { ManuallyDrop::drop(&mut arr[2]); }
+}
+```
+
+---
+
+## 6. `Pin<P>` — закрепление в памяти
+
+### Проблема: самозареференцирующиеся структуры
+```rust
+// НЕБЕЗОПАСНО! При перемещении self-referential указатель становится невалидным
+struct SelfRef {
+    data: String,
+    ptr: *const String, // Указатель на self.data
+}
+
+impl SelfRef {
+    fn new() -> Self {
+        let data = String::from("hello");
+        let ptr = &data as *const String;
+        SelfRef { data, ptr } // При возврате происходит move!
+    }
+}
+```
+
+### Решение: `Pin<Box<T>>`
+```rust
+use std::pin::Pin;
+use std::marker::PhantomPinned;
+
+struct SelfRef {
+    data: String,
+    ptr: *const String,
+    _pin: PhantomPinned, // Запрещает реализацию Unpin
+}
+
+impl SelfRef {
+    fn new() -> Pin<Box<Self>> {
+        let mut boxed = Box::pin(SelfRef {
+            data: String::from("hello"),
+            ptr: std::ptr::null(),
+            _pin: PhantomPinned,
+        });
+        // После pin'а адрес стабилен
+        let ptr = &boxed.data as *const String;
+        unsafe { boxed.as_mut().get_unchecked_mut().ptr = ptr; }
+        boxed
+    }
+
+    fn print(&self) {
+        println!("data: {}, ptr: {:?}", self.data, unsafe { &*self.ptr });
+    }
+}
+```
+
+### `Unpin` маркер
+- Большинство типов: `Unpin` (можно перемещать после pin)
+- `PhantomPinned` делает `!Unpin`
+- `Pin<&mut T>` даёт доступ к `get_unchecked_mut()` только для `!Unpin`
+
+---
+
+## 7. Stack vs Heap — когда что
+
+### Стек (Stack)
+- Быстрое выделение (просто сдвиг указателя)
+- Ограниченный размер (~8MB на поток в Linux)
+- Автоматическое освобождение при выходе из scope
+- Подходит для: примитивы, маленькие структуры, известный размер
+
+### Куча (Heap)
+- Медленнее (аллокатор, поиск свободного блока)
+- Практически неограничен (до RAM)
+- Требует явного управления (Box, Vec, String, Arc)
+- Подходит для: большие данные, динамический размер,共享 владение
+
+### `Box::new` vs стек
+```rust
+fn on_stack() -> [u8; 1000] { [0; 1000] } // 1KB на стеке — OK
+fn on_stack_big() -> [u8; 10_000_000] { [0; 10_000_000] } // 10MB — STACK OVERFLOW!
+
+fn on_heap() -> Box<[u8; 10_000_000]> { Box::new([0; 10_000_000]) } // OK
+```
+
+### `alloca` / `stacker` для больших стековых массивов (редко)
+```rust
+// Требует feature или unsafe
+```
+
+---
+
+## 8. `#[repr(C)]`, `#[repr(transparent)]`, `#[repr(packed)]`
+
+### `#[repr(C)]` — C-совместимый layout
+```rust
+#[repr(C)]
+struct CLayout {
+    a: u8,
+    b: u32,
+    c: u16,
+}
+// Порядок и выравнивание как в C
+```
+
+### `#[repr(transparent)]` — новая обёртка с тем же layout
+```rust
+#[repr(transparent)]
+struct Meters(f64); // Идентично f64 в памяти
+```
+
+### `#[repr(packed)]` — без выравнивания
+```rust
+#[repr(packed)]
+struct Packed {
+    a: u8,
+    b: u32, // Сразу после a, без padding
+}
+// Осторожно: невыровненный доступ медленнее/UB на некоторых архитектурах
+```
+
+---
+
+## 9. Практические упражнения
+
+### Упражнение 1: Частичное перемещение и ref
+```rust
+struct Config {
+    host: String,
+    port: u16,
+    timeout: u64,
+    retries: u32,
+}
+
+fn connect(host: &str, port: u16) { println!("Connecting to {}:{}", host, port); }
+
+fn main() {
+    let cfg = Config {
+        host: "localhost".into(),
+        port: 8080,
+        timeout: 30,
+        retries: 3,
+    };
+
+    // Используем ref для host/port, двигаем остальное
+    let Config { ref host, ref port, timeout, retries } = cfg;
+    connect(host, *port);
+    println!("timeout={}, retries={}", timeout, retries);
+}
+```
+
+### Упражнение 2: `mem::replace` для state machine
+```rust
+use std::mem;
+
+enum State {
+    Disconnected,
+    Connecting,
+    Connected(String),
+}
+
+struct Connection {
+    state: State,
+}
+
+impl Connection {
+    fn connect(&mut self, addr: String) {
+        // Заменяем состояние атомарно
+        let old = mem::replace(&mut self.state, State::Connecting);
+        println!("Was: {:?}", old);
+        // ... асинхронное подключение ...
+        self.state = State::Connected(addr);
+    }
+}
+```
+
+### Упражнение 3: `Pin` для async стейт-машины
+```rust
+use std::pin::Pin;
+use std::future::Future;
+use std::task::{Context, Poll};
+
+struct MyFuture {
+    state: u32,
+}
+
+impl Future for MyFuture {
+    type Output = u32;
+    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<u32> {
+        self.state += 1;
+        if self.state >= 3 {
+            Poll::Ready(self.state)
+        } else {
+            Poll::Pending
+        }
+    }
+}
+```
+
+---
+
+## 10. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `use of partially moved value` | Частичный move структуры | Используйте `ref`/`ref mut` в паттерне |
+| `cannot move out of borrowed content` | Попытка move через `&` | Используйте `mem::replace`/`take` или клонируйте |
+| `drop order` неожиданный | Не знание правил | Поля: reverse declaration order; vars: reverse creation |
+| `Pin` не работает | Тип реализует `Unpin` | Добавьте `PhantomPinned` |
+| Stack overflow | Слишком большой массив на стеке | Используйте `Box`/`Vec` |
+
+---
+
+## 11. Шпаргалка: Ownership Cheatsheet
+
+| Операция | Stack | Heap | Drop |
+|----------|-------|------|------|
+| `let x = y` (Copy) | копия | — | нет |
+| `let x = y` (Move) | копия указателя | общий | y инвалиден |
+| `let x = y.clone()` | копия указателя | глубокая копия | оба валидны |
+| `Box::new(x)` | указатель | аллокация + копия | при выходе из scope |
+| `mem::replace(&mut x, y)` | — | — | старое значение возвращается |
+| `mem::forget(x)` | — | — | НЕТ (утечка) |
+| `ManuallyDrop::new(x)` | — | — | ручной `drop()` |
+
+---
+
+## 12. Полезные ресурсы
+
+- **The Book — Drop**: https://doc.rust-lang.org/book/ch15-03-drop.html
+- **std::mem**: https://doc.rust-lang.org/std/mem/
+- **std::pin**: https://doc.rust-lang.org/std/pin/
+- **Pin RFC**: https://rust-lang.github.io/rfcs/2349-pin.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- Внутреннее устройство `String`, `Vec`, `Box` (fat pointers)
+- Частичное перемещение и `ref`/`ref mut` в паттернах
+- `std::mem::swap`, `replace`, `take`, `forget`
+- Порядок drop: поля — reverse declaration, vars — reverse creation
+- `ManuallyDrop<T>` для ручного управления деструктором
+- `Pin<P>` и `PhantomPinned` для самозареференцирующихся структур
+- Stack vs Heap, `#[repr(...)]` атрибуты
+
+---
+
+**Следующий урок:** Продвинутые типы (`13_Types_Advanced.txt`)

@@ -1,0 +1,515 @@
+{
+  "title": "Урок 16: Контекстные менеджеры",
+  "slug": "urok-16-декораторы",
+  "short_description": "функции-декораторы, классы-декораторы, functools.wraps, параметризованные",
+  "goals": [
+    "Понимать основы: функции-декораторы, классы-декораторы, functools.wraps, параметризованные",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 2.5: Контекстные менеджеры — with, __enter__/__exit__, contextlib, ресурсы"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать протокол контекстного менеджера",
+        "Писать свои классы с __enter__/__exit__",
+        "Использовать contextlib.contextmanager",
+        "Работать с ExitStack, AsyncExitStack",
+        "Правильно управлять ресурсами (файлы, соединения, блокировки)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Зачем нужны контекстные менеджеры"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема: управление ресурсами"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "БЕЗ with — легко забыть закрыть"
+    },
+    {
+      "type": "text",
+      "content": "f = open(\"file.txt\", \"w\")\nf.write(\"данные\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Если здесь ошибка — файл не закроется!"
+    },
+    {
+      "type": "text",
+      "content": "f.close()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "С with — гарантированная очистка"
+    },
+    {
+      "type": "text",
+      "content": "with open(\"file.txt\", \"w\") as f:\n    f.write(\"данные\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "файл закрыт автоматически, даже при исключении"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что происходит под капотом"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Эквивалентно:"
+    },
+    {
+      "type": "text",
+      "content": "mgr = EXPR\nexit = type(mgr).__exit__\nvalue = type(mgr).__enter__(mgr)\nexc = True\ntry:\n    VAR = value\n    BLOCK\nexcept Exception:\n    exc = False\n    if not exit(mgr, *sys.exc_info()):\n        raise\nfinally:\n    if exc:\n        exit(mgr, None, None, None)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Классовый контекстный менеджер"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый шаблон"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class ManagedResource:\n    def __init__(self, name):\n        self.name = name\n        self.handle = None\n\n    def __enter__(self):\n        print(f\"Открываем {self.name}\")\n        self.handle = acquire_resource(self.name)\n        return self.handle  # значение для `as`\n\n    def __exit__(self, exc_type, exc_val, exc_tb):\n        print(f\"Закрываем {self.name}\")\n        release_resource(self.handle)\n        # Возврат True — подавляет исключение\n        # Возврат False/None — пробрасывает дальше\n        return False\n\nwith ManagedResource(\"DB\") as db:\n    db.query(\"SELECT * FROM users\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Параметры __exit__"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def __exit__(self, exc_type, exc_val, exc_tb):\n    # exc_type — класс исключения (или None)\n    # exc_val — экземпляр исключения (или None)\n    # exc_tb — traceback (или None)\n\n    if exc_type is not None:\n        print(f\"Произошла ошибка: {exc_type.__name__}: {exc_val}\")\n        # Можно логировать, но не подавлять\n        return False  # пробросить дальше\n    return True  # без ошибки — можно вернуть True"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. contextlib.contextmanager — генераторный декоратор"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простой случай"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: context manager**\n\n**Что делает:** with open(...) as f: — автоматическое закрытие ресурсов\n\n**Зачем нужно:** Гарантирует закрытие файлов/соединений даже при ошибках, чище try/finally\n\n**Как работает:** with open('file.txt') as f: data = f.read() — файл закроется автоматически"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import contextmanager\n\n@contextmanager\ndef open_file(path, mode=\"r\"):\n    f = open(path, mode)\n    try:\n        yield f  # значение для `as`\n    finally:\n        f.close()\n\nwith open_file(\"data.txt\") as f:\n    content = f.read()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "С обработкой ошибок"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@contextmanager\ndef transaction(db):\n    try:\n        yield db\n        db.commit()\n    except Exception:\n        db.rollback()\n        raise\n    finally:\n        db.close()\n\nwith transaction(db) as tx:\n    tx.execute(\"INSERT ...\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контекстный менеджер с возвратом значения"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@contextmanager\ndef timer():\n    import time\n    start = time.perf_counter()\n    try:\n        yield lambda: time.perf_counter() - start  # функция для получения времени\n    finally:\n        pass\n\nwith timer() as get_elapsed:\n    do_work()\n    print(f\"Прошло: {get_elapsed():.3f} сек\")"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. contextlib — полезные утилиты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "closing — для объектов с close()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "page.close() вызван автоматически"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "suppress — игнорирование исключений"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import suppress\nimport os\n\nwith suppress(FileNotFoundError):\n    os.remove(\"temp.txt\")  # ошибка игнорируется, если файл не существует"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "redirect_stdout/stderr"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import redirect_stdout\nimport io\n\nbuf = io.StringIO()\nwith redirect_stdout(buf):\n    print(\"Это пойдёт в буфер\")\nprint(\"А это в консоль\")\nprint(buf.getvalue())  # \"Это пойдёт в буфер\\n\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "nullcontext — заглушка (Python 3.7+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import nullcontext\n\ndef process(data, logger=nullcontext()):\n    with logger as log:\n        log.info(\"Обработка...\")  # если logger=None — ничего не делает"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "chdir — смена директории (Python 3.11+)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "вернулись в исходную директорию"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. ExitStack — динамический стек контекстов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда нужно: неизвестное число ресурсов"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: list comprehension**\n\n**Что делает:** Создание списков через выражение в квадратных скобках\n\n**Зачем нужно:** Быстрее цикла for, читаемее map/filter, питоничный стиль\n\n**Как работает:** [x*2 for x in range(10) if x%2==0] вместо цикла с append"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import ExitStack\n\ndef process_files(filenames):\n    with ExitStack() as stack:\n        files = [stack.enter_context(open(f)) for f in filenames]\n        # Все файлы откроются, и все закроются при выходе\n        return [f.read() for f in files]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Callback — регистрация функции очистки"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "with ExitStack() as stack:\n    stack.callback(print, \"Очистка 1\")\n    stack.callback(print, \"Очистка 2\")\n    # При выходе вызовутся в обратном порядке: \"Очистка 2\", \"Очистка 1\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Перехват исключений в коллбэках"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "with ExitStack() as stack:\n    @stack.callback\n    def cleanup():\n        print(\"Всегда выполняется\")"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. AsyncExitStack — для асинхронных контекстов (Python 3.7+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import AsyncExitStack\nimport asyncio\n\nclass AsyncResource:\n    async def __aenter__(self):\n        print(\"Асинхронное открытие\")\n        return self\n\n    async def __aexit__(self, *args):\n        print(\"Асинхронное закрытие\")\n\nasync def main():\n    async with AsyncExitStack() as stack:\n        res1 = await stack.enter_async_context(AsyncResource())\n        res2 = await stack.enter_async_context(AsyncResource())\n        # Оба закроются при выходе\n\nasyncio.run(main())"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Паттерны использования"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Блокировки (threading)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Вместо:"
+    },
+    {
+      "type": "text",
+      "content": "lock.acquire()\ntry:\n    critical_section()\nfinally:\n    lock.release()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Используйте:"
+    },
+    {
+      "type": "text",
+      "content": "with lock:\n    critical_section()  # lock.__enter__ = acquire, __exit__ = release\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Временная замена (mocking, monkeypatching)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import contextmanager\n\n@contextmanager\ndef patch(obj, attr, new_value):\n    old = getattr(obj, attr)\n    setattr(obj, attr, new_value)\n    try:\n        yield\n    finally:\n        setattr(obj, attr, old)\n\nclass Config:\n    debug = False\n\nwith patch(Config, \"debug\", True):\n    print(Config.debug)  # True\nprint(Config.debug)      # False"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Измерение времени"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from contextlib import contextmanager\nimport time\n\n@contextmanager\ndef timed(label):\n    start = time.perf_counter()\n    try:\n        yield\n    finally:\n        print(f\"{label}: {time.perf_counter() - start:.3f}с\")\n\nwith timed(\"загрузка\"):\n    data = load_data()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Временное изменение окружения"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import os\nfrom contextlib import contextmanager\n\n@contextmanager\ndef env_var(key, value):\n    old = os.environ.get(key)\n    os.environ[key] = value\n    try:\n        yield\n    finally:\n        if old is None:\n            del os.environ[key]\n        else:\n            os.environ[key] = old\n\nwith env_var(\"DEBUG\", \"1\"):\n    print(os.getenv(\"DEBUG\"))  # \"1\""
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Вложенные контексты"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Последовательно (Python 3.10+)"
+    },
+    {
+      "type": "text",
+      "content": "with open(\"a.txt\") as a, open(\"b.txt\") as b:\n    pass"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Вложено (для совместимости)"
+    },
+    {
+      "type": "text",
+      "content": "with open(\"a.txt\") as a:\n    with open(\"b.txt\") as b:\n        pass"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ExitStack для динамического числа"
+    },
+    {
+      "type": "text",
+      "content": "with ExitStack() as stack:\n    files = [stack.enter_context(open(f)) for f in filenames]\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Асинхронные контекстные менеджеры (async with)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class AsyncDB:\n    async def __aenter__(self):\n        self.conn = await connect()\n        return self.conn\n\n    async def __aexit__(self, exc_type, exc_val, exc_tb):\n        await self.conn.close()\n        return False\n\nasync def main():\n    async with AsyncDB() as db:\n        await db.execute(\"SELECT 1\")"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки и лучшие практики"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `__enter__` не возвращает `self`/ресурс | `return self` или `return resource` |\n| `__exit__` не принимает 3 аргумента | `def __exit__(self, exc_type, exc_val, exc_tb):` |\n| Подавление всех исключений (`return True`) | Подавляйте ТОЛЬКО ожидаемые, логируйте остальные |\n| Ресурс не закрывается при ошибке в `__enter__` | `__exit__` не вызовется — используйте `try/finally` в `__enter__` |\n| Забыли `@contextmanager` на генераторе | Без декоратора это просто генератор, не контекстный менеджер |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Pool соединений**: контекстный менеджер, выдающий соединение из пула и возвращающий его обратно\n2. **Transaction manager**: `@contextmanager` для БД с commit/rollback\n3. **Temp directory**: создание временной папки с автоудалением\n4. **Profile block**: контекстный менеджер для cProfile с выводом топ-N функций\n5. **Rate limiter**: `async with rate_limit(10):` — не чаще N вызовов в секунду\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Docs: contextlib** — https://docs.python.org/3/library/contextlib.html",
+        "**Real Python: Context Managers** — https://realpython.com/python-with-statement/",
+        "**PEP 343 — The \"with\" Statement** — https://peps.python.org/pep-0343/",
+        "**PEP 377 — Exception Handling in Generators** — https://peps.python.org/pep-0377/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Декораторы",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Декораторы' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: функции-декораторы, классы-декораторы, functools.wraps, параметризованные — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 16,
+  "name_en": "Lesson: Декораторы",
+  "short_description_en": "Learn Декораторы in Python with detailed explanations and examples"
+}

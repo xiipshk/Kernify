@@ -1,0 +1,1048 @@
+# Урок 30: Large App Engineering — TypeScript, Tree Shaking, Integration Tests, CI/CD, Monitoring
+
+## 🎯 Цели урока
+- Глубоко понять TypeScript: advanced types, generics, conditional types, template literals
+- Освоить Tree Shaking & Dead Code Elimination: sideEffects, pure annotations, bundler config
+- Разобрать Integration Testing: Testcontainers, contract testing, E2E strategies
+- Изучить CI/CD Pipeline: GitHub Actions, caching, matrix builds, deployment strategies
+- Понять Monitoring & Observability: metrics, logs, traces, alerting, SLO/SLI
+
+---
+
+## 1. TypeScript Advanced Types
+
+### 1.1 Conditional Types & Infer
+```typescript
+// Conditional Types: T extends U ? X : Y
+type IsString<T> = T extends string ? true : false;
+type A = IsString<'hello'>;  // true
+type B = IsString<123>;      // false
+
+// Infer — извлечение типов внутри conditional:
+type ReturnType<T> = T extends (...args: any[]) => infer R ? R : never;
+type ParamType<T> = T extends (arg: infer P) => any ? P : never;
+
+function foo(s: string): number { return s.length; }
+type FooReturn = ReturnType<typeof foo>;  // number
+type FooParam = ParamType<typeof foo>;    // string
+
+// Distributive conditional types (over unions):
+type ToArray<T> = T extends any ? T[] : never;
+type Result = ToArray<string | number>;  // string[] | number[] (распределяется!)
+
+// Non-distributive: обернуть в tuple
+type ToArrayNonDist<T> = [T] extends [any] ? T[] : never;
+type Result2 = ToArrayNonDist<string | number>;  // (string | number)[]
+```
+
+### 1.2 Template Literal Types (TS 4.1+)
+```typescript
+// Конструирование строковых типов:
+type EventName<T extends string> = `on${Capitalize<T>}`;
+type ClickEvent = EventName<'click'>;  // 'onClick'
+
+// С unions:
+type Direction = 'top' | 'right' | 'bottom' | 'left';
+type MarginProps = `margin${Capitalize<Direction>}`;
+// 'marginTop' | 'marginRight' | 'marginBottom' | 'marginLeft'
+
+// Pattern matching:
+type ParseUrl<T extends string> = T extends `${infer Protocol}://${infer Rest}`
+  ? { protocol: Protocol; rest: Rest }
+  : never;
+
+type Parsed = ParseUrl<'https://example.com/path'>;
+// { protocol: 'https'; rest: 'example.com/path' }
+
+// CSS-in-JS типизация:
+type CSSProperty<T> = T extends `${infer Prop}: ${infer Value}` ? { [K in Prop]: Value } : never;
+```
+
+### 1.3 Mapped Types & Utility Types
+```typescript
+// Key remapping (TS 4.1+):
+type Getters<T> = {
+  [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K]
+};
+
+interface User { name: string; age: number; }
+type UserGetters = Getters<User>;
+// { getName: () => string; getAge: () => number; }
+
+// Filter keys:
+type OnlyStrings<T> = {
+  [K in keyof T as T[K] extends string ? K : never]: T[K]
+};
+type UserStrings = OnlyStrings<User>;  // { name: string }
+
+// Deep readonly:
+type DeepReadonly<T> = {
+  readonly [K in keyof T]: T[K] extends object ? DeepReadonly<T[K]> : T[K]
+};
+
+// Built-in utilities:
+Partial<T>          // все optional
+Required<T>         // все required
+Readonly<T>         // все readonly
+Pick<T, K>          // выбрать ключи
+Omit<T, K>          // исключить ключи
+Record<K, T>        // объект с ключами K и значениями T
+Exclude<T, U>       // исключить U из T
+Extract<T, U>       // оставить только U из T
+NonNullable<T>      // убрать null/undefined
+Parameters<T>       // tuple параметров функции
+ConstructorParameters<T> // параметры конструктора
+ReturnType<T>       // возвращаемый тип
+InstanceType<T>     // тип экземпляра класса
+ThisParameterType<T> // тип this
+OmitThisParameter<T> // убрать this
+```
+
+### 1.4 Generics Constraints & Defaults
+```typescript
+// Constraints:
+function merge<T extends object, U extends object>(a: T, b: U): T & U {
+  return { ...a, ...b };
+}
+
+// Default generics:
+interface ApiResponse<T = unknown> {
+  data: T;
+  status: number;
+  error?: string;
+}
+
+// Type parameter defaults в type aliases:
+type Container<T = string> = { value: T };
+
+// Variance (in/out) — TS 4.7+:
+// out — ковариантность (return types)
+interface Producer<out T> { make(): T; }
+// in — контравариантность (parameter types)
+interface Consumer<in T> { consume(t: T): void; }
+```
+
+### 1.5 Advanced Patterns
+```typescript
+// Branded types (nominal typing):
+type Brand<K, T> = K & { __brand: T };
+type UserId = Brand<string, 'UserId'>;
+type PostId = Brand<string, 'PostId'>;
+
+function getUser(id: UserId) { /* ... */ }
+getUser('123' as UserId);  // OK
+// getUser('123' as PostId); // Error!
+
+// Fluent API typing:
+class QueryBuilder<T> {
+  select<K extends keyof T>(keys: K[]): QueryBuilder<Pick<T, K>> { return this; }
+  where<U extends Partial<T>>(cond: U): QueryBuilder<T> { return this; }
+  execute(): Promise<T[]> { return Promise.resolve([]); }
+}
+
+const users = await new QueryBuilder<User>()
+  .select(['name', 'email'])
+  .where({ active: true })
+  .execute();
+// users: Pick<User, 'name' | 'email'>[]
+
+// Discriminated unions для state machines:
+type LoadingState = { status: 'loading' };
+type SuccessState = { status: 'success'; data: User[] };
+type ErrorState = { status: 'error'; error: Error };
+type State = LoadingState | SuccessState | ErrorState;
+
+function handle(state: State) {
+  switch (state.status) {
+    case 'loading': return '...';
+    case 'success': return state.data.length;  // state.data доступен!
+    case 'error': return state.error.message;
+  }
+}
+```
+
+---
+
+## 2. Tree Shaking & Dead Code Elimination
+
+### 2.1 Как работает Tree Shaking
+```javascript
+// Tree Shaking = удаление unused exports при bundling
+// Работает ТОЛЬКО с ES Modules (import/export) — статический анализ!
+
+// ❌ CommonJS — НЕ tree-shakable:
+const _ = require('lodash');
+_.map([1,2,3], x => x*2); // весь lodash попадает в bundle!
+
+// ✅ ES Modules — tree-shakable:
+import { map } from 'lodash-es';
+map([1,2,3], x => x*2); // только map + зависимости!
+
+// ✅ Или с babel/plugin-transform-runtime:
+import map from 'lodash/map';  // cherry-pick (но не всегда работает)
+```
+
+### 2.2 package.json: sideEffects
+```json
+// package.json библиотеки:
+{
+  "name": "my-lib",
+  "sideEffects": false,  // ВСЁ чистое — можно безопасно удалять неиспользуемое
+  // ИЛИ массив файлов с side effects:
+  "sideEffects": [
+    "*.css",           // CSS импорты имеют side effects
+    "./polyfills.js"   // этот файл выполняет код при импорте
+  ]
+}
+
+// В коде библиотеки — пометьте pure функции:
+/* @__PURE__ */ export function helper() { ... }
+
+// Или в package.json exports:
+"exports": {
+  ".": {
+    "import": "./index.mjs",
+    "types": "./index.d.ts"
+  },
+  "./pure": {
+    "import": "./pure.mjs",
+    "sideEffects": false
+  }
+}
+```
+
+### 2.3 Bundler Configuration
+```javascript
+// webpack.config.js
+module.exports = {
+  mode: 'production',  // включает optimization
+  optimization: {
+    usedExports: true,      // пометка unused exports
+    sideEffects: true,      // чтение package.json sideEffects
+    minimize: true,         // terser minification
+    concatenateModules: true, // scope hoisting
+    providedExports: true,  // анализ exports
+    innerGraph: true,       // глубокий анализ зависимостей (webpack 5.5+)
+  },
+  // Для библиотек:
+  output: {
+    library: { type: 'module' },  // ESM output
+  },
+  experiments: {
+    outputModule: true,
+  }
+};
+
+// Rollup (более агрессивный tree shaking):
+export default {
+  input: 'src/index.ts',
+  output: { format: 'esm', dir: 'dist' },
+  treeshake: {
+    moduleSideEffects: 'no-external',  // внешние зависимости — без side effects
+    propertyReadSideEffects: false,
+    unknownGlobalSideEffects: false,
+  },
+  plugins: [
+    typescript(),
+    terser({ module: true })
+  ]
+};
+
+// esbuild (самый быстрый):
+// esbuild src/index.ts --bundle --outfile=dist/index.js --format=esm --tree-shaking=true
+```
+
+### 2.4 Common Tree Shaking Pitfalls
+```javascript
+// ❌ Side effects в коде:
+console.log('init');  // side effect!
+window.global = {};   // side effect!
+require('./polyfill'); // side effect!
+
+// ❌ Re-exporting всё (barrel files):
+// utils/index.ts
+export * from './helpers';  // ВСЁ экспортируется!
+export * from './constants';
+
+// ✅ Named exports только нужного:
+// utils/helpers.ts
+export function map() { ... }
+export function filter() { ... }
+
+// utils/index.ts
+export { map, filter } from './helpers';  // явный реэкспорт
+
+// ❌ Dynamic import в условии:
+if (condition) {
+  const { heavy } = await import('./heavy'); // не tree-shaken!
+}
+
+// ✅ Используйте bundler-specific magic comments:
+const { heavy } = await import(/* webpackChunkName: "heavy" */ './heavy');
+```
+
+### 2.5 Analyzing Bundle Size
+```bash
+# webpack-bundle-analyzer:
+npx webpack-bundle-analyzer dist/stats.json
+
+# rollup-plugin-visualizer:
+npm i -D rollup-plugin-visualizer
+# в config: visualizer({ open: true })
+
+# source-map-explorer:
+npx source-map-explorer dist/main.js.map
+
+# bundlephobia.com — онлайн анализ npm пакетов
+# webpack analyse — загрузка stats.json в аналитик
+```
+
+---
+
+## 3. Integration Testing Strategies
+
+### 3.1 Testing Pyramid (Updated)
+```
+        /\
+       /  \     E2E Tests (few) — Cypress, Playwright
+      /----\    Critical user journeys
+     /      \
+    /        \  Integration Tests (some) — Testcontainers, API tests
+   /----------\  Service interactions, DB, external APIs
+  /            \
+ /              \ Unit Tests (many) — Vitest, Jest
+/----------------\  Pure functions, components, utils
+```
+
+### 3.2 Testcontainers (Real DB/Services in Tests)
+```typescript
+// vitest.config.ts
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    setupFiles: ['./tests/setup.ts'],
+    teardownFiles: ['./tests/teardown.ts'],
+  },
+});
+
+// tests/setup.ts
+import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { GenericContainer, StartedTestContainer } from 'testcontainers';
+
+let pgContainer: StartedPostgreSqlContainer;
+let redisContainer: StartedTestContainer;
+
+export async function setup() {
+  pgContainer = await new PostgreSqlContainer('postgres:16-alpine')
+    .withDatabase('testdb')
+    .withUsername('test')
+    .withPassword('test')
+    .start();
+
+  redisContainer = await new GenericContainer('redis:7-alpine')
+    .withExposedPorts(6379)
+    .start();
+
+  // Set env vars для приложения
+  process.env.DATABASE_URL = pgContainer.getConnectionUri();
+  process.env.REDIS_URL = `redis://${redisContainer.getHost()}:${redisContainer.getMappedPort(6379)}`;
+}
+
+export async function teardown() {
+  await pgContainer?.stop();
+  await redisContainer?.stop();
+}
+
+// tests/user.integration.test.ts
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { setup, teardown } from './setup';
+import { UserRepository } from '../src/repositories/user';
+
+describe('UserRepository Integration', () => {
+  let repo: UserRepository;
+
+  beforeAll(async () => {
+    await setup();
+    repo = new UserRepository();
+    await repo.migrate(); // run migrations
+  });
+
+  afterAll(async () => {
+    await teardown();
+  });
+
+  it('should create and find user', async () => {
+    const user = await repo.create({ email: 'test@example.com', name: 'Test' });
+    expect(user.id).toBeDefined();
+
+    const found = await repo.findById(user.id);
+    expect(found?.email).toBe('test@example.com');
+  });
+});
+```
+
+### 3.3 Contract Testing (Pact)
+```typescript
+// Consumer test (frontend/client):
+import { PactV3, MatchersV3 } from '@pact-foundation/pact';
+import { UserApiClient } from './api/client';
+
+const { like, eachLike } = MatchersV3;
+
+const provider = new PactV3({
+  consumer: 'web-app',
+  provider: 'user-api',
+  dir: './pacts',
+});
+
+describe('UserApiClient contract', () => {
+  it('returns users list', async () => {
+    await provider
+      .given('users exist')
+      .uponReceiving('a request for users')
+      .withRequest({
+        method: 'GET',
+        path: '/api/users',
+        headers: { Accept: 'application/json' },
+      })
+      .willRespondWith({
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: eachLike({
+          id: like('123'),
+          name: like('John'),
+          email: like('john@example.com'),
+        }),
+      })
+      .executeTest(async (mockServer) => {
+        const client = new UserApiClient(mockServer.url);
+        const users = await client.getUsers();
+        expect(users).toHaveLength(1);
+        expect(users[0].name).toBe('John');
+      });
+  });
+});
+
+// Provider verification (backend):
+// npx @pact-foundation/pact-verifier-cli \
+//   --provider-base-url=http://localhost:3000 \
+//   --pact-urls=./pacts/web-app-user-api.json
+```
+
+### 3.4 E2E Testing (Playwright)
+```typescript
+// tests/e2e/login.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Authentication', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/login');
+  });
+
+  test('successful login redirects to dashboard', async ({ page }) => {
+    await page.fill('[data-testid="email"]', 'user@example.com');
+    await page.fill('[data-testid="password"]', 'password123');
+    await page.click('[data-testid="submit"]');
+
+    await expect(page).toHaveURL('/dashboard');
+    await expect(page.locator('[data-testid="welcome"]')).toContainText('Welcome');
+  });
+
+  test('failed login shows error', async ({ page }) => {
+    await page.fill('[data-testid="email"]', 'wrong@example.com');
+    await page.fill('[data-testid="password"]', 'wrong');
+    await page.click('[data-testid="submit"]');
+
+    await expect(page.locator('[data-testid="error"]')).toContainText('Invalid credentials');
+  });
+});
+
+// Playwright config:
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  fullyParallel: true,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 2 : undefined,
+  reporter: 'html',
+  use: {
+    baseURL: 'http://localhost:3000',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    { name: 'Mobile Chrome', use: { ...devices['Pixel 5'] } },
+    { name: 'Mobile Safari', use: { ...devices['iPhone 12'] } },
+  ],
+  webServer: {
+    command: 'npm run start',
+    url: 'http://localhost:3000',
+    reuseExistingServer: !process.env.CI,
+  },
+});
+```
+
+---
+
+## 4. CI/CD Pipeline (GitHub Actions)
+
+### 4.1 Complete CI Pipeline
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & TypeCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+        with: { version: ${{ env.PNPM_VERSION }} }
+      - uses: actions/setup-node@v4
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: 'pnpm' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: 'pnpm' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:unit --coverage
+      - uses: codecov/codecov-action@v3
+        with: { files: ./coverage/lcov.info }
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_DB: test, POSTGRES_USER: test, POSTGRES_PASSWORD: test }
+        ports: [5432:5432]
+        options: >-
+          --health-cmd="pg_isready -U test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: 'pnpm' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:integration
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+          REDIS_URL: redis://localhost:6379
+
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: 'pnpm' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test:e2e -- --project=chromium
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  build:
+    name: Build
+    needs: [lint-and-typecheck, unit-tests, integration-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: 'pnpm' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+```
+
+### 4.2 CD Pipeline (Deployment)
+```yaml
+# .github/workflows/cd.yml
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy-staging:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'pnpm' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Deploy to Vercel (example)
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod=false'
+      - name: Run smoke tests
+        run: pnpm test:smoke --base-url=https://staging.example.com
+
+  deploy-production:
+    needs: deploy-staging
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Manual approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ secrets.GITHUB_TOKEN }}
+          approvers: lead-dev, tech-lead
+      - name: Deploy to Production
+        run: |
+          # Blue-green или rolling deployment
+          kubectl set image deployment/app app=myapp:${{ github.sha }}
+          kubectl rollout status deployment/app
+      - name: Run production smoke tests
+        run: pnpm test:smoke --base-url=https://example.com
+```
+
+### 4.3 Caching Strategies
+```yaml
+# Кэш node_modules:
+- uses: actions/cache@v4
+  with:
+    path: |
+      ~/.pnpm-store
+      **/node_modules
+    key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+    restore-keys: |
+      ${{ runner.os }}-pnpm-
+
+# Кэш build artifacts (Vite, Next.js):
+- uses: actions/cache@v4
+  with:
+    path: |
+      .vite
+      .next/cache
+      dist
+    key: ${{ runner.os }}-build-${{ github.sha }}
+    restore-keys: |
+      ${{ runner.os }}-build-
+```
+
+---
+
+## 5. Monitoring & Observability
+
+### 5.1 Three Pillars: Metrics, Logs, Traces
+```typescript
+// Metrics (Prometheus format):
+// counter, gauge, histogram, summary
+
+import { Counter, Gauge, Histogram, Registry } from 'prom-client';
+
+const register = new Registry();
+
+// HTTP requests
+const httpRequestsTotal = new Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'path', 'status'],
+  registers: [register],
+});
+
+const httpRequestDuration = new Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request latency',
+  labelNames: ['method', 'path'],
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5],
+  registers: [register],
+});
+
+// Business metrics
+const activeUsers = new Gauge({
+  name: 'active_users',
+  help: 'Currently active users',
+  registers: [register],
+});
+
+// Middleware:
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    const duration = Number(process.hrtime.bigint() - start) / 1e9;
+    httpRequestsTotal.inc({ method: req.method, path: req.route?.path || req.path, status: res.statusCode });
+    httpRequestDuration.observe({ method: req.method, path: req.route?.path || req.path }, duration);
+  });
+  next();
+});
+
+// /metrics endpoint:
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.send(await register.metrics());
+});
+```
+
+### 5.2 Structured Logging (Pino)
+```typescript
+// logger.ts
+import pino from 'pino';
+
+export const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  formatters: {
+    level: (label) => ({ level: label }),
+  },
+  timestamp: pino.stdTimeFunctions.isoTime,
+  base: {
+    service: 'my-app',
+    version: process.env.APP_VERSION,
+    environment: process.env.NODE_ENV,
+  },
+  redact: {
+    paths: ['req.headers.authorization', 'req.body.password', '*.secrets'],
+    censor: '[REDACTED]',
+  },
+});
+
+// Child loggers с контекстом:
+const childLogger = logger.child({ requestId: 'abc-123', userId: '456' });
+childLogger.info({ action: 'user_login' }, 'User logged in');
+
+// Serialization для ошибок:
+logger.error({ err: error }, 'Operation failed');
+// { "level": 50, "err": { "type": "Error", "message": "...", "stack": "..." } }
+```
+
+### 5.3 Distributed Tracing (OpenTelemetry)
+```typescript
+// tracing.ts
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { JaegerExporter } from '@opentelemetry/exporter-jaeger';
+import { Resource } from '@opentelemetry/resources';
+import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
+
+const sdk = new NodeSDK({
+  resource: new Resource({
+    [SemanticResourceAttributes.SERVICE_NAME]: 'my-app',
+    [SemanticResourceAttributes.SERVICE_VERSION]: process.env.APP_VERSION,
+    [SemanticResourceAttributes.DEPLOYMENT_ENVIRONMENT]: process.env.NODE_ENV,
+  }),
+  traceExporter: new JaegerExporter({
+    endpoint: process.env.JAEGER_ENDPOINT || 'http://localhost:14268/api/traces',
+  }),
+  instrumentations: [getNodeAutoInstrumentations()],
+});
+
+sdk.start();
+
+// Graceful shutdown:
+process.on('SIGTERM', () => {
+  sdk.shutdown().catch(console.error);
+});
+
+// Manual spans:
+import { trace, SpanStatusCode } from '@opentelemetry/api';
+
+const tracer = trace.getTracer('my-app');
+
+async function handleRequest(req, res) {
+  return tracer.startActiveSpan('handleRequest', async (span) => {
+    try {
+      span.setAttribute('http.method', req.method);
+      span.setAttribute('http.url', req.url);
+      const result = await doWork(req);
+      span.setStatus({ code: SpanStatusCode.OK });
+      return result;
+    } catch (err) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
+      span.recordException(err);
+      throw err;
+    } finally {
+      span.end();
+    }
+  });
+}
+```
+
+### 5.4 SLO / SLI / Error Budgets
+```yaml
+# Service Level Objectives (SLO):
+# SLI (Service Level Indicator) — метрика
+# SLO (Service Level Objective) — цель по SLI
+# Error Budget = 100% - SLO
+
+# Примеры:
+# Availability: 99.9% uptime в месяц → error budget = 43.2 мин downtime/месяц
+# Latency: 95% запросов < 200ms → error budget = 5% запросов могут быть медленными
+# Quality: < 0.1% error rate → error budget = 0.1% ошибок
+
+# Alerting на error budget burn rate:
+# - Fast burn: 2% error budget за 1 час → page immediately
+# - Slow burn: 10% error budget за 6 часов → ticket
+```
+
+### 5.5 Alerting Rules (Prometheus Alertmanager)
+```yaml
+# alerts.yml
+groups:
+- name: app-alerts
+  rules:
+  # High error rate
+  - alert: HighErrorRate
+    expr: |
+      sum(rate(http_requests_total{status=~"5.."}[5m]))
+      / sum(rate(http_requests_total[5m])) > 0.05
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High 5xx error rate ({{ $value | humanizePercentage }})"
+      description: "{{ $value | humanizePercentage }} of requests are 5xx"
+
+  # High latency
+  - alert: HighLatency
+    expr: |
+      histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path)) > 1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High P95 latency on {{ $labels.path }}"
+      description: "P95 latency is {{ $value }}s"
+
+  # Error budget burn
+  - alert: ErrorBudgetBurnFast
+    expr: |
+      (1 - (sum(rate(http_requests_total{status!~"5.."}[1h])) / sum(rate(http_requests_total[1h])))) > 0.02
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Fast error budget burn"
+```
+
+---
+
+## 6. Architecture Patterns for Large Apps
+
+### 6.1 Monorepo vs Polyrepo
+```bash
+# Monorepo advantages:
+# - Atomic commits across packages
+# - Shared tooling/config
+# - Easier refactoring
+# - Code reuse
+# Tools: Nx, Turborepo, pnpm workspaces, Yarn workspaces
+
+# Polyrepo advantages:
+# - Independent deployments
+# - Clear ownership boundaries
+# - Smaller clone sizes
+# - Independent versioning
+```
+
+### 6.2 Modular Architecture
+```typescript
+// Domain-Driven Design structure:
+src/
+├── modules/
+│   ├── users/
+│   │   ├── domain/          # entities, value objects, domain events
+│   │   ├── application/     # use cases, commands, queries
+│   │   ├── infrastructure/  # repositories, external adapters
+│   │   ├── presentation/    # controllers, GraphQL resolvers
+│   │   └── tests/
+│   ├── orders/
+│   │   └── ...
+│   └── payments/
+│       └── ...
+├── shared/
+│   ├── kernel/              # base classes, interfaces
+│   ├── utils/               # pure functions
+│   └── types/               # shared types
+└── app.ts                   // composition root
+
+// Dependency Rule: inner layers не зависят от outer
+// domain → application → infrastructure → presentation
+```
+
+### 6.3 Feature Flags
+```typescript
+// feature-flags.ts
+interface FeatureFlags {
+  newDashboard: boolean;
+  betaApi: boolean;
+  darkMode: boolean;
+}
+
+const flags: FeatureFlags = {
+  newDashboard: process.env.FF_NEW_DASHBOARD === 'true',
+  betaApi: process.env.FF_BETA_API === 'true',
+  darkMode: true,
+};
+
+// Runtime evaluation (LaunchDarkly, Unleash, custom):
+async function getFlags(user: User): Promise<FeatureFlags> {
+  const response = await fetch(`${FLAGS_SERVICE}/flags?userId=${user.id}`);
+  return response.json();
+}
+
+// Usage:
+if (flags.newDashboard) {
+  return <NewDashboard />;
+}
+return <LegacyDashboard />;
+```
+
+---
+
+## 7. Browser vs Node.js Engineering Differences
+
+| Aspect | Browser (Frontend) | Node.js (Backend) |
+|--------|-------------------|-------------------|
+| **TypeScript** | Strict, DOM types | Strict, Node types (@types/node) |
+| **Tree Shaking** | Critical (bundle size) | Less critical (server) |
+| **Testing** | Unit + Component + E2E | Unit + Integration + Contract |
+| **CI** | Build + Preview deploy | Build + Test + Container build |
+| **CD** | Static hosting (Vercel, Netlify) | K8s, VMs, Serverless |
+| **Monitoring** | RUM (Real User Monitoring) | Infrastructure + APM |
+| **Logs** | Console, Sentry | Structured JSON, ELK/Datadog |
+
+---
+
+## 8. Упражнения
+
+### Упражнение 1: TypeScript Advanced
+```typescript
+// 1. Создайте тип DeepPartial<T> — делает все свойства optional рекурсивно
+// 2. Создайте тип RequiredKeys<T> — возвращает union только required ключей
+// 3. Создайте тип AsyncReturnType<T> — для async функций
+// 4. Реализуйте типизированный EventEmitter с infer событиями
+```
+
+### Упражнение 2: Tree Shaking Audit
+```bash
+# Создайте проект с библиотекой, имеющей:
+# - Pure функции
+# - Side effects (CSS, polyfill)
+# - Barrel файлы
+# Проанализируйте bundle size с разными конфигурациями sideEffects
+# Исправьте barrel files для правильного tree shaking
+```
+
+### Упражнение 3: Integration Test with Testcontainers
+```typescript
+// Напишите интеграционные тесты для:
+// - PostgreSQL repository (CRUD + transactions)
+// - Redis cache (TTL, invalidation)
+// - External API mock (WireMock или MSW)
+// Используйте vitest + testcontainers
+```
+
+### Упражнение 4: CI/CD Pipeline
+```yaml
+# Настройте GitHub Actions workflow с:
+# - Matrix testing (Node 18, 20, 22)
+# - Parallel jobs (lint, typecheck, unit, integration)
+# - Artifact upload для build
+# - Deploy preview на PR
+# - Manual approval для production
+```
+
+---
+
+## 9. Дополнительные ресурсы
+
+- **TypeScript Handbook**: https://www.typescriptlang.org/docs/handbook/2/
+- **Type Challenges**: https://github.com/type-challenges/type-challenges
+- **Tree Shaking**: https://webpack.js.org/guides/tree-shaking/
+- **Testcontainers**: https://testcontainers.com/
+- **Pact Contract Testing**: https://docs.pact.io/
+- **Playwright**: https://playwright.dev/
+- **GitHub Actions**: https://docs.github.com/en/actions
+- **OpenTelemetry JS**: https://opentelemetry.io/docs/instrumentation/js/
+- **Prometheus Client**: https://github.com/siimon/prom-client
+- **SLO Handbook**: https://slo-handbook.com/
+
+---
+
+## 10. Контрольные вопросы
+
+1. В чём разница между `T extends U ? X : Y` и `[T] extends [U] ? X : Y`?
+2. Как `sideEffects: false` в package.json влияет на tree shaking?
+3. Почему barrel files (`export * from ...`) вредят tree shaking?
+4. Что такое Testcontainers и зачем они нужны вместо моков?
+5. В чём разница между Contract Testing и E2E Testing?
+6. Что такое Error Budget и как он связан с SLO/SLI?
+7. Зачем нужны OpenTelemetry и distributed tracing?
+8. Как feature flags помогают в CI/CD?
+
+---
+
+## 📝 Саммари
+
+| Концепция | Ключевой момент |
+|-----------|-----------------|
+| **TypeScript Advanced** | Conditional types, infer, template literals, mapped types, branded types |
+| **Tree Shaking** | Только ES Modules; sideEffects: false; избегайте barrel files; анализируйте bundle |
+| **Integration Tests** | Testcontainers для реальных БД; Pact для contract testing; Playwright для E2E |
+| **CI/CD** | GitHub Actions: matrix, caching, artifacts; staging → production с approval |
+| **Observability** | Metrics (Prometheus), Logs (Pino), Traces (OpenTelemetry); SLO/SLI/Error Budgets |
+| **Architecture** | Monorepo (Nx/Turborepo); Modular/DDD; Feature flags для безопасных деплоев |
+
+---
+
+*Следующий урок: 31 — Advanced Patterns: metaprogramming, proxies, symbols, decorators, reflection*

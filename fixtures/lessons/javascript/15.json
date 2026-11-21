@@ -1,0 +1,390 @@
+{
+  "title": "Урок 15: Modules Tooling ESM NPM Bundlers",
+  "slug": "urok-15-события-и-event-loop",
+  "short_description": "Event Loop, макрозадачи/микрозадачи, setTimeout, requestAnimationFrame",
+  "goals": [
+    "Понимать основы: Event Loop, макрозадачи/микрозадачи, setTimeout, requestAnimationFrame",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 15: Modules & Tooling — ES Modules, npm, структура проекта, бандлеры"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Мастерски использовать ES Modules (import/export)",
+        "Понимать CommonJS vs ESM, interop",
+        "Работать с npm: package.json, scripts, dependencies, workspaces",
+        "Организовывать структуру проекта",
+        "Настраивать бандлеры (Vite, esbuild, Rollup, Webpack)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. ES Modules (ESM) — нативные модули"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// math.js — именованные экспорты\nexport function add(a, b) { return a + b; }\nexport function sub(a, b) { return a - b; }\nexport const PI = 3.14159;\n\n// default экспорт (один на файл)\nexport default function multiply(a, b) { return a * b; }\n\n// Экспорт списком\nfunction div(a, b) { return a / b; }\nfunction mod(a, b) { return a % b; }\nexport { div, mod };\n\n// Реэкспорт (переэкспорт)\nexport { add, sub } from \"./math.js\";\nexport { default as multiply } from \"./multiply.js\";\nexport * from \"./constants.js\"; // все именованные"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Импорт"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Именованные\nimport { add, sub, PI } from \"./math.js\";\nimport { add as addNumbers } from \"./math.js\"; // алиас\n\n// Default\nimport multiply from \"./multiply.js\"; // любое имя\nimport { default as mul } from \"./multiply.js\";\n\n// Комбинированный\nimport multiply, { add, PI } from \"./math.js\";\n\n// Namespace import (все именованные в объекте)\nimport * as Math from \"./math.js\";\nMath.add(1, 2);\n\n// Динамический импорт (Promise-based, работает везде)\nconst module = await import(\"./math.js\");\nmodule.add(1, 2);\n\n// Условный/ленивый импорт\nif (condition) {\n  const { heavy } = await import(\"./heavy.js\");\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ESM в браузере"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "html",
+      "content": "<script type=\"module\" src=\"./main.js\"></script>\n<!-- Или inline -->\n<script type=\"module\">\n  import { add } from \"./math.js\";\n  console.log(add(1, 2));\n</script>\n\n<!-- nomodule — фоллбек для старых браузеров -->\n<script nomodule src=\"./legacy-bundle.js\"></script>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Особенности ESM"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// 1. Всегда strict mode\n// 2. Топ-уровневый await (ES2022)\nconst data = await fetch(\"/api/data\").then(r => r.json());\n\n// 3. import.meta — метаданные модуля\nconsole.log(import.meta.url);     // полный URL модуля\nconsole.log(import.meta.resolve); // функция resolve (предложение)\nimport.meta.env;                  // Vite/инструменты инжектят env\n\n// 4. Циклические зависимости — работают (live bindings)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. CommonJS (CJS) — Node.js legacy"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// math.cjs\nfunction add(a, b) { return a + b; }\nmodule.exports = { add }; // или exports.add = add;\n\n// main.cjs\nconst { add } = require(\"./math.cjs\");\nconst math = require(\"./math.cjs\"); // { add }\n\n// Динамический require\nconst mod = require(`./lang/${lang}.cjs`);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ESM ↔ CJS Interop"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ESM импортирует CJS\nimport pkg from \"lodash\"; // default = module.exports\nimport { debounce } from \"lodash\"; // именованные из свойств default\n\n// CJS импортирует ESM (только динамически!)\nconst esm = await import(\"./esm-module.js\"); // Promise\n// require(\"./esm-module.js\") — ОШИБКА!\n\n// package.json: \"type\": \"module\" — весь проект ESM\n// Файлы .mjs = ESM, .cjs = CJS (явное расширение)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "package.json: exports / imports (современный)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"name\": \"my-lib\",\n  \"type\": \"module\",\n  \"exports\": {\n    \".\": {\n      \"import\": \"./dist/index.js\",\n      \"require\": \"./dist/index.cjs\",\n      \"types\": \"./dist/index.d.ts\"\n    },\n    \"./utils\": \"./dist/utils.js\"\n  },\n  \"imports\": {\n    \"#internal/*\": \"./src/internal/*\"\n  }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. npm — управление пакетами"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "package.json ключевые поля"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"name\": \"my-app\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\",\n  \"main\": \"./dist/index.cjs\",\n  \"module\": \"./dist/index.js\",\n  \"exports\": { \".\": \"./dist/index.js\" },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"preview\": \"vite preview\",\n    \"test\": \"vitest\",\n    \"lint\": \"eslint .\",\n    \"format\": \"prettier --write .\"\n  },\n  \"dependencies\": {\n    \"lodash\": \"^4.17.21\",\n    \"zod\": \"^3.22.0\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^5.0.0\",\n    \"vitest\": \"^1.0.0\",\n    \"eslint\": \"^8.56.0\",\n    \"prettier\": \"^3.2.0\",\n    \"typescript\": \"^5.3.0\"\n  },\n  \"engines\": { \"node\": \">=18\" },\n  \"packageManager\": \"pnpm@9.0.0\"\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Версионирование (SemVer)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "^1.2.3  — совместимые (>=1.2.3 <2.0.0)\n~1.2.3  — только патчи (>=1.2.3 <1.3.0)\n1.2.3   — точно версия\n*       — любая"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Workspaces (монорепо)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"name\": \"my-monorepo\",\n  \"private\": true,\n  \"workspaces\": [\n    \"packages/*\",\n    \"apps/*\"\n  ],\n  \"scripts\": {\n    \"build\": \"turbo run build\",\n    \"test\": \"turbo run test\"\n  }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Структура проекта (best practices)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Рекомендуемая структура (Vite/React/Vue/Svelte)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "my-app/\n├── public/              # Статические ассеты (копируются как есть)\n│   └── favicon.ico\n├── src/\n│   ├── assets/          # Импортируемые ассеты (CSS, изображения)\n│   ├── components/      # UI компоненты\n│   ├── features/        # Feature-based модули (domain logic)\n│   │   └── auth/\n│   │       ├── api.js\n│   │       ├── components/\n│   │       ├── hooks/\n│   │       └── index.js\n│   ├── lib/             # Утилиты, хелперы, конфиги\n│   ├── hooks/           # Общие хуки\n│   ├── styles/          # Глобальные стили, переменные\n│   ├── App.jsx\n│   ├── main.jsx         # Entry point\n│   └── vite-env.d.ts    # Типы для import.meta.env\n├── tests/               # Интеграционные/E2E тесты\n├── .eslintrc.cjs\n├── .prettierrc\n├── tsconfig.json\n├── vite.config.ts\n├── package.json\n└── README.md"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Библиотека (npm package)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "my-lib/\n├── src/\n│   ├── index.ts         # Public API entry\n│   ├── utils/\n│   └── types.ts\n├── dist/                # Билд (gitignored, публикуется)\n├── tests/\n├── package.json         # \"exports\", \"types\"\n├── tsconfig.json\n├── rollup.config.js / vite.config.ts\n└── README.md"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Бандлеры: Vite, esbuild, Rollup, Webpack"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Vite (современный стандарт для приложений)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "typescript",
+      "content": "// vite.config.ts\nimport { defineConfig } from \"vite\";\nimport react from \"@vitejs/plugin-react\";\nimport path from \"path\";\n\nexport default defineConfig({\n  plugins: [react()],\n  resolve: {\n    alias: { \"@\": path.resolve(__dirname, \"./src\") }\n  },\n  build: {\n    target: \"es2022\",\n    minify: \"esbuild\", // или \"terser\"\n    sourcemap: true,\n    rollupOptions: {\n      output: {\n        manualChunks: { vendor: [\"react\", \"react-dom\"] }\n      }\n    }\n  },\n  server: { port: 3000, proxy: { \"/api\": \"http://localhost:4000\" } }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Rollup (для библиотек)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// rollup.config.js\nimport resolve from \"@rollup/plugin-node-resolve\";\nimport commonjs from \"@rollup/plugin-commonjs\";\nimport typescript from \"@rollup/plugin-typescript\";\nimport dts from \"rollup-plugin-dts\";\nimport { readFileSync } from \"fs\";\n\nconst pkg = JSON.parse(readFileSync(\"package.json\", \"utf-8\"));\n\nexport default [\n  // ES + CJS builds\n  {\n    input: \"src/index.ts\",\n    output: [\n      { file: pkg.module, format: \"es\", sourcemap: true },\n      { file: pkg.main, format: \"cjs\", sourcemap: true }\n    ],\n    plugins: [resolve(), commonjs(), typescript()],\n    external: [...Object.keys(pkg.dependencies || {}), ...Object.keys(pkg.peerDependencies || {})]\n  },\n  // .d.ts\n  {\n    input: \"dist/index.d.ts\",\n    output: [{ file: \"dist/index.d.ts\", format: \"es\" }],\n    plugins: [dts()]\n  }\n];"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "esbuild (максимальная скорость)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "CLI"
+    },
+    {
+      "type": "text",
+      "content": "esbuild src/index.ts --bundle --outfile=dist/index.js --format=esm --platform=node --target=node18 --external:lodash"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "JS API"
+    },
+    {
+      "type": "text",
+      "content": "await require(\"esbuild\").build({\n  entryPoints: [\"src/index.ts\"],\n  bundle: true,\n  outfile: \"dist/index.js\",\n  format: \"esm\",\n  platform: \"node\",\n  target: \"node18\",\n  external: [\"lodash\"]\n});\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Webpack (legacy / complex configs)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// webpack.config.js — только если нужен Module Federation, сложные оптимизации\nmodule.exports = {\n  entry: \"./src/index.ts\",\n  module: { rules: [{ test: /\\.ts$/, use: \"ts-loader\" }] },\n  resolve: { extensions: [\".ts\", \".js\"] },\n  optimization: { usedExports: true }\n};"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. TypeScript + ESM конфигурация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "tsconfig.json (современный)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"Bundler\",\n    \"lib\": [\"ES2022\", \"DOM\", \"DOM.Iterable\"],\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"esModuleInterop\": true,\n    \"allowSyntheticDefaultImports\": true,\n    \"resolveJsonModule\": true,\n    \"isolatedModules\": true,\n    \"baseUrl\": \".\",\n    \"paths\": { \"@/*\": [\"src/*\"] }\n  },\n  \"include\": [\"src/**/*\", \"vite.config.ts\"],\n  \"exclude\": [\"node_modules\", \"dist\"]\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Создайте библиотеку**: `npm init`, настройте `package.json` с `exports`, напишите утилиты, соберите Rollup'ом в ESM+CJS+types, опубликуйте в npm (или локально `npm pack`).\n\n2. **Монorepo**: Настройте pnpm workspaces с `packages/ui`, `packages/utils`, `apps/web`. Настройте Turbo для кэширования билдов.\n\n3. **Vite плагин**: Напишите простой Vite плагин, который заменяет `__BUILD_TIME__` на текущую дату при билде.\n\n4. **Динамические импорты**: Реализуйте code-splitting роутинга — ленивая загрузка страниц через `import(\"./pages/About.jsx\")`.\n\n5. **ESM в Node.js**: Напишите CLI утилиту на ESM с `#!/usr/bin/env node`, использующую `commander`, `chalk`, `ora`.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `import \"lodash\"` в CJS файле | `const _ = require(\"lodash\")` или переименуйте в `.mjs` / `\"type\": \"module\"` |\n| `require(\"esm-module\")` | Только `await import(\"esm-module\")` |\n| Циклические импорты ломают код | ESM поддерживает live bindings — рефакторьте архитектуру |\n| `package.json` без `\"exports\"` — утечка внутренних файлов | Всегда объявляйте `exports` для публичного API |\n| Бандлер включает `node_modules` в бандл библиотеки | `external: [...Object.keys(pkg.dependencies)]` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Node.js ESM docs** — https://nodejs.org/api/esm.html",
+        "**Vite Guide** — https://vitejs.dev/guide/",
+        "**Rollup Tutorial** — https://rollupjs.org/guide/en/",
+        "**esbuild** — https://esbuild.github.io/",
+        "**pnpm Workspaces** — https://pnpm.io/workspaces",
+        "**Packages: exports field** — https://nodejs.org/docs/latest/api/packages.html#packages_package_entry_points"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: События и Event Loop",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'События и Event Loop' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация JavaScript",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-javascript на GitHub",
+    "Конференции и митапы по JavaScript"
+  ],
+  "key_takeaways": [
+    "Главная идея: Event Loop, макрозадачи/микрозадачи, setTimeout, requestAnimationFrame — это фундамент для Event Loop, Замыкания, Прототипы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "javascript",
+  "lesson_order": 15,
+  "name_en": "Lesson: События и Event Loop",
+  "short_description_en": "Learn События и Event Loop in JavaScript with detailed explanations and examples"
+}

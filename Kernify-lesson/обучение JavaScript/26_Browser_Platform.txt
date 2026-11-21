@@ -1,0 +1,846 @@
+# Урок 26: Browser Platform — Rendering Pipeline, Layout/Paint/Compositing, Web Components, Service Workers, Security Model
+
+## 🎯 Цели урока
+- Понять Rendering Pipeline: Style → Layout → Paint → Composite
+- Освоить Critical Rendering Path и оптимизацию (CLS, LCP, INP)
+- Изучить Web Components: Custom Elements, Shadow DOM, Slots, Declarative Shadow DOM
+- Разобрать Service Workers: lifecycle, caching strategies, Background Sync, Push API
+- Понять Security Model: Same-Origin Policy, CORS, CSP, COOP/COEP, Permissions Policy
+
+---
+
+## 1. Rendering Pipeline (Конвейер рендеринга)
+
+### 1.1 Полный цикл: от HTML до пикселей
+```
+HTML Parsing → DOM Tree
+     ↓
+CSS Parsing → CSSOM Tree
+     ↓
+Style Calculation (Recalc Style) → Computed Styles
+     ↓
+Layout (Reflow) → Geometry (x, y, width, height)
+     ↓
+Paint → Display List (draw commands)
+     ↓
+Composite → Layers → GPU → Screen
+```
+
+### 1.2 Style Calculation (Recalc Style)
+```javascript
+// Browser рассчитывает computed styles для каждого элемента
+// Сложность: O(elements × rules) — оптимизируется через Rule Tree / Style Sharing
+
+// Что вызывает Recalc Style:
+// - Изменение class, style, атрибутов
+// - :hover, :focus, :active (pseudo-classes)
+// - Media query changes
+// - CSS custom properties (--var) изменения
+
+// Оптимизация:
+// - Избегайте глубоких селекторов: .a .b .c .d { } → .a-d { }
+// - Используйте BEM / CSS Modules для изоляции
+// - will-change: transform, opacity — подсказка браузеру
+```
+
+### 1.3 Layout (Reflow) — Самая дорогая операция
+```javascript
+// Layout = вычисление геометрии (позиция, размер) каждого элемента
+// Triggered by:
+// - width, height, margin, padding, border
+// - position, top/left/bottom/right
+// - display, flex/grid properties
+// - font-size, line-height (может изменить размеры)
+// - window.resize, scroll (иногда)
+
+// Force Layout (Synchronous Layout Thrashing) — АНТИПАТТЕРН:
+function bad() {
+  const h1 = element.clientHeight; // READ → force layout
+  element.style.height = h1 + 10 + 'px'; // WRITE
+  const h2 = element.clientHeight; // READ → force layout AGAIN
+  element.style.height = h2 + 10 + 'px';
+}
+
+// ✅ Хорошо: batch reads, then writes
+function good() {
+  const h1 = element.clientHeight; // READ
+  const h2 = element.clientHeight; // READ (cached)
+  element.style.height = h1 + 10 + 'px'; // WRITE
+  element.style.height = h2 + 10 + 'px'; // WRITE
+}
+
+// Layout Boundaries (Containment):
+// contain: layout — изолирует layout внутри элемента
+// content-visibility: auto — пропускает layout для off-screen элементов
+```
+
+### 1.4 Paint — Рисование пикселей
+```javascript
+// Paint = генерация display list (список команд рисования)
+// Triggered by:
+// - color, background, box-shadow, border-radius
+// - transform (если не на compositor layer)
+// - opacity (если не на compositor layer)
+// - visibility, outline
+
+// Paint Flashing (DevTools) — показывает перерисовываемые области
+// Layer promotion: will-change: transform, opacity → отдельный compositor layer
+```
+
+### 1.5 Compositing — Сборка слоёв на GPU
+```javascript
+// Compositor thread (отдельный от main thread!)
+// Слои (Compositor Layers):
+// - Root layer (document)
+// - Elements с: will-change, transform/opacity animation, video, canvas, iframe
+// - Elements с z-index и overlapping (heuristic)
+
+// GPU Acceleration:
+// transform: translateZ(0) / translate3d(0,0,0) — hack для forced layer (устарел)
+// will-change: transform, opacity — правильный способ
+
+// Compositor-only properties (не вызывают layout/paint):
+// transform: translateX, scale, rotate
+// opacity
+// filter (некоторые)
+// ПРИМЕР: анимация через transform/opacity = 60fps на GPU
+```
+
+---
+
+## 2. Critical Rendering Path & Core Web Vitals
+
+### 2.1 Critical Rendering Path (CRP)
+```html
+<!-- Блокирующие ресурсы: -->
+<link rel="stylesheet" href="styles.css">     <!-- блокирует paint -->
+<script src="app.js"></script>                 <!-- блокирует parsing + paint -->
+
+<!-- Неблокирующие: -->
+<link rel="stylesheet" href="print.css" media="print">  <!-- не блокирует -->
+<script src="analytics.js" async></script>     <!-- async: загружает параллельно, выполняет сразу -->
+<script src="widget.js" defer></script>        <!-- defer: загружает параллельно, выполняет после DOMContentLoaded -->
+<script type="module" src="app.mjs"></script>  <!-- module = defer по умолчанию -->
+
+<!-- Preload / Prefetch: -->
+<link rel="preload" href="font.woff2" as="font" crossorigin>
+<link rel="prefetch" href="next-page.js">      <!-- низкий приоритет, для следующей навигации -->
+<link rel="preconnect" href="https://cdn.example.com"> <!-- DNS + TCP + TLS заранее -->
+```
+
+### 2.2 Core Web Vitals (2024)
+```javascript
+// LCP (Largest Contentful Paint) — скорость загрузки главного контента
+// Хорошо: ≤ 2.5s
+// Оптимизация: preload LCP image, уменьшить CSS blocking, быстрый сервер (TTFB)
+
+// INP (Interaction to Next Paint) — отзывчивость (заменил FID в 2024)
+// Хорошо: ≤ 200ms
+// Оптимизация: избегайте long tasks (>50ms), разбивайте работу, web workers
+
+// CLS (Cumulative Layout Shift) — визуальная стабильность
+// Хорошо: ≤ 0.1
+// Оптимизация: задавайте width/height для images/iframes, reserve space для ads/fonts
+
+// Измерение в коде:
+new PerformanceObserver((entries) => {
+  for (const entry of entries.getEntries()) {
+    console.log(entry.name, entry.value, entry.rating); // 'good' | 'needs-improvement' | 'poor'
+  }
+}).observe({ type: 'largest-contentful-paint', buffered: true });
+
+new PerformanceObserver((entries) => {
+  for (const entry of entries.getEntries()) {
+    if (entry.entryType === 'layout-shift' && !entry.hadRecentInput) {
+      console.log('CLS:', entry.value);
+    }
+  }
+}).observe({ type: 'layout-shift', buffered: true });
+```
+
+### 2.3 Long Tasks & Scheduler API
+```javascript
+// Long Task = задача > 50ms на main thread (блокирует INP)
+// Разбивка работы:
+function yieldToMain() {
+  return new Promise(resolve => setTimeout(resolve, 0)); // или scheduler.yield()
+}
+
+// Scheduler API (Chrome 115+):
+async function processLargeArray(items) {
+  for (const item of items) {
+    processItem(item);
+    if (navigator.scheduling.isInputPending()) {
+      await scheduler.yield(); // уступить управление браузеру
+    }
+  }
+}
+
+// requestIdleCallback (legacy, не для критических задач):
+requestIdleCallback((deadline) => {
+  while (deadline.timeRemaining() > 0 && workQueue.length) {
+    doWork();
+  }
+});
+```
+
+---
+
+## 3. Web Components (Стандартные веб-компоненты)
+
+### 3.1 Custom Elements (HTML Spec)
+```javascript
+// Определение:
+class MyButton extends HTMLButtonElement {
+  static get observedAttributes() { return ['disabled', 'variant']; }
+
+  constructor() {
+    super(); // ОБЯЗАТЕЛЬНО первым вызовом!
+    this.attachShadow({ mode: 'open' }); // Shadow DOM
+  }
+
+  connectedCallback() {
+    // Элемент добавлен в DOM
+    this.render();
+    this.button = this.shadowRoot.querySelector('button');
+    this.button.addEventListener('click', this.handleClick);
+  }
+
+  disconnectedCallback() {
+    // Элемент удалён из DOM — cleanup!
+    this.button.removeEventListener('click', this.handleClick);
+  }
+
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (oldValue !== newValue) this.render();
+  }
+
+  handleClick = () => {
+    this.dispatchEvent(new CustomEvent('my-click', {
+      bubbles: true,
+      composed: true, // пробивает Shadow DOM границу!
+      detail: { originalEvent: event }
+    }));
+  };
+
+  render() {
+    this.shadowRoot.innerHTML = `
+      <style>
+        button { padding: 8px 16px; border: none; border-radius: 4px; }
+        .primary { background: #0066cc; color: white; }
+        .secondary { background: #eee; color: #333; }
+        :host([disabled]) button { opacity: 0.5; cursor: not-allowed; }
+      </style>
+      <button class="${this.getAttribute('variant') || 'primary'}"
+              ${this.hasAttribute('disabled') ? 'disabled' : ''}>
+        <slot>Button</slot>
+      </button>
+    `;
+  }
+}
+
+// Регистрация:
+// Autonomous (extends HTMLElement):
+customElements.define('my-button', MyButton, { extends: 'button' });
+// Customized built-in (extends HTMLButtonElement):
+// <button is="my-button"> — только для built-in элементов
+
+// Использование:
+<my-button variant="primary" disabled>Click me</my-button>
+<script>
+  const btn = document.querySelector('my-button');
+  btn.addEventListener('my-click', e => console.log(e.detail));
+</script>
+```
+
+### 3.2 Shadow DOM — Инкапсуляция стилей и DOM
+```javascript
+// Shadow Root modes:
+this.attachShadow({ mode: 'open' });   // element.shadowRoot доступен снаружи
+this.attachShadow({ mode: 'closed' }); // element.shadowRoot === null (encapsulation)
+
+// Стилизация Shadow DOM:
+/* Внутри shadow root: */
+:host { display: block; }              // стили самого custom element
+:host(.variant) { ... }                // когда у хоста есть класс
+:host-context(.dark) { ... }           // когда у ancestor есть класс
+::slotted(*) { ... }                   // стили для slotted контента
+::part(name) { ... }                   // exposed parts (см. ниже)
+
+// CSS Custom Properties — пробивают Shadow DOM boundary!
+/* Глобально: */
+:root { --my-button-bg: #0066cc; }
+/* В shadow DOM: */
+button { background: var(--my-button-bg, #0066cc); }
+
+// ::part — экспозиция внутренних элементов для стилизации:
+/* В template: */
+<button part="button"><span part="label"><slot></slot></span></button>
+/* Снаружи: */
+my-button::part(button) { border-radius: 8px; }
+my-button::part(label) { font-weight: bold; }
+```
+
+### 3.3 Slots — Проекция контента (Light DOM → Shadow DOM)
+```html
+<my-card>
+  <span slot="header">Title</span>
+  <p slot="content">Body text</p>
+  <button slot="footer">Action</button>
+  <p>Без slot → попадает в default slot</p>
+</my-card>
+
+<!-- В shadow template: -->
+<div class="card">
+  <header><slot name="header"></slot></header>
+  <main><slot name="content"></slot></main>
+  <footer><slot name="footer"></slot></footer>
+  <slot></slot> <!-- default slot -->
+</div>
+```
+
+```javascript
+// Slot assignment API:
+this.shadowRoot.querySelector('slot[name="header"]').assignedElements();
+// [{ slot: "header" }, ...]
+
+// slotchange event — когда меняется assigned nodes:
+this.shadowRoot.querySelector('slot').addEventListener('slotchange', e => {
+  console.log('Slot content changed', e.target.assignedNodes());
+});
+```
+
+### 3.4 Declarative Shadow DOM (Server-Side Rendering)
+```html
+<!-- Сервер рендерит Shadow DOM сразу в HTML — нет FOUC! -->
+<my-component>
+  <template shadowrootmode="open">
+    <style>
+      :host { display: block; color: var(--text-color, black); }
+      .content { border: 1px solid gray; padding: 1rem; }
+    </style>
+    <div class="content">
+      <slot></slot>
+    </div>
+  </template>
+  <p>Light DOM content</p>
+</my-component>
+
+<!-- Парсер браузера создаёт shadow root при парсинге template[shadowrootmode] -->
+<!-- В JS: element.shadowRoot уже доступен! -->
+```
+
+### 3.5 Form Participation (ElementInternals)
+```javascript
+class MyInput extends HTMLElement {
+  static get formAssociated() { return true; } // Участвует в формах!
+
+  constructor() {
+    super();
+    this.internals = this.attachInternals();
+    this._value = '';
+  }
+
+  get value() { return this._value; }
+  set value(v) {
+    this._value = v;
+    this.internals.setFormValue(v); // Устанавливает значение для form submit
+  }
+
+  // Validation:
+  checkValidity() { return this.internals.checkValidity(); }
+  reportValidity() { return this.internals.reportValidity(); }
+  setValidity(flags, message) { this.internals.setValidity(flags, message); }
+}
+
+customElements.define('my-input', MyInput);
+
+// Использование в форме:
+<form>
+  <my-input name="email" required></my-input>
+  <button type="submit">Submit</button>
+</form>
+```
+
+---
+
+## 4. Service Workers (Offline, Caching, Background Sync)
+
+### 4.1 Lifecycle & Registration
+```javascript
+// main.js
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    .then(reg => console.log('SW registered:', reg.scope))
+    .catch(err => console.log('SW registration failed:', err));
+}
+
+// sw.js — Service Worker файл
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open('static-v1').then(cache =>
+      cache.addAll(['/', '/index.html', '/styles.css', '/app.js'])
+    )
+  );
+  self.skipWaiting(); // Активировать сразу, не ждать закрытия вкладок
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== 'static-v1').map(k => caches.delete(k)))
+    )
+  );
+  self.clients.claim(); // Взять контроль над открытыми страницами сразу
+});
+```
+
+### 4.2 Caching Strategies
+```javascript
+// sw.js
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+
+  // Стратегия 1: Cache First (для статических ассетов)
+  if (url.pathname.match(/\.(js|css|png|jpg|woff2)$/)) {
+    event.respondWith(cacheFirst(event.request));
+    return;
+  }
+
+  // Стратегия 2: Network First (для API)
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(networkFirst(event.request));
+    return;
+  }
+
+  // Стратегия 3: Stale While Revalidate (для HTML)
+  event.respondWith(staleWhileRevalidate(event.request));
+});
+
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  const response = await fetch(request);
+  const cache = await caches.open('static-v1');
+  cache.put(request, response.clone());
+  return response;
+}
+
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    const cache = await caches.open('dynamic-v1');
+    cache.put(request, response.clone());
+    return response;
+  } catch {
+    return caches.match(request) || new Response('Offline', { status: 503 });
+  }
+}
+
+async function staleWhileRevalidate(request) {
+  const cached = await caches.match(request);
+  const fetchPromise = fetch(request).then(response => {
+    const cache = caches.open('dynamic-v1');
+    cache.then(c => c.put(request, response.clone()));
+    return response;
+  });
+  return cached || fetchPromise;
+}
+```
+
+### 4.3 Background Sync & Periodic Background Sync
+```javascript
+// sw.js — Background Sync (одноразовая синхронизация при появлении сети)
+self.addEventListener('sync', event => {
+  if (event.tag === 'send-analytics') {
+    event.waitUntil(sendPendingAnalytics());
+  }
+  if (event.tag === 'sync-contacts') {
+    event.waitUntil(syncContacts());
+  }
+});
+
+// main.js — регистрация sync
+async function queueAnalytics(data) {
+  const db = await openDB();
+  await db.add('pending-analytics', data);
+  const reg = await navigator.serviceWorker.ready;
+  await reg.sync.register('send-analytics');
+}
+
+// Periodic Background Sync (периодическая, требует разрешения)
+self.addEventListener('periodicsync', event => {
+  if (event.tag === 'daily-news') {
+    event.waitUntil(fetchLatestNews());
+  }
+});
+
+// main.js — регистрация periodic sync
+const reg = await navigator.serviceWorker.ready;
+if ('periodicSync' in reg) {
+  const status = await navigator.permissions.query({ name: 'periodic-background-sync' });
+  if (status.state === 'granted') {
+    await reg.periodicSync.register('daily-news', { minInterval: 24 * 60 * 60 * 1000 });
+  }
+}
+```
+
+### 4.4 Push API & Notifications
+```javascript
+// sw.js
+self.addEventListener('push', event => {
+  const data = event.data.json();
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: '/icon-192.png',
+      badge: '/badge-72.png',
+      vibrate: [200, 100, 200],
+      data: { url: data.url },
+      actions: [{ action: 'open', title: 'Open' }, { action: 'dismiss', title: 'Dismiss' }]
+    })
+  );
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  if (event.action === 'open') {
+    event.waitUntil(clients.openWindow(event.notification.data.url));
+  }
+});
+
+// main.js — подписка
+async function subscribeToPush() {
+  const reg = await navigator.serviceWorker.ready;
+  const subscription = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+  });
+  await fetch('/api/push/subscribe', {
+    method: 'POST',
+    body: JSON.stringify(subscription)
+  });
+}
+```
+
+### 4.5 Workbox (Production-ready SW library)
+```javascript
+// workbox-sw.js (importScripts в sw.js)
+importScripts('https://storage.googleapis.com/workbox-cdn/releases/7.0.0/workbox-sw.js');
+
+workbox.precaching.precacheAndRoute(self.__WB_MANIFEST);
+
+workbox.routing.registerRoute(
+  ({ request }) => request.destination === 'image',
+  new workbox.strategies.CacheFirst({
+    cacheName: 'images',
+    plugins: [
+      new workbox.expiration.ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 }),
+      new workbox.cacheableResponse.CacheableResponsePlugin({ statuses: [0, 200] })
+    ]
+  })
+);
+
+workbox.routing.registerRoute(
+  ({ url }) => url.pathname.startsWith('/api/'),
+  new workbox.strategies.NetworkFirst({
+    cacheName: 'api',
+    networkTimeoutSeconds: 10,
+    plugins: [new workbox.cacheableResponse.CacheableResponsePlugin({ statuses: [0, 200] })]
+  })
+);
+```
+
+---
+
+## 5. Browser Security Model
+
+### 5.1 Same-Origin Policy (SOP)
+```javascript
+// Origin = scheme + host + port
+// https://example.com:443 ≠ https://example.com:8443 ≠ http://example.com
+
+// SOP ограничивает:
+// - DOM доступ: iframe.contentWindow.document (cross-origin → blocked)
+// - fetch/XHR: cross-origin запросы блокируются (если нет CORS)
+// - Cookies: отправляются только same-origin (SameSite атрибуты)
+// - localStorage/IndexedDB: изолированы по origin
+// - WebSockets: origin проверяется при handshake
+
+// Relaxing SOP:
+// document.domain = 'example.com' — DEPRECATED (убрали в Chrome 100+)
+// PostMessage — безопасный cross-origin communication
+```
+
+### 5.2 CORS (Cross-Origin Resource Sharing)
+```http
+// Request headers (browser adds automatically):
+Origin: https://app.example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Content-Type, Authorization
+
+// Response headers (server must set):
+Access-Control-Allow-Origin: https://app.example.com  // или * (но не с credentials)
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+Access-Control-Allow-Headers: Content-Type, Authorization
+Access-Control-Allow-Credentials: true  // если нужны cookies/auth
+Access-Control-Max-Age: 86400  // cache preflight
+
+// Preflight request (OPTIONS) для не-простых запросов:
+// - метод не GET/HEAD/POST
+// - Content-Type не application/x-www-form-urlencoded, multipart/form-data, text/plain
+// - custom headers
+```
+
+### 5.3 CSP (Content Security Policy)
+```http
+// Content-Security-Policy header или <meta http-equiv="Content-Security-Policy">
+// Защита от XSS, инъекций, нежелательных ресурсов
+
+Content-Security-Policy:
+  default-src 'self';                           // всё только с текущего origin
+  script-src 'self' 'nonce-{random}' 'strict-dynamic'; // скрипты: self + nonce + strict-dynamic
+  style-src 'self' 'unsafe-inline';             // стили: self + inline (для CSS-in-JS)
+  img-src 'self' data: https:;                  // изображения
+  font-src 'self' https://fonts.gstatic.com;    // шрифты
+  connect-src 'self' https://api.example.com;   // fetch, WebSocket, EventSource
+  frame-src 'self' https://www.youtube.com;     // iframe
+  object-src 'none';                            // запрет <object>, <embed>
+  base-uri 'self';                              // <base> только self
+  form-action 'self';                           // form submit только self
+  frame-ancestors 'none';                       // запрет встраивания в iframe (X-Frame-Options alternative)
+  upgrade-insecure-requests;                    // HTTP → HTTPS автоматически
+
+// Nonce-based (для inline scripts):
+<script nonce="random123">console.log('allowed')</script>
+// Сервер генерирует новый nonce каждый запрос!
+
+// Hash-based:
+<script>console.log('allowed')</script>
+// CSP: script-src 'sha256-{base64-hash-of-script-content}'
+
+// strict-dynamic: если скрипт с nonce загружает другие скрипты — они тоже доверяются
+```
+
+### 5.4 COOP / COEP (Cross-Origin Isolation)
+```http
+// Cross-Origin Opener Policy — изоляция browsing context
+Cross-Origin-Opener-Policy: same-origin
+// Результат: window.opener = null для cross-origin попапов/iframes
+
+// Cross-Origin Embedder Policy — требование CORS для cross-origin ресурсов
+Cross-Origin-Embedder-Policy: require-corp
+// Ресурсы должны отдавать: Cross-Origin-Resource-Policy: cross-origin
+// ИЛИ быть same-origin
+
+// Вместе (COOP + COEP) → Cross-Origin Isolation:
+// - SharedArrayBuffer работает!
+// - performance.measureUserTiming() работает!
+// - high-resolution timers (performance.now() с микросекундами)
+// - WASM threads, WebAssembly SIMD
+```
+
+### 5.5 Permissions Policy (Feature Policy)
+```http
+// Permissions-Policy header (ранее Feature-Policy)
+// Контроль доступа к браузерным API
+
+Permissions-Policy:
+  geolocation=(),                    // запрет геолокации
+  camera=(), microphone=(),          // запрет камеры/микрофона
+  payment=(self "https://pay.example.com"), // только self + конкретный домен
+  fullscreen=(self),                 // fullscreen только self
+  accelerometer=(), gyroscope=(),    // датчики
+  clipboard-read=(self), clipboard-write=(self),
+  interest-cohort=()                 // FLoC/Topics opt-out
+
+// В iframe:
+<iframe allow="camera; microphone 'src'"></iframe>
+```
+
+### 5.6 Additional Security Headers
+```http
+X-Content-Type-Options: nosniff        // Запрет MIME sniffing
+X-Frame-Options: DENY                  // Запрет iframe embedding (legacy, используйте CSP frame-ancestors)
+X-XSS-Protection: 1; mode=block        // Legacy XSS filter (деprecated, CSP лучше)
+Referrer-Policy: strict-origin-when-cross-origin // Контроль Referer header
+Strict-Transport-Security: max-age=31536000; includeSubDomains; preload // HSTS
+```
+
+---
+
+## 6. Advanced Browser APIs
+
+### 6.1 Intersection Observer (Lazy loading, Infinite scroll)
+```javascript
+const observer = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (entry.isIntersecting) {
+      const img = entry.target;
+      img.src = img.dataset.src; // Загрузка изображения
+      observer.unobserve(img);
+    }
+  }
+}, { rootMargin: '100px', threshold: 0.1 });
+
+document.querySelectorAll('img[data-src]').forEach(img => observer.observe(img));
+```
+
+### 6.2 Resize Observer (Реактивные размеры)
+```javascript
+const resizeObserver = new ResizeObserver(entries => {
+  for (const entry of entries) {
+    const { width, height } = entry.contentRect;
+    entry.target.style.setProperty('--width', `${width}px`);
+  }
+});
+resizeObserver.observe(document.querySelector('.responsive-component'));
+```
+
+### 6.3 Page Lifecycle API
+```javascript
+// Состояния: active, passive, hidden, frozen, terminated, discarded
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    // Сохранить состояние, остановить анимации
+  } else {
+    // Восстановить, продолжить
+  }
+});
+
+// Page Lifecycle events (Chrome):
+window.addEventListener('freeze', () => { /* страница заморожена */ });
+window.addEventListener('resume', () => { /* страница восстановлена */ });
+
+// Page Discard (browser может убить вкладку под память):
+window.addEventListener('pagehide', event => {
+  if (event.persisted) {
+    // Страница в bfcache — может быть восстановлена мгновенно
+  } else {
+    // Страница unload — финальная очистка
+  }
+});
+```
+
+### 6.4 BFCache (Back/Forward Cache)
+```javascript
+// BFCache = кэш всей страницы в памяти при навигации back/forward
+// Мгновенное восстановление без ререндеринга!
+
+// Что ЛОМАЕТ BFCache:
+// - unload listener (используйте pagehide!)
+// - Cache-Control: no-store
+// - Service Worker с fetch handler (sometimes)
+// - WebRTC, IndexedDB открытые транзакции
+// - window.opener ссылки (COOP помогает)
+
+// Проверка:
+window.addEventListener('pageshow', event => {
+  if (event.persisted) {
+    console.log('Restored from BFCache!');
+    // Обновить stale данные
+  }
+});
+```
+
+---
+
+## 7. Browser vs Node.js: Platform Differences
+
+| Feature | Браузер | Node.js |
+|---------|---------|---------|
+| **DOM / CSSOM** | Полная поддержка | Нет (jsdom, happy-dom для тестов) |
+| **Rendering Pipeline** | Нативный | Нет |
+| **Service Workers** | Полная поддержка | Нет (workerd, miniflare для эмуляции) |
+| **Web Components** | Нативно | Нет (эмуляция через библиотеки) |
+| **CSP / COOP / COEP** | Enforced by browser | Application responsibility |
+| **Permissions Policy** | Enforced by browser | N/A |
+| **Intersection/Resize Observer** | Нативно | Нет |
+| **BFCache / Page Lifecycle** | Нативно | N/A |
+| **Push API / Notifications** | Нативно | Нет |
+| **File System Access API** | Origin Private File System | Native fs (다른 권한 모델) |
+| **Web Locks API** | Нативно | Нет |
+
+---
+
+## 8. Упражнения
+
+### Упражнение 1: Rendering Pipeline Optimization
+```javascript
+// Дано: анимация элемента через left/top
+// Задача: переписать на transform/opacity для compositor-only
+// Измерить в DevTools Performance: Layout/Paint/Composite время до и после
+```
+
+### Упражнение 2: Web Component с Form Participation
+```javascript
+// Создайте <color-picker> custom element:
+// - Shadow DOM со стилями
+// - input[type=color] внутри
+// - Form participation: name, value, validity, required
+// - Dispatches 'change' и 'input' events
+// - Работает внутри <form> с FormData
+```
+
+### Упражнение 3: Service Worker Cache Strategies
+```javascript
+// Реализуйте SW с тремя стратегиями:
+// 1. Cache First для /assets/*
+// 2. Network First для /api/*
+// 3. Stale While Revalidate для HTML страниц
+// Добавьте Background Sync для offline form submissions
+```
+
+### Упражнение 4: CSP Policy Design
+```javascript
+// Напишите CSP для SPA приложения:
+// - Скрипты: self + trusted CDN + nonce для inline
+// - Стили: self + unsafe-inline (CSS-in-JS)
+// - Шрифты: self + fonts.gstatic.com
+// - API: self + api.example.com
+// - Запрет object, embed, frame-ancestors
+// Протестируйте в браузере (DevTools Console → CSP violations)
+```
+
+---
+
+## 9. Дополнительные ресурсы
+
+- **Rendering Pipeline**: https://developer.chrome.com/docs/lighthouse/performance/critical-rendering-path/
+- **Web Components**: https://developer.mozilla.org/en-US/docs/Web/API/Web_components
+- **Service Workers**: https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API
+- **CSP**: https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP
+- **COOP/COEP**: https://web.dev/coop-coep/
+- **Core Web Vitals**: https://web.dev/vitals/
+- **Page Lifecycle**: https://developer.chrome.com/blog/page-lifecycle-api/
+- **BFCache**: https://web.dev/bfcache/
+
+---
+
+## 10. Контрольные вопросы
+
+1. В чём разница между Layout, Paint и Composite? Какие CSS свойства вызывают каждый этап?
+2. Почему `transform` и `opacity` анимируются на 60fps, а `left/top` — нет?
+3. Как Shadow DOM изолирует стили? Как "пробить" эту изоляцию для темизации?
+4. В чём разница между `async`, `defer` и `type="module"` для скриптов?
+5. Как Service Worker перехватывает fetch? Что такое `event.waitUntil`?
+6. Зачем нужен `Cross-Origin-Opener-Policy: same-origin`?
+7. Что такое BFCache и что его ломает?
+8. В чём разница между `same-origin` и `same-site` для cookies?
+
+---
+
+## 📝 Саммари
+
+| Концепция | Ключевой момент |
+|-----------|-----------------|
+| **Rendering Pipeline** | HTML→DOM, CSS→CSSOM, Style→Layout→Paint→Composite; только transform/opacity на GPU |
+| **Core Web Vitals** | LCP (загрузка), INP (отзывчивость), CLS (стабильность) — измеряются через PerformanceObserver |
+| **Web Components** | Custom Elements + Shadow DOM + Slots = инкапсуляция; Declarative Shadow DOM для SSR |
+| **Service Workers** | install → activate → fetch; стратегии кэширования; Background Sync, Push API |
+| **Security Model** | SOP → CORS → CSP → COOP/COEP → Permissions Policy = слои защиты |
+| **BFCache** | Мгновенный back/forward; ломается unload listener, no-store, открытые соединения |
+
+---
+
+*Следующий урок: 27 — Node Internals: event-driven design, streams, buffers, worker threads, processes, IPC*

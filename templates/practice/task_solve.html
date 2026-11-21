@@ -1,0 +1,328 @@
+{% extends 'base.html' %}
+{% load i18n %}
+{% load badge_filters %}
+
+{% block title %}{{ task.name }} - {% trans "Solve" %} - kernify{% endblock %}
+
+{% block extra_head %}
+<link href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/editor/editor.main.css" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-0">
+    <div class="row g-0">
+        <!-- Left Panel: Problem -->
+        <aside id="taskSidebar" class="col-lg-5 d-none d-lg-block bg-theme-dark border-end sidebar-mobile" style="min-height: calc(100vh - 56px); max-height: calc(100vh - 56px); overflow-y: auto; z-index: 1039;">
+            <div class="p-4">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div>
+                        <span class="badge bg-primary px-3 py-2">{{ task.topic.program.language.name }}</span>
+                        <span class="badge difficulty-badge bg-{{ task.difficulty_color }} bg-opacity-10 text-{{ task.difficulty_color }} px-3 py-2" title="{% trans "Difficulty" %}: {{ task.difficulty_level }}/5">{{ task.difficulty_stars }}</span>
+                        <span class="badge bg-{{ task.task_type|badge_color }} bg-opacity-10 text-{{ task.task_type|badge_color }} px-3 py-2">{{ task.get_task_type_display }}</span>
+                    </div>
+                    <a href="{% url 'practice:task_detail' task.slug %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-info-circle me-1"></i>{% trans "Details" %}</a>
+                </div>
+
+                <h3 class="mb-3">{{ task.name }}</h3>
+                <p class="text-muted mb-4">{{ task.description }}</p>
+
+                <div class="card bg-secondary bg-opacity-25 border-0 mb-4">
+                    <div class="card-body">
+                        <h6 class="mb-3">{% trans "Requirements" %}</h6>
+                        {% if task.test_cases %}
+                        <p class="mb-2">{% trans "Read the data from standard input and print the result to standard output." %}</p>
+                        <p class="mb-1"><strong>{% trans "Example input" %}:</strong></p>
+                        <pre class="p-2 rounded small mb-2" style="background: var(--bg-secondary); color: var(--text-primary);">{{ task.test_cases.0.input }}</pre>
+                        <p class="mb-1"><strong>{% trans "Example output" %}:</strong></p>
+                        <pre class="p-2 rounded small mb-0" style="background: var(--bg-secondary); color: var(--text-primary);">{{ task.test_cases.0.expected_output }}</pre>
+                        {% else %}
+                        <p class="mb-0">{{ task.description }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Hints -->
+                {% if task.hints %}
+                <div class="card bg-warning bg-opacity-10 border-0 mb-4">
+                    <div class="card-body">
+                        <h6 class="mb-3"><i class="bi bi-lightbulb text-warning me-2"></i>{% trans "Hints" %}</h6>
+                        <ol class="mb-0 small">
+                            {% for hint in task.hints %}
+                            <li class="mb-2">{{ hint }}</li>
+                            {% endfor %}
+                        </ol>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Test Cases -->
+                {% if task.test_cases %}
+                <details class="mb-4">
+                    <summary class="text-decoration-underline text-muted small cursor-pointer">{% trans "View Test Cases" %}</summary>
+                    <pre class="mt-2 p-3 rounded small" style="background: var(--bg-secondary); color: var(--rtk-text);"><code>{{ task.test_cases|json_script:"test-cases" }}</code></pre>
+                </details>
+                {% endif %}
+
+                <div class="d-flex gap-2 mt-4">
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary px-3 py-2"><i class="bi bi-star text-warning me-1"></i>{{ task.xp_reward }} XP</span>
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary px-3 py-2"><i class="bi bi-clock me-1"></i>{{ task.estimated_minutes }} {% trans "min" %}</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right Panel: Editor -->
+        <main class="col-lg-7 d-flex flex-column" style="min-height: calc(100vh - 56px);">
+            <!-- Top Bar -->
+            <header class="bg-theme-dark border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-3">
+                    <button class="btn btn-outline-secondary btn-sm d-lg-none" id="toggleTaskSidebar" aria-label="{% trans "Toggle navigation" %}"><i class="bi bi-list"></i></button>
+                    <h5 class="mb-0">{{ task.name }}</h5>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge difficulty-badge bg-{{ task.difficulty_color }} bg-opacity-10 text-{{ task.difficulty_color }} px-3 py-2" title="{% trans "Difficulty" %}: {{ task.difficulty_level }}/5">{{ task.difficulty_stars }}</span>
+                    <span class="text-theme-muted small"><i class="bi bi-star text-warning me-1"></i>{{ task.xp_reward }} XP</span>
+                </div>
+            </header>
+
+            <!-- Editor Area -->
+            <div class="flex-grow-1 d-flex flex-column overflow-hidden">
+                <!-- Tabs -->
+                <div class="bg-theme-dark border-bottom px-3 py-2 d-flex gap-1" role="tablist">
+                    <button class="btn btn-sm btn-outline-light active" data-tab="editor">{% trans "Code" %}</button>
+                    <button class="btn btn-sm btn-outline-light" data-tab="output">{% trans "Output" %}</button>
+                    <button class="btn btn-sm btn-outline-light" data-tab="tests">{% trans "Tests" %}</button>
+                </div>
+
+                <!-- Editor -->
+                <div class="flex-grow-1 overflow-hidden w-100" role="tabpanel">
+                    <div id="editor" style="height: 100%; width: 100%;"></div>
+                </div>
+
+                <!-- Output Panel (hidden by default) -->
+                <div id="outputPanel" class="d-none flex-grow-1 overflow-auto bg-theme-dark p-3" role="tabpanel" style="height: 100%;">
+                    <pre id="outputContent" class="mb-0 text-theme" style="font-family: monospace; font-size: 0.875rem;"></pre>
+                </div>
+
+                <!-- Tests Panel -->
+                <div id="testsPanel" class="d-none flex-grow-1 overflow-auto bg-theme-dark p-3" role="tabpanel" style="height: 100%;">
+                    <div id="testsContent"></div>
+                </div>
+            </div>
+
+            <!-- Bottom Bar -->
+            <footer class="bg-theme-dark border-top px-4 py-3">
+                {% if not code_runner_enabled %}
+                <div class="alert alert-secondary d-flex align-items-start gap-2 py-2 px-3 mb-3 small" role="status" style="font-family: inherit;">
+                    <i class="bi bi-info-circle mt-1"></i>
+                    <div>
+                        <strong>{% trans "Compilation is not available yet" %}</strong><br>
+                        {% trans "You can write code here, but running it is disabled for now. Compilation will be enabled later." %}
+                    </div>
+                </div>
+                {% endif %}
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-primary" id="runBtn" {% if not code_runner_enabled %}disabled title="{% trans "Code execution is currently disabled" %}"{% endif %}><i class="bi bi-play-fill me-1"></i>{% trans "Run" %} (Ctrl+Enter)</button>
+                        <button class="btn btn-success" id="submitBtn"><i class="bi bi-send me-1"></i>{% trans "Submit" %}</button>
+                        <button class="btn btn-outline-secondary" id="resetBtn"><i class="bi bi-arrow-counterclockwise me-1"></i>{% trans "Reset" %}</button>
+                    </div>
+                    <div class="d-flex gap-2 align-items-center">
+                        <span class="badge bg-secondary px-3 py-2" title="{% trans "Solution language" %}">
+                            <i class="bi bi-lock-fill me-1"></i>{{ task.language.name }}
+                        </span>
+                    </div>
+                </div>
+            </footer>
+        </main>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ task.test_cases|json_script:"task-test-cases" }}
+<script>
+    const toggleTaskSidebar = document.getElementById('toggleTaskSidebar');
+    const taskSidebar = document.getElementById('taskSidebar');
+    if (toggleTaskSidebar && taskSidebar) {
+        toggleTaskSidebar.addEventListener('click', () => {
+            taskSidebar.classList.toggle('show');
+            taskSidebar.classList.toggle('d-none');
+            document.body.classList.toggle('sidebar-open');
+        });
+        document.addEventListener('click', (e) => {
+            if (!taskSidebar.contains(e.target) && !toggleTaskSidebar.contains(e.target) && taskSidebar.classList.contains('show')) {
+                taskSidebar.classList.remove('show');
+                taskSidebar.classList.add('d-none');
+                document.body.classList.remove('sidebar-open');
+            }
+        });
+    }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.js"></script>
+<script>
+require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' }});
+require(['vs/editor/editor.main'], function() {
+    const editor = monaco.editor.create(document.getElementById('editor'), {
+        value: `{{ task.starter_code|escapejs }}`,
+        language: '{{ task.topic.program.language.slug }}',
+        theme: '{{ request.COOKIES.rtk_theme|default:'vs-dark' }}',
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 14,
+        lineNumbers: 'on',
+        tabSize: 4,
+        wordWrap: 'on',
+    });
+
+    // Надёжно подгоняем размер редактора под контейнер (иначе при широком
+    // окне Monaco может остаться узкой полоской).
+    const relayout = () => { try { editor.layout(); } catch (e) {} };
+    window.addEventListener('resize', relayout);
+    setTimeout(relayout, 50);
+    setTimeout(relayout, 300);
+    setTimeout(relayout, 1000);
+
+    // Tab switching
+    document.querySelectorAll('[data-tab]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('[data-tab]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('editor').style.display = btn.dataset.tab === 'editor' ? 'block' : 'none';
+            document.getElementById('outputPanel').classList.toggle('d-none', btn.dataset.tab !== 'output');
+            document.getElementById('outputPanel').classList.toggle('d-flex', btn.dataset.tab === 'output');
+            document.getElementById('testsPanel').classList.toggle('d-none', btn.dataset.tab !== 'tests');
+            document.getElementById('testsPanel').classList.toggle('d-flex', btn.dataset.tab === 'tests');
+            if (btn.dataset.tab === 'editor') { relayout(); setTimeout(relayout, 50); }
+        });
+    });
+
+    // Run code
+    const RUN_ENABLED = {{ code_runner_enabled|yesno:"true,false" }};
+    // Язык жёстко зафиксирован под задачу — сменить нельзя.
+    const TASK_LANGUAGE = '{{ task.language.slug }}';
+    const TASK_TESTS = (function () {
+        try { return JSON.parse(document.getElementById('task-test-cases').textContent) || []; }
+        catch (e) { return []; }
+    })();
+
+    async function callRunner(code, language, stdin) {
+        const response = await fetch('/api/code/run/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}',
+            },
+            body: JSON.stringify({ code, language, stdin: stdin || '' })
+        });
+        return await response.json();
+    }
+
+    async function runCode() {
+        if (!RUN_ENABLED) {
+            return;
+        }
+        const code = editor.getValue();
+        const language = TASK_LANGUAGE;
+        const outputContent = document.getElementById('outputContent');
+        const testsContent = document.getElementById('testsContent');
+
+        outputContent.textContent = 'Выполняется...';
+        testsContent.innerHTML = '';
+
+        try {
+            // Если у задачи есть тесты — прогоняем до 3 из них и показываем результат.
+            const cases = TASK_TESTS.slice(0, 3);
+            if (cases.length === 0) {
+                const data = await callRunner(code, language, '');
+                outputContent.textContent = data.output !== undefined && data.output !== ''
+                    ? data.output
+                    : (data.error ? 'Ошибка: ' + data.error : '(нет вывода)');
+                return;
+            }
+
+            let html = '<h6>Результаты тестов:</h6><ul class="list-group">';
+            let passed = 0;
+            let lastOutput = '';
+            for (let i = 0; i < cases.length; i++) {
+                const tc = cases[i];
+                const data = await callRunner(code, language, tc.input || '');
+                const got = (data.output || '').trim();
+                const expected = (tc.expected_output || '').trim();
+                const ok = data.error ? false : (got === expected);
+                if (ok) passed++;
+                lastOutput = got !== '' ? got : (data.error || '');
+                html += `<li class="list-group-item bg-transparent border-0 d-flex justify-content-between align-items-center">
+                    Тест ${i + 1} <span class="badge ${ok ? 'bg-success' : 'bg-danger'}">${ok ? 'Пройден' : 'Провален'}</span>
+                </li>`;
+                if (!ok) {
+                    html += `<li class="list-group-item bg-transparent border-0 ps-4 small text-muted">
+                        Вход: <code>${(tc.input || '').replace(/\n/g, '\\n')}</code><br>
+                        Ожидалось: <code>${expected}</code><br>
+                        Получено: <code>${(data.error ? data.error : got)}</code>
+                    </li>`;
+                }
+            }
+            html += '</ul>';
+            testsContent.innerHTML = html;
+            outputContent.textContent = `Пройдено тестов: ${passed} из ${cases.length}.` + (lastOutput ? `\n\nПоследний вывод:\n${lastOutput}` : '');
+
+            // Переключаемся на вкладку «Тесты»
+            document.querySelectorAll('[data-tab]').forEach(b => b.classList.remove('active'));
+            const testsTab = document.querySelector('[data-tab="tests"]');
+            if (testsTab) testsTab.classList.add('active');
+            document.getElementById('editor').style.display = 'none';
+            document.getElementById('outputPanel').classList.add('d-none');
+            document.getElementById('testsPanel').classList.remove('d-none');
+            document.getElementById('testsPanel').classList.add('d-flex');
+        } catch (e) {
+            outputContent.textContent = 'Ошибка: ' + e.message;
+        }
+    }
+
+    document.getElementById('runBtn').addEventListener('click', runCode);
+    document.getElementById('submitBtn').addEventListener('click', async () => {
+        const code = editor.getValue();
+        const language = TASK_LANGUAGE;
+        const btn = document.getElementById('submitBtn');
+        const original = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + '{% trans "Checking…" %}';
+        try {
+            const resp = await fetch('{% url "practice:task_submit_api" task.slug %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}',
+                },
+                body: JSON.stringify({ code: code, language: language, session_id: {{ session.id }} }),
+            });
+            const data = await resp.json();
+            if (data.redirect_url) {
+                window.location.href = data.redirect_url;
+            } else {
+                alert(data.error || 'Не удалось проверить решение.');
+            }
+        } catch (e) {
+            alert('Ошибка: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = original;
+        }
+    });
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        editor.setValue(`{{ task.starter_code|escapejs }}`);
+        document.getElementById('outputContent').textContent = '';
+        document.getElementById('testsContent').innerHTML = '';
+    });
+
+    // Keyboard shortcut
+    editor.onKeyDown(e => {
+        if (e.ctrlKey && e.keyCode === 13) { // Ctrl+Enter
+            runCode();
+        }
+    });
+
+    // Язык задачи зафиксирован; подсветку уже задаёт language при создании редактора.
+});
+</script>
+{% endblock %}

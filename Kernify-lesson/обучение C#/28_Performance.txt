@@ -1,0 +1,601 @@
+# Урок 3.6: Performance — BenchmarkDotNet, Profiling, JIT/Tiered Compilation, Memory Optimization
+
+## Цели урока
+- Писать правильные бенчмарки с BenchmarkDotNet
+- Использовать профайлеры: dotnet-trace, PerfView, Visual Studio Profiler
+- Понимать JIT, Tiered Compilation, ReadyToRun, Native AOT
+- Оптимизировать память: избегать аллокаций, использовать Span, pooling
+- Применять SIMD (Vector<T>, Hardware Intrinsics) для числовых вычислений
+
+---
+
+## 1. BenchmarkDotNet — Правильное бенчмаркирование
+
+### Базовый бенчмарк
+```csharp
+using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
+
+[MemoryDiagnoser] // GC stats
+[SimpleJob(RuntimeMoniker.Net80)] // Target runtime
+[SimpleJob(RuntimeMoniker.Net90)]
+public class StringBenchmarks
+{
+    private string _longString = new('a', 10000);
+
+    [Benchmark(Baseline = true)]
+    public int StringLength() => _longString.Length;
+
+    [Benchmark]
+    public int LinqCount() => _longString.Count();
+
+    [Benchmark]
+    public int SpanLength()
+    {
+        ReadOnlySpan<char> span = _longString.AsSpan();
+        return span.Length;
+    }
+}
+
+// Запуск
+BenchmarkRunner.Run<StringBenchmarks>();
+```
+
+### Параметризованные бенчмарки
+```csharp
+[MemoryDiagnoser]
+[SimpleJob(RuntimeMoniker.Net80)]
+public class ListBenchmarks
+{
+    [Params(10, 100, 1000, 10000)]
+    public int Size { get; set; }
+
+    private List<int> _list = null!;
+    private int[] _array = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _list = Enumerable.Range(0, Size).ToList();
+        _array = Enumerable.Range(0, Size).ToArray();
+    }
+
+    [Benchmark(Baseline = true)]
+    public int ListForEach()
+    {
+        int sum = 0;
+        foreach (var item in _list) sum += item;
+        return sum;
+    }
+
+    [Benchmark]
+    public int ArrayForEach()
+    {
+        int sum = 0;
+        foreach (var item in _array) sum += item;
+        return sum;
+    }
+
+    [Benchmark]
+    public int ListFor()
+    {
+        int sum = 0;
+        for (int i = 0; i < _list.Count; i++) sum += _list[i];
+        return sum;
+    }
+
+    [Benchmark]
+    public int SpanLoop()
+    {
+        int sum = 0;
+        var span = _array.AsSpan();
+        for (int i = 0; i < span.Length; i++) sum += span[i];
+        return sum;
+    }
+}
+```
+
+### Настройка Job'ов
+```csharp
+[Config(typeof(Config))]
+public class Config : ManualConfig
+{
+    public Config()
+    {
+        // Базовые джобы
+        AddJob(Job.Default
+            .WithRuntime(CoreRuntime.Core80)
+            .WithIterationCount(15)
+            .WithWarmupCount(5)
+            .WithGcServer(true));
+
+        // Сравнение GC режимов
+        AddJob(Job.Default.WithGcServer(true).WithId("Server GC"));
+        AddJob(Job.Default.WithGcServer(false).WithId("Workstation GC"));
+
+        // ReadyToRun vs JIT
+        AddJob(Job.Default.WithRuntime(CoreRuntime.Core80).WithId("JIT"));
+        AddJob(Job.Default.WithRuntime(CoreRuntime.Core80).WithCustomBuildConfiguration(
+            b => b.WithMsBuildPath("/p:PublishReadyToRun=true")).WithId("R2R"));
+
+        // Native AOT
+        AddJob(Job.Default.WithRuntime(CoreRuntime.NativeAot80).WithId("Native AOT"));
+    }
+}
+```
+
+### Анализ результатов
+```csharp
+// Результаты в консоли:
+// | Method | Size | Mean | Error | StdDev | Gen0 | Allocated |
+// |--------|-----:|-----:|------:|-------:|-----:|----------:|
+// | ListForEach | 1000 | 1.23 us | 0.02 us | 0.01 us | 0.12 | 256 B |
+// | ArrayForEach | 1000 | 0.98 us | 0.01 us | 0.01 us | - | - |
+
+// Ключевые метрики:
+// Mean — среднее время
+// Error/StdDev — статистическая погрешность
+// Gen0/Gen1/Gen2 — коллекции GC
+// Allocated — байт аллоцировано на операцию
+```
+
+---
+
+## 2. Профилирование
+
+### dotnet-trace — cross-platform tracing
+```bash
+# Установка
+dotnet tool install -g dotnet-trace
+
+# Сбор трассы
+dotnet trace collect --process-id <PID> --providers Microsoft-DotNETCore-SampleProfiler
+
+# Или запуск приложения под трассером
+dotnet trace collect -- dotnet run --project MyApp.csproj
+
+# Анализ в PerfView или Speedscope
+dotnet trace convert trace.nettrace --format speedscope
+```
+
+### PerfView — глубокий анализ Windows
+```bash
+# Скачать с GitHub: microsoft/perfview
+# Запуск
+PerfView.exe collect
+
+# Анализ:
+# - GC Stats: время в GC, поколения, причины
+# - CPU Stacks: горячие пути
+# - Memory: объекты в куче, retention graph
+# - JIT: методы, время компиляции, tiered compilation
+```
+
+### Visual Studio Profiler
+```
+Alt+F2 -> Performance Profiler
+- CPU Usage (sampling/instrumentation)
+- Memory Usage (snapshots, diff)
+- .NET Object Allocation Tracking
+- Database (EF Core queries)
+```
+
+### dotnet-counters — runtime метрики в реальном времени
+```bash
+dotnet tool install -g dotnet-counters
+dotnet counters monitor --process-id <PID> --counters System.Runtime
+```
+
+---
+
+## 3. JIT, Tiered Compilation, ReadyToRun, Native AOT
+
+### Tiered Compilation (включен по умолчанию .NET Core 3.0+)
+```csharp
+// Tier 0: Быстрая компиляция, без оптимизаций
+// Tier 1: Оптимизированная версия после профилирования
+
+// Контроль через атрибуты
+[MethodImpl(MethodImplOptions.NoOptimization)]
+public void NoOptMethod() { }
+
+[MethodImpl(MethodImplOptions.AggressiveOptimization)]
+public void AggressiveOptMethod() { }
+
+// Отключение tiered для метода
+[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.NoInlining)]
+// Нет прямого атрибута, но можно через:
+// <TieredCompilation>false</TieredCompilation> в csproj
+```
+
+### ReadyToRun (R2R) — предварительная компиляция
+```xml
+<!-- .csproj -->
+<PropertyGroup>
+  <PublishReadyToRun>true</PublishReadyToRun>
+  <!-- Для cross-platform: -->
+  <PublishReadyToRunComposite>true</PublishReadyToRunComposite>
+</PropertyGroup>
+
+<!-- Публикация -->
+dotnet publish -c Release -r win-x64 --self-contained
+```
+
+### Native AOT (.NET 8+)
+```xml
+<!-- .csproj -->
+<PropertyGroup>
+  <PublishAot>true</PublishAot>
+  <StripSymbols>true</StripSymbols>
+  <InvariantGlobalization>true</InvariantGlobalization>
+</PropertyGroup>
+
+<!-- Ограничения AOT:
+- Нет Reflection.Emit
+- Нет dynamic
+- Ограниченная рефлексия (требует [DynamicallyAccessedMembers])
+- Нет Assembly.LoadFromAssembly
+-->
+```
+
+### PGO (Profile-Guided Optimization, .NET 8+)
+```bash
+# 1. Инструментированная сборка
+dotnet publish -c Release -r win-x64 /p:PGOInstrument=true
+
+# 2. Запуск под нагрузкой (собирает профиль)
+./MyApp.Instrumented.exe
+
+# 3. Оптимизированная сборка с профилем
+dotnet publish -c Release -r win-x64 /p:PGOOptimize=true
+```
+
+---
+
+## 4. Memory Optimization — Паттерны
+
+### Избегание аллокаций
+```csharp
+// ПЛОХО: конкатенация строк в цикле
+string result = "";
+foreach (var item in items)
+    result += item.ToString(); // Новая строка каждый раз!
+
+// ХОРОШО: StringBuilder
+var sb = new StringBuilder();
+foreach (var item in items)
+    sb.Append(item);
+return sb.ToString();
+
+// ЛУЧШЕ: предварительный размер
+var sb = new StringBuilder(items.Count * 10);
+```
+
+### Object Pooling
+```csharp
+// ArrayPool для массивов
+public class PooledProcessor
+{
+    private readonly ArrayPool<byte> _pool = ArrayPool<byte>.Shared;
+
+    public void Process(Stream input)
+    {
+        byte[] buffer = _pool.Rent(4096);
+        try
+        {
+            int read;
+            while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                HandleData(buffer.AsSpan(0, read));
+            }
+        }
+        finally
+        {
+            _pool.Return(buffer);
+        }
+    }
+}
+
+// ObjectPool для сложных объектов (Microsoft.Extensions.ObjectPool)
+public class PooledStringBuilder : IDisposable
+{
+    private static readonly ObjectPool<StringBuilder> _pool =
+        new DefaultObjectPool<StringBuilder>(new StringBuilderPooledPolicy(), 100);
+
+    private StringBuilder? _sb;
+
+    public StringBuilder Get() => _sb ??= _pool.Get();
+
+    public void Dispose()
+    {
+        if (_sb != null)
+        {
+            _pool.Return(_sb);
+            _sb = null;
+        }
+    }
+}
+```
+
+### Struct vs Class — избегайте boxing
+```csharp
+// ПЛОХО: boxing при использовании интерфейса
+interface IProcessor { void Process(); }
+struct MyStruct : IProcessor { public void Process() { } }
+
+void Bad(IProcessor p) => p.Process(); // Boxing!
+
+// ХОРОШО: generic constraint
+void Good<T>(T p) where T : struct, IProcessor => p.Process(); // No boxing
+
+// Или: не используйте интерфейсы для struct'ов в hot path
+```
+
+### Stackalloc для малых буферов
+```csharp
+public void ProcessSmallData(ReadOnlySpan<byte> input)
+{
+    // До 1KB на стеке — безопасно
+    Span<byte> buffer = stackalloc byte[256];
+
+    if (input.Length > buffer.Length)
+    {
+        // Fallback на ArrayPool для больших данных
+        byte[] pooled = ArrayPool<byte>.Shared.Rent(input.Length);
+        try
+        {
+            buffer = pooled;
+            // ...
+        }
+        finally { ArrayPool<byte>.Shared.Return(pooled); }
+    }
+
+    input.CopyTo(buffer);
+    // Работа с buffer
+}
+```
+
+---
+
+## 5. SIMD — Vector<T> и Hardware Intrinsics
+
+### System.Numerics.Vector<T>
+```csharp
+using System.Numerics;
+
+public static class SimdMath
+{
+    // Сложение массивов
+    public static void Add(float[] a, float[] b, float[] result)
+    {
+        int i = 0;
+        var vectorSize = Vector<float>.Count; // 8 на AVX2, 16 на AVX-512
+
+        for (; i <= a.Length - vectorSize; i += vectorSize)
+        {
+            var va = new Vector<float>(a, i);
+            var vb = new Vector<float>(b, i);
+            (va + vb).CopyTo(result, i);
+        }
+
+        // Остаток
+        for (; i < a.Length; i++)
+            result[i] = a[i] + b[i];
+    }
+
+    // Скалярное произведение
+    public static float DotProduct(float[] a, float[] b)
+    {
+        var sum = Vector<float>.Zero;
+        int i = 0;
+        var vectorSize = Vector<float>.Count;
+
+        for (; i <= a.Length - vectorSize; i += vectorSize)
+        {
+            sum += new Vector<float>(a, i) * new Vector<float>(b, i);
+        }
+
+        float result = sum.Sum();
+        for (; i < a.Length; i++)
+            result += a[i] * b[i];
+
+        return result;
+    }
+}
+```
+
+### Hardware Intrinsics (AVX2, SSE, ARM NEON)
+```csharp
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+
+public static class Avx2Math
+{
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void AddAvx2(float[] a, float[] b, float[] result)
+    {
+        if (!Avx2.IsSupported)
+        {
+            SimdMath.Add(a, b, result); // Fallback
+            return;
+        }
+
+        int i = 0;
+        const int VectorSize = 8; // 256 bit = 8 floats
+
+        for (; i <= a.Length - VectorSize; i += VectorSize)
+        {
+            var va = Avx.LoadVector256(a, i);
+            var vb = Avx.LoadVector256(b, i);
+            var vr = Avx2.Add(va, vb);
+            Avx.Store(result, i, vr);
+        }
+
+        // Остаток
+        for (; i < a.Length; i++)
+            result[i] = a[i] + b[i];
+    }
+
+    // Fused Multiply-Add (FMA)
+    public static void FmaAvx2(float[] a, float[] b, float[] c, float[] result)
+    {
+        if (!Fma.IsSupported) { /* fallback */ return; }
+
+        for (int i = 0; i <= a.Length - 8; i += 8)
+        {
+            var va = Avx.LoadVector256(a, i);
+            var vb = Avx.LoadVector256(b, i);
+            var vc = Avx.LoadVector256(c, i);
+            var vr = Fma.MultiplyAdd(va, vb, vc); // a * b + c
+            Avx.Store(result, i, vr);
+        }
+    }
+}
+```
+
+### Vector128/256/512 — универсальный API (.NET 7+)
+```csharp
+using System.Runtime.Intrinsics;
+
+public static class VectorMath
+{
+    public static void Add<T>(T[] a, T[] b, T[] result) where T : struct
+    {
+        if (Vector512.IsSupported && Vector512<T>.Count > 0)
+        {
+            AddVector512(a, b, result);
+        }
+        else if (Vector256.IsSupported && Vector256<T>.Count > 0)
+        {
+            AddVector256(a, b, result);
+        }
+        else if (Vector128.IsSupported && Vector128<T>.Count > 0)
+        {
+            AddVector128(a, b, result);
+        }
+        else
+        {
+            ScalarAdd(a, b, result);
+        }
+    }
+
+    private static void AddVector256<T>(T[] a, T[] b, T[] result) where T : struct
+    {
+        var count = Vector256<T>.Count;
+        for (int i = 0; i <= a.Length - count; i += count)
+        {
+            Vector256.LoadUnsafe(ref a[i]) + Vector256.LoadUnsafe(ref b[i])
+                .StoreUnsafe(ref result[i]);
+        }
+    }
+}
+```
+
+---
+
+## 6. JIT Optimizations — что знает компилятор
+
+### Inlining
+```csharp
+// JIT инлайнит:
+// - Малые методы (< 32 байт IL)
+// - Не virtual/interface вызовы
+// - Без try/catch (в старых версиях)
+// - Без стэк аллок
+
+[MethodImpl(MethodImplOptions.AggressiveInlining)]
+public static int Add(int a, int b) => a + b;
+
+// Запрет инлайна (для рекурсии, стека)
+[MethodImpl(MethodImplOptions.NoInlining)]
+public void RecursiveMethod(int depth) { ... }
+```
+
+### Devirtualization
+```csharp
+// Sealed классы — devirtualization
+sealed class SealedClass { public virtual void Method() { } }
+
+// Final методы
+class Base { public virtual void Method() { } }
+class Derived : Base { public sealed override void Method() { } } // Devirtualized
+
+// JIT может девиртуализировать если видит конкретный тип
+void Call(Base b) => b.Method(); // Если b всегда Derived — инлайнится
+```
+
+### Escape Analysis / Scalar Replacement
+```csharp
+// JIT может заменить аллокацию объекта на скаляры в регистрах
+public void EscapeAnalysis()
+{
+    var point = new Point(1, 2); // Не уходит наружу — может быть scalar replaced
+    Console.WriteLine(point.X + point.Y);
+}
+
+// Point должен быть struct или small class без identity
+```
+
+### Bounds Check Elimination
+```csharp
+// JIT убирает проверки границ если может доказать безопасность
+public int Sum(int[] array)
+{
+    int sum = 0;
+    for (int i = 0; i < array.Length; i++) // Bounds check eliminated
+        sum += array[i];
+    return sum;
+}
+
+// Span — гарантированно без bounds check в цикле
+public int SumSpan(Span<int> span)
+{
+    int sum = 0;
+    for (int i = 0; i < span.Length; i++)
+        sum += span[i]; // Нет bounds check
+    return sum;
+}
+```
+
+---
+
+## 7. Практические задания
+
+1. **Benchmark Suite**: Напишите набор бенчмарков для сравнения: `List<T>` vs `Array` vs `Span<T>` vs `Memory<T>` для операций: итерация, поиск, фильтрация, сортировка
+
+2. **Memory Profiler Analysis**: Возьмите реальное приложение, соберите memory dump (`dotnet-dump`), найдите топ-10 типов по памяти, оптимизируйте 3 самых больших
+
+3. **SIMD Implementation**: Реализуйте матричное умножение 4x4 используя `Vector<T>` и сравните с naïve реализацией через BenchmarkDotNet
+
+4. **PGO Pipeline**: Настройте CI/CD для PGO: инструментированная сборка -> нагрузочный тест -> оптимизированная сборка, сравтите производительность
+
+5. **Native AOT Migration**: Перенесите консольное приложение на Native AOT, решите проблемы с рефлексией/JSON сериализацией, измерьте cold start и размер бинарника
+
+---
+
+## 8. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Бенчмарк без `[MemoryDiagnoser]` | Всегда включайте для GC/memory метрик |
+| Один запуск бенчмарка | Минимум 15 итераций, 5 warmup |
+| Бенчмарк в Debug конфигурации | Только `Release`, `dotnet run -c Release` |
+| `DateTime.Now` для замеров | `Stopwatch` или BenchmarkDotNet |
+| Игнорируют JIT warmup | BenchmarkDotNet делает warmup автоматически |
+| `Vector<T>` без проверки `IsSupported` | Всегда проверяйте и давайте fallback |
+| `stackalloc` больших буферов | Лимит ~1KB, больше — ArrayPool |
+
+---
+
+## 9. Полезные ресурсы
+
+- **BenchmarkDotNet Docs** — https://benchmarkdotnet.org/articles/guides/getting-started.html
+- **Performance Tips** — https://learn.microsoft.com/dotnet/core/performance/
+- **JIT Compiler** — https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/jit/
+- **Tiered Compilation** — https://learn.microsoft.com/dotnet/core/run-time-config/compilation#tiered-compilation
+- **ReadyToRun** — https://learn.microsoft.com/dotnet/core/deploying/ready-to-run
+- **Native AOT** — https://learn.microsoft.com/dotnet/core/deploying/native-aot
+- **SIMD in .NET** — https://learn.microsoft.com/dotnet/api/system.numerics
+- **Hardware Intrinsics** — https://learn.microsoft.com/dotnet/api/system.runtime.intrinsics
+- **Pro .NET Performance** — Sasha Goldshtein (книга)
+- **Writing High-Performance .NET Code** — Ben Watson (книга)

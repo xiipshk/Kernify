@@ -1,0 +1,590 @@
+{
+  "title": "Урок 19: Асинхронность",
+  "slug": "urok-19-асинхронность-asyncio",
+  "short_description": "async/await, Task, Future, gather, wait, timeout, semaphore, queues",
+  "goals": [
+    "Понимать основы: async/await, Task, Future, gather, wait, timeout, semaphore, queues",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 2.8: Асинхронность — async/await, event loop, задачи, синхронизация, aiohttp"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать event loop, корутины, задачи",
+        "Писать async/await код",
+        "Использовать asyncio.gather, wait, as_completed",
+        "Синхронизировать: Lock, Semaphore, Event, Queue",
+        "Работать с aiohttp для HTTP запросов"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Зачем асинхронность"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Блокирующий vs Неблокирующий"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Синхронно — последовательно, ждёт каждый запрос"
+    },
+    {
+      "type": "text",
+      "content": "def sync_fetch(urls):\n    results = []\n    for url in urls:\n        resp = requests.get(url)  # БЛОКИРУЕТ поток!\n        results.append(resp.text)\n    return results"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Асинхронно — параллельно, не блокирует"
+    },
+    {
+      "type": "text",
+      "content": "import aiohttp\nimport asyncio\n\nasync def async_fetch(urls):\n    async with aiohttp.ClientSession() as session:\n        tasks = [fetch_one(session, url) for url in urls]\n        return await asyncio.gather(*tasks)\n\nasync def fetch_one(session, url):\n    async with session.get(url) as resp:\n        return await resp.text()\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Основы async/await"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Корутина (coroutine)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "hello() НЕ выполняется, возвращает корутину"
+    },
+    {
+      "type": "text",
+      "content": "coro = hello()\ntype(coro)  # <class 'coroutine'>"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Запуск через event loop"
+    },
+    {
+      "type": "text",
+      "content": "asyncio.run(hello())\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "await — только внутри async функции"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ОШИБКА: await снаружи async функции"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "await asyncio.sleep(0.1)  # SyntaxError"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Event Loop — цикл событий"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Получить текущий loop"
+    },
+    {
+      "type": "text",
+      "content": "loop = asyncio.get_event_loop()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Запустить корутину"
+    },
+    {
+      "type": "text",
+      "content": "loop.run_until_complete(main())"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Python 3.7+ — проще"
+    },
+    {
+      "type": "text",
+      "content": "asyncio.run(main())"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Создать задачу (Task) — планирует выполнение"
+    },
+    {
+      "type": "text",
+      "content": "async def main():\n    task = asyncio.create_task(background_work())\n    # background_work запускается параллельно!\n    await do_something_else()\n    await task  # ждём завершения\n\nasyncio.run(main())\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Запуск нескольких корутин параллельно"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "gather — собрать результаты"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "gather с обработкой ошибок"
+    },
+    {
+      "type": "text",
+      "content": "results = await asyncio.gather(*tasks, return_exceptions=True)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "results содержит либо результат, либо Exception"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "wait — больше контроля"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "done — завершённые, pending — ещё работающие"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Отмена оставшихся"
+    },
+    {
+      "type": "text",
+      "content": "for task in pending:\n    task.cancel()\nawait asyncio.gather(*pending, return_exceptions=True)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "as_completed — по мере готовности"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "for coro in asyncio.as_completed(tasks):\n    result = await coro\n    print(f\"Готово: {result}\")"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Синхронизация примитивы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Lock — взаимное исключение"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "lock = asyncio.Lock()\n\nasync def safe_increment(counter):\n    async with lock:\n        counter.value += 1\n        await asyncio.sleep(0)  # yield"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Semaphore — ограничение параллелизма"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Не более 3 одновременных соединений"
+    },
+    {
+      "type": "text",
+      "content": "semaphore = asyncio.Semaphore(3)\n\nasync def limited_fetch(url):\n    async with semaphore:\n        return await fetch(url)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Event — сигнал между задачами"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "event = asyncio.Event()\n\nasync def waiter():\n    print(\"Жду...\")\n    await event.wait()\n    print(\"Событие произошло!\")\n\nasync def setter():\n    await asyncio.sleep(1)\n    event.set()\n\nasyncio.run(asyncio.gather(waiter(), setter()))"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Queue — безопасная передача данных"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "queue = asyncio.Queue(maxsize=10)\n\nasync def producer():\n    for i in range(5):\n        await queue.put(i)\n        await asyncio.sleep(0.1)\n    await queue.put(None)  # сигнал завершения\n\nasync def consumer():\n    while True:\n        item = await queue.get()\n        if item is None:\n            break\n        print(f\"Получено: {item}\")\n        queue.task_done()\n\nasyncio.run(asyncio.gather(producer(), consumer()))"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Таймауты и отмена"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "wait_for — таймаут на одну корутину"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "try:\n    result = await asyncio.wait_for(slow_operation(), timeout=5.0)\nexcept asyncio.TimeoutError:\n    print(\"Слишком долго!\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Timeout контекстный менеджер (Python 3.11+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "async with asyncio.timeout(5):\n    await slow_operation()"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Отмена задачи"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "async def long_running():\n    try:\n        while True:\n            await asyncio.sleep(1)\n    except asyncio.CancelledError:\n        print(\"Отменено!\")\n        raise  # нужно пробросить дальше!\n\ntask = asyncio.create_task(long_running())\nawait asyncio.sleep(0.5)\ntask.cancel()\ntry:\n    await task\nexcept asyncio.CancelledError:\n    pass"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Запуск в потоках/процессах"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "to_thread — блокирующий код в отдельном потоке (Python 3.9+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import time\n\ndef blocking_io():\n    time.sleep(2)\n    return \"готово\"\n\nasync def main():\n    result = await asyncio.to_thread(blocking_io)\n    print(result)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "run_in_executor — для CPU-bound задач"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import concurrent.futures\n\ndef cpu_heavy(n):\n    return sum(i*i for i in range(n))\n\nasync def main():\n    loop = asyncio.get_running_loop()\n    # В пуле процессов (для CPU-bound)\n    with concurrent.futures.ProcessPoolExecutor() as pool:\n        result = await loop.run_in_executor(pool, cpu_heavy, 10_000_000)\n    print(result)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. aiohttp — асинхронный HTTP клиент"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import aiohttp\nimport asyncio\n\nasync def fetch(session, url):\n    async with session.get(url) as response:\n        return await response.text()\n\nasync def main():\n    async with aiohttp.ClientSession() as session:\n        html = await fetch(session, \"https://example.com\")\n        print(html[:100])\n\nasyncio.run(main())"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "POST с JSON"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "async def post_data(session, url, data):\n    async with session.post(url, json=data) as resp:\n        return await resp.json()\n\nasync with aiohttp.ClientSession() as session:\n    result = await post_data(session, \"https://api.example.com/users\",\n                             {\"name\": \"Анна\", \"age\": 25})"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Таймауты и повторные попытки"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "timeout = aiohttp.ClientTimeout(total=30, connect=10)\nconnector = aiohttp.TCPConnector(limit=100, limit_per_host=30)\n\nasync with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:\n    ..."
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Асинхронные контекстные менеджеры и итераторы"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Асинхронный итератор"
+    },
+    {
+      "type": "text",
+      "content": "class AsyncCounter:\n    def __init__(self, limit):\n        self.limit = limit\n        self.current = 0\n\n    def __aiter__(self):\n        return self\n\n    async def __anext__(self):\n        if self.current >= self.limit:\n            raise StopAsyncIteration\n        val = self.current\n        self.current += 1\n        await asyncio.sleep(0.1)\n        return val\n\nasync for i in AsyncCounter(3):\n    print(i)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Паттерны и лучшие практики"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура приложения"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "async def main():\n    # 1. Инициализация ресурсов\n    async with Database() as db, Cache() as cache:\n        # 2. Запуск фоновых задач\n        background = asyncio.create_task(periodic_cleanup(cache))\n\n        try:\n            # 3. Основной цикл (веб-сервер, бот, и т.д.)\n            await run_server(db, cache)\n        finally:\n            # 4. Корректное завершение\n            background.cancel()\n            await background"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Graceful shutdown"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import signal\n\nshutdown_event = asyncio.Event()\n\ndef signal_handler():\n    shutdown_event.set()\n\nasync def main():\n    loop = asyncio.get_running_loop()\n    for sig in (signal.SIGTERM, signal.SIGINT):\n        loop.add_signal_handler(sig, signal_handler)\n\n    await shutdown_event.wait()\n    print(\"Завершение...\")"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Отладка асинхронного кода"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Включить debug режим event loop"
+    },
+    {
+      "type": "text",
+      "content": "asyncio.run(main(), debug=True)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Или"
+    },
+    {
+      "type": "text",
+      "content": "loop = asyncio.get_event_loop()\nloop.set_debug(True)\nloop.slow_callback_duration = 0.1  # логировать медленные коллбеки > 100ms\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Частые проблемы"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ПРОБЛЕМА: забыли await"
+    },
+    {
+      "type": "text",
+      "content": "async def bad():\n    fetch_data()  # корутина создана, но не запущена!"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ПРАВИЛЬНО"
+    },
+    {
+      "type": "text",
+      "content": "async def good():\n    await fetch_data()\n    # или\n    asyncio.create_task(fetch_data())\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Параллельный загрузчик**: скачайте 100 URL с ограничением 10 одновременных (Semaphore)\n2. **WebSocket клиент**: подключение с переподключением (aiohttp WS)\n3. **Rate limiter**: класс, позволяющий N запросов в секунду (Token Bucket)\n4. **Task pool**: пул воркеров, обрабатывающих очередь задач\n5. **Graceful shutdown**: сервер, корректно завершающийся по SIGTERM\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `await` на не-awaitable | Только на coroutine, Task, Future, Awaitable |\n| Блокирующие вызовы (time.sleep, requests) в async | asyncio.sleep, aiohttp, to_thread |\n| Создание задач без сохранения ссылок | `task = create_task(...)` иначе GC удалит! |\n| Отмена без обработки CancelledError | try/except CancelledError, raise дальше |\n| asyncio.run() внутри уже работающего loop | Используйте create_task или ensure_future |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Docs: asyncio** — https://docs.python.org/3/library/asyncio.html",
+        "**Real Python: Async IO** — https://realpython.com/async-io-python/",
+        "**aiohttp docs** — https://docs.aiohttp.org/",
+        "**AsyncIO Best Practices** — https://github.com/timofurrer/awesome-asyncio",
+        "**PEP 492 — Coroutines with async and await** — https://peps.python.org/pep-0492/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Асинхронность (asyncio)",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Асинхронность (asyncio)' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: async/await, Task, Future, gather, wait, timeout, semaphore, queues — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 19,
+  "name_en": "Lesson: Асинхронность (asyncio)",
+  "short_description_en": "Learn Асинхронность (asyncio) in Python with detailed explanations and examples"
+}

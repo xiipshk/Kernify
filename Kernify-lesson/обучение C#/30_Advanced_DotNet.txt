@@ -1,0 +1,706 @@
+# Урок 3.8: Advanced .NET — ASP.NET Core, EF Core, Networking, Background Services, Observability
+
+## Цели урока
+- Глубокое понимание ASP.NET Core pipeline, Minimal APIs, endpoints
+- Продвинутый EF Core: performance, compiled queries, interceptors, migrations
+- Сетевое программирование: sockets, HTTP/2, gRPC, SignalR
+- Background Services: IHostedService, periodic tasks, distributed locks
+- Observability: OpenTelemetry, structured logging, metrics, distributed tracing
+
+---
+
+## 1. ASP.NET Core — Pipeline и Minimal APIs
+
+### Request Pipeline
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Services
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+// Middleware order MATTERS!
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+app.UseRouting();              // Endpoint routing
+app.UseAuthentication();       // Must be before Authorization
+app.UseAuthorization();
+app.UseRateLimiter();          // .NET 7+
+app.MapControllers();          // Attribute routing
+app.MapHealthChecks("/health");
+
+app.Run();
+```
+
+### Minimal APIs (.NET 6+)
+```csharp
+var app = WebApplication.CreateBuilder(args).Build();
+
+// Простой endpoint
+app.MapGet("/hello", () => "Hello World!");
+
+// С параметрами и валидацией
+app.MapGet("/users/{id:guid}", async (Guid id, IUserService service, CancellationToken ct) =>
+{
+    var user = await service.GetAsync(id, ct);
+    return user is not null ? Results.Ok(user) : Results.NotFound();
+})
+.WithName("GetUser")
+.Produces<User>(200)
+.Produces(404);
+
+// Группы и фильтры
+var api = app.MapGroup("/api/v1").RequireAuthorization();
+
+api.MapPost("/users", async (CreateUserDto dto, IMediator mediator, CancellationToken ct) =>
+{
+    var id = await mediator.Send(new CreateUserCommand(dto.Email, dto.Name), ct);
+    return Results.Created($"/api/v1/users/{id}", id);
+})
+.RequireAuthorization("AdminPolicy")
+.AddEndpointFilter<ValidationFilter<CreateUserDto>>();
+
+// Binding sources
+app.MapGet("/search", ([AsParameters] SearchRequest request) => ...); // Query + Header + Route
+```
+
+### Endpoint Filters
+```csharp
+public class ValidationFilter<T> : IEndpointFilter
+{
+    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        var validator = context.HttpContext.RequestServices.GetService<IValidator<T>>();
+        if (validator is null) return await next(context);
+
+        var argument = context.Arguments.OfType<T>().FirstOrDefault();
+        if (argument is not null)
+        {
+            var result = await validator.ValidateAsync(argument, context.HttpContext.RequestAborted);
+            if (!result.IsValid)
+                return Results.ValidationProblem(result.ToDictionary());
+        }
+        return await next(context);
+    }
+}
+
+// Global filter
+app.AddEndpointFilter(async (ctx, next) =>
+{
+    var logger = ctx.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+    logger.LogInformation("Executing {Endpoint}", ctx.HttpContext.GetEndpoint()?.DisplayName);
+    return await next(ctx);
+});
+```
+
+### Result Types и ProblemDetails
+```csharp
+// Typed Results
+app.MapGet("/users/{id}", async (Guid id, IUserService service, CancellationToken ct) =>
+{
+    var user = await service.GetAsync(id, ct);
+    return user is not null ? TypedResults.Ok(user) : TypedResults.NotFound();
+});
+
+// ProblemDetails (RFC 7807)
+app.MapPost("/users", async (CreateUserDto dto, IUserService service, CancellationToken ct) =>
+{
+    var result = await service.CreateAsync(dto, ct);
+    return result.IsSuccess
+        ? TypedResults.Created($"/users/{result.Value.Id}", result.Value)
+        : TypedResults.Problem(result.Error.Message, statusCode: 400);
+});
+
+// Custom ProblemDetails
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = ctx =>
+    {
+        ctx.ProblemDetails.Instance = $"{ctx.HttpContext.Request.Method} {ctx.HttpContext.Request.Path}";
+        ctx.ProblemDetails.Extensions["traceId"] = ctx.HttpContext.TraceIdentifier;
+    };
+});
+```
+
+---
+
+## 2. EF Core — Advanced
+
+### Compiled Queries
+```csharp
+// Компилируем один раз, используем много раз
+private static readonly Func<AppDbContext, Guid, Task<User?>> _getUserById =
+    EF.CompileAsyncQuery((AppDbContext ctx, Guid id) =>
+        ctx.Users.FirstOrDefault(u => u.Id == id));
+
+// Использование
+var user = await _getUserById(_context, userId);
+```
+
+### Interceptors
+```csharp
+public class AuditingInterceptor : SaveChangesInterceptor
+{
+    public override InterceptionResult<int> SavingChanges(
+        DbContextEventData eventData, InterceptionResult<int> result)
+    {
+        var entries = eventData.Context!.ChangeTracker.Entries<IAuditable>();
+        foreach (var entry in entries)
+        {
+            if (entry.State == EntityState.Added)
+            {
+                entry.Entity.CreatedAt = DateTimeOffset.UtcNow;
+                entry.Entity.CreatedBy = _currentUserService.UserId;
+            }
+            else if (entry.State == EntityState.Modified)
+            {
+                entry.Entity.UpdatedAt = DateTimeOffset.UtcNow;
+                entry.Entity.UpdatedBy = _currentUserService.UserId;
+            }
+        }
+        return base.SavingChanges(eventData, result);
+    }
+}
+
+// Регистрация
+builder.Services.AddDbContext<AppDbContext>((sp, options) =>
+{
+    options.UseNpgsql(connectionString)
+           .AddInterceptors(sp.GetRequiredService<AuditingInterceptor>());
+});
+```
+
+### Query Splitting и AsSplitQuery
+```csharp
+// Single query (cartesian explosion risk)
+var users = await _context.Users
+    .Include(u => u.Orders)
+    .ThenInclude(o => o.Items)
+    .ToListAsync();
+
+// Split query (multiple SQL queries, better for large collections)
+var users = await _context.Users
+    .Include(u => u.Orders)
+    .ThenInclude(o => o.Items)
+    .AsSplitQuery()
+    .ToListAsync();
+
+// Global config
+options.UseNpgsql(connectionString, o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+```
+
+### Bulk Operations (EFCore.BulkExtensions)
+```csharp
+using EFCore.BulkExtensions;
+
+await _context.BulkInsertAsync(entities);
+await _context.BulkUpdateAsync(entities);
+await _context.BulkDeleteAsync(entities);
+await _context.BulkReadAsync(list => list.Where(e => ids.Contains(e.Id)));
+```
+
+### Raw SQL и FromSql
+```csharp
+// Параметризованный SQL
+var users = await _context.Users
+    .FromSqlRaw("SELECT * FROM \"Users\" WHERE \"Email\" LIKE {0}", "%@example.com")
+    .ToListAsync();
+
+// Stored procedure
+var count = await _context.Database
+    .ExecuteSqlRawAsync("CALL \"RefreshMaterializedViews\"()");
+
+// Dapper для сложных запросов
+using var connection = _context.Database.GetDbConnection();
+var results = await connection.QueryAsync<CustomDto>(sql, parameters);
+```
+
+### Change Tracking Optimization
+```csharp
+// NoTracking для read-only
+var users = await _context.Users
+    .AsNoTracking()
+    .Where(u => u.IsActive)
+    .ToListAsync();
+
+// Identity Resolution (default) vs NoTrackingWithIdentityResolution
+var users = await _context.Users
+    .AsNoTrackingWithIdentityResolution()
+    .ToListAsync();
+
+// Explicit loading
+var user = await _context.Users.FindAsync(id);
+await _context.Entry(user).Collection(u => u.Orders).LoadAsync();
+
+// AutoDetectChanges
+_context.ChangeTracker.AutoDetectChangesEnabled = false;
+// ... bulk operations ...
+_context.ChangeTracker.AutoDetectChangesEnabled = true;
+_context.ChangeTracker.DetectChanges();
+```
+
+### Migrations Best Practices
+```csharp
+// Идемпотентные миграции
+public partial class AddUserIndex : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        // Проверка существования
+        migrationBuilder.Sql(@"
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'IX_Users_Email') THEN
+                    CREATE INDEX ""IX_Users_Email"" ON ""Users"" (""Email"");
+                END IF;
+            END $$;
+        ");
+    }
+}
+
+// Seed data через HasData
+modelBuilder.Entity<Role>().HasData(
+    new Role { Id = 1, Name = "Admin" },
+    new Role { Id = 2, Name = "User" }
+);
+```
+
+---
+
+## 3. Networking — Sockets, HTTP/2, gRPC, SignalR
+
+### Sockets / TCP
+```csharp
+// TCP Server
+var listener = new TcpListener(IPAddress.Any, 5000);
+listener.Start();
+
+while (true)
+{
+    var client = await listener.AcceptTcpClientAsync();
+    _ = HandleClientAsync(client); // Fire and forget
+}
+
+async Task HandleClientAsync(TcpClient client)
+{
+    using var stream = client.GetStream();
+    var buffer = new byte[4096];
+    int read;
+    while ((read = await stream.ReadAsync(buffer)) > 0)
+    {
+        var message = Encoding.UTF8.GetString(buffer, 0, read);
+        await stream.WriteAsync(Encoding.UTF8.GetBytes($"Echo: {message}"));
+    }
+}
+```
+
+### HTTP/2 и HttpClient
+```csharp
+// HttpClient с HTTP/2
+var handler = new SocketsHttpHandler
+{
+    EnableMultipleHttp2Connections = true,
+    PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
+    MaxConnectionsPerServer = 100
+};
+
+var client = new HttpClient(handler)
+{
+    DefaultRequestVersion = HttpVersion.Version20,
+    DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+};
+
+// HttpClientFactory (рекомендуемый способ)
+builder.Services.AddHttpClient<GitHubClient>(c =>
+{
+    c.BaseAddress = new Uri("https://api.github.com/");
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("MyApp/1.0");
+})
+.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    PooledConnectionLifetime = TimeSpan.FromMinutes(15)
+})
+.AddStandardResilienceHandler(); // .NET 8+ Polly integration
+```
+
+### gRPC Server/Client
+```csharp
+// Server
+public class UserService : UserProtoService.UserProtoServiceBase
+{
+    public override async Task<UserResponse> GetUser(GetUserRequest request, ServerCallContext context)
+    {
+        var user = await _repo.GetAsync(Guid.Parse(request.Id), context.CancellationToken);
+        return user.ToProto();
+    }
+
+    // Server streaming
+    public override async Task GetUsers(GetUsersRequest request,
+        IServerStreamWriter<UserResponse> responseStream, ServerCallContext context)
+    {
+        await foreach (var user in _repo.GetAllAsync(context.CancellationToken))
+        {
+            await responseStream.WriteAsync(user.ToProto());
+        }
+    }
+}
+
+// Client
+var channel = GrpcChannel.ForAddress("https://localhost:5001");
+var client = new UserProtoService.UserProtoServiceClient(channel);
+var user = await client.GetUserAsync(new GetUserRequest { Id = id.ToString() });
+```
+
+### SignalR — Real-time
+```csharp
+// Hub
+public class ChatHub : Hub
+{
+    public async Task SendMessage(string user, string message)
+    {
+        await Clients.All.SendAsync("ReceiveMessage", user, message);
+    }
+
+    public async Task JoinGroup(string groupName)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
+    }
+
+    public override async Task OnConnectedAsync()
+    {
+        await Clients.Caller.SendAsync("Connected", Context.ConnectionId);
+        await base.OnConnectedAsync();
+    }
+}
+
+// Client (JS)
+// const connection = new signalR.HubConnectionBuilder()
+//     .withUrl("/chathub")
+//     .build();
+// await connection.start();
+// connection.on("ReceiveMessage", (user, message) => { ... });
+
+// Регистрация
+app.MapHub<ChatHub>("/chathub");
+
+// Scale-out с Redis
+builder.Services.AddSignalR().AddStackExchangeRedis("localhost");
+```
+
+---
+
+## 4. Background Services
+
+### IHostedService и BackgroundService
+```csharp
+// Базовый BackgroundService
+public class OrderProcessingService : BackgroundService
+{
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<OrderProcessingService> _logger;
+    private readonly TimeSpan _interval = TimeSpan.FromMinutes(5);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // Initial delay
+        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var processor = scope.ServiceProvider.GetRequiredService<IOrderProcessor>();
+                await processor.ProcessPendingAsync(stoppingToken);
+            }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogError(ex, "Order processing failed");
+            }
+
+            await Task.Delay(_interval, stoppingToken);
+        }
+    }
+}
+
+// Регистрация
+builder.Services.AddHostedService<OrderProcessingService>();
+```
+
+### Periodic Tasks с Timer
+```csharp
+public class PeriodicHostedService : IHostedService, IDisposable
+{
+    private Timer? _timer;
+    private readonly IServiceScopeFactory _scopeFactory;
+
+    public Task StartAsync(CancellationToken ct)
+    {
+        _timer = new Timer(DoWork, null, TimeSpan.Zero, TimeSpan.FromHours(1));
+        return Task.CompletedTask;
+    }
+
+    private async void DoWork(object? state)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<ICleanupService>();
+        await service.CleanupAsync(CancellationToken.None);
+    }
+
+    public Task StopAsync(CancellationToken ct)
+    {
+        _timer?.Change(Timeout.Infinite, 0);
+        return Task.CompletedTask;
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}
+```
+
+### Distributed Locks для масштабирования
+```csharp
+// Используя Redis (StackExchange.Redis)
+public class DistributedLockService
+{
+    private readonly IDatabase _redis;
+
+    public async Task<IDisposable?> TryAcquireLockAsync(string key, TimeSpan expiry)
+    {
+        var lockKey = $"lock:{key}";
+        var token = Guid.NewGuid().ToString();
+
+        var acquired = await _redis.StringSetAsync(lockKey, token, expiry, When.NotExists);
+        if (!acquired) return null;
+
+        return new RedisLock(_redis, lockKey, token);
+    }
+
+    private class RedisLock : IDisposable
+    {
+        private readonly IDatabase _redis;
+        private readonly string _key;
+        private readonly string _token;
+
+        public RedisLock(IDatabase redis, string key, string token)
+        {
+            _redis = redis; _key = key; _token = token;
+        }
+
+        public void Dispose()
+        {
+            // Lua script для атомарного удаление только своего токена
+            var script = @"if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+            _redis.ScriptEvaluate(script, new RedisKey[] { _key }, new RedisValue[] { _token });
+        }
+    }
+}
+
+// Использование
+public class SingletonBackgroundService : BackgroundService
+{
+    private readonly DistributedLockService _locks;
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            using var lockHandle = await _locks.TryAcquireLockAsync("daily-report", TimeSpan.FromMinutes(10));
+            if (lockHandle != null)
+            {
+                // Only one instance runs this
+                await GenerateDailyReportAsync(ct);
+            }
+            await Task.Delay(TimeSpan.FromHours(24), ct);
+        }
+    }
+}
+```
+
+---
+
+## 5. Observability — OpenTelemetry, Logging, Metrics
+
+### Structured Logging
+```csharp
+// Program.cs
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole(options =>
+{
+    options.FormatterName = "json";
+    options.IncludeScopes = true;
+});
+builder.Logging.AddConsoleFormatter<JsonConsoleFormatter, ConsoleFormatterOptions>();
+
+// Использование
+public class OrderService
+{
+    private readonly ILogger<OrderService> _logger;
+
+    public async Task<Order> CreateAsync(CreateOrderDto dto)
+    {
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            ["CustomerId"] = dto.CustomerId,
+            ["OrderId"] = Guid.NewGuid()
+        });
+
+        _logger.LogInformation("Creating order for customer {CustomerId}", dto.CustomerId);
+
+        try
+        {
+            var order = await _repository.CreateAsync(dto);
+            _logger.LogInformation("Order {OrderId} created successfully", order.Id);
+            return order;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create order for customer {CustomerId}", dto.CustomerId);
+            throw;
+        }
+    }
+}
+```
+
+### OpenTelemetry — Traces, Metrics, Logs
+```csharp
+// NuGet: OpenTelemetry.Exporter.Console, OpenTelemetry.Exporter.OpenTelemetryProtocol, OpenTelemetry.Instrumentation.AspNetCore
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService("MyService", "1.0.0"))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddEntityFrameworkCoreInstrumentation()
+        .AddSource("MyApp.*")
+        .AddOtlpExporter(o => o.Endpoint = new Uri("http://jaeger:4317")))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddProcessInstrumentation()
+        .AddOtlpExporter(o => o.Endpoint = new Uri("http://prometheus:4317")));
+
+// Custom ActivitySource
+public static class DiagnosticsConfig
+{
+    public static readonly ActivitySource ActivitySource = new("MyApp.Orders");
+}
+
+// В коде
+using var activity = DiagnosticsConfig.ActivitySource.StartActivity("CreateOrder");
+activity?.SetTag("customer.id", customerId);
+activity?.SetTag("order.amount", amount);
+```
+
+### Custom Metrics
+```csharp
+public class OrderMetrics
+{
+    private readonly Counter<long> _ordersCreated;
+    private readonly Histogram<double> _orderValue;
+    private readonly UpDownCounter<long> _activeOrders;
+
+    public OrderMetrics(IMeterFactory meterFactory)
+    {
+        var meter = meterFactory.Create("MyApp.Orders");
+        _ordersCreated = meter.CreateCounter<long>("orders.created", description: "Total orders created");
+        _orderValue = meter.CreateHistogram<double>("orders.value", unit: "USD", description: "Order value distribution");
+        _activeOrders = meter.CreateUpDownCounter<long>("orders.active", description: "Currently active orders");
+    }
+
+    public void OrderCreated(decimal value)
+    {
+        _ordersCreated.Add(1);
+        _orderValue.Record((double)value);
+        _activeOrders.Add(1);
+    }
+
+    public void OrderCompleted() => _activeOrders.Add(-1);
+}
+```
+
+### Health Checks
+```csharp
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>()
+    .AddNpgSql(connectionString)
+    .AddRedis(redisConnectionString)
+    .AddUrlGroup(new Uri("https://api.external.com/health"), "external-api")
+    .AddCheck<CustomHealthCheck>("custom-check");
+
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+});
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = _ => false // Всегда healthy для liveness
+});
+
+// Custom HealthCheck
+public class CustomHealthCheck : IHealthCheck
+{
+    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
+    {
+        var isHealthy = CheckDependencies();
+        return Task.FromResult(isHealthy
+            ? HealthCheckResult.Healthy("All systems operational")
+            : HealthCheckResult.Degraded("Some dependencies unavailable"));
+    }
+}
+```
+
+---
+
+## 6. Практические задания
+
+1. **Minimal API Project**: Постройте REST API для "E-Commerce" на Minimal APIs: endpoints для Products, Orders, Users с валидацией, версионированием, ProblemDetails
+
+2. **EF Core Performance**: Оптимизируйте медленные запросы: N+1, cartesian explosion, добавить compiled queries, interceptors для аудита, bulk operations для импорта
+
+3. **gRPC + SignalR**: Реализуйте чат: gRPC для сервер-сервер коммуникации, SignalR для real-time клиентов. Добавьте scale-out через Redis
+
+4. **Background Job System**: Создайте систему фоновых задач: регистрация задач, расписание (cron), retry policy, distributed lock, мониторинг через HealthChecks
+
+5. **Full Observability Stack**: Настройте OpenTelemetry + Jaeger + Prometheus + Grafana для ASP.NET Core приложения. Добавьте custom metrics, structured logging, distributed tracing
+
+---
+
+## 7. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `AddDbContext` без пула | `AddDbContextPool` для высокой нагрузки |
+| `Include` для больших коллекций | `AsSplitQuery()` или explicit loading |
+| `HttpClient` создают вручную | `IHttpClientFactory` / `AddHttpClient` |
+| BackgroundService без `IServiceScopeFactory` | Всегда создавайте scope для scoped сервисов |
+| Отсутствие correlation ID | Middleware для генерации/проброса `X-Correlation-ID` |
+| Логи без структуры | `Serilog` / `Microsoft.Extensions.Logging` с JSON formatter |
+
+---
+
+## 8. Полезные ресурсы
+
+- **ASP.NET Core Docs** — https://learn.microsoft.com/aspnet/core
+- **EF Core Performance** — https://learn.microsoft.com/ef/core/performance
+- **Minimal APIs** — https://learn.microsoft.com/aspnet/core/fundamentals/minimal-apis
+- **OpenTelemetry .NET** — https://opentelemetry.io/docs/instrumentation/net/
+- **SignalR** — https://learn.microsoft.com/aspnet/core/signalr
+- **gRPC in .NET** — https://learn.microsoft.com/aspnet/core/grpc
+- **Health Checks** — https://learn.microsoft.com/aspnet/core/host-and-deploy/health-checks
+- **Distributed Tracing** — https://learn.microsoft.com/dotnet/core/diagnostics/distributed-tracing

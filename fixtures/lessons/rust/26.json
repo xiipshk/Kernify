@@ -1,0 +1,552 @@
+{
+  "title": "Урок 26: Unsafe Rust",
+  "slug": "urok-26-cli-приложения-clap,-ratatui,-crossterm",
+  "short_description": "Args derive, subcommands, TUI, colors, input handling, progress bars",
+  "goals": [
+    "Понимать основы: Args derive, subcommands, TUI, colors, input handling, progress bars",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 26: Unsafe Rust"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать, что такое `unsafe` и когда его использовать",
+        "Работать с пятью видами unsafe операций",
+        "Писать безопасные абстракции поверх unsafe кода",
+        "Использовать `unsafe` блоки, функции и трейты",
+        "Понимать UB (Undefined Behavior) и как его избегать",
+        "Работать с FFI (Foreign Function Interface)",
+        "Использовать `std::ptr` для низкоуровневой работы с указателями",
+        "Писать `unsafe` trait implementations (`Send`, `Sync`)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "После изучения этого урока вы сможете:\n\n\n\n\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Что такое `unsafe`?"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Два режима Rust"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Safe Rust — проверяется компилятором\n// - Ограничения владения и заимствования\n// - Проверка границ массивов\n// - Нет null pointer dereference\n// - Нет data races\n\n// Unsafe Rust — программист отвечает за безопасность\n// - Разрешает 5 операций, которые компилятор не может проверить"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5 вещей, которые можно делать в `unsafe`:"
+    },
+    {
+      "type": "text",
+      "content": "1. **Разыменовать raw pointer** (`*const T`, `*mut T`)\n2. **Вызвать unsafe функцию** (включая FFI)\n3. **Доступ к mutable static переменной**\n4. **Реализовать unsafe trait** (`Send`, `Sync`)\n5. **Доступ к полям `union`**\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. `unsafe` блоки и функции"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`unsafe` блок"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let mut x = 42;\nlet raw = &mut x as *mut i32;\n\nunsafe {\n    *raw = 10; // Разыменование raw pointer\n    println!(\"{}\", *raw);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`unsafe fn`"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "unsafe fn dangerous() {\n    // Внутри unsafe fn можно вызывать другие unsafe операции без блока\n    let ptr = std::ptr::null_mut::<i32>();\n    *ptr = 42; // OK внутри unsafe fn\n}\n\n// Вызов unsafe fn требует unsafe блока\nunsafe { dangerous(); }\n\n// Safe wrapper над unsafe fn\nfn safe_wrapper() {\n    unsafe { dangerous(); } // Инкапсуляция unsafe\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`unsafe trait` и `unsafe impl`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Marker trait, требующий unsafe impl\nunsafe trait MyUnsafeTrait {}\n\nstruct MyType;\n\nunsafe impl MyUnsafeTrait for MyType {} // Гарантируем контракт вручную"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Raw Pointers детально"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Создание"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let x = 42;\n\n// Из ссылок\nlet raw_const: *const i32 = &x as *const i32;\nlet raw_mut: *mut i32 = &mut x as *mut i32;\n\n// Из Box\nlet boxed = Box::new(42);\nlet raw: *mut i32 = Box::into_raw(boxed);\n\n// Null pointers\nlet null: *const i32 = std::ptr::null();\nlet null_mut: *mut i32 = std::ptr::null_mut();\n\n// NonNull\nuse std::ptr::NonNull;\nlet non_null = NonNull::new(raw); // Option<NonNull<T>>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Разыменование"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let x = 42;\nlet raw = &x as *const i32;\n\nunsafe {\n    let val = *raw; // Чтение\n    println!(\"{}\", val);\n}\n\nlet mut y = 0;\nlet raw_mut = &mut y as *mut i32;\n\nunsafe {\n    *raw_mut = 10; // Запись\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pointer arithmetic"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let arr = [1, 2, 3, 4, 5];\nlet ptr = arr.as_ptr();\n\nunsafe {\n    let second = ptr.add(1);      // ptr + 1 * size_of::<i32>()\n    let third = ptr.add(2);\n    println!(\"{} {}\", *second, *third);\n\n    // offset — signed arithmetic\n    let back = third.offset(-1);\n    println!(\"{}\", *back);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`std::ptr` функции"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr;\n\n// Чтение/запись без drop\nlet mut x = 42;\nlet ptr = &mut x as *mut i32;\n\nunsafe {\n    ptr::write(ptr, 100);        // Запись без drop старого\n    let val = ptr::read(ptr);    // Чтение без drop\n    println!(\"{}\", val);\n}\n\n// Копирование памяти\nlet src = [1, 2, 3];\nlet mut dst = [0, 0, 0];\nunsafe {\n    ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 3);\n}\n\n// Копирование с перекрытием (memmove)\nlet mut arr = [1, 2, 3, 4, 5];\nunsafe {\n    ptr::copy(arr.as_ptr(), arr.as_mut_ptr().add(1), 3);\n    // arr = [1, 1, 2, 3, 5]\n}\n\n// Замена значения\nlet mut x = 42;\nlet ptr = &mut x as *mut i32;\nunsafe {\n    let old = ptr::replace(ptr, 100); // x = 100, возвращает 42\n}\n\n// Swap\nlet mut a = 1;\nlet mut b = 2;\nunsafe {\n    ptr::swap(&mut a as *mut _, &mut b as *mut _);\n    // a = 2, b = 1\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. `union` — объединения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "union IntOrFloat {\n    i: i32,\n    f: f32,\n}\n\nfn main() {\n    let u = IntOrFloat { i: 42 };\n\n    unsafe {\n        println!(\"i: {}\", u.i);\n        // println!(\"f: {}\", u.f); // UB! Неактивное поле\n    }\n\n    // Активное поле можно менять\n    u.f = 3.14;\n    unsafe { println!(\"f: {}\", u.f); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pattern matching на union (Rust 1.44+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "union IntOrFloat {\n    i: i32,\n    f: f32,\n}\n\nfn process(u: IntOrFloat) {\n    unsafe {\n        match u {\n            IntOrFloat { i: 42 } => println!(\"Answer!\"),\n            IntOrFloat { f } => println!(\"Float: {}\", f),\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Union для type punning"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "union FloatBits {\n    f: f32,\n    bits: u32,\n}\n\nfn float_to_bits(f: f32) -> u32 {\n    unsafe { FloatBits { f }.bits }\n}\n\nfn bits_to_float(bits: u32) -> f32 {\n    unsafe { FloatBits { bits }.f }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. FFI (Foreign Function Interface)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Вызов C функций"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// extern \"C\" — C calling convention\nextern \"C\" {\n    fn abs(input: i32) -> i32;\n    fn strlen(s: *const i8) -> usize;\n}\n\nfn main() {\n    unsafe {\n        println!(\"abs(-3) = {}\", abs(-3));\n\n        let s = std::ffi::CString::new(\"hello\").unwrap();\n        println!(\"strlen = {}\", strlen(s.as_ptr()));\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Экспорт Rust функций для C"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[no_mangle] // Не манглить имя\npub extern \"C\" fn rust_add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n// В C:\n// int rust_add(int a, int b);\n// int result = rust_add(2, 3);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структуры для FFI"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(C)] // C layout\npub struct Point {\n    pub x: f64,\n    pub y: f64,\n}\n\nextern \"C\" {\n    fn distance(p1: *const Point, p2: *const Point) -> f64;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Коллбеки из C"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: records with with-expression**\n\n**Что делает:** Создание копии record с изменением части полей\n\n**Зачем нужно:** Неизменяемость + удобное обновление, вместо ручного копирования полей\n\n**Как работает:** var updated = user with { Age = 26 }; // копия с изменённым Age"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "extern \"C\" fn callback(x: i32) {\n    println!(\"Callback called with {}\", x);\n}\n\nextern \"C\" {\n    fn register_callback(cb: extern \"C\" fn(i32));\n}\n\nfn main() {\n    unsafe { register_callback(callback); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Строки в FFI"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ffi::{CStr, CString};\n\n// Rust -> C\nlet c_string = CString::new(\"hello\").unwrap();\nlet raw_ptr = c_string.as_ptr(); // *const i8\n// Передаём в C функцию\n\n// C -> Rust\nunsafe {\n    let c_str = CStr::from_ptr(raw_ptr);\n    let rust_str = c_str.to_str().unwrap(); // &str\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Безопасные абстракции над unsafe"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Паттерн: Safe wrapper"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr::NonNull;\nuse std::marker::PhantomData;\n\npub struct MyBox<T> {\n    ptr: NonNull<T>,\n    _marker: PhantomData<T>,\n}\n\nimpl<T> MyBox<T> {\n    pub fn new(x: T) -> Self {\n        let ptr = NonNull::new(Box::into_raw(Box::new(x)))\n            .expect(\"Box::into_raw never returns null\");\n        MyBox { ptr, _marker: PhantomData }\n    }\n\n    pub fn as_ref(&self) -> &T {\n        unsafe { self.ptr.as_ref() }\n    }\n\n    pub fn as_mut(&mut self) -> &mut T {\n        unsafe { self.ptr.as_mut() }\n    }\n}\n\nimpl<T> Drop for MyBox<T> {\n    fn drop(&mut self) {\n        unsafe { drop(Box::from_raw(self.ptr.as_ptr())); }\n    }\n}\n\n// Теперь пользователь работает с безопасным API\nfn main() {\n    let mut boxed = MyBox::new(42);\n    *boxed.as_mut() += 1;\n    println!(\"{}\", boxed.as_ref());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Pin` projection в unsafe"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: borrowing**\n\n**Что делает:** Заимствование (&T, &mut T) — временный доступ без передачи владения\n\n**Зачем нужно:** Позволяет читать/менять данные без передачи владения, проверки на этапе компиляции\n\n**Как работает:** fn read(s: &String) { println!(\"{}\", s); } let s = String::from(\"hi\"); read(&s);"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\n\nstruct MyStruct {\n    field: i32,\n}\n\nimpl MyStruct {\n    // Безопасно: field не содержит указателей на self\n    fn get_field(self: Pin<&Self>) -> &i32 {\n        // unsafe: мы гарантируем, что field не двигается\n        unsafe { &self.get_unchecked_mut().field }\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Undefined Behavior (UB) — чего НЕЛЬЗЯ делать"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Список UB в Rust"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// 1. Разыменование null/dangling pointer\nlet ptr: *const i32 = std::ptr::null();\nunsafe { *ptr; } // UB!\n\n// 2. Use after free\nlet x = Box::new(42);\nlet raw = Box::into_raw(x);\ndrop(Box::from_raw(raw)); // Память освобождена\nunsafe { *raw; } // UB!\n\n// 3. Data race (два потока пишут в одно место без синхронизации)\n\n// 4. Нарушение aliasing rules\nlet mut x = 42;\nlet raw_mut = &mut x as *mut i32;\nlet raw_const = &x as *const i32; // UB! *mut и *const одновременно\n\n// 5. Неинициализированная память\nlet x: i32;\nprintln!(\"{}\", x); // UB! (но Rust не даст скомпилировать)\n\n// 6. Out of bounds access\nlet arr = [1, 2, 3];\nunsafe { *arr.as_ptr().add(10); } // UB!\n\n// 7. Invalid enum discriminant\nenum Foo { A, B }\nlet invalid = std::mem::transmute::<u8, Foo>(10); // UB!\n\n// 8. Violation of reference validity\nlet r: &i32 = unsafe { &*(std::ptr::null::<i32>()) }; // UB!\n\n// 9. Double free\nlet x = Box::new(42);\nlet raw = Box::into_raw(x);\nunsafe { drop(Box::from_raw(raw)); }\nunsafe { drop(Box::from_raw(raw)); } // UB!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Miri — интерпретатор для поиска UB"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo install miri\ncargo miri test\ncargo miri run"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. `Send` и `Sync` unsafe impl"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда нужен `unsafe impl`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr::NonNull;\n\nstruct MyPtr<T> {\n    ptr: NonNull<T>,\n}\n\n// MyPtr<T>: Send если T: Send\nunsafe impl<T: Send> Send for MyPtr<T> {}\n\n// MyPtr<T>: Sync если T: Sync\nunsafe impl<T: Sync> Sync for MyPtr<T> {}\n\n// НО: если T не Send/Sync, мы ВРУЧНУЮ гарантируем\nstruct SpecialPtr {\n    ptr: *mut (),\n}\n\n// Мы знаем, что этот указатель используется thread-safe\nunsafe impl Send for SpecialPtr {}\nunsafe impl Sync for SpecialPtr {}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила для `Send`/`Sync`"
+    },
+    {
+      "type": "table",
+      "content": "| Тип | Send | Sync |\n|-----|------|------|\n| `&T` | да, если T: Sync | да, если T: Sync |\n| `&mut T` | да, если T: Send | да, если T: Send |\n| `*const T` | нет | нет |\n| `*mut T` | нет | нет |\n| `Box<T>` | да, если T: Send | да, если T: Sync |\n| `Rc<T>` | нет | нет |\n| `Arc<T>` | да, если T: Send+Sync | да, если T: Send+Sync |\n| `Mutex<T>` | да, если T: Send | да, если T: Send |\n| `RefCell<T>` | нет | нет |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Безопасный wrapper над C malloc/free"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::alloc::{Layout, alloc, dealloc};\nuse std::ptr::NonNull;\n\npub struct CAllocation {\n    ptr: NonNull<u8>,\n    layout: Layout,\n}\n\nimpl CAllocation {\n    pub fn new(size: usize) -> Option<Self> {\n        let layout = Layout::from_size_align(size, 8).ok()?;\n        let ptr = unsafe { alloc(layout) };\n        NonNull::new(ptr).map(|ptr| CAllocation { ptr, layout })\n    }\n\n    pub fn as_ptr(&self) -> *mut u8 {\n        self.ptr.as_ptr()\n    }\n\n    pub fn as_slice(&self) -> &[u8] {\n        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.layout.size()) }\n    }\n\n    pub fn as_mut_slice(&mut self) -> &mut [u8] {\n        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.layout.size()) }\n    }\n}\n\nimpl Drop for CAllocation {\n    fn drop(&mut self) {\n        unsafe { dealloc(self.ptr.as_ptr(), self.layout); }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Intrusive linked list с raw pointers"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr::NonNull;\n\nstruct Node<T> {\n    value: T,\n    next: Option<NonNull<Node<T>>>,\n    prev: Option<NonNull<Node<T>>>,\n}\n\nstruct LinkedList<T> {\n    head: Option<NonNull<Node<T>>>,\n    tail: Option<NonNull<Node<T>>>,\n    len: usize,\n}\n\nimpl<T> LinkedList<T> {\n    pub fn new() -> Self {\n        LinkedList { head: None, tail: None, len: 0 }\n    }\n\n    pub fn push_back(&mut self, value: T) {\n        let node = Box::new(Node { value, next: None, prev: self.tail });\n        let node_ptr = NonNull::new(Box::into_raw(node)).unwrap();\n\n        unsafe {\n            if let Some(mut tail) = self.tail {\n                tail.as_mut().next = Some(node_ptr);\n                node_ptr.as_mut().prev = Some(tail);\n            } else {\n                self.head = Some(node_ptr);\n            }\n            self.tail = Some(node_ptr);\n            self.len += 1;\n        }\n    }\n\n    pub fn pop_back(&mut self) -> Option<T> {\n        self.tail.map(|mut tail_ptr| {\n            unsafe {\n                let tail = Box::from_raw(tail_ptr.as_ptr());\n                self.tail = tail.prev;\n                if let Some(mut new_tail) = self.tail {\n                    new_tail.as_mut().next = None;\n                } else {\n                    self.head = None;\n                }\n                self.len -= 1;\n                tail.value\n            }\n        })\n    }\n}\n\nimpl<T> Drop for LinkedList<T> {\n    fn drop(&mut self) {\n        while self.pop_back().is_some() {}\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: FFI wrapper для простой C библиотеки"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// C header:\n// typedef struct { double x, y; } Point;\n// double distance(Point* a, Point* b);\n// Point* point_new(double x, double y);\n// void point_free(Point* p);\n\n#[repr(C)]\npub struct Point {\n    x: f64,\n    y: f64,\n}\n\nextern \"C\" {\n    fn distance(a: *const Point, b: *const Point) -> f64;\n    fn point_new(x: f64, y: f64) -> *mut Point;\n    fn point_free(p: *mut Point);\n}\n\npub struct PointHandle {\n    ptr: *mut Point,\n}\n\nimpl PointHandle {\n    pub fn new(x: f64, y: f64) -> Option<Self> {\n        let ptr = unsafe { point_new(x, y) };\n        if ptr.is_null() { None } else { Some(PointHandle { ptr }) }\n    }\n\n    pub fn distance(&self, other: &PointHandle) -> f64 {\n        unsafe { distance(self.ptr, other.ptr) }\n    }\n}\n\nimpl Drop for PointHandle {\n    fn drop(&mut self) {\n        unsafe { point_free(self.ptr); }\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| `dereference of null pointer` | `std::ptr::null()` разыменован | Проверяйте `is_null()` или используйте `NonNull` |\n| `use after free` | Память освобождена, указатель жив | `Box::from_raw` ровно один раз, `Drop` правильно |\n| `data race` | Несинхронизированный доступ из потоков | `Mutex`, `RwLock`, атомарные, или `unsafe impl Send/Sync` с гарантией |\n| `misaligned pointer` | `ptr::read` наunaligned адресе | `ptr::read_unaligned` или `repr(align)` |\n| `invalid enum discriminant` | `transmute` невалидного значения | Проверяйте входные данные |\n| `double free` | Два `Box::from_raw` на одном указателе | Отслеживайте владение, используйте `Option` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Шпаргалка: Unsafe API"
+    },
+    {
+      "type": "table",
+      "content": "| Категория | Функции/Типы |\n|-----------|--------------|\n| Raw pointers | `*const T`, `*mut T`, `NonNull<T>` |\n| Pointer ops | `ptr::read`, `ptr::write`, `ptr::copy`, `ptr::copy_nonoverlapping`, `ptr::swap`, `ptr::replace`, `ptr::addr_of!`, `ptr::addr_of_mut!` |\n| Allocation | `alloc`, `dealloc`, `Layout`, `GlobalAlloc` |\n| FFI | `extern \"C\"`, `#[no_mangle]`, `CString`, `CStr`, `c_int`, `c_void` |\n| Unions | `union`, pattern matching |\n| Traits | `unsafe trait`, `unsafe impl`, `Send`, `Sync` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Rustonomicon**: https://doc.rust-lang.org/nomicon/ — библия unsafe Rust",
+        "**Unsafe Guidelines**: https://rust-lang.github.io/unsafe-code-guidelines/",
+        "**Miri**: https://github.com/rust-lang/miri — интерпретатор для поиска UB",
+        "**FFI Guide**: https://doc.rust-lang.org/nomicon/ffi.html",
+        "**std::ptr**: https://doc.rust-lang.org/std/ptr/"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**`unsafe`**: 5 разрешенных операций (raw pointers, unsafe fn, static mut, unsafe trait, union)",
+        "**Raw pointers**: создание, разыменование, арифметика, `std::ptr` функции",
+        "**Unions**: `union`, pattern matching, type punning",
+        "**FFI**: `extern \"C\"`, `#[no_mangle]`, `CString`/`CStr`, callbacks",
+        "**Safe abstractions**: инкапсуляция unsafe в safe API",
+        "**UB**: список видов UB, Miri для обнаружения",
+        "**`Send`/`Sync`**: `unsafe impl` для кастомных типов"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "✅ **Что мы изучили:**\n\n\n\n\n\n\n\n\n---\n\n**Следующий урок:** Async Internals (`27_Async_Internals.txt`)"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: CLI приложения (clap, ratatui, crossterm)",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'CLI приложения (clap, ratatui, crossterm)' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Rust",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-rust на GitHub",
+    "Конференции и митапы по Rust"
+  ],
+  "key_takeaways": [
+    "Главная идея: Args derive, subcommands, TUI, colors, input handling, progress bars — это фундамент для Ownership, Borrowing, Lifetimes.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "rust",
+  "lesson_order": 26,
+  "name_en": "Lesson: CLI приложения (clap, ratatui, crossterm)",
+  "short_description_en": "Learn CLI приложения (clap, ratatui, crossterm) in Rust with detailed explanations and examples"
+}

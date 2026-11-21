@@ -1,0 +1,406 @@
+# Урок 30: Optimization — machine code, vectorization, cache, profiling, compile-time cost
+
+## Цели урока
+- Понять кодогенерацию: assembly, calling conventions, optimizations
+- Освоить векторизацию: SIMD, автовекторизация, explicit intrinsics
+- Изучить cache-friendly programming: locality, prefetching, false sharing
+- Научиться профилированию: perf, VTune, sampling vs instrumentation
+- Понять compile-time cost: template bloat, header cost, unity builds
+
+---
+
+## 1. Machine Code & Assembly Basics
+
+### Calling Conventions (x86-64 System V AMD64 ABI)
+```
+Caller-saved (volatile):  rax, rcx, rdx, rsi, rdi, r8-r11
+Callee-saved (non-volatile): rbx, rbp, r12-r15
+Return: rax (rdx:rax для 128-bit)
+Args: rdi, rsi, rdx, rcx, r8, r9, затем стек
+```
+
+### Пример функции и её ассемблер
+```cpp
+int add(int a, int b) { return a + b; }
+
+// GCC -O2 -S add.cpp
+add:
+    lea eax, [rdi + rsi]   // return в rax
+    ret
+```
+
+### Inlining
+```cpp
+inline int square(int x) { return x * x; }
+
+// always_inline — принудительно
+__attribute__((always_inline)) int fast_square(int x) { return x * x; }
+
+// noinline — запрет
+__attribute__((noinline)) int debug_square(int x) { return x * x; }
+
+// MSVC
+__forceinline int fast_square(int x) { return x * x; }
+__declspec(noinline) int debug_square(int x) { return x * x; }
+```
+
+### Compiler Explorer (Godbolt) — обязательный инструмент
+```bash
+# Локально
+g++ -O2 -S -masm=intel file.cpp -o -
+clang++ -O2 -S -masm=intel file.cpp -o -
+```
+
+---
+
+## 2. Vectorization (SIMD)
+
+### Auto-vectorization
+```cpp
+// Простой цикл — автовекторизуется
+void add_arrays(float* a, float* b, float* c, size_t n) {
+    for (size_t i = 0; i < n; ++i)
+        c[i] = a[i] + b[i];
+}
+
+// GCC/Clang: -O2 -ftree-vectorize -march=native
+// MSVC: /O2 /arch:AVX2
+```
+
+### Hints для автовекторизации
+```cpp
+// restrict / __restrict — нет aliasing
+void add_arrays(float* __restrict a, float* __restrict b, float* __restrict c, size_t n) {
+    for (size_t i = 0; i < n; ++i)
+        c[i] = a[i] + b[i];
+}
+
+// alignas для выравнивания
+void add_aligned(float* __restrict a, float* __restrict b, float* __restrict c, size_t n) {
+    // a, b, c выровнены на 32 байта (AVX)
+    for (size_t i = 0; i < n; ++i)
+        c[i] = a[i] + b[i];
+}
+
+// #pragma для принудительной векторизации
+#pragma GCC ivdep
+#pragma clang loop vectorize(enable)
+for (size_t i = 0; i < n; ++i) { ... }
+
+// MSVC
+#pragma loop(hint_parallel(8))
+for (size_t i = 0; i < n; ++i) { ... }
+```
+
+### Explicit SIMD (Intrinsics)
+```cpp
+#include <immintrin.h>  // AVX/AVX2/AVX-512
+
+void add_avx(float* a, float* b, float* c, size_t n) {
+    size_t i = 0;
+    for (; i + 7 < n; i += 8) {
+        __m256 va = _mm256_load_ps(a + i);      // 8 floats
+        __m256 vb = _mm256_load_ps(b + i);
+        __m256 vc = _mm256_add_ps(va, vb);
+        _mm256_store_ps(c + i, vc);
+    }
+    // tail handling
+    for (; i < n; ++i) c[i] = a[i] + b[i];
+}
+
+// FMA (Fused Multiply-Add)
+void fma_avx2(float* a, float* b, float* c, float* d, size_t n) {
+    for (size_t i = 0; i + 7 < n; i += 8) {
+        __m256 va = _mm256_load_ps(a + i);
+        __m256 vb = _mm256_load_ps(b + i);
+        __m256 vc = _mm256_load_ps(c + i);
+        __m256 vd = _mm256_fmadd_ps(va, vb, vc); // a*b + c
+        _mm256_store_ps(d + i, vd);
+    }
+}
+```
+
+### C++23 std::simd (Experimental)
+```cpp
+#include <experimental/simd>
+
+using namespace std::experimental;
+
+void add_simd(float* a, float* b, float* c, size_t n) {
+    using Vec = native_simd<float>;
+    size_t i = 0;
+    for (; i + Vec::size() <= n; i += Vec::size()) {
+        Vec va(a + i, vector_aligned);
+        Vec vb(b + i, vector_aligned);
+        Vec vc = va + vb;
+        vc.copy_to(c + i, vector_aligned);
+    }
+    // scalar tail
+}
+```
+
+---
+
+## 3. Cache Optimization
+
+### Cache Hierarchy (Typical)
+```
+L1:  32-64 KB/core,  4-5 cycles,  64-byte lines
+L2:  256 KB-1 MB/core, 12-15 cycles
+L3:  8-32 MB shared,  30-50 cycles
+RAM: ~100-300 cycles
+```
+
+### Data Layout — AoS vs SoA
+```cpp
+// Array of Structures (AoS) — плохо для SIMD
+struct Particle { float x, y, z, vx, vy, vz, mass; };
+std::vector<Particle> particles;
+
+// Structure of Arrays (SoA) — cache-friendly, SIMD-friendly
+struct ParticleSystem {
+    std::vector<float> x, y, z;
+    std::vector<float> vx, vy, vz;
+    std::vector<float> mass;
+};
+```
+
+### Prefetching
+```cpp
+// Software prefetch
+for (size_t i = 0; i < n; ++i) {
+    __builtin_prefetch(&data[i + 16], 0, 3); // read, high temporal locality
+    process(data[i]);
+}
+
+// C++26: std::prefetch (proposal)
+```
+
+### False Sharing
+```cpp
+// ПЛОХО: разные потоки пишут в соседние ячейки одной cache line
+struct Counter { std::atomic<int> value; };
+Counter counters[4]; // 4 * 4 = 16 байт — одна cache line (64 байта)!
+
+// ХОРОШО: padding до cache line
+struct alignas(64) PaddedCounter {
+    std::atomic<int> value;
+};
+PaddedCounter counters[4]; // каждый в своей cache line
+
+// Или C++17 hardware_destructive_interference_size
+alignas(std::hardware_destructive_interference_size) std::atomic<int> counter;
+```
+
+### Cache-Friendly Algorithms
+```cpp
+// Blocked matrix multiplication (tiling)
+void matmul_blocked(float* A, float* B, float* C, int N, int BLOCK=32) {
+    for (int ii = 0; ii < N; ii += BLOCK)
+        for (int jj = 0; jj < N; jj += BLOCK)
+            for (int kk = 0; kk < N; kk += BLOCK)
+                for (int i = ii; i < ii + BLOCK; ++i)
+                    for (int k = kk; k < kk + BLOCK; ++k) {
+                        float aik = A[i*N + k];
+                        for (int j = jj; j < jj + BLOCK; ++j)
+                            C[i*N + j] += aik * B[k*N + j];
+                    }
+}
+```
+
+---
+
+## 4. Profiling
+
+### Linux perf
+```bash
+# Компиляция с debug info
+g++ -O2 -g -fno-omit-frame-pointer main.cpp -o app
+
+# Sampling профилирование
+perf record -g ./app
+perf report
+
+# Hardware counters
+perf stat -e cycles,instructions,cache-references,cache-misses,branch-misses ./app
+
+# Flame graph
+perf record -g --call-graph dwarf ./app
+perf script | ./stackcollapse-perf.pl | ./flamegraph.pl > flame.svg
+```
+
+### Intel VTune / AMD uProf
+```bash
+# VTune CLI
+vtune -collect hotspots -- ./app
+vtune -collect memory-access -- ./app
+vtune -collect hpc-performance -- ./app
+```
+
+### Google Benchmark (Microbenchmarks)
+```cpp
+#include <benchmark/benchmark.h>
+
+static void BM_StringCreation(benchmark::State& state) {
+    for (auto _ : state)
+        std::string s("hello");
+}
+BENCHMARK(BM_StringCreation);
+
+static void BM_StringCopy(benchmark::State& state) {
+    std::string x = "hello";
+    for (auto _ : state)
+        std::string s = x;
+}
+BENCHMARK(BM_StringCopy);
+
+BENCHMARK_MAIN();
+```
+
+### Valgrind / Callgrind
+```bash
+valgrind --tool=callgrind ./app
+kcachegrind callgrind.out.xxx  # GUI
+```
+
+---
+
+## 5. Compile-Time Cost
+
+### Template Bloat
+```cpp
+// ПРОБЛЕМА: код раздувается для каждого T
+template <typename T>
+void process(std::vector<T>& v) {
+    std::sort(v.begin(), v.end());
+    // ... много кода
+}
+
+// РЕШЕНИЕ: type erasure / void* / базовый класс
+void process_erased(void* data, size_t size, size_t align, void (*sort_fn)(void*, size_t));
+
+// Или explicit instantiation в .cpp
+// header
+template <typename T> void process_impl(std::vector<T>&);
+// cpp
+template void process_impl<int>(std::vector<int>&);
+template void process_impl<float>(std::vector<float>&);
+```
+
+### Header Cost
+```cpp
+// ПРОБЛЕМА: #include <vector> тянет 10000+ строк
+// РЕШЕНИЕ:
+// 1. Forward declarations где возможно
+// 2. Pimpl idiom
+class Widget {
+    struct Impl;
+    std::unique_ptr<Impl> pimpl_;
+public:
+    Widget();
+    ~Widget(); // нужен в .cpp для destroy Impl
+    void do_work();
+};
+
+// 3. Modules (C++20) — не включают заголовки транзитивно
+export module widget;
+import <memory>; // не экспортируется дальше
+```
+
+### Unity Builds
+```cmake
+# CMake 3.16+
+set(CMAKE_UNITY_BUILD ON)
+set(CMAKE_UNITY_BUILD_BATCH_SIZE 8)  # файлов в одном TU
+
+# Или вручную
+# unity.cpp
+#include "file1.cpp"
+#include "file2.cpp"
+#include "file3.cpp"
+```
+Плюсы: быстрее компиляция, лучше оптимизация между TU.
+Минусы: коллизии имен, сложнее инкрементальная сборка.
+
+### Precompiled Headers (PCH)
+```cmake
+# CMake
+target_precompile_headers(mylib PRIVATE
+    <vector>
+    <string>
+    <memory>
+    "common.h"
+)
+```
+
+---
+
+## 6. Profile-Guided Optimization (PGO)
+
+### GCC/Clang PGO
+```bash
+# 1. Instrument
+g++ -O2 -fprofile-generate -o app main.cpp
+
+# 2. Run representative workload
+./app --benchmark
+
+# 3. Optimize with profile
+g++ -O2 -fprofile-use -o app main.cpp
+```
+
+### MSVC PGO
+```bash
+# 1. Instrument
+cl /GL /LTCG:PGINSTRUMENT main.cpp
+
+# 2. Run
+app.exe
+
+# 3. Optimize
+cl /GL /LTCG:PGOPTIMIZE main.cpp
+```
+
+### BOLT (Post-link Optimization)
+```bash
+# LLVM BOLT — оптимизация бинарника после линковки
+perf record -g ./app
+perf2bolt app -o app.bolt
+llvm-bolt app -o app.optimized -b app.bolt
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Assembly Analysis
+Напишите функцию `dot_product(float*, float*, size_t)` и изучите её ассемблер при `-O0`, `-O2`, `-O3 -march=native`. Найдите где автовекторизация сработала, а где нет.
+
+### Задание 2: SIMD Implementation
+Реализуйте `memcpy` / `memset` / `strlen` используя AVX2 intrinsics. Сравните с `std::memcpy` и `glibc` версией.
+
+### Задание 3: Cache Benchmark
+Создайте benchmark: последовательный vs случайный доступ к массиву 100MB. Измерьте bandwidth через `perf stat`. Добавьте prefetch и измерьте улучшение.
+
+### Задание 4: False Sharing Demo
+Напишите программу с 4 потоками, каждый инкрементирует свой `atomic<int>` в массиве. Сравните время с `alignas(64)` и без. Объясните результаты.
+
+### Задание 5: Profiling Real Code
+Возьмите свой проект (или любой open-source). Запустите под `perf record -g`. Найдите top 3 hot functions. Попробуйте оптимизировать одну из них.
+
+### Задание 6: Template Bloat Measurement
+Создайте шаблонный класс `Matrix<T, N, M>` с методами. Явно инстанцируйте для 10 типов. Измерьте размер бинарника с explicit instantiation в .cpp vs только в header.
+
+### Задание 7: PGO Workflow
+Настройте PGO для проекта с CMake. Сравьте производительность до/после на реальной нагрузке.
+
+---
+
+## Полезные ресурсы
+- **Agner Fog: Optimization Manuals** — https://www.agner.org/optimize/
+- **Intel Intrinsics Guide** — https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html
+- **Compiler Explorer** — https://godbolt.org/
+- **perf wiki** — https://perf.wiki.kernel.org/
+- **Brendan Gregg: Flame Graphs** — http://www.brendangregg.com/flamegraphs.html
+- **CppCon: "Optimizing C++" (Chandler Carruth, Mike Acton, Fedor Pikus)**
+- **C++ Performance Tips** — https://github.com/cpp-best-practices/cppbestpractices/blob/master/06-Performance.md

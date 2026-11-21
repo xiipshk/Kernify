@@ -1,0 +1,442 @@
+{
+  "title": "Урок 25: Advanced CSharp",
+  "slug": "urok-25-advanced-unsafe,-pointers,-interop,-nativeaot",
+  "short_description": "fixed, stackalloc, P/Invoke, NativeAOT limitations, function pointers",
+  "goals": [
+    "Понимать основы: fixed, stackalloc, P/Invoke, NativeAOT limitations, function pointers",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.3: Advanced C# — Extension Members, Operator Overloading, Indexers, ref/in/out, Spans, Unsafe"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Создавать extension methods, properties, interfaces (C# 12+)",
+        "Перегружать операторы: арифметические, сравнения, неявные/явные преобразования",
+        "Использовать indexers и range/index operators (^ и ..)",
+        "Работать с ref, in, out, ref struct, ref readonly",
+        "Применять Span<T>, Memory<T>, ReadOnlySpan<T> для zero-allocation",
+        "Понимать unsafe код, fixed, stackalloc, pointers"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Extension Members"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Extension Methods (C# 3.0+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public static class StringExtensions\n{\n    // this string — расширяемый тип\n    public static bool IsNullOrEmpty(this string? str) => string.IsNullOrEmpty(str);\n\n    // Generic extension\n    public static TResult? Pipe<T, TResult>(this T value, Func<T, TResult> func)\n        => value is null ? default : func(value);\n}\n\n// Использование\n\"hello\".IsNullOrEmpty(); // false\n5.Pipe(x => x * 2).Pipe(x => x.ToString()); // \"10\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Extension Properties (C# 12+ — preview, требует `<LangVersion>preview</LangVersion>`)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// В C# 12 можно создавать extension properties через static virtual members в интерфейсах\npublic interface INumber<T> where T : INumber<T>\n{\n    static abstract T Zero { get; }\n    static abstract T One { get; }\n}\n\n// Extension property syntax (future)\n// extension string\n// {\n//     public int WordCount => this.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;\n// }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Extension Interfaces (C# 12+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Можно \"добавить\" реализацию интерфейса к существующему типу\npublic interface IJsonSerializable\n{\n    string ToJson();\n    static IJsonSerializable FromJson(string json) => throw new NotImplementedException();\n}\n\n// extension для типа без изменения его кода\nextension(string) : IJsonSerializable\n{\n    public string ToJson() => $\"\\\"{this}\\\"\";\n    public static IJsonSerializable FromJson(string json) => json.Trim('\"');\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Operator Overloading"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Арифметические операторы"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public readonly struct Vector2\n{\n    public double X { get; }\n    public double Y { get; }\n\n    public Vector2(double x, double y) => (X, Y) = (x, y);\n\n    // Бинарные операторы\n    public static Vector2 operator +(Vector2 a, Vector2 b) => new(a.X + b.X, a.Y + b.Y);\n    public static Vector2 operator -(Vector2 a, Vector2 b) => new(a.X - b.X, a.Y - b.Y);\n    public static Vector2 operator *(Vector2 a, double scalar) => new(a.X * scalar, a.Y * scalar);\n    public static Vector2 operator *(double scalar, Vector2 a) => a * scalar; // commutative\n    public static Vector2 operator /(Vector2 a, double scalar) => new(a.X / scalar, a.Y / scalar);\n\n    // Унарные операторы\n    public static Vector2 operator -(Vector2 a) => new(-a.X, -a.Y);\n    public static Vector2 operator ++(Vector2 a) => a + new Vector2(1, 1);\n    public static Vector2 operator --(Vector2 a) => a - new Vector2(1, 1);\n\n    public override string ToString() => $\"({X}, {Y})\";\n}\n\n// Использование\nvar v1 = new Vector2(1, 2);\nvar v2 = new Vector2(3, 4);\nvar v3 = v1 + v2;        // (4, 6)\nvar v4 = v1 * 2.5;       // (2.5, 5)\nvar v5 = -v1;            // (-1, -2)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Операторы сравнения"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public readonly struct Version : IComparable<Version>, IEquatable<Version>\n{\n    public int Major { get; }\n    public int Minor { get; }\n    public int Patch { get; }\n\n    public Version(int major, int minor, int patch) => (Major, Minor, Patch) = (major, minor, patch);\n\n    // Обязательно парами: ==/!=, </>, <=/>=\n    public static bool operator ==(Version a, Version b) => a.Equals(b);\n    public static bool operator !=(Version a, Version b) => !a.Equals(b);\n    public static bool operator <(Version a, Version b) => a.CompareTo(b) < 0;\n    public static bool operator >(Version a, Version b) => a.CompareTo(b) > 0;\n    public static bool operator <=(Version a, Version b) => a.CompareTo(b) <= 0;\n    public static bool operator >=(Version a, Version b) => a.CompareTo(b) >= 0;\n\n    public int CompareTo(Version other)\n    {\n        var c = Major.CompareTo(other.Major);\n        if (c != 0) return c;\n        c = Minor.CompareTo(other.Minor);\n        if (c != 0) return c;\n        return Patch.CompareTo(other.Patch);\n    }\n\n    public bool Equals(Version other) => Major == other.Major && Minor == other.Minor && Patch == other.Patch;\n    public override bool Equals(object? obj) => obj is Version v && Equals(v);\n    public override int GetHashCode() => HashCode.Combine(Major, Minor, Patch);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Неявные и явные преобразования"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public readonly struct Celsius\n{\n    public double Degrees { get; }\n    public Celsius(double degrees) => Degrees = degrees;\n\n    // Implicit: безопасное, не теряет данных\n    public static implicit operator Celsius(double degrees) => new(degrees);\n    public static implicit operator double(Celsius c) => c.Degrees;\n\n    // Explicit: может терять данные или быть неочевидным\n    public static explicit operator Fahrenheit(Celsius c) => new(c.Degrees * 9 / 5 + 32);\n    public static explicit operator Celsius(Fahrenheit f) => new((f.Degrees - 32) * 5 / 9);\n}\n\npublic readonly struct Fahrenheit\n{\n    public double Degrees { get; }\n    public Fahrenheit(double degrees) => Degrees = degrees;\n}\n\n// Использование\nCelsius c = 25;                    // implicit double -> Celsius\ndouble d = c;                      // implicit Celsius -> double\nFahrenheit f = (Fahrenheit)c;      // explicit cast required"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пользовательские операторы для ссылочных типов (C# 10+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class Money\n{\n    public decimal Amount { get; }\n    public string Currency { get; }\n\n    public Money(decimal amount, string currency) => (Amount, Currency) = (amount, currency);\n\n    // Для классов операторы должны быть static\n    public static Money operator +(Money a, Money b)\n    {\n        if (a.Currency != b.Currency) throw new InvalidOperationException(\"Currency mismatch\");\n        return new Money(a.Amount + b.Amount, a.Currency);\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Indexers и Range/Index Operators"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Indexers"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class BitArray\n{\n    private readonly ulong[] _bits;\n\n    public BitArray(int capacity) => _bits = new ulong[(capacity + 63) / 64];\n\n    // Indexer с get/set\n    public bool this[int index]\n    {\n        get\n        {\n            if (index < 0 || index >= _bits.Length * 64) throw new IndexOutOfRangeException();\n            return (_bits[index / 64] & (1UL << (index % 64))) != 0;\n        }\n        set\n        {\n            if (index < 0 || index >= _bits.Length * 64) throw new IndexOutOfRangeException();\n            if (value) _bits[index / 64] |= 1UL << (index % 64);\n            else _bits[index / 64] &= ~(1UL << (index % 64));\n        }\n    }\n\n    // Indexer с параметрами\n    public int this[int start, int count]\n    {\n        get\n        {\n            int result = 0;\n            for (int i = 0; i < count; i++)\n                if (this[start + i]) result |= 1 << i;\n            return result;\n        }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Range (..) и Index (^) operators (C# 8.0+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "int[] arr = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];\n\n// Index ^ — от конца\nConsole.WriteLine(arr[^1]);  // 9 (последний)\nConsole.WriteLine(arr[^2]);  // 8 (предпоследний)\n\n// Range .. — диапазон\nvar slice1 = arr[2..5];      // [2, 3, 4] (5 не включается)\nvar slice2 = arr[..3];       // [0, 1, 2] (от начала)\nvar slice3 = arr[7..];       // [7, 8, 9] (до конца)\nvar slice4 = arr[^3..^1];    // [7, 8] (3 с конца до 1 с конца)\n\n// Range как переменная\nRange r = 2..5;\nvar slice5 = arr[r];\n\n// Пользовательский тип с поддержкой Range/Index\npublic class CustomList<T>\n{\n    private T[] _items;\n    public int Count { get; private set; }\n\n    public T this[Index index] => _items[index.GetOffset(Count)];\n    public CustomList<T> this[Range range]\n    {\n        get\n        {\n            var (offset, length) = range.GetOffsetAndLength(Count);\n            var result = new CustomList<T> { _items = new T[length], Count = length };\n            Array.Copy(_items, offset, result._items, 0, length);\n            return result;\n        }\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. ref, in, out, ref struct"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ref / out / in параметры"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// out — обязательно присвоить перед выходом\npublic bool TryParse(string s, out int result)\n{\n    result = 0; // обязательно!\n    return int.TryParse(s, out result);\n}\n\n// ref — чтение и запись, значение должно быть инициализировано\npublic void Swap(ref int a, ref int b)\n{\n    (a, b) = (b, a);\n}\n\n// in — readonly reference (C# 7.2+), для больших struct без копирования\npublic readonly struct BigStruct\n{\n    public long A, B, C, D, E, F, G, H; // 64 bytes\n}\n\npublic double Compute(in BigStruct s) // передача по ссылке, но readonly\n{\n    // s.A = 1; // ОШИБКА: cannot assign to readonly variable\n    return s.A + s.B;\n}\n\n// ref readonly return — возврат по ссылке без копирования (C# 7.2+)\npublic ref readonly BigStruct GetBigStruct() => ref _cachedStruct;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ref struct — только стек (C# 7.2+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// ref struct не может быть полем класса, элементом массива, generic argument\npublic ref struct SpanWrapper\n{\n    private Span<int> _span;\n    public SpanWrapper(Span<int> span) => _span = span;\n\n    // Нельзя: public SpanWrapper(int[] arr) — array на куче\n    // Можно: public SpanWrapper(ref int ptr, int length) — stackalloc\n}\n\npublic ref struct StackOnly\n{\n    private int _value;\n    // Нельзя box'ить, нельзя использовать в async/iterator методах\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ref fields (C# 11+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Ref fields в ref struct\npublic ref struct BufferWriter\n{\n    private Span<byte> _buffer;\n    private int _position;\n\n    // ref field — ссылка на поле другого struct\n    public ref int Position => ref _position;\n}\n\n// В обычных классах ref fields запрещены (кроме unsafe)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Span<T>, Memory<T>, ReadOnlySpan<T>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Span<T> — stack-only view over memory"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Создание\nSpan<int> stackSpan = stackalloc int[100];        // на стеке\nSpan<int> arraySpan = new int[100];               // над массивом\nSpan<byte> nativeSpan = new Span<byte>(ptr, 100); // над unmanaged памятью\n\n// Slicing — БЕЗ КОПИРОВАНИЯ!\nvar slice = stackSpan[10..20]; // Span<int>, указывает на ту же память\n\n// Заполнение\nstackSpan.Fill(42);\nstackSpan[5..10].Clear(); // обнулить диапазон\n\n// Копирование\nSpan<int> dest = stackalloc int[50];\nstackSpan[10..60].CopyTo(dest); // копирует 50 элементов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Memory<T> — heap-friendly (для async)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Memory можно хранить в полях классов, использовать в async\npublic class BufferPool\n{\n    private Memory<byte> _buffer = new byte[4096];\n\n    public Memory<byte> Rent(int size) => _buffer[..size];\n    public void Return(Memory<byte> memory) { /* ... */ }\n}\n\n// Асинхронное чтение в Memory\npublic async Task ReadAsync(Memory<byte> buffer)\n{\n    await _stream.ReadAsync(buffer); // ReadAsync принимает Memory<byte>\n}\n\n// Memory<T> -> Span<T> (только синхронно)\nSpan<byte> span = buffer.Span;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ReadOnlySpan<T> / ReadOnlyMemory<T>"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Для строк и неизменяемых данных\nReadOnlySpan<char> span = \"Hello World\".AsSpan();\nReadOnlySpan<byte> bytes = \"UTF8 string\"u8; // UTF-8 literal (C# 11+)\n\n// Поиск без аллокаций\nint index = span.IndexOf('W'); // 6\nbool startsWith = span.StartsWith(\"Hello\"); // true\n\n// Парсинг без substring аллокаций\nReadOnlySpan<char> line = \"key=value\";\nint eqIndex = line.IndexOf('=');\nvar key = line[..eqIndex];      // ReadOnlySpan<char>\nvar value = line[(eqIndex + 1)..];"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Span и строки"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// String -> ReadOnlySpan<char> (zero allocation)\nReadOnlySpan<char> span = \"Hello\".AsSpan();\n\n// Parsing без Substring\nstring input = \"id=123,name=test\";\nforeach (var pair in input.Split(','))\n{\n    var kv = pair.Split('=');\n    // Но Split аллоцирует массивы!\n\n    // Лучше: ручной парсинг на Span\n    // См. System.Text.Utf8Parser или реализуйте сам\n}\n\n// Span-based parsing (high performance)\npublic static bool TryParseId(ReadOnlySpan<char> input, out int id)\n{\n    id = 0;\n    if (!input.StartsWith(\"id=\")) return false;\n    return int.TryParse(input[3..], out id);\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Unsafe Code — Pointers, fixed, stackalloc"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Включение unsafe"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj -->\n<PropertyGroup>\n  <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n</PropertyGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовые указатели"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "unsafe void PointerBasics()\n{\n    int value = 42;\n    int* ptr = &value;        // адрес переменной\n    Console.WriteLine(*ptr);  // разыменование: 42\n\n    *ptr = 100;               // изменение через указатель\n    Console.WriteLine(value); // 100\n\n    // Указатели на массивы (fixed)\n    int[] arr = [1, 2, 3, 4, 5];\n    fixed (int* p = arr)\n    {\n        for (int i = 0; i < arr.Length; i++)\n            Console.WriteLine(p[i]); // p[i] == *(p + i)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "stackalloc — выделение на стеке"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "unsafe void StackAllocExample()\n{\n    // Выделение на стеке (быстро, автоматически освобождается)\n    int* buffer = stackalloc int[100];\n\n    for (int i = 0; i < 100; i++)\n        buffer[i] = i * i;\n\n    // Span<T> over stackalloc (без unsafe контекста!)\n    Span<int> span = stackalloc int[100];\n    span.Fill(42);\n}\n\n// Большие буферы — осторожно (StackOverflow!)\nunsafe void LargeBuffer()\n{\n    // Для больших буферов используйте ArrayPool или Memory<T>\n    const int MaxStackAlloc = 1024; // conservative limit\n    Span<byte> buffer = MaxStackAlloc <= 1024 ? stackalloc byte[MaxStackAlloc] : new byte[MaxStackAlloc];\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "fixed statement — закрепление объекта в памяти"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "unsafe void FixedExample()\n{\n    byte[] managedArray = new byte[1000];\n\n    // Закрепляем массив, чтобы GC не двигал его\n    fixed (byte* p = managedArray)\n    {\n        // p указывает на начало массива\n        // Можно передать в unmanaged API\n        NativeApi.Process(p, managedArray.Length);\n    } // разблокировка после блока\n\n    // fixed с Span (C# 7.3+)\n    fixed (byte* p = managedArray.AsSpan()[100..200])\n    {\n        // Указатель на середину массива\n    }\n}\n\n// Fixed size buffers в struct (для interop)\nunsafe struct FixedBufferStruct\n{\n    public fixed byte Data[256]; // inline array, 256 байт в struct\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unsafe и Span взаимодействие"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// MemoryMarshal — мост между safe и unsafe\nusing System.Runtime.InteropServices;\n\nunsafe void InteropExample()\n{\n    Span<byte> span = stackalloc byte[100];\n\n    // Получить указатель из Span\n    void* ptr = Unsafe.AsPointer(ref MemoryMarshal.GetReference(span));\n\n    // Или через GetPinnableReference (для pinned)\n    ref byte pinnedRef = ref MemoryMarshal.GetReference(span);\n    fixed (byte* p = &pinnedRef)\n    {\n        NativeWrite(p, 100);\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Vector Math Library**: Реализуйте `Vector2`, `Vector3`, `Vector4` с полным набором операторов (+, -, *, /, ==, !=, -, ++, --), implicit/explicit conversions\n\n2. **Matrix Indexer**: Создайте `Matrix<T>` с indexer `[row, col]`, поддержкой Range (`matrix[0..2, 1..3]`), операторами +, *, transpose\n\n3. **High-Performance Parser**: Напишите парсер CSV/JSON используя только `ReadOnlySpan<char>`, `Utf8Parser`, без аллокаций строк\n\n4. **Custom Buffer Pool**: Реализуйте `ArrayPool<byte>` wrapper с `Memory<byte>` арендой, возвратом, статистикой\n\n5. **Unsafe Bitmap**: Класс `Bitmap` с `fixed byte[]` buffer, методами `SetPixel`, `GetPixel`, `Blur` через указатели\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `ref struct` как поле класса | `ref struct` только на стеке: локальные переменные, параметры, возвращаемые значения |\n| `in` параметр модифицируется | `in` — readonly, используйте `ref` если нужно изменять |\n| `stackalloc` больших буферов | Ограничивайте ~1KB, для большего — `ArrayPool` или `Memory` |\n| `fixed` забыт при работе с managed массивами в unsafe | Всегда `fixed` при взятии адреса managed объекта |\n| Operator `==` без `!=` и `Equals`/`GetHashCode` | Всегда перегружайте пары, переопределяйте `Equals`/`GetHashCode` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**C# Reference: Operators** — https://learn.microsoft.com/dotnet/csharp/language-reference/operators",
+        "**Span<T> and Memory<T]** — https://learn.microsoft.com/dotnet/standard/memory-and-spans",
+        "**ref struct** — https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/ref-struct",
+        "**Unsafe Code** — https://learn.microsoft.com/dotnet/csharp/language-reference/unsafe-code",
+        "**Index and Range** — https://learn.microsoft.com/dotnet/csharp/language-reference/operators/index-range",
+        "**C# 12 Features** — https://learn.microsoft.com/dotnet/csharp/whats-new/csharp-12"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Advanced: Unsafe, Pointers, Interop, NativeAOT",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Advanced: Unsafe, Pointers, Interop, NativeAOT' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C#",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c# на GitHub",
+    "Конференции и митапы по C#"
+  ],
+  "key_takeaways": [
+    "Главная идея: fixed, stackalloc, P/Invoke, NativeAOT limitations, function pointers — это фундамент для LINQ, Generics, Delegates/Events.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "csharp",
+  "lesson_order": 25,
+  "name_en": "Lesson: Advanced: Unsafe, Pointers, Interop, NativeAOT",
+  "short_description_en": "Learn Advanced: Unsafe, Pointers, Interop, NativeAOT in C# with detailed explanations and examples"
+}

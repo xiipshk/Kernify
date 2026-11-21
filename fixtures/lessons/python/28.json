@@ -1,0 +1,589 @@
+{
+  "title": "Урок 28: Микросервисы",
+  "slug": "urok-28-производительность-и-профилирование",
+  "short_description": "cProfile, snakeviz, py-spy, memory_profiler, line_profiler, PyPy",
+  "goals": [
+    "Понимать основы: cProfile, snakeviz, py-spy, memory_profiler, line_profiler, PyPy",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.6: Микросервисы — коммуникация, паттерны, сервис-меш, наблюдаемость"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать архитектуру микросервисов vs монолит",
+        "Выбирать способ коммуникации (sync vs async)",
+        "Применять паттерны: API Gateway, Circuit Breaker, Saga, CQRS",
+        "Работать с Service Mesh (Istio/Linkerd)",
+        "Настраивать распределённую трассировку (OpenTelemetry, Jaeger)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Монолит vs Микросервисы"
+    },
+    {
+      "type": "table",
+      "content": "| Аспект | Монолит | Микросервисы |\n|--------|---------|--------------|\n| Деплой | Один артефакт | Независимые деплои |\n| Масштабирование | Всё сразу | Выборочно |\n| Стек | Один | Полиглот |\n| Команда | Одна | Независимые команды |\n| Сложность | Низкая (в начале) | Высокая (операционная) |\n| Отладка | Простая | Распределённая трассировка |"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда НЕ нужны микросервисы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Маленькая команда (< 5 человек)",
+        "Простой домен",
+        "Нет потребности в независимом масштабировании",
+        "Нет DevOps зрелости"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Коммуникация между сервисами"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синхронная (Request-Response)"
+    },
+    {
+      "type": "text",
+      "content": "#### REST / HTTP\n```python"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Клиент"
+    },
+    {
+      "type": "text",
+      "content": "import httpx\n\nasync def get_user(user_id: str) -> dict:\n    async with httpx.AsyncClient(timeout=5.0) as client:\n        resp = await client.get(f\"http://user-service/users/{user_id}\")\n        resp.raise_for_status()\n        return resp.json()"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "#### gRPC (высокая производительность, контракты)"
+    },
+    {
+      "type": "text",
+      "content": "protobuf\n// user.proto\nsyntax = \"proto3\";\npackage user;\n\nservice UserService {\n  rpc GetUser(GetUserRequest) returns (User);\n  rpc ListUsers(ListUsersRequest) returns (stream User);\n}\n\nmessage GetUserRequest { string id = 1; }\nmessage User { string id = 1; string name = 2; string email = 3; }"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "python"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "server"
+    },
+    {
+      "type": "text",
+      "content": "import grpc\nfrom user_pb2 import User\nfrom user_pb2_grpc import UserServiceServicer\n\nclass UserServicer(UserServiceServicer):\n    async def GetUser(self, request, context):\n        return User(id=request.id, name=\"Анна\", email=\"anna@example.com\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "client"
+    },
+    {
+      "type": "text",
+      "content": "channel = grpc.aio.insecure_channel(\"user-service:50051\")\nstub = UserServiceStub(channel)\nuser = await stub.GetUser(GetUserRequest(id=\"123\"))\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Асинхронная (Message-Driven)"
+    },
+    {
+      "type": "text",
+      "content": "#### RabbitMQ / Kafka\n```python"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Producer (FastAPI + aio-pika)"
+    },
+    {
+      "type": "text",
+      "content": "import aio_pika\nimport json\n\nasync def publish_order_created(order: dict):\n    connection = await aio_pika.connect_robust(\"amqp://guest:guest@rabbitmq/\")\n    async with connection:\n        channel = await connection.channel()\n        exchange = await channel.declare_exchange(\"orders\", aio_pika.ExchangeType.TOPIC)\n        await exchange.publish(\n            aio_pika.Message(body=json.dumps(order).encode()),\n            routing_key=\"order.created\"\n        )"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Consumer"
+    },
+    {
+      "type": "text",
+      "content": "async def consume_orders():\n    connection = await aio_pika.connect_robust(\"amqp://guest:guest@rabbitmq/\")\n    async with connection:\n        channel = await connection.channel()\n        queue = await channel.declare_queue(\"order_service_orders\", durable=True)\n        await queue.bind(exchange, \"order.*\")\n        async with queue.iterator() as queue_iter:\n            async for message in queue_iter:\n                async with message.process():\n                    order = json.loads(message.body)\n                    await process_order(order)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "#### Event Schema (Avro/Protobuf для Kafka)"
+    },
+    {
+      "type": "text",
+      "content": "python"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "schema_registry пример"
+    },
+    {
+      "type": "text",
+      "content": "from confluent_kafka.schema_registry import SchemaRegistryClient\nfrom confluent_kafka.schema_registry.avro import AvroSerializer\n\nschema_str = \"\"\"\n{\n  \"type\": \"record\",\n  \"name\": \"OrderCreated\",\n  \"fields\": [\n    {\"name\": \"order_id\", \"type\": \"string\"},\n    {\"name\": \"customer_id\", \"type\": \"string\"},\n    {\"name\": \"total\", \"type\": \"double\"}\n  ]\n}\n\"\"\"\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Паттерны микросервисов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "API Gateway"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Kong / Traefik / NGINX / AWS API Gateway"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Роутинг, аутентификация, rate limiting, трансформация"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Пример на FastAPI как простой gateway"
+    },
+    {
+      "type": "text",
+      "content": "from fastapi import FastAPI, Request\nimport httpx\n\napp = FastAPI()\nSERVICES = {\n    \"users\": \"http://user-service:8000\",\n    \"orders\": \"http://order-service:8000\",\n    \"products\": \"http://product-service:8000\",\n}\n\n@app.api_route(\"/{service}/{path:path}\", methods=[\"GET\", \"POST\", \"PUT\", \"DELETE\"])\nasync def gateway(service: str, path: str, request: Request):\n    if service not in SERVICES:\n        raise HTTPException(404, \"Service not found\")\n\n    async with httpx.AsyncClient() as client:\n        url = f\"{SERVICES[service]}/{path}\"\n        resp = await client.request(\n            request.method, url,\n            headers=dict(request.headers),\n            content=await request.body(),\n            params=request.query_params\n        )\n    return Response(content=resp.content, status_code=resp.status_code, headers=resp.headers)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Circuit Breaker"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pybreaker"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Использование с fallback"
+    },
+    {
+      "type": "text",
+      "content": "async def get_user_with_fallback(user_id: str):\n    try:\n        return await call_user_service(user_id)\n    except pybreaker.CircuitBreakerError:\n        return {\"id\": user_id, \"name\": \"Unknown\", \"cached\": True}\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Saga Pattern (распределённые транзакции)"
+    },
+    {
+      "type": "text",
+      "content": "#### Хореография (события)\n```python"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Order Service"
+    },
+    {
+      "type": "text",
+      "content": "async def create_order(order_data):\n    order = Order(**order_data)\n    order.status = \"pending\"\n    await order.save()\n\n    # Публикуем событие\n    await publish_event(\"order.created\", {\"order_id\": order.id, \"items\": order.items})\n\n    # Ждём подтверждений через callback/event\n    return order"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Payment Service — слушает order.created"
+    },
+    {
+      "type": "text",
+      "content": "async def handle_order_created(event):\n    try:\n        payment = await charge_customer(event[\"customer_id\"], event[\"total\"])\n        await publish_event(\"payment.completed\", {\"order_id\": event[\"order_id\"]})\n    except PaymentFailed:\n        await publish_event(\"payment.failed\", {\"order_id\": event[\"order_id\"]})"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Order Service — слушает payment.completed/failed"
+    },
+    {
+      "type": "text",
+      "content": "async def handle_payment_result(event):\n    order = await Order.get(event[\"order_id\"])\n    if event[\"type\"] == \"payment.completed\":\n        order.status = \"paid\"\n    else:\n        order.status = \"cancelled\"\n        await compensate_inventory(event[\"order_id\"])\n    await order.save()"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "#### Оркестрация (централизованный координатор)"
+    },
+    {
+      "type": "text",
+      "content": "python\nclass OrderSaga:\n    def __init__(self):\n        self.steps = [\n            (self.reserve_inventory, self.release_inventory),\n            (self.charge_payment, self.refund_payment),\n            (self.create_shipment, self.cancel_shipment),\n        ]\n\n    async def execute(self, order_data):\n        completed = []\n        try:\n            for forward, _ in self.steps:\n                await forward(order_data)\n                completed.append(forward)\n        except Exception:\n            # Компенсация в обратном порядке\n            for _, backward in reversed(completed):\n                await backward(order_data)\n            raise\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CQRS (Command Query Responsibility Segregation)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Write Model (Commands)"
+    },
+    {
+      "type": "text",
+      "content": "class OrderCommandHandler:\n    async def handle_create_order(self, cmd: CreateOrderCommand):\n        order = Order.create(cmd.customer_id, cmd.items)\n        await order_repo.save(order)\n        await event_bus.publish(OrderCreated(order.id, ...))"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Read Model (Queries) — отдельная БД/проекция"
+    },
+    {
+      "type": "text",
+      "content": "class OrderQueryHandler:\n    async def handle_get_order_summary(self, query: GetOrderSummary):\n        # Денормализованное представление из Elasticsearch/Redis\n        return await read_model.get_order_summary(query.order_id)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Event Handler обновляет Read Model"
+    },
+    {
+      "type": "text",
+      "content": "async def on_order_created(event: OrderCreated):\n    summary = OrderSummary(\n        order_id=event.order_id,\n        customer_name=event.customer_name,\n        total=event.total,\n        status=\"pending\"\n    )\n    await read_model.save(summary)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Service Mesh (Istio / Linkerd)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Зачем Service Mesh"
+    },
+    {
+      "type": "list",
+      "items": [
+        "mTLS между сервисами (автоматически)",
+        "Traffic management (canary, retry, timeout)",
+        "Наблюдаемость (метрики, трейсы, логи)",
+        "Политики авторизации"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Istio пример"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "VirtualService для canary"
+    },
+    {
+      "type": "list",
+      "items": [
+        "route:",
+        "destination:",
+        "destination:"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "apiVersion: networking.istio.io/v1beta1\nkind: VirtualService\nmetadata:\n  name: user-service\nspec:\n  hosts: [\"user-service\"]\n  http:\n\n\n            host: user-service\n            subset: v1\n          weight: 90\n\n            host: user-service\n            subset: v2\n          weight: 10\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "DestinationRule с mTLS и circuit breaker"
+    },
+    {
+      "type": "text",
+      "content": "apiVersion: networking.istio.io/v1beta1\nkind: DestinationRule\nmetadata:\n  name: user-service\nspec:\n  host: user-service\n  trafficPolicy:\n    tls:\n      mode: ISTIO_MUTUAL\n    connectionPool:\n      tcp:\n        maxConnections: 100\n      http:\n        h2UpgradePolicy: UPGRADE\n        http1MaxPendingRequests: 100\n        http2MaxRequests: 1000\n    outlierDetection:\n      consecutive5xxErrors: 5\n      interval: 30s\n      baseEjectionTime: 30s\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Наблюдаемость (Observability)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Three Pillars"
+    },
+    {
+      "type": "text",
+      "content": "1. **Metrics** — Prometheus (RED: Rate, Errors, Duration)\n2. **Logs** — Loki / ELK (структурированные JSON)\n3. **Traces** — OpenTelemetry → Jaeger / Tempo"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "OpenTelemetry в Python"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install opentelemetry-api opentelemetry-sdk \\\n    opentelemetry-instrumentation-fastapi \\\n    opentelemetry-instrumentation-httpx \\\n    opentelemetry-exporter-otlp"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "tracing.py"
+    },
+    {
+      "type": "text",
+      "content": "from opentelemetry import trace\nfrom opentelemetry.sdk.trace import TracerProvider\nfrom opentelemetry.sdk.trace.export import BatchSpanProcessor\nfrom opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter\nfrom opentelemetry.instrumentation.fastapi import FastAPIInstrumentor\nfrom opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor\n\ntrace.set_tracer_provider(TracerProvider())\ntracer = trace.get_tracer(__name__)\n\notlp_exporter = OTLPSpanExporter(endpoint=\"http://jaeger:4317\", insecure=True)\ntrace.get_tracer_provider().add_span_processor(BatchSpanProcessor(otlp_exporter))"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Автоинструментация"
+    },
+    {
+      "type": "text",
+      "content": "FastAPIInstrumentor.instrument_app(app)\nHTTPXClientInstrumentor().instrument()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Ручные спаны"
+    },
+    {
+      "type": "text",
+      "content": "async def get_user(user_id: str):\n    with tracer.start_as_current_span(\"get_user\") as span:\n        span.set_attribute(\"user.id\", user_id)\n        async with httpx.AsyncClient() as client:\n            resp = await client.get(f\"http://user-service/users/{user_id}\")\n        return resp.json()\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Корреляция логов (trace_id)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import logging\nfrom opentelemetry.trace import get_current_span\n\nclass TraceIDFilter(logging.Filter):\n    def filter(self, record):\n        span = get_current_span()\n        record.trace_id = f\"{span.get_span_context().trace_id:032x}\" if span.get_span_context().trace_id else \"none\"\n        return True\n\nlogging.basicConfig(\n    format='{\"time\": \"%(asctime)s\", \"level\": \"%(levelname)s\", \"trace_id\": \"%(trace_id)s\", \"msg\": \"%(message)s\"}'\n)\nlogger = logging.getLogger()\nlogger.addFilter(TraceIDFilter())"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Данные в микросервисах"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Database per Service"
+    },
+    {
+      "type": "list",
+      "items": [
+        "У каждого сервиса своя БД",
+        "Никаких прямых JOIN между сервисами",
+        "Данные дублируются (Eventual Consistency)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Transactional Outbox"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Вместо прямой публикации события — пишем в outbox таблицу ТОЙ ЖЕ транзакцией"
+    },
+    {
+      "type": "text",
+      "content": "async def create_order(order_data):\n    async with session.begin():\n        order = Order(...)\n        session.add(order)\n\n        # Outbox запись в той же транзакции\n        outbox = OutboxEvent(\n            event_type=\"OrderCreated\",\n            payload=json.dumps({\"order_id\": order.id, ...})\n        )\n        session.add(outbox)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Отдельный процесс (relay) читает outbox и публикует в брокер"
+    },
+    {
+      "type": "text",
+      "content": "async def outbox_relay():\n    while True:\n        events = await session.execute(\n            select(OutboxEvent).where(OutboxEvent.published == False).limit(100)\n        )\n        for event in events:\n            await publish_to_broker(event)\n            event.published = True\n        await session.commit()\n        await asyncio.sleep(1)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Тестирование микросервисов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Contract Testing (Pact)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pact-python"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Consumer test"
+    },
+    {
+      "type": "text",
+      "content": "from pact import Consumer, Provider\n\npact = Consumer(\"order-service\").has_pact_with(Provider(\"user-service\"))\n\ndef test_get_user():\n    expected = {\"id\": \"123\", \"name\": \"Анна\"}\n    (pact\n     .given(\"user 123 exists\")\n     .upon_receiving(\"a request for user 123\")\n     .with_request(\"GET\", \"/users/123\")\n     .will_respond_with(200, body=expected))\n\n    with pact:\n        resp = httpx.get(f\"{pact.uri}/users/123\")\n        assert resp.json() == expected\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Testcontainers для интеграционных тестов"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install testcontainers"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from testcontainers.postgres import PostgresContainer\nfrom testcontainers.kafka import KafkaContainer\n\ndef test_with_real_postgres():\n    with PostgresContainer(\"postgres:15\") as pg:\n        db_url = pg.get_connection_url()\n        # запускаем тесты с реальной БД"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Service Template**: создайте шаблон микросервиса (FastAPI + Docker + k8s + CI)\n2. **gRPC**: реализуйте UserService с protobuf, клиент с retry/timeout\n3. **Event-Driven**: Order Service → Kafka → Payment/Inventory/Notification\n4. **Circuit Breaker**: добавьте pybreaker к HTTP клиентам\n5. **Tracing**: внедрите OpenTelemetry, настройте Jaeger\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| Распределённый монолит (сильные связи) | Слабая связанность, async коммуникация |\n| Синхронные цепочки вызовов | Event-driven, Saga для длинных процессов |\n| Общая БД между сервисами | Database per Service |\n| Нет contract testing | Pact / схемы в Schema Registry |\n| Игнорируют eventual consistency | Проектируют под eventual consistency |\n| Нет распределённой трассировки | OpenTelemetry везде |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Microservices Patterns** — Chris Richardson",
+        "**Building Microservices** — Sam Newman",
+        "**gRPC Python** — https://grpc.io/docs/languages/python/",
+        "**OpenTelemetry Python** — https://opentelemetry.io/docs/instrumentation/python/",
+        "**Istio Docs** — https://istio.io/latest/docs/",
+        "**Pact** — https://docs.pact.io/",
+        "**Transactional Outbox** — https://microservices.io/patterns/data/transactional-outbox.html"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Производительность и профилирование",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Производительность и профилирование' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: cProfile, snakeviz, py-spy, memory_profiler, line_profiler, PyPy — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 28,
+  "name_en": "Lesson: Производительность и профилирование",
+  "short_description_en": "Learn Производительность и профилирование in Python with detailed explanations and examples"
+}

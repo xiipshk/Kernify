@@ -1,0 +1,463 @@
+# Урок 32: Производительность и надёжность
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Писать бенчмарки с Criterion и сравнивать разные реализации
+- Профилировать аллокации памяти с аллокаторами (jemalloc, mimalloc) и инструментами (heaptrack, dhat, massif, flamegraph)
+- Валидировать unsafe код с Miri (поиск UB) и Loom (конкурентность, data races)
+- Писать фазз-тесты с cargo-fuzz
+- Писать property-based тесты с proptest и quickcheck
+- Интегрировать все эти проверки в CI/CD
+
+---
+
+## 1. Бенчмаркирование с Criterion
+
+Criterion — де-факто стандарт для бенчмарков в Rust. В отличие от встроенного `test::Bencher` (работает только на ночном компиляторе), Criterion работает на стабильном компиляторе, статистически корректно обрабатывает результаты (разогрев, несколько итераций, доверительные интервалы) и генерирует HTML-отчёты.
+
+### Подключение
+```toml
+# Cargo.toml
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "my_bench"
+harness = false
+```
+
+`harness = false` обязателен: Criterion сам управляет запускомベンчмарков.
+
+### Базовый бенчмарк
+```rust
+// benches/my_bench.rs
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+fn fibonacci(n: u64) -> u64 {
+    match n {
+        0 => 0,
+        1 => 1,
+        _ => fibonacci(n - 1) + fibonacci(n - 2),
+    }
+}
+
+fn criterion_benchmark(c: &mut Criterion) {
+    c.bench_function("fibonacci 20", |b| b.iter(|| fibonacci(black_box(20))));
+}
+
+criterion_group!(benches, criterion_benchmark);
+criterion_main!(benches);
+```
+
+Запуск:
+```bash
+cargo bench
+# HTML-отчёт: target/criterion/reports/
+```
+
+`black_box` запрещает компилятору вычислять результат заранее или мёртвый код удалить — без него бенчмарк может показать ноль времени.
+
+### Группа с параметрами
+```rust
+fn bench_sort(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sort");
+    group.sample_size(100);               // больше итераций — точнее результат
+    group.warm_up_time(std::time::Duration::from_millis(100));
+    group.measurement_time(std::time::Duration::from_secs(5));
+
+    for size in [10, 100, 1000, 10_000] {
+        group.bench_with_input(format!("vec_{}", size), &size, |b, &size| {
+            let mut v: Vec<i32> = (0..size as i32).collect();
+            v.reverse();
+            b.iter(|| {
+                let mut v = v.clone();
+                v.sort_unstable();
+                black_box(&v);
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, criterion_benchmark, bench_sort);
+criterion_main!(benches);
+```
+
+### Сравнение двух реализаций
+```rust
+fn sum_fast(input: &[i32]) -> i32 {
+    input.iter().sum()
+}
+
+fn sum_slow(input: &[i32]) -> i32 {
+    let mut s = 0;
+    for &x in input {
+        s += x;
+    }
+    s
+}
+
+fn bench_comparison(c: &mut Criterion) {
+    let data: Vec<i32> = (0..1000).collect();
+    c.bench_function("sum fast", |b| b.iter(|| sum_fast(black_box(&data))));
+    c.bench_function("sum slow", |b| b.iter(|| sum_slow(black_box(&data))));
+}
+```
+
+Отчёты сохраняются в `target/criterion/reports/` в виде HTML. Для CI полезно сохранять базовые результаты и сравнивать:
+```bash
+cargo bench -- --save-baseline baseline
+# позже:
+cargo bench -- --baseline baseline
+```
+
+### Async бенчмарки
+Criterion не поддерживает `async` напрямую. Для async-кода используйте обёртку над рантаймом (например, `tokio::test` внутри бенчмарка) или क्रейт `criterion-async`.
+
+---
+
+## 2. Профилирование аллокаций памяти
+
+### Замена системного аллокатора
+По умолчанию Rust использует системный аллокатор (`System`). Для продакшена можно заменить на jemalloc, mimalloc или snmalloc.
+
+```toml
+# Cargo.toml
+[dependencies]
+tikv-jemallocator = "0.6"
+# mimalloc = "0.1"
+```
+
+```rust
+// src/lib.rs (самый верх, перед остальными использованиями аллокатора)
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+```
+
+Узнать текущий аллокатор:
+```rust
+use std::alloc::System;
+#[global_allocator]
+static GLOBAL: System = System;
+```
+
+### heaptrack (KDE)
+Инструмент для профилирования аллокаций: показывает, кто и когда выделяет память, и где происходят пики.
+
+```bash
+# Linux: sudo apt install heaptrack
+heaptrack ./target/release/my_binary
+heaptrack --analyze heaptrack.my_binary.*.gz
+```
+
+### dhat (Dynamic Heap Analysis)
+Встроенный в компилятор профилировщик аллокаций (ночной инструмент):
+
+```bash
+RUSTFLAGS="-Zdhat" cargo run --release
+# генерирует dhat-*.json, можно открыть в онлайн-вьюере dhat
+```
+
+### Valgrind Massif
+```bash
+valgrind --tool=massif ./target/release/my_binary
+ms_print massif.out.<pid>
+```
+
+### Пламяграфик (flamegraph)
+Показывает, сколько времени тратится в каждой функции (CPU профилирование):
+
+```bash
+cargo install cargo-flamegraph
+cargo flamegraph --binary my_binary
+# результат: target/flamegraph.svg — открыть в браузере
+```
+
+---
+
+## 3. Валидация unsafe кода (Miri, Loom)
+
+### Miri — поиск неопределённого поведения (UB)
+Miri запускает Rust-код в интерпретаторе и发现 неинициализированную память, use-after-free, нарушение правил aliasing, невалидные указатели и другие виды UB.
+
+```bash
+rustup component add miri
+cargo miri test        # все тесты под Miri
+cargo miri run         # запуск бинаря под Miri
+cargo miri test --package my_crate
+```
+
+Ограничения: Miri медленный, и не поддерживает FFI (вызовы внешних C-функций будут ошибкой).
+
+Пример кода, который Miri поймает:
+```rust
+fn main() {
+    let x = Box::new(42);
+    let raw = Box::into_raw(x);
+    drop(unsafe { Box::from_raw(raw) }); // память освобождена
+    unsafe { *raw = 0; } // Miri: use-after-free!
+}
+```
+
+### Loom — тестирование конкурентности
+Loom моделирует все возможные переключения потоков и помогает найти data races и deadlocks в конкурентном/unsafe коде.
+
+```toml
+# Cargo.toml
+[dev-dependencies]
+loom = "0.11"
+```
+
+```rust
+use loom::sync::Mutex;
+use std::sync::Arc;
+
+#[test]
+fn test_mutex_concurrency() {
+    loom::model(|| {
+        let data = Arc::new(Mutex::new(0));
+        let data1 = data.clone();
+        let data2 = data.clone();
+
+        loom::spawn(move || {
+            let mut g = data1.lock().unwrap();
+            *g += 1;
+        });
+        loom::spawn(move || {
+            let mut g = data2.lock().unwrap();
+            *g += 1;
+        });
+    });
+}
+```
+
+Запуск: `cargo test --release` (Loom перебирает много перестановок, лучше в release).
+
+Практика:
+- Не используйте `unsafe`, где можно обойтись безопасными абстракциями.
+- Весь unsafe-код оборачивайте в безопасный API и документируйте инварианты.
+- Прогоняйте unsafe-тесты под Miri, а конкурентный код — под Loom.
+
+---
+
+## 4. Фаззинг (cargo-fuzz)
+
+Фаззинг — автоматическая генерация случайных и некорректных входных данных для поиска паник и UB.
+
+### Установка
+```bash
+cargo install cargo-fuzz
+cargo fuzz init
+```
+
+Создаётся папка `fuzz/` с целями фаззинга.
+
+### Цель фаззинга
+```rust
+// fuzz/fuzz_targets/parse_input.rs
+#![no_main]
+use libfuzzer_sys::fuzz_target;
+
+fuzz_target!(|data: &[u8]| {
+    // попробуем обработать произвольные входные байты
+    if let Ok(s) = std::str::from_utf8(data) {
+        let _ = s.parse::<i32>();
+    }
+    // любая паника здесь = баг, который нужно исправить
+});
+```
+
+### Запуск
+```bash
+cargo fuzz run parse_input            # фаззинг цели
+cargo fuzz run parse_input -r 1000    # ограниченное число запусков
+cargo fuzz run parse_input -- -max_len=4096
+```
+
+Кейсы, вызвавшие паник, сохраняются в `fuzz/corpus/parse_input/`.
+
+### Генерация структур через `arbitrary`
+```toml
+[dependencies]
+arbitrary = "1.0"
+```
+
+```rust
+use arbitrary::Arbitrary;
+
+#[derive(Arbitrary, Debug)]
+struct MyInput {
+    flag: bool,
+    count: u8,
+    name: String,
+}
+
+fuzz_target!(|data: &[u8]| {
+    if let Ok(input) = MyInput::arbitrary_from(data) {
+        // обработать input
+    }
+});
+```
+
+### Интеграция в CI
+Фаззинг лучше запускать с ограничением по времени или числу итераций:
+```yaml
+- run: cargo fuzz run parse_input -r 10000
+```
+Для открытых проектов можно подключить OSS-Fuzz (Google) — постоянный фаззинг в облаке.
+
+---
+
+## 5. Property-based тесты (proptest, quickcheck)
+
+Property-based тестирование генерирует случайные входные данные и проверяет, что某种 свойство (инвариант) выполняется для всех них. При падении теста автоматически выполняется shrinking — сокращение примера до минимального воспроизведения.
+
+### proptest
+```toml
+# Cargo.toml
+[dev-dependencies]
+proptest = "1.0"
+```
+
+```rust
+#[cfg(test)]
+mod prop_tests {
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn add_commutative(a: i32, b: i32) {
+            prop_assert_eq!(add(a, b), add(b, a));
+        }
+
+        #[test]
+        fn sort_preserves_length(v in proptest::collection::vec(0..1000, 0..100)) {
+            let mut sorted = v.clone();
+            sorted.sort_unstable();
+            prop_assert_eq!(v.len(), sorted.len());
+        }
+
+        #[test]
+        fn reverse_twice_is_identity(v in proptest::collection::vec(0..100, 0..50)) {
+            let mut v1 = v.clone();
+            v1.reverse();
+            v1.reverse();
+            prop_assert_eq!(v, v1);
+        }
+    }
+}
+```
+
+Стратегии генерации:
+- `(0..100)` — диапазон чисел
+- `proptest::collection::vec(any, 0..100)` — вектор
+- `"[a-z0-9]*"` — строка по регулярному выражению
+- `proptest::option::of(0..100)` — `Option`
+- `proptest::result::of(0..100, "-100..-1")` — `Result`
+
+### quickcheck
+```toml
+# Cargo.toml
+[dev-dependencies]
+quickcheck = "1.0"
+quickcheck_macros = "1.0"
+```
+
+```rust
+#[quickcheck]
+fn prop_reverse_twice(v: Vec<i32>) -> bool {
+    let mut v1 = v.clone();
+    v1.reverse();
+    v1.reverse();
+    v == v1
+}
+```
+
+### Сравнение proptest и quickcheck
+
+| Критерий | proptest | quickcheck |
+|----------|----------|------------|
+| Shrinking (сокращение counterexample) | ✅ встроенный | ✅ |
+| Гибкие стратегии генерации | ✅ комбинаторы | проще |
+| Поддержка async | ✅ (через рантайм) | ограничена |
+| Популярность в экосистеме | выше | ниже |
+
+Рекомендация: используйте `proptest` для новых проектов.
+
+---
+
+## Практические задания
+
+1. **Бенчмарк**: Добавьте Criterion-бенчмарк для какой-нибудь функции в вашем проекте (сортировка, парсинг, вычисление). Сравните две реализации, запустите `cargo bench` и приложите HTML-отчёт.
+
+2. **Аллокатор**: Замените системный аллокатор на `tikv-jemallocator` или `mimalloc` в бинарном крейте. Запустите `heaptrack` (или `cargo flamegraph`) и найдите самое тяжёлое место аллокации.
+
+3. **Miri**: Напишите небольшой unsafe-код с intentional UB (use-after-free или неинициализированная память) и докажите, что `cargo miri test` его ловит. Затем исправьте код.
+
+4. **Фаззинг**: Настройте `cargo fuzz init`, добавьте одну цель фаззинга для функции, принимающей `&[u8]` (например, парсер), и запустите её на 1000 итераций.
+
+5. **Property-тест**: Напишите proptest-тест для свойства вашего кода (например, «сортировка не меняет длину», «десериализация обратна сериализации»).
+
+6. **CI**: Добавьте в GitHub Actions шаги: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`, `cargo bench`, `cargo miri test`, `cargo audit`.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| Бенчмарк показывает ноль или нестабильно | Компилятор оптимизировал код, либо шум системы | Оберните вход в `black_box`, запускайте на выделенной машине, используйте `--profile bench` |
+| `cargo miri` падает на FFI | Мiri не поддерживает вызовы внешних C-функций | Изолируйте FFI, не прогоняйте его под Miri, или используйте заглушки |
+| Loom'explodes state space | Много потоков и мьютексов в модели | Ограничьте модель, тестируйте небольшие фрагменты конкурентного кода |
+| Фаззинг не находится багов | Слишком простая цель фаззинга | Генерируйте и валидные, и невалидные данные, используйте `arbitrary` |
+| Property-тест падает на редком входе | Недостаточно сгенерировано примеров | Увеличьте число тестов (`#![proptest::cases = 1000]`) или сузьте диапазоны |
+| `cargo bench` не видит бенчмарков | `harness = false` не указан в `[[bench]]` | Добавьте `harness = false` для целейベンчмарков |
+
+---
+
+## Шпаргалка: Инструменты производительности и надёжности
+
+| Категория | Инструмент | Команда / использование |
+|-----------|------------|-------------------------|
+| Бенчмарки | `criterion` | `cargo bench`, отчёт в `target/criterion/reports/` |
+| Аллокатор | `tikv-jemallocator` / `mimalloc` | `#[global_allocator]` |
+| Профайлер аллокаций | `heaptrack` | `heaptrack ./binary`, `heaptrack --analyze` |
+| DHAT профайлер | `dhat` | `RUSTFLAGS="-Zdhat" cargo run` |
+| Пламяграфик | `cargo-flamegraph` | `cargo flamegraph` |
+| Поиск UB | `miri` | `cargo miri test / run` |
+| Конкурентность | `loom` | `loom::model(|| { ... })` |
+| Фаззинг | `cargo-fuzz` | `cargo fuzz init`, `cargo fuzz run <target>` |
+| Property-тесты | `proptest` / `quickcheck` | `proptest! { ... }`, `#[quickcheck]` |
+| Аудит зависимостей | `cargo-audit` | `cargo audit` |
+
+---
+
+## Полезные ресурсы
+
+- **Criterion**: https://github.com/bheisler/criterion.rs
+- **Miri**: https://github.com/rust-lang/miri
+- **Loom**: https://github.com/tokio-rs/loom
+- **cargo-fuzz**: https://github.com/rust-fuzz/cargo-fuzz
+- **OSS-Fuzz**: https://github.com/google/oss-fuzz
+- **proptest**: https://github.com/AltSysrq/proptest
+- **quickcheck**: https://github.com/BurntSushi/quickcheck
+- **arbitrary**: https://github.com/rust-fuzz/arbitrary
+- **tikv-jemallocator**: https://github.com/tikv/jemallocator
+- **heaptrack**: https://github.com/KDE/heaptrack
+- **cargo-flamegraph**: https://github.com/flamegraph-rs/cargo-flamegraph
+- **Rustonomicon (UB)**: https://doc.rust-lang.org/nomicon/
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- **Criterion**: бенчмаркирование, `black_box`, группы, параметризация, сравнение реализаций, отчёты
+- **Профилирование аллокаций**: замена аллокатора (jemalloc/mimalloc), `heaptrack`, `dhat`, `massif`, `cargo-flamegraph`
+- **Валидация unsafe**: `miri` (поиск UB), `loom` (конкурентность, data races), инварианты unsafe
+- **Фаззинг**: `cargo-fuzz`, цели фаззинга, `arbitrary`, интеграция в CI, OSS-Fuzz
+- **Property-тесты**: `proptest` и `quickcheck`, стратегии, shrinking, сравнение
+
+---
+
+**Следующий урок:** Проект (`33_Project.txt`)

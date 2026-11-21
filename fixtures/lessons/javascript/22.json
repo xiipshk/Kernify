@@ -1,0 +1,521 @@
+{
+  "title": "Урок 22: ecmascript runtime",
+  "slug": "urok-22-прокси-и-reflect",
+  "short_description": "Proxy traps, валидация, ленивые вычисления, кэширование",
+  "goals": [
+    "Понимать основы: Proxy traps, валидация, ленивые вычисления, кэширование",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 22: ECMAScript / Runtime — Спецификация, типы, абстрактные операции, контексты исполнения, записи окружения"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять структуру спецификации ECMAScript и как читать алгоритмы",
+        "Изучить все типы ECMAScript (включая Spec Types: Reference, Completion, Property Descriptor, Environment Record)",
+        "Освоить абстрактные операции (Abstract Operations) — ядро семантики языка",
+        "Глубоко разобрать Execution Contexts, Execution Context Stack, Environment Records",
+        "Понять различия между браузерной и Node.js реализацией runtime"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Структура спецификации ECMAScript"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.1 Как читать спецификацию"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Clause 4-5**: Overview, Notation",
+        "**Clause 6**: ECMAScript Data Types and Values",
+        "**Clause 7**: Abstract Operations",
+        "**Clause 8**: Executable Code and Execution Contexts",
+        "**Clause 9**: Ordinary and Exotic Objects Behaviours",
+        "**Clause 10-15**: Built-in Objects, Functions, Modules, etc."
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Спецификация ECMAScript (ECMA-262) — это формальное описание языка. Ключевые разделы:\n\n\n\n\n\n\n\n> **Совет**: Используйте [tc39.es/ecma262](https://tc39.es/ecma262/) — актуальная HTML-версия с поиском."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "1.2 Нотация алгоритмов"
+    },
+    {
+      "type": "text",
+      "content": "Спецификация использует псевдокод с особыми соглашениями:"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Пример: ToBoolean(argument) — 7.1.2\n// 1. If argument is true, return true.\n// 2. Return false.\n\n// Completion Records: { [[Type]]: normal | break | continue | return | throw, [[Value]], [[Target]] }\n// ? ReturnIfAbrupt(x) — если x — abrupt completion, вернуть его\n// ! Assert — внутреннее утверждение (не проверяется в runtime)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Система типов ECMAScript (Clause 6)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.1 ECMAScript Language Types (языковые типы)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Primitive Types (неизменяемые):\nundefined, null, boolean, number, bigint, string, symbol\n\n// Object Type (ссылочный, изменяемый):\nobject\n\n// ES2023+: Symbols as WeakMap keys, #private fields"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.2 Specification Types (спецификационные типы) — **критически важны для понимания runtime**"
+    },
+    {
+      "type": "table",
+      "content": "| Тип | Назначение | Примеры использования |\n|-----|------------|----------------------|\n| **Reference** | Результат evaluation identifier/super/import.meta | `x`, `obj.prop`, `super.method()` |\n| **Completion Record** | Результат выполнения любого кода | `return`, `throw`, `break`, `continue` |\n| **Property Descriptor** | Атрибуты свойства объекта | `[[Value]]`, `[[Writable]]`, `[[Get]]`, `[[Set]]` |\n| **Environment Record** | Хранение переменных (лексическое окружение) | `let`, `const`, `function`, `var` |\n| **Abstract Closure** | Функция + её лексическое окружение | Замыкания, стрелочные функции |"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "2.3 Reference Type (Ссылочный тип) — ключ к пониманию `this`, `delete`, `typeof`"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Reference = { [[Base]]: value | Environment Record, [[ReferencedName]]: string, [[Strict]]: boolean }\n\n// Примеры:\nx                    // Reference { base: globalEnv, name: \"x\", strict: false }\nobj.prop             // Reference { base: obj, name: \"prop\", strict: false }\ndelete obj.prop      // Использует [[Base]] и [[ReferencedName]]\ntypeof x             // Special case: не выбрасывает ReferenceError если base = unresolvable"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Абстрактные операции (Abstract Operations) — Clause 7"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.1 Type Conversion (преобразование типов)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// ToPrimitive(input, preferredType?) — 7.1.1\n// 1. If input is Object, call input[Symbol.toPrimitive](hint)\n// 2. Else if preferredType = number: valueOf() -> toString()\n// 3. Else: toString() -> valueOf()\n\n// ToNumber(argument) — 7.1.3\n// ToString(argument) — 7.1.4\n// ToBoolean(argument) — 7.1.2\n// ToObject(argument) — 7.1.13 (throws на null/undefined)\n\n// ES2023: ToNumeric (для BigInt support)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.2 Property Operations"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// OrdinaryGetPrototypeOf(O) — 10.1.1\n// OrdinarySetPrototypeOf(O, V) — 10.1.2\n// OrdinaryGetOwnProperty(O, P) — 10.1.5\n// OrdinaryDefineOwnProperty(O, P, Desc) — 10.1.6\n// OrdinaryHasProperty(O, P) — 10.1.7\n// OrdinaryGet(O, P, Receiver) — 10.1.8\n// OrdinarySet(O, P, V, Receiver) — 10.1.9\n// OrdinaryDelete(O, P) — 10.1.10\n// OrdinaryOwnPropertyKeys(O) — 10.1.11"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "3.3 Environment Record Operations (7.3)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Declarative Environment Records (function, block, catch)\n//   HasBinding, CreateMutableBinding, CreateImmutableBinding,\n//   InitializeBinding, SetMutableBinding, GetBindingValue,\n//   DeleteBinding, HasThisBinding, HasSuperBinding, WithBaseObject\n\n// Object Environment Records (with, global)\n//   Same + bindings stored in object properties\n\n// Global Environment Record (8.1.1.4)\n//   VarNames, LexicalNames, objectRecord, declarativeRecord"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Execution Contexts (Clause 8)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.1 Структура Execution Context"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: source generators**\n\n**Что делает:** Генерация кода на этапе компиляции (C# 9+)\n\n**Зачем нужно:** Нет рефлексии в runtime, работает в NativeAOT, нулевой оверхед\n\n**Как работает:** [Generator] public class MyGenerator : IIncrementalGenerator { ... }"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Execution Context = {\n//   [[Function]]: null | function object,        // код, выполняющийся сейчас\n//   [[Realm]]: Realm Record,                     // глобальное окружение\n//   [[ScriptOrModule]]: Script | Module Record,  // исходный код\n//   [[LexicalEnvironment]]: Environment Record,  // для разрешения идентификаторов\n//   [[VariableEnvironment]]: Environment Record, // для var/function declarations\n//   [[PrivateEnvironment]]: PrivateEnvironment | null, // для #private fields\n//   [[Generator]]: GeneratorObject | null,       // для generators\n//   [[AsyncContext]]: AsyncContext | null        // для async functions\n// }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.2 Execution Context Stack (Call Stack)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// При запуске скрипта:\n// 1. Create Realm -> Global Environment Record -> Global Execution Context\n// 2. Push на стек\n// 3. При вызове функции: PrepareForOrdinaryCall -> New Execution Context -> Push\n// 4. При return/throw: Pop, restore previous context\n\n// Важно: каждый async function / generator имеет свой Execution Context,\n// но они могут приостанавливаться (suspend) и возобновляться (resume)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.3 LexicalEnvironment vs VariableEnvironment"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function example() {\n  var a = 1;      // VariableEnvironment (Function Environment Record)\n  let b = 2;      // LexicalEnvironment (Block Environment Record)\n  const c = 3;    // LexicalEnvironment\n  \n  if (true) {\n    var d = 4;    // VariableEnvironment (тоже function-scoped!)\n    let e = 5;    // Новый Block Environment Record (child of current LexicalEnvironment)\n  }\n  \n  // d доступна, e — нет\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "4.4 Environment Records детально"
+    },
+    {
+      "type": "text",
+      "content": "#### Declarative Environment Record (Function, Block, Catch, Module)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Хранит bindings в внутренних слотах, не в объекте\n// CreateMutableBinding(name, deletable) — let/const/function\n// CreateImmutableBinding(name, strict) — const\n// InitializeBinding(name, value) — инициализация (TDZ для const/let)\n// SetMutableBinding(name, value, strict) — присваивание\n// GetBindingValue(name, strict) — чтение (бросает ReferenceError если uninitialized)"
+    },
+    {
+      "type": "text",
+      "content": "#### Object Environment Record (With, Global - legacy)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Bindings хранятся как свойства объекта (bindingObject)\n// WithBaseObject() возвращает объект для with"
+    },
+    {
+      "type": "text",
+      "content": "#### Global Environment Record (Специальный комбинированный)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Два под-рекорда:\n// - objectRecord: var, function declarations (legacy, configurable)\n// - declarativeRecord: let, const, class (non-configurable, TDZ)\n\n// GlobalThis — ссылка на global object (window, global, self)\n// В браузере: window === globalThis\n// В Node.js: global === globalThis (но global !== global object в модулях!)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Realm (Реальм) — изолированное глобальное окружение"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.1 Структура Realm Record"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Realm Record = {\n//   [[Intrinsics]]: %ObjectPrototype%, %ArrayPrototype%, ... (встроенные объекты)\n//   [[GlobalObject]]: globalThis,\n//   [[GlobalEnv]]: Global Environment Record,\n//   [[TemplateMap]]: Map для template literals (кэш)\n// }\n\n// Важно: каждый iframe / Worker / vm.Context в Node.js — отдельный Realm\n// instanceof проверяет прототип в ТЕКУЩЕМ Realm'е"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "5.2 Cross-realm взаимодействие"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// iframe.contentWindow.Array !== Array (разные Realm)\n// Array.isArray() работает cross-realm (использует [[Realm]] internal slot)\n// Symbol.for() — глобальный реестр символов (cross-realm)\n// structuredClone() — клонирование между realms"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Браузер vs Node.js: ключевые различия Runtime"
+    },
+    {
+      "type": "table",
+      "content": "| Аспект | Браузер | Node.js |\n|--------|---------|---------|\n| **Global Object** | `window` (WindowProxy) | `global` (но в модулях — `globalThis`) |\n| **Global Scope** | `var`/`function` → `window` | `var`/`function` → `global` (но модули изолированы) |\n| **Module System** | ES Modules (`.mjs`, `type: module`) | CommonJS (`require`) + ES Modules |\n| **Event Loop** | HTML Spec (microtask/macrotask) | libuv (phases: timers, I/O, check, close) |\n| **Realm Isolation** | iframe, Worker | `vm` module, Worker Threads |\n| **Process/Exit** | `window.close()`, navigation | `process.exit()`, signals |\n| **Console** | DevTools Console | `process.stdout/stderr`, TTY detection |"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "6.1 Node.js Module Execution Context"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// В Node.js (CommonJS) каждый модуль оборачивается:\n// (function(exports, require, module, __filename, __dirname) { ... });\n\n// В ES Modules (Node.js 14+):\n// - Каждый модуль — отдельный Module Record\n// - Свой Module Environment Record\n// - import.meta.url доступен"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практические примеры и отладка"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "7.1 Визуализация Execution Context Stack"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function traceContext(label) {\n  const stack = new Error().stack;\n  console.log(`[${label}] Stack depth: ${stack.split('\\n').length - 1}`);\n}\n\nfunction a() { traceContext('a'); b(); }\nfunction b() { traceContext('b'); c(); }\nfunction c() { traceContext('c'); }\n\na();\n// Output показывает вложенность контекстов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "7.2 Проверка TDZ (Temporal Dead Zone)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "{\n  // console.log(x); // ReferenceError: Cannot access 'x' before initialization\n  let x = 1;\n  console.log(x); // OK\n}\n\n// typeof в TDZ:\ntypeof undeclaredVar; // \"undefined\" (не выбрасывает)\ntypeof tdzVar;        // ReferenceError в блоке до let/const\n// let tdzVar;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "7.3 Realm detection"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "function isSameRealm(obj, constructor) {\n  return obj instanceof constructor; // false если разные realms\n}\n\n// Cross-realm array check:\nconst arr = [];\n// В iframe: iframe.contentWindow.Array.isArray(arr) === true"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. ES2023+ изменения в Runtime"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "8.1 Hashbang Grammar (ES2023)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "#!/usr/bin/env node\n// Теперь валидный синтаксис в модулях и скриптах"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "8.2 Symbols as WeakMap Keys (ES2023)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "const wm = new WeakMap();\nconst sym = Symbol('key');\nwm.set(sym, 'value'); // Теперь работает!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "8.3 Array.findLast / findLastIndex (ES2023)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Не меняют runtime, но полезны для алгоритмов"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Reference Type"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Предскажите результат и объясните через Reference Type:\nconst obj = { foo: 1 };\nconst ref = obj.foo;\ndelete obj.foo;\nconsole.log(ref); // ?\n\n// Ответ: 1 (Reference запомнил base и name, но значение прочитано до delete)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Environment Records"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// Создайте функцию, которая возвращает объект с методами\n// для чтения/записи переменной, недоступной снаружи\nfunction createPrivateCounter() {\n  // Используйте лексическое окружение\n}\n\n// Проверьте: counter.get() === 0, counter.increment(), counter.get() === 1"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: Realm Isolation"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// В браузере: создайте iframe, передайте массив, проверьте instanceof\n// В Node.js: используйте vm.createContext()"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Дополнительные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**ECMA-262 Spec**: https://tc39.es/ecma262/",
+        "**ECMAScript Spec Annotated**: https://github.com/tc39/ecma262",
+        "**JavaScript Engine Fundamentals** (V8, SpiderMonkey, JavaScriptCore): статьи на v8.dev/blog",
+        "**\"JavaScript: The Definitive Guide\" 7th ed.** — Chapter 3, 8, 13",
+        "**\"You Don't Know JS: Scope & Closures\"** — Chapter 2, 3, 5"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Контрольные вопросы"
+    },
+    {
+      "type": "text",
+      "content": "1. В чём разница между `LexicalEnvironment` и `VariableEnvironment`?\n2. Почему `typeof undeclared` не бросает ошибку, а `let x; typeof x;` в TDZ бросает?\n3. Что такое Completion Record и зачем он нужен?\n4. Как работает `super` в методах классов через лексическое окружение?\n5. В чём разница между Realm в браузере (iframe) и Node.js (vm module)?\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "📝 Саммари"
+    },
+    {
+      "type": "table",
+      "content": "| Концепция | Суть |\n|-----------|------|\n| **Specification Types** | Reference, Completion, Property Descriptor, Environment Record — не существуют в runtime, но определяют семантику |\n| **Execution Context** | Контейнер для выполнения кода: код + окружение + realm + приватные поля |\n| **Environment Record** | Где живут переменные: Declarative (function/block) vs Object (with/global) |\n| **Realm** | Изолированный мир с собственными встроенными объектами и globalThis |\n| **Abstract Operations** | Атомарные шаги семантики: Get, Set, HasProperty, ToNumber, ToPrimitive... |\n\n---\n\n*Следующий урок: 23 — Objects/Prototypes: property descriptors, prototype inheritance, Reflect, Proxy, private fields*"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Прокси и Reflect",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Прокси и Reflect' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация JavaScript",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-javascript на GitHub",
+    "Конференции и митапы по JavaScript"
+  ],
+  "key_takeaways": [
+    "Главная идея: Proxy traps, валидация, ленивые вычисления, кэширование — это фундамент для Event Loop, Замыкания, Прототипы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "javascript",
+  "lesson_order": 22,
+  "name_en": "Lesson: Прокси и Reflect",
+  "short_description_en": "Learn Прокси и Reflect in JavaScript with detailed explanations and examples"
+}

@@ -1,0 +1,730 @@
+# Урок 22: Проект — многослойное приложение с БД, API, тестами, логированием и обработкой ошибок
+
+## Цели урока
+- Собрать все знания среднего уровня в полноценное приложение
+- Применить Clean Architecture / Vertical Slice Architecture
+- Реализовать полноценный REST API с EF Core, миграциями
+- Настроить логирование, обработку ошибок, валидацию
+- Написать unit и integration тесты
+- Подготовить к деплою (Docker, health checks)
+
+---
+
+## 1. Архитектура решения
+
+### Структура папок (Clean Architecture)
+```
+MyApp.sln
+├── src/
+│   ├── MyApp.Domain/              # Enterprise Business Rules
+│   │   ├── Entities/
+│   │   ├── ValueObjects/
+│   │   ├── Events/
+│   │   ├── Interfaces/            # Repository interfaces
+│   │   └── Exceptions/
+│   ├── MyApp.Application/         # Application Business Rules
+│   │   ├── Commands/              # Write operations (CQRS)
+│   │   ├── Queries/               # Read operations
+│   │   ├── DTOs/
+│   │   ├── Validators/
+│   │   ├── Behaviors/             # MediatR pipeline behaviors
+│   │   └── Interfaces/            # External services (email, etc.)
+│   ├── MyApp.Infrastructure/      # Frameworks & Drivers
+│   │   ├── Persistence/
+│   │   │   ├── Configurations/    # EF Core mappings
+│   │   │   ├── Repositories/
+│   │   │   └── Migrations/
+│   │   ├── Services/              # Email, FileStorage, etc.
+│   │   └── Identity/              # Auth, tokens
+│   └── MyApp.Api/                 # Interface Adapters (Web)
+│       ├── Endpoints/             # Minimal API endpoints
+│       ├── Filters/
+│       ├── Middleware/
+│       ├── Extensions/
+│       └── Program.cs
+├── tests/
+│   ├── MyApp.UnitTests/
+│   ├── MyApp.IntegrationTests/
+│   └── MyApp.ArchitectureTests/
+├── docker-compose.yml
+├── Dockerfile
+└── Directory.Build.props
+```
+
+### Зависимости (внутренние)
+```
+MyApp.Api
+    └── MyApp.Application
+    └── MyApp.Infrastructure
+
+MyApp.Application
+    └── MyApp.Domain
+
+MyApp.Infrastructure
+    └── MyApp.Domain
+    └── MyApp.Application (interfaces)
+
+MyApp.Domain
+    └── (нет зависимостей от внешних проектов)
+```
+
+---
+
+## 2. Domain Layer (Ядро бизнеса)
+
+### Entity с Domain Events
+```csharp
+// MyApp.Domain/Entities/Order.cs
+public class Order : BaseEntity, IAggregateRoot
+{
+    public OrderId Id { get; private set; }
+    public CustomerId CustomerId { get; private set; }
+    public OrderStatus Status { get; private set; }
+    private readonly List<OrderItem> _items = new();
+    public IReadOnlyCollection<OrderItem> Items => _items.AsReadOnly();
+    public decimal Total => _items.Sum(i => i.Price * i.Quantity);
+
+    private Order() { } // EF Core
+
+    public static Order Create(CustomerId customerId, IEnumerable<OrderItemData> items)
+    {
+        var order = new Order
+        {
+            Id = OrderId.New(),
+            CustomerId = customerId,
+            Status = OrderStatus.Pending
+        };
+        foreach (var item in items)
+            order.AddItem(item.ProductId, item.Quantity, item.UnitPrice);
+
+        order.AddDomainEvent(new OrderCreatedEvent(order.Id, order.CustomerId, order.Total));
+        return order;
+    }
+
+    public void AddItem(ProductId productId, int quantity, decimal unitPrice)
+    {
+        if (Status != OrderStatus.Pending) throw new InvalidOperationException("Cannot modify confirmed order");
+        _items.Add(new OrderItem(productId, quantity, unitPrice));
+    }
+
+    public void Confirm()
+    {
+        if (Status != OrderStatus.Pending) throw new InvalidOperationException("Only pending orders can be confirmed");
+        if (!_items.Any()) throw new InvalidOperationException("Order must have items");
+        Status = OrderStatus.Confirmed;
+        AddDomainEvent(new OrderConfirmedEvent(Id, CustomerId, Total));
+    }
+}
+```
+
+### Value Objects
+```csharp
+// MyApp.Domain/ValueObjects/OrderId.cs
+public readonly record struct OrderId(Guid Value)
+{
+    public static OrderId New() => new(Guid.CreateVersion7()); // UUID v7 (time-ordered)
+    public static implicit operator Guid(OrderId id) => id.Value;
+    public static explicit operator OrderId(Guid guid) => new(guid);
+    public override string ToString() => Value.ToString();
+}
+```
+
+### Domain Exceptions
+```csharp
+// MyApp.Domain/Exceptions/DomainException.cs
+public abstract class DomainException : Exception
+{
+    public string Code { get; }
+    protected DomainException(string code, string message) : base(message) => Code = code;
+}
+
+public class InsufficientStockException : DomainException
+{
+    public InsufficientStockException(ProductId productId, int requested, int available)
+        : base("INSUFFICIENT_STOCK", $"Product {productId}: requested {requested}, available {available}") { }
+}
+```
+
+---
+
+## 3. Application Layer (Use Cases / CQRS)
+
+### MediatR Setup
+```bash
+dotnet add package MediatR
+dotnet add package FluentValidation
+dotnet add package FluentValidation.DependencyInjectionExtensions
+```
+
+### Commands (Write)
+```csharp
+// MyApp.Application/Commands/CreateOrder/CreateOrderCommand.cs
+public record CreateOrderCommand(CustomerId CustomerId, List<OrderItemDto> Items) : IRequest<Result<OrderDto>>;
+
+public record OrderItemDto(ProductId ProductId, int Quantity);
+
+// Handler
+public class CreateOrderHandler : IRequestHandler<CreateOrderCommand, Result<OrderDto>>
+{
+    private readonly IOrderRepository _orders;
+    private readonly IProductRepository _products;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly ILogger<CreateOrderHandler> _log;
+
+    public CreateOrderHandler(IOrderRepository orders, IProductRepository products, IUnitOfWork uow, ILogger<CreateOrderHandler> log)
+        => (_orders, _products, _unitOfWork, _log) = (orders, products, uow, log);
+
+    public async Task<Result<OrderDto>> Handle(CreateOrderCommand request, CancellationToken ct)
+    {
+        // Проверка товаров и резервирование
+        foreach (var item in request.Items)
+        {
+            var product = await _products.GetByIdAsync(item.ProductId, ct)
+                ?? throw new NotFoundException($"Product {item.ProductId} not found");
+            if (product.Stock < item.Quantity)
+                throw new InsufficientStockException(item.ProductId, item.Quantity, product.Stock);
+            product.ReserveStock(item.Quantity);
+        }
+
+        var order = Order.Create(request.CustomerId, request.Items);
+        await _orders.AddAsync(order, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        _log.LogInformation("Order {OrderId} created for customer {CustomerId}", order.Id, request.CustomerId);
+        return Result.Success(order.ToDto());
+    }
+}
+```
+
+### Queries (Read) — оптимизированные DTO проекции
+```csharp
+// MyApp.Application/Queries/GetOrder/GetOrderQuery.cs
+public record GetOrderQuery(OrderId Id) : IRequest<Result<OrderDetailDto>>;
+
+public class GetOrderHandler : IRequestHandler<GetOrderQuery, Result<OrderDetailDto>>
+{
+    private readonly IReadOnlyOrderRepository _orders; // отдельный read-only репозиторий
+
+    public GetOrderHandler(IReadOnlyOrderRepository orders) => _orders = orders;
+
+    public async Task<Result<OrderDetailDto>> Handle(GetOrderQuery request, CancellationToken ct)
+    {
+        var order = await _orders.GetDetailAsync(request.Id, ct);
+        return order == null ? Result.Failure<OrderDetailDto>(Error.NotFound) : Result.Success(order);
+    }
+}
+```
+
+### Pipeline Behaviors (Cross-cutting concerns)
+```csharp
+// Validation Behavior
+public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
+{
+    private readonly IEnumerable<IValidator<TRequest>> _validators;
+    public ValidationBehavior(IEnumerable<IValidator<TRequest>> validators) => _validators = validators;
+
+    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    {
+        var context = new ValidationContext<TRequest>(request);
+        var failures = _validators.Select(v => v.Validate(context))
+            .SelectMany(r => r.Errors).Where(f => f != null).ToList();
+
+        if (failures.Any()) throw new ValidationException(failures);
+        return await next(ct);
+    }
+}
+
+// Logging Behavior
+public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+{
+    private readonly ILogger<LoggingBehavior<TRequest, TResponse>> _log;
+    public LoggingBehavior(ILogger<LoggingBehavior<TRequest, TResponse>> log) => _log = log;
+
+    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    {
+        _log.LogInformation("Handling {RequestType}", typeof(TRequest).Name);
+        var response = await next(ct);
+        _log.LogInformation("Handled {RequestType}", typeof(TRequest).Name);
+        return response;
+    }
+}
+
+// Transaction Behavior (для команд)
+public class TransactionBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
+{
+    private readonly IUnitOfWork _uow;
+    public TransactionBehavior(IUnitOfWork uow) => _uow = uow;
+
+    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    {
+        if (request is not ICommand) return await next(ct); // только для команд
+
+        var strategy = _uow.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _uow.BeginTransactionAsync(ct);
+            try
+            {
+                var response = await next(ct);
+                await tx.CommitAsync(ct);
+                return response;
+            }
+            catch
+            {
+                await tx.RollbackAsync(ct);
+                throw;
+            }
+        });
+    }
+}
+```
+
+### Регистрация в DI
+```csharp
+// MyApp.Application/DependencyInjection.cs
+public static class ApplicationServiceExtensions
+{
+    public static IServiceCollection AddApplication(this IServiceCollection services)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(assembly));
+        services.AddValidatorsFromAssembly(assembly);
+
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(LoggingBehavior<,>));
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(TransactionBehavior<,>));
+
+        return services;
+    }
+}
+```
+
+---
+
+## 4. Infrastructure Layer
+
+### EF Core Configuration
+```csharp
+// MyApp.Infrastructure/Persistence/Configurations/OrderConfiguration.cs
+public class OrderConfiguration : IEntityTypeConfiguration<Order>
+{
+    public void Configure(EntityTypeBuilder<Order> builder)
+    {
+        builder.HasKey(o => o.Id);
+        builder.Property(o => o.Id).HasConversion(v => v.Value, v => new OrderId(v));
+        builder.Property(o => o.CustomerId).HasConversion(v => v.Value, v => new CustomerId(v));
+        builder.OwnsMany(o => o.Items, item =>
+        {
+            item.WithOwner().HasForeignKey("OrderId");
+            item.Property(i => i.ProductId).HasConversion(v => v.Value, v => new ProductId(v));
+        });
+        builder.Property(o => o.Status).HasConversion<string>();
+    }
+}
+```
+
+### DbContext
+```csharp
+// MyApp.Infrastructure/Persistence/AppDbContext.cs
+public class AppDbContext : DbContext, IUnitOfWork
+{
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<Customer> Customers => Set<Customer>();
+
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    protected override void OnModelCreating(ModelBuilder model)
+    {
+        model.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
+        base.OnModelCreating(model);
+    }
+
+    public async Task<int> SaveChangesAsync(CancellationToken ct = default)
+    {
+        // Dispatch domain events before save
+        var entities = ChangeTracker.Entries<BaseEntity>()
+            .Where(e => e.Entity.DomainEvents.Any()).Select(e => e.Entity).ToList();
+
+        var result = await base.SaveChangesAsync(ct);
+
+        foreach (var entity in entities)
+        {
+            var events = entity.DomainEvents.ToList();
+            entity.ClearDomainEvents();
+            // Publish events (через MediatR или отдельный publisher)
+        }
+        return result;
+    }
+}
+```
+
+### Repository Implementation
+```csharp
+// MyApp.Infrastructure/Persistence/Repositories/OrderRepository.cs
+public class OrderRepository : IOrderRepository
+{
+    private readonly AppDbContext _ctx;
+    public OrderRepository(AppDbContext ctx) => _ctx = ctx;
+
+    public async Task AddAsync(Order order, CancellationToken ct) => await _ctx.Orders.AddAsync(order, ct);
+    public Task<Order?> GetByIdAsync(OrderId id, CancellationToken ct) => _ctx.Orders.FindAsync([id], ct).AsTask();
+    public Task<Order?> GetWithItemsAsync(OrderId id, CancellationToken ct) =>
+        _ctx.Orders.Include(o => o.Items).FirstOrDefaultAsync(o => o.Id == id, ct);
+}
+
+// Read-only repository (AsNoTracking, проекции)
+public class ReadOnlyOrderRepository : IReadOnlyOrderRepository
+{
+    private readonly AppDbContext _ctx;
+    public ReadOnlyOrderRepository(AppDbContext ctx) => _ctx = ctx;
+
+    public async Task<OrderDetailDto?> GetDetailAsync(OrderId id, CancellationToken ct)
+        => await _ctx.Orders.AsNoTracking()
+            .Where(o => o.Id == id)
+            .Select(o => new OrderDetailDto(
+                o.Id, o.CustomerId, o.Status, o.Total,
+                o.Items.Select(i => new OrderItemDto(i.ProductId, i.Quantity, i.Price)).ToList()))
+            .FirstOrDefaultAsync(ct);
+}
+```
+
+---
+
+## 5. API Layer (Minimal APIs)
+
+### Endpoints
+```csharp
+// MyApp.Api/Endpoints/OrdersEndpoints.cs
+public static class OrdersEndpoints
+{
+    public static void MapOrdersEndpoints(this IEndpointRouteBuilder app)
+    {
+        var group = app.MapGroup("/api/orders").WithTags("Orders").RequireAuthorization();
+
+        group.MapGet("/", async (ISender sender, [AsParameters] GetOrdersQuery query) =>
+            await sender.Send(query))
+            .Produces<PagedResult<OrderSummaryDto>>();
+
+        group.MapGet("/{id}", async (OrderId id, ISender sender) =>
+        {
+            var result = await sender.Send(new GetOrderQuery(id));
+            return result.IsSuccess ? Results.Ok(result.Value) : Results.NotFound(result.Error);
+        })
+        .Produces<OrderDetailDto>()
+        .Produces(StatusCodes.Status404NotFound);
+
+        group.MapPost("/", async (CreateOrderCommand command, ISender sender) =>
+        {
+            var result = await sender.Send(command);
+            return result.IsSuccess
+                ? Results.Created($"/api/orders/{result.Value.Id}", result.Value)
+                : Results.BadRequest(result.Error);
+        })
+        .Produces<OrderDto>(StatusCodes.Status201Created)
+        .ProducesValidationProblem()
+        .AddEndpointFilter<ValidationFilter<CreateOrderCommand>>();
+    }
+}
+```
+
+### Global Error Handling
+```csharp
+// MyApp.Api/Middleware/ExceptionHandlingMiddleware.cs
+public class ExceptionHandlingMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<ExceptionHandlingMiddleware> _log;
+
+    public ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> log)
+        => (_next, _log) = (next, log);
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        try
+        {
+            await _next(context);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Unhandled exception");
+            await HandleExceptionAsync(context, ex);
+        }
+    }
+
+    private static async Task HandleExceptionAsync(HttpContext context, Exception ex)
+    {
+        var (status, error) = ex switch
+        {
+            ValidationException v => (StatusCodes.Status400BadRequest, new { Errors = v.Errors.Select(e => e.ErrorMessage) }),
+            NotFoundException => (StatusCodes.Status404NotFound, new { Message = ex.Message }),
+            DomainException d => (StatusCodes.Status400BadRequest, new { Code = d.Code, Message = ex.Message }),
+            _ => (StatusCodes.Status500InternalServerError, new { Message = "Internal server error" })
+        };
+
+        context.Response.StatusCode = status;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new { Error = error });
+    }
+}
+```
+
+### Program.cs (Composition Root)
+```csharp
+// MyApp.Api/Program.cs
+var builder = WebApplication.CreateBuilder(args);
+
+// Configuration
+builder.Configuration.AddUserSecrets<Program>(optional: true);
+
+// Services
+builder.Services.AddDomain();           // Domain services (если есть)
+builder.Services.AddApplication();      // MediatR, Validators, Behaviors
+builder.Services.AddInfrastructure(builder.Configuration); // EF Core, Repositories, External services
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new() { Title = "MyApp API", Version = "v1" });
+    c.AddSecurityDefinition("Bearer", new() { Type = SecuritySchemeType.Http, Scheme = "bearer" });
+});
+
+builder.Host.UseSerilog((ctx, cfg) => cfg.ReadFrom.Configuration(ctx.Configuration));
+
+var app = builder.Build();
+
+// Pipeline
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseSerilogRequestLogging();
+app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapOrdersEndpoints();
+app.MapProductsEndpoints();
+app.MapHealthChecks("/health");
+
+app.Run();
+```
+
+---
+
+## 6. Testing
+
+### Unit Tests (Domain/Application)
+```csharp
+// MyApp.UnitTests/Orders/CreateOrderTests.cs
+public class CreateOrderTests
+{
+    private readonly Mock<IOrderRepository> _orders = new();
+    private readonly Mock<IProductRepository> _products = new();
+    private readonly Mock<IUnitOfWork> _uow = new();
+    private readonly CreateOrderHandler _handler;
+
+    public CreateOrderTests()
+    {
+        _handler = new CreateOrderHandler(_orders.Object, _products.Object, _uow.Object, Mock.Of<ILogger<CreateOrderHandler>>());
+    }
+
+    [Fact]
+    public async Task Handle_ValidCommand_CreatesOrder()
+    {
+        // Arrange
+        var productId = ProductId.New();
+        _products.Setup(p => p.GetByIdAsync(productId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Product(productId, "Widget", 10.00m, 100));
+
+        var command = new CreateOrderCommand(CustomerId.New(), new[] { new OrderItemDto(productId, 2) });
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Items.Should().HaveCount(1);
+        _orders.Verify(o => o.AddAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()), Times.Once);
+        _uow.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+}
+```
+
+### Integration Tests (Testcontainers)
+```csharp
+// MyApp.IntegrationTests/OrdersEndpointsTests.cs
+public class OrdersEndpointsTests : IAsyncLifetime
+{
+    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder().Build();
+    private WebApplicationFactory<Program> _factory;
+    private HttpClient _client;
+
+    public async Task InitializeAsync()
+    {
+        await _db.StartAsync();
+        _factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(b => b.ConfigureServices(s =>
+            {
+                s.RemoveAll<DbContextOptions<AppDbContext>>();
+                s.AddDbContext<AppDbContext>(o => o.UseNpgsql(_db.GetConnectionString()));
+            }));
+        _client = _factory.CreateClient();
+        // Apply migrations
+        using var scope = _factory.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
+    }
+
+    [Fact]
+    public async Task CreateOrder_ReturnsCreated()
+    {
+        var cmd = new { CustomerId = Guid.NewGuid(), Items = new[] { new { ProductId = Guid.NewGuid(), Quantity = 1 } } };
+        var response = await _client.PostAsJsonAsync("/api/orders", cmd);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    public Task DisposeAsync() => _factory.DisposeAsync().AsTask();
+}
+```
+
+### Architecture Tests (NetArchTest)
+```csharp
+// MyApp.ArchitectureTests/LayeringTests.cs
+public class LayeringTests
+{
+    [Fact]
+    public void Domain_ShouldNotReference_ExternalProjects()
+    {
+        var result = Types.InAssembly(typeof(BaseEntity).Assembly)
+            .ShouldNot().HaveDependencyOn("MyApp.Application")
+            .And().ShouldNot().HaveDependencyOn("MyApp.Infrastructure")
+            .And().ShouldNot().HaveDependencyOn("MyApp.Api")
+            .GetResult();
+
+        result.IsSuccessful.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Application_ShouldNotReference_InfrastructureOrApi()
+    {
+        var result = Types.InAssembly(typeof(CreateOrderHandler).Assembly)
+            .ShouldNot().HaveDependencyOn("MyApp.Infrastructure")
+            .And().ShouldNot().HaveDependencyOn("MyApp.Api")
+            .GetResult();
+
+        result.IsSuccessful.Should().BeTrue();
+    }
+}
+```
+
+---
+
+## 7. Docker & Deployment
+
+### Dockerfile
+```dockerfile
+# Build stage
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY ["MyApp.sln", "."]
+COPY ["src/MyApp.Api/MyApp.Api.csproj", "src/MyApp.Api/"]
+COPY ["src/MyApp.Application/MyApp.Application.csproj", "src/MyApp.Application/"]
+COPY ["src/MyApp.Domain/MyApp.Domain.csproj", "src/MyApp.Domain/"]
+COPY ["src/MyApp.Infrastructure/MyApp.Infrastructure.csproj", "src/MyApp.Infrastructure/"]
+RUN dotnet restore "MyApp.sln"
+
+COPY . .
+WORKDIR "/src/src/MyApp.Api"
+RUN dotnet publish -c Release -o /app/publish --no-restore
+
+# Runtime stage
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+COPY --from=build /app/publish .
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "MyApp.Api.dll"]
+```
+
+### docker-compose.yml
+```yaml
+version: '3.8'
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__Default=Host=db;Database=myapp;Username=postgres;Password=postgres
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=myapp
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+```
+
+---
+
+## 8. Практические задания
+
+1. **Full Feature**: добавьте функционал "Отмена заказа" — Command, Handler, Validator, Endpoint, тесты
+2. **Idempotency**: реализуйте идемпотентность для POST эндпоинтов (Idempotency-Key header)
+3. **Background Jobs**: добавьте Hangfire / Quartz для фоновых задач (отправка email, очистка)
+4. **API Versioning**: настройте версионирование API (URL / Header) с `Asp.Versioning`
+5. **Observability**: добавьте OpenTelemetry трассировку, метрики (Prometheus), дашборды Grafana
+
+---
+
+## 9. Чек-лист готовности к продакшену
+
+| Категория | Проверки |
+|-----------|----------|
+| **Security** | HTTPS, CORS, Rate limiting, Auth/Z, Input validation, Secrets в Key Vault |
+| **Reliability** | Health checks, Graceful shutdown, Retry policies, Circuit breaker, Timeouts |
+| **Observability** | Structured logs, Correlation IDs, Metrics (latency, errors, throughput), Distributed tracing |
+| **Performance** | Connection pooling, Caching, Pagination, Async all the way, DB indexes |
+| **Data** | Migrations applied, Backup strategy, PII encryption, GDPR compliance |
+| **Testing** | Unit > 80%, Integration для critical paths, Contract tests, Load tests |
+| **Deployment** | Zero-downtime deploy, Rollback plan, Feature flags, DB migration strategy |
+
+---
+
+## 10. Полезные ресурсы
+
+- **Clean Architecture** — https://github.com/jasontaylordev/CleanArchitecture
+- **Vertical Slice Architecture** — https://www.jimmybogard.com/vertical-slice-architecture/
+- **MediatR** — https://github.com/jbogard/MediatR
+- **FluentValidation** — https://docs.fluentvalidation.net/
+- **Testcontainers** — https://dotnet.testcontainers.org/
+- **NetArchTest** — https://github.com/BenMorris/NetArchTest
+- **Asp.Versioning** — https://github.com/dotnet/aspnet-api-versioning
+- **OpenTelemetry .NET** — https://opentelemetry.io/docs/instrumentation/net/
+- **Book: "Clean Architecture" by Robert Martin**
+- **Book: "Enterprise Integration Patterns" by Gregor Hohpe**

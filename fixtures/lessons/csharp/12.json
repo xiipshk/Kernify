@@ -1,0 +1,356 @@
+{
+  "title": "Урок 12: Типовая система",
+  "slug": "urok-12-async-await,-task,-valuetask,-cancellationtoken",
+  "short_description": "State machine, ConfigureAwait, ValueTask, CancellationToken, IAsyncEnumerable",
+  "goals": [
+    "Понимать основы: State machine, ConfigureAwait, ValueTask, CancellationToken, IAsyncEnumerable",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 12: Типовая система C# — value/reference types, nullable, boxing/unboxing, struct/record/class, immutability"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать разницу между value types и reference types",
+        "Работать с nullable типами и операторами ?. ??",
+        "Понимать boxing/unboxing и их влияние на производительность",
+        "Выбирать между struct, record и class",
+        "Применять паттерны неизменяемости (immutability)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Value Types vs Reference Types"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Value Types (struct, enum, примитивы)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Хранятся в стеке (обычно), копируются по значению\nint a = 42;\nint b = a;        // b — копия a\nb = 100;\nConsole.WriteLine(a); // 42 (не изменилось)\n\nstruct Point { public int X, Y; }\nvar p1 = new Point { X = 1, Y = 2 };\nvar p2 = p1;      // полная копия структуры\np2.X = 99;\nConsole.WriteLine(p1.X); // 1"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Reference Types (class, interface, delegate, array, string)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Хранятся в куче, переменная — ссылка\nvar list1 = new List<int> { 1, 2 };\nvar list2 = list1; // list2 ссылается на ТОТ ЖЕ объект\nlist2.Add(3);\nConsole.WriteLine(list1.Count); // 3 (изменилось!)\n\n// string — reference type, но immutable (ведёт себя как value type)\nstring s1 = \"hello\";\nstring s2 = s1;\ns2 = \"world\"; // создаёт НОВУЮ строку\nConsole.WriteLine(s1); // \"hello\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Таблица сравнения"
+    },
+    {
+      "type": "table",
+      "content": "| Характеристика | Value Type | Reference Type |\n|----------------|------------|----------------|\n| Хранение | Стек (обычно) | Куча |\n| Присваивание | Копия данных | Копия ссылки |\n| Null по умолчанию | Нет (кроме nullable) | Да |\n| Наследование | Нет (sealed) | Да |\n| Примеры | int, bool, struct, enum | class, string, array, delegate |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Nullable Types (Nullable Value Types)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: optional chaining**\n\n**Что делает:** ?. безопасный доступ к вложенным свойствам\n\n**Зачем нужно:** Предотвращает ошибки 'Cannot read property of undefined', короче чем &&\n\n**Как работает:** user?.profile?.name вместо user && user.profile && user.profile.name"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Два эквивалентных способа\nint? age = null;        // синтаксический сахар\nNullable<int> age2 = null; // полная форма\n\n// Проверка\nif (age.HasValue) { Console.WriteLine(age.Value); }\nif (age is not null) { Console.WriteLine(age.Value); }\n\n// Операторы\nint? x = null;\nint y = x ?? 42;           // null-coalescing: 42\nint z = x.GetValueOrDefault(); // 0 (default(int))\n\n// Null-conditional operator\nPerson? person = null;\nConsole.WriteLine(person?.Name?.Length); // null, не исключение"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Nullable Reference Types (C# 8+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Включить в .csproj: <Nullable>enable</Nullable>\n\n#nullable enable\nstring? nullableString = null;  // может быть null\nstring notNullString = \"hello\"; // не может быть null (предупреждение компилятора)\n\nvoid PrintLength(string s) => Console.WriteLine(s.Length);\n// PrintLength(nullableString); // Warning: possible null reference\nPrintLength(nullableString!);   // ! — \"я знаю, что не null\" (null-forgiving)\n#nullable restore"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Boxing и Unboxing"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что происходит"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "int value = 42;\nobject boxed = value;    // BOXING: int → object (аллокация в куче!)\nint unboxed = (int)boxed; // UNBOXING: object → int (проверка типа + копия)\n\n// С générics — избегаем boxing\nList<int> list = new();  // нет boxing\nlist.Add(42);            // напрямую в массиве int[]\n\n// Плохо: boxing в цикле\nobject sum = 0;\nfor (int i = 0; i < 1000; i++)\n    sum = (int)sum + i;  // boxing/unboxing каждую итерацию!\n\n// Хорошо: используйте примитив или generic\nint sum2 = 0;\nfor (int i = 0; i < 1000; i++)\n    sum2 += i;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда происходит boxing"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// 1. Присваивание value type в object/interface\nobject o = 42;\nIComparable c = 42;\n\n// 2. Вызов метода object (ToString, GetHashCode, Equals)\nint x = 42;\nConsole.WriteLine(x.ToString()); // boxing! (вызывает object.ToString)\n\n// 3. В не-generic коллекциях\nArrayList list = new();\nlist.Add(42); // boxing!\n\n// 4. String interpolation/concat с value types\nConsole.WriteLine(\"Value: \" + 42); // boxing!\nConsole.WriteLine($\"Value: {42}\"); // тоже boxing (вызывает ToString)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Struct vs Record vs Class"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Class (Reference Type)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "class Person\n{\n    public string Name { get; set; }\n    public int Age { get; set; }\n\n    // Референс-семантика\n    public override bool Equals(object? obj) =>\n        obj is Person p && p.Name == Name && p.Age == Age;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Struct (Value Type)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// C# 10+: record struct\nreadonly record struct Point(int X, int Y);\n\n// Традиционный struct\nstruct Rectangle\n{\n    public int Width, Height;\n    public readonly int Area => Width * Height; // readonly метод\n\n    // struct не может иметь параметризованный конструктор без параметров (до C# 10)\n    // но может иметь static фабрики\n    public static Rectangle Square(int size) => new() { Width = size, Height = size };\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Record (Reference Type с value-семантикой равенства)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: records**\n\n**Что делает:** Неизменяемые ссылочные типы с value-семантикой (C# 9+)\n\n**Зачем нужно:** Value equality, with-expressions, деконструкция, неизменяемость — идеально для DTO\n\n**Как работает:** public record User(string Name, int Age); var u = new User(\"Alex\", 25);"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Record class (reference type)\nrecord Person(string Name, int Age);\n\n// Record struct (value type) — C# 10+\nreadonly record struct Point(int X, int Y);\n\n// Инициализация с with-выражением (immutability)\nvar p1 = new Person(\"Alice\", 30);\nvar p2 = p1 with { Age = 31 }; // новый объект, Name скопирован\n\n// Positional records — деконструкция\nvar (name, age) = p1;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда что использовать"
+    },
+    {
+      "type": "table",
+      "content": "| Сценарий | Выбор |\n|----------|-------|\n| Данные, передаваемые по значению, малые (< 16 байт) | `struct` / `record struct` |\n| DTO, сущности с идентичностью по данным | `record` / `record struct` |\n| Бизнес-объекты с поведением, изменяемое состояние | `class` |\n| Полиморфизм, наследование | `class` / `record` (record может наследовать record) |\n| Высокая производительность, массивы | `struct` / `record struct` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Immutability (Неизменяемость)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Init-only свойства (C# 9+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: records with with-expression**\n\n**Что делает:** Создание копии record с изменением части полей\n\n**Зачем нужно:** Неизменяемость + удобное обновление, вместо ручного копирования полей\n\n**Как работает:** var updated = user with { Age = 26 }; // копия с изменённым Age"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "class ImmutablePerson\n{\n    public string Name { get; init; }\n    public int Age { get; init; }\n\n    // Можно задать только в инициализаторе\n    var p = new ImmutablePerson { Name = \"Alice\", Age = 30 };\n    // p.Age = 31; // Ошибка компиляции!\n}\n\n// With-выражения работают с init-only (C# 10+ для class)\nvar p2 = p with { Age = 31 };"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Readonly struct"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "readonly struct ImmutablePoint\n{\n    public int X { get; }\n    public int Y { get; }\n\n    public ImmutablePoint(int x, int y) => (X, Y) = (x, y);\n\n    // Все методы неявно readonly\n    public double DistanceFromOrigin() => Math.Sqrt(X * X + Y * Y);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Record — встроенная неизменяемость"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "record User(string Name, string Email)\n{\n    // Можно добавить вычисляемые свойства\n    public string Domain => Email.Split('@')[1];\n\n    // Init-only setter для изменения через with\n    public string? Phone { get; init; }\n}\n\nvar u1 = new User(\"Alice\", \"alice@example.com\");\nvar u2 = u1 with { Phone = \"+1234567890\" }; // новый объект"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Frozen Collections (C# 10+ / .NET 8)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Collections.Frozen;\n\n// Оптимизированы для чтения, быстрый поиск\nFrozenSet<int> frozen = [1, 2, 3, 4, 5].ToFrozenSet();\nFrozenDictionary<string, int> dict = new Dictionary<string, int>\n{\n    [\"a\"] = 1, [\"b\"] = 2\n}.ToFrozenDictionary();\n\nConsole.WriteLine(frozen.Contains(3)); // O(1), очень быстро"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Ref Struct и Stack-Only Types (C# 7.2+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Только стек, не может быть полем класса, в async, в boxed\nref struct SpanWrapper\n{\n    public Span<int> Span { get; }\n\n    public SpanWrapper(Span<int> span) => Span = span;\n\n    // Нельзя: public List<SpanWrapper> list; // ошибка!\n}\n\n// Span<T> — пример ref struct\nvoid Process(Span<int> data)\n{\n    // Работа с памятью без аллокаций\n    for (int i = 0; i < data.Length; i++)\n        data[i] *= 2;\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Boxing detector**: напишите анализатор (Roslyn analyzer), который находит неявный boxing в коде\n2. **Immutable DTO**: создайте record для API ответа с вложенными объектами, покажите with-выражения\n3. **Performance benchmark**: сравните `List<int>` vs `List<object>` с 1 млн элементов (память, скорость)\n4. **Nullable migration**: возьмите класс с `string Name` и сделайте его nullable-aware с правильными аннотациями\n5. **Struct vs Class**: создайте `struct Point` и `class PointClass`, измерьте память для массива 10 млн точек\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `struct` с большими данными (> 16 байт) | `class` или `record` |\n| `class` для DTO без поведения | `record` / `record struct` |\n| Мутация struct через свойство | `readonly struct` или `with` |\n| Игнорирование nullable warnings | Включите `<Nullable>enable</Nullable>` |\n| `object` вместо generic в коллекциях | `List<T>`, `Dictionary<TKey, TValue>` |\n| Boxing в горячем пути (циклы, hot path) | Примитивы, `Span<T>`, generic |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**C# Language Reference: Value Types** — https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/value-types",
+        "**C# Language Reference: Nullable Types** — https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/nullable-value-types",
+        "**Records in C#** — https://learn.microsoft.com/dotnet/csharp/whats-new/tutorials/records",
+        "**Nullable Reference Types** — https://learn.microsoft.com/dotnet/csharp/nullable-references",
+        "**Performance: Boxing and Unboxing** — https://learn.microsoft.com/dotnet/csharp/programming-guide/types/boxing-and-unboxing",
+        "**Frozen Collections** — https://learn.microsoft.com/dotnet/api/system.collections.frozen"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Async/Await, Task, ValueTask, CancellationToken",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Async/Await, Task, ValueTask, CancellationToken' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C#",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c# на GitHub",
+    "Конференции и митапы по C#"
+  ],
+  "key_takeaways": [
+    "Главная идея: State machine, ConfigureAwait, ValueTask, CancellationToken, IAsyncEnumerable — это фундамент для LINQ, Generics, Delegates/Events.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "csharp",
+  "lesson_order": 12,
+  "name_en": "Lesson: Async/Await, Task, ValueTask, CancellationToken",
+  "short_description_en": "Learn Async/Await, Task, ValueTask, CancellationToken in C# with detailed explanations and examples"
+}

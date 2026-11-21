@@ -1,0 +1,500 @@
+# Урок 13: Продвинутые типы (Advanced Types)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Использовать Newtype pattern для типовобезопасности
+- Работать с алиасами типов (`type`)
+- Понимать Never type (`!`) и его применение
+- Использовать Dynamically Sized Types (DST): `str`, `[T]`, `dyn Trait`
+- Работать с `Box<dyn Trait>`, `Rc<dyn Trait>`, `Arc<dyn Trait>`
+- Понимать Variance (ковариантность, контрвариантность, инвариантность)
+- Использовать PhantomData для marker types
+- Работать с Function Pointers и Function Items
+
+---
+
+## 1. Newtype Pattern (Обёртки для типовобезопасности)
+
+### Базовый пример
+```rust
+// Проблема: easy to mix up
+fn set_age(age: u32) {}
+fn set_id(id: u32) {}
+set_age(42); // Ошибка не поймается
+
+// Решение: Newtype
+struct UserId(u64);
+struct Age(u8);
+
+fn set_age(age: Age) {}
+fn set_id(id: UserId) {}
+
+fn main() {
+    let id = UserId(42);
+    let age = Age(30);
+    set_id(id);
+    set_age(age);
+    // set_id(age); // ОШИБКА: mismatched types
+}
+```
+
+### Реализация трейтов для Newtype
+```rust
+use std::ops::{Add, Deref};
+
+struct Meters(f64);
+
+impl Deref for Meters {
+    type Target = f64;
+    fn deref(&self) -> &f64 { &self.0 }
+}
+
+impl Add for Meters {
+    type Output = Meters;
+    fn add(self, other: Meters) -> Meters {
+        Meters(self.0 + other.0)
+    }
+}
+
+fn main() {
+    let a = Meters(10.0);
+    let b = Meters(5.0);
+    let c = a + b; // Meters(15.0)
+    println!("{}", *c); // Deref -> f64
+}
+```
+
+### Tuple struct vs struct с одним полем
+```rust
+// Tuple — удобно для Deref
+struct Wrapper(T);
+
+// Named — удобно для документации и расширения
+struct Wrapper { value: T }
+```
+
+---
+
+## 2. Type Aliases (Алиасы типов)
+
+```rust
+type Kilometers = i64;
+type Result<T> = std::result::Result<T, MyError>;
+
+// Упрощение сложных типов
+type BoxedCallback = Box<dyn FnOnce() + Send + 'static>;
+type Thunk = Box<dyn FnOnce() + Send + 'static>;
+
+// В сигнатурах
+fn takes_long_type(f: Thunk) {}
+fn returns_long_type() -> Thunk { Box::new(|| {}) }
+```
+
+**Важно:** Type aliases — НЕ создают новые типы, просто альтернативные имена!
+```rust
+type Meters = u32;
+fn takes_meters(m: Meters) {}
+fn takes_u32(u: u32) {}
+
+fn main() {
+    takes_meters(5);
+    takes_u32(5); // Оба работают — это ОДИН тип!
+}
+```
+
+---
+
+## 3. Never Type (`!`)
+
+### Функции, которые никогда не возвращаются
+```rust
+fn panic_fn() -> ! {
+    panic!("Never returns!");
+}
+
+fn exit_fn() -> ! {
+    std::process::exit(0);
+}
+
+fn infinite_loop() -> ! {
+    loop {}
+}
+```
+
+### Использование в `match`
+```rust
+fn get_or_default(opt: Option<i32>) -> i32 {
+    match opt {
+        Some(v) => v,
+        None => panic_fn(), // Тип ! совместим с любым
+    }
+}
+```
+
+### `!` как тип ошибки (infallible)
+```rust
+use std::convert::Infallible;
+
+fn never_fails() -> Result<i32, Infallible> {
+    Ok(42)
+}
+
+fn main() {
+    let x: i32 = never_fails().unwrap(); // Гарантированно Ok
+}
+```
+
+---
+
+## 4. Dynamically Sized Types (DST)
+
+### Что такое DST
+Типы, размер которых известен только в runtime:
+- `str` — не `&str`, а сам `str` (unsized)
+- `[T]` — срез, не `&[T]`
+- `dyn Trait` — trait object
+
+### Работа с DST — только через указатели
+```rust
+// НЕЛЬЗЯ:
+// let s: str = * "hello"; // ошибка: size not known
+// let arr: [i32] = [1,2,3]; // ошибка
+
+// МОЖНО через указатели:
+let s: &str = "hello";
+let boxed_str: Box<str> = Box::from("hello");
+let rc_str: std::rc::Rc<str> = std::rc::Rc::from("hello");
+
+let slice: &[i32] = &[1,2,3];
+let boxed_slice: Box<[i32]> = Box::new([1,2,3]);
+
+let trait_obj: &dyn std::fmt::Debug = &42;
+let boxed_trait: Box<dyn std::fmt::Debug> = Box::new(42);
+```
+
+### `Sized` trait bound
+```rust
+// По умолчанию все generic параметры: T: Sized
+fn generic<T>(t: T) {} // T: Sized подразумевается
+
+// Чтобы разрешить DST:
+fn generic_unsized<T: ?Sized>(t: &T) {}
+// Теперь можно: generic_unsized("hello") — &str
+```
+
+### Кастомные DST (редко)
+```rust
+struct MyDST {
+    len: usize,
+    data: [u8], // unsized tail
+}
+
+// Использование только через Box/MyDST, Rc<MyDST> и т.д.
+```
+
+---
+
+## 5. Variance (Вариантность)
+
+### Ковариантность (Covariance) — `&T`, `Box<T>`, `Vec<T>`
+```rust
+// Если U подтип T, то &U подтип &T
+fn take_ref(s: &str) {}
+let s: &'static str = "hello";
+take_ref(s); // OK: &'static str -> &str
+```
+
+### Контрвариантность (Contravariance) — `Fn(T)`
+```rust
+// Если U подтип T, то Fn(T) подтип Fn(U)
+fn call_with_static(f: fn(&'static str)) {}
+fn takes_any(s: &str) {}
+call_with_static(takes_any); // OK: fn(&str) -> fn(&'static str)
+```
+
+### Инвариантность (Invariance) — `&mut T`, `Cell<T>`, `RefCell<T>`
+```rust
+// &mut T инвариантен — НИКАКИХ приведений!
+fn take_mut(s: &mut String) {}
+let mut s = String::new();
+// take_mut(&mut s as &mut dyn Any); // ОШИБКА!
+```
+
+### Таблица вариативности
+| Тип | Вариантность по T |
+|-----|-------------------|
+| `&T`, `&mut T` (shared) | Ковариантен |
+| `&mut T` | Инвариантен |
+| `Box<T>`, `Vec<T>`, `Rc<T>`, `Arc<T>` | Ковариантны |
+| `Cell<T>`, `RefCell<T>`, `UnsafeCell<T>` | Инвариантны |
+| `fn(T) -> U` | Контрвариантен по T, ковариантен по U |
+| `*const T` | Ковариантен |
+| `*mut T` | Инвариантен |
+
+---
+
+## 6. `PhantomData<T>` — маркер владения
+
+### Когда нужно
+```rust
+use std::marker::PhantomData;
+
+// Структура не хранит T, но должна вести себя так, будто хранит
+struct MyIter<'a, T> {
+    ptr: *const T,
+    _marker: PhantomData<&'a T>, // Указывает на заимствование &'a T
+}
+
+impl<'a, T> Iterator for MyIter<'a, T> {
+    type Item = &'a T;
+    fn next(&mut self) -> Option<&'a T> { /* unsafe */ }
+}
+```
+
+### Основные паттерны
+```rust
+// Владеет T (как Box<T>)
+PhantomData<T>
+
+// Заимствует &T (как &T)
+PhantomData<&T>
+
+// Заимствует &mut T (как &mut T)
+PhantomData<&mut T>
+
+// Send/Sync маркеры
+PhantomData<*const T> // не Send, не Sync
+PhantomData<*mut T>   // не Send, не Sync
+```
+
+### Пример: Typed Builder
+```rust
+use std::marker::PhantomData;
+
+struct Builder<HasName, HasAge> {
+    name: Option<String>,
+    age: Option<u32>,
+    _marker: PhantomData<(HasName, HasAge)>,
+}
+
+struct Yes;
+struct No;
+
+impl Builder<No, No> {
+    fn new() -> Self {
+        Builder { name: None, age: None, _marker: PhantomData }
+    }
+}
+
+impl<HasAge> Builder<No, HasAge> {
+    fn name(mut self, n: String) -> Builder<Yes, HasAge> {
+        self.name = Some(n);
+        Builder { name: self.name, age: self.age, _marker: PhantomData }
+    }
+}
+
+impl<HasName> Builder<HasName, No> {
+    fn age(mut self, a: u32) -> Builder<HasName, Yes> {
+        self.age = Some(a);
+        Builder { name: self.name, age: self.age, _marker: PhantomData }
+    }
+}
+
+impl Builder<Yes, Yes> {
+    fn build(self) -> User {
+        User { name: self.name.unwrap(), age: self.age.unwrap() }
+    }
+}
+```
+
+---
+
+## 7. Function Pointers vs Function Items
+
+### Function Item (уникальный тип для каждой функции)
+```rust
+fn add(a: i32, b: i32) -> i32 { a + b }
+fn sub(a: i32, b: i32) -> i32 { a - b }
+
+// Тип add — уникальный zero-sized type
+// Тип sub — другой уникальный тип
+```
+
+### Function Pointer (`fn(Args) -> Ret`)
+```rust
+// Приведение function item -> function pointer
+let op: fn(i32, i32) -> i32 = add; // Коэрция
+let ops = [add, sub]; // Массив function pointers
+```
+
+### Разница
+| Аспект | Function Item | Function Pointer |
+|--------|---------------|------------------|
+| Тип | Уникальный для каждой fn | `fn(Args) -> Ret` |
+| Размер | 0 (ZST) | 1 указатель (8 байт) |
+| Generic | Может быть generic | Не может быть generic |
+| Capture | Не может захватывать | Не может захватывать |
+| Инлайнинг | Всегда | Зависит от оптимизатора |
+
+### Использование в generics
+```rust
+// Принимает function pointer
+fn apply_ptr(f: fn(i32) -> i32, x: i32) -> i32 { f(x) }
+
+// Принимает любой callable (generic)
+fn apply_generic<F>(f: F, x: i32) -> i32
+where F: Fn(i32) -> i32
+{ f(x) }
+
+fn main() {
+    apply_ptr(add, 5); // OK
+    apply_generic(add, 5); // OK
+    apply_generic(|x| x * 2, 5); // OK (closure)
+    // apply_ptr(|x| x * 2, 5); // ОШИБКА: closure не fn pointer
+}
+```
+
+---
+
+## 8. Опасные (unsafe) типы
+
+### `*const T` / `*mut T` — raw pointers
+```rust
+let x = 42;
+let raw_const: *const i32 = &x;
+let raw_mut: *mut i32 = &mut x;
+
+// Разыменование только в unsafe
+unsafe {
+    println!("{}", *raw_const);
+    *raw_mut = 100;
+}
+```
+
+### `NonNull<T>` — ненулевой указатель (оптимизация Option)
+```rust
+use std::ptr::NonNull;
+
+let ptr = NonNull::new(Box::into_raw(Box::new(42))).unwrap();
+// Option<NonNull<T>> = 1 слово (null pointer optimization)
+```
+
+---
+
+## 9. Практические упражнения
+
+### Упражнение 1: Newtype для валидации
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Email(String);
+
+impl Email {
+    fn new(s: String) -> Result<Self, String> {
+        if s.contains('@') && s.contains('.') {
+            Ok(Email(s))
+        } else { Err("Invalid email".into()) }
+    }
+    fn as_str(&self) -> &str { &self.0 }
+}
+
+fn send_email(to: Email) { println!("Sending to {}", to.as_str()); }
+
+fn main() {
+    let email = Email::new("test@example.com".into()).unwrap();
+    send_email(email);
+    // send_email(Email::new("invalid".into()).unwrap()); // Err
+}
+```
+
+### Упражнение 2: DST в trait objects
+```rust
+trait Draw {
+    fn draw(&self);
+}
+
+struct Circle { r: f64 }
+struct Square { s: f64 }
+
+impl Draw for Circle { fn draw(&self) { println!("Circle {}", self.r); } }
+impl Draw for Square { fn draw(&self) { println!("Square {}", self.s); } }
+
+fn main() {
+    let shapes: Vec<Box<dyn Draw>> = vec![
+        Box::new(Circle { r: 5.0 }),
+        Box::new(Square { s: 3.0 }),
+    ];
+    for s in shapes { s.draw(); }
+}
+```
+
+### Упражнение 3: PhantomData для FFI wrapper
+```rust
+use std::marker::PhantomData;
+
+struct Handle<T> {
+    ptr: *mut std::ffi::c_void,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> Handle<T> {
+    unsafe fn from_raw(ptr: *mut std::ffi::c_void) -> Self {
+        Handle { ptr, _phantom: PhantomData }
+    }
+    fn as_ptr(&self) -> *mut std::ffi::c_void { self.ptr }
+}
+
+// Handle<T> ведёт себя так, будто владеет T
+```
+
+---
+
+## 10. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `type alias not allowed here` | Алиас в недопустимом месте | Используйте `struct` или переместите alias |
+| `the size for values of type T cannot be known` | DST без указателя | Используйте `Box<T>`, `&T`, `Rc<T>` |
+| `expected fn pointer, found fn item` | Замыкание вместо fn pointer | Используйте generic `F: Fn(...)` или приведите `as fn(...)` |
+| `PhantomData` не влияет на variance | Неправильный маркер | Выберите `PhantomData<T>`, `&T`, `&mut T`, `*const T` правильно |
+| `invariance` ошибка с `&mut` | Попытка covariance для &mut | Измените дизайн: используйте `&T` или `Cell`/`RefCell` |
+
+---
+
+## 11. Шпаргалка: Advanced Types
+
+| Конструкция | Назначение | Создаёт новый тип? |
+|-------------|------------|-------------------|
+| `struct Foo(T)` | Newtype | Да |
+| `type Foo = T` | Алиас | Нет |
+| `!` | Never (diverging) | Примитив |
+| `dyn Trait` | Trait object (DST) | Нет (unsized) |
+| `PhantomData<T>` | Marker для variance/drop | Нет (ZST) |
+| `fn(...) -> ...` | Function pointer | Нет (примитив) |
+
+---
+
+## 12. Полезные ресурсы
+
+- **The Book — Advanced Types**: https://doc.rust-lang.org/book/ch19-04-advanced-types.html
+- **Rustonomicon — Variance**: https://doc.rust-lang.org/nomicon/subtyping.html
+- **PhantomData**: https://doc.rust-lang.org/std/marker/struct.PhantomData.html
+- **DST**: https://doc.rust-lang.org/reference/dynamically-sized-types.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- Newtype pattern для типовобезопасности и реализации трейтов
+- Type aliases — только синтаксический сахар
+- Never type `!` для diverging функций и infallible Result
+- DST: `str`, `[T]`, `dyn Trait` — работа только через указатели
+- `?Sized` bound для generic над DST
+- Variance: ковариантность, контрвариантность, инвариантность
+- `PhantomData<T>` — маркер для variance, dropck, Send/Sync
+- Function items vs function pointers
+- Raw pointers и `NonNull<T>`
+
+---
+
+**Следующий урок:** Дженерики и трейты продвинуто (`14_Generics_Traits.txt`)

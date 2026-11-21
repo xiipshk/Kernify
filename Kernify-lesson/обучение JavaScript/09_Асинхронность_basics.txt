@@ -1,0 +1,467 @@
+# Урок 9: Асинхронность — основы
+
+## Цели урока
+- Понять, почему JavaScript однопоточен и как работает Event Loop
+- Научиться работать с Promise: создание, цепочки, обработка ошибок
+- Освоить async/await — синтаксический сахар над промисами
+- Разобраться с параллельным и последовательным выполнением
+- Понять микрозадачи и макрозадачи
+
+---
+
+## Почему асинхронность?
+
+JavaScript — **однопоточный** язык. Длительные операции (сеть, таймеры, файлы) блокировали бы поток.
+
+```javascript
+// Синхронно — блокирует
+const data = fetchSync('/api/users'); // страница замерзла до ответа
+
+// Асинхронно — не блокирует
+fetch('/api/users').then(data => console.log(data));
+console.log('Этот код выполнится СРАЗУ!');
+```
+
+Браузер/Node.js используют **Event Loop** — цикл обработки задач.
+
+---
+
+## Event Loop (упрощённо)
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Call Stack                       │
+│  (выполняет синхронный код, функции, frame'ы)       │
+└─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│                  Microtask Queue                    │
+│  (Promise .then/.catch/.finally, queueMicrotask)    │
+│  → ВСЕ выполняются перед следующим макротаском      │
+└─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│                  Macrotask Queue                    │
+│  (setTimeout, setInterval, I/O, UI rendering,      │
+│   postMessage, setImmediate (Node.js))              │
+│  → ОДИН макрозадач за тик, потом снова микрозадачи  │
+└─────────────────────────────────────────────────────┘
+```
+
+**Порядок выполнения в одном тике:**
+1. Весь синхронный код (Call Stack)
+2. **Все** микрозадачи (пока очередь не пуста)
+3. Один макрозадач
+4. Рендер (если браузер)
+5. Повторять
+
+---
+
+## Таймеры — макрозадачи
+
+```javascript
+// setTimeout — макрозадач
+console.log('1');
+setTimeout(() => console.log('2'), 0);
+console.log('3');
+
+// Вывод: 1, 3, 2
+// '2' попадает в macrotask queue, выполняется после микрозадач
+```
+
+```javascript
+// setInterval — повторяющийся макрозадач
+const id = setInterval(() => console.log('tick'), 1000);
+clearInterval(id); // остановка
+
+// requestAnimationFrame — перед рендером (не макрозадач, не микрозадач)
+// для анимаций
+function animate() {
+  // обновление
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+```
+
+---
+
+## Promise — обещание результата
+
+```javascript
+// Состояния: pending → fulfilled (resolved) / rejected
+
+const promise = new Promise((resolve, reject) => {
+  // executor — выполняется СРАЗУ, синхронно
+  setTimeout(() => {
+    const ok = Math.random() > 0.5;
+    if (ok) resolve('Успех!');
+    else reject(new Error('Ошибка'));
+  }, 1000);
+});
+
+promise
+  .then(value => console.log(value))      // fulfilled
+  .catch(err => console.error(err))       // rejected
+  .finally(() => console.log('Готово'));  // всегда
+```
+
+### Статические методы Promise
+
+```javascript
+// Успешный промис
+Promise.resolve(42);           // Promise<42>
+Promise.resolve(Promise.resolve(42)); // распаковывает
+
+// Ошибочный промис
+Promise.reject(new Error('oops'));
+
+// Параллельное выполнение — ждёт ВСЕ
+Promise.all([
+  fetch('/api/1'),
+  fetch('/api/2'),
+  fetch('/api/3')
+]).then(([r1, r2, r3]) => ...);
+
+// Promise.allSettled — не падает, если один упал (ES2020)
+const results = await Promise.allSettled(promises);
+results.forEach(r => {
+  if (r.status === 'fulfilled') console.log(r.value);
+  else console.error(r.reason);
+});
+
+// Promise.race — первый завершившийся (успех или ошибка)
+Promise.race([fetch('/api'), timeout(5000)]);
+
+// Promise.any — первый УСПЕШНЫЙ (ES2021)
+Promise.any([fetch('/slow'), fetch('/fast')]); // берёт /fast
+```
+
+---
+
+## Цепочки промисов (Chaining)
+
+```javascript
+fetch('/api/user')
+  .then(response => response.json())     // возвращает Promise
+  .then(user => fetch(`/api/posts/${user.id}`))
+  .then(response => response.json())
+  .then(posts => console.log(posts))
+  .catch(err => console.error('Ошибка:', err));
+
+// Возврат значения → оборачивается в Promise.resolve
+Promise.resolve(1)
+  .then(x => x + 1)      // 2
+  .then(x => x * 2)      // 4
+  .then(x => Promise.resolve(x + 1)) // 5
+  .then(console.log);    // 5
+
+// Возврат промиса → распаковывается
+Promise.resolve(1)
+  .then(x => Promise.resolve(x + 1))
+  .then(console.log);    // 2
+```
+
+### Обработка ошибок в цепочке
+
+```javascript
+Promise.resolve(1)
+  .then(x => { throw new Error('oops'); }) // rejected
+  .then(x => console.log(x))               // ПРОПУЩЕН
+  .catch(err => {
+    console.error(err); // поймал
+    return 'recovered'; // восстановление! следующая цепочка получает это
+  })
+  .then(x => console.log(x)); // 'recovered'
+
+// catch в середине
+Promise.resolve(1)
+  .then(x => { throw new Error('oops'); })
+  .catch(err => 'fallback')
+  .then(x => console.log(x)); // 'fallback' — цепочка продолжается
+```
+
+---
+
+## async / await (ES2017)
+
+Синтаксический сахар — код выглядит синхронно, но работает асинхронно.
+
+```javascript
+async function fetchUser(id) {
+  // await ждёт разрешения промиса (не блокирует поток!)
+  const response = await fetch(`/api/users/${id}`);
+  const user = await response.json();
+  return user;
+}
+
+// Использование
+fetchUser(1).then(user => console.log(user));
+
+// Или внутри другой async функции
+async function main() {
+  const user = await fetchUser(1);
+  console.log(user);
+}
+main();
+```
+
+### Правила await
+
+```javascript
+// Только внутри async функции (или модуля с top-level await)
+async function foo() {
+  await bar(); // OK
+}
+
+// Обычная функция — ОШИБКА
+function foo() {
+  await bar(); // SyntaxError
+}
+
+// IIFE для top-level await в скриптах
+(async () => {
+  const data = await fetch('/api').then(r => r.json());
+})();
+```
+
+### await с не-промисами
+
+```javascript
+await 42;              // 42 (оборачивается в Promise.resolve)
+await Promise.resolve(42); // 42
+await thenable;        // распаковывает thenable (объект с .then)
+```
+
+---
+
+## Параллельное vs Последовательное
+
+### Последовательно (медленнее)
+
+```javascript
+async function sequential() {
+  const user = await fetch('/api/user').then(r => r.json());  // ждёт
+  const posts = await fetch('/api/posts').then(r => r.json()); // потом это
+  const comments = await fetch('/api/comments').then(r => r.json());
+  return { user, posts, comments };
+}
+// Время = sum(всех запросов)
+```
+
+### Параллельно (быстрее)
+
+```javascript
+async function parallel() {
+  // Все стартуют ОДНОВРЕМЕННО
+  const [userRes, postsRes, commentsRes] = await Promise.all([
+    fetch('/api/user'),
+    fetch('/api/posts'),
+    fetch('/api/comments')
+  ]);
+
+  const [user, posts, comments] = await Promise.all([
+    userRes.json(),
+    postsRes.json(),
+    commentsRes.json()
+  ]);
+
+  return { user, posts, comments };
+}
+// Время = max(всех запросов)
+```
+
+### Promise.allSettled для частичных ошибок
+
+```javascript
+async function robust() {
+  const results = await Promise.allSettled([
+    fetch('/api/critical'),
+    fetch('/api/optional'),
+    fetch('/api/analytics')
+  ]);
+
+  const critical = results[0].status === 'fulfilled'
+    ? await results[0].value.json()
+    : null;
+
+  // optional и analytics — не критичны
+}
+```
+
+---
+
+## Обработка ошибок с async/await
+
+```javascript
+async function fetchData() {
+  try {
+    const response = await fetch('/api/data');
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return await response.json();
+  } catch (err) {
+    if (err.name === 'TypeError') {
+      // Сетевая ошибка
+      throw new Error('Нет соединения');
+    }
+    throw err; // пробросить дальше
+  }
+}
+
+// Глобальный обработчик непойманных ошибок промисов
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('Unhandled:', e.reason);
+  e.preventDefault(); // не показывать в консоли
+});
+```
+
+---
+
+## Микрозадачи детально
+
+```javascript
+console.log('1');
+
+Promise.resolve()
+  .then(() => console.log('2'))
+  .then(() => console.log('3'));
+
+queueMicrotask(() => console.log('4'));
+
+setTimeout(() => console.log('5'), 0);
+
+console.log('6');
+
+// Порядок:
+// 1 (sync)
+// 6 (sync)
+// 2 (microtask)
+// 3 (microtask - добавлен в then précédente)
+// 4 (microtask)
+// 5 (macrotask)
+```
+
+### Практический пример: батчинг обновлений
+
+```javascript
+let pending = false;
+const queue = [];
+
+function scheduleUpdate(fn) {
+  queue.push(fn);
+  if (!pending) {
+    pending = true;
+    queueMicrotask(flush);
+  }
+}
+
+function flush() {
+  pending = false;
+  const fns = queue.splice(0);
+  fns.forEach(fn => fn());
+}
+
+// Использование
+scheduleUpdate(() => console.log('a'));
+scheduleUpdate(() => console.log('b'));
+// Вывод: a, b (в одном микрозадаче)
+```
+
+---
+
+## Отмена асинхронных операций
+
+### AbortController (fetch, EventTarget)
+
+```javascript
+const controller = new AbortController();
+const signal = controller.signal;
+
+// Таймаут
+setTimeout(() => controller.abort(), 5000);
+
+try {
+  const response = await fetch('/api/slow', { signal });
+  const data = await response.json();
+} catch (err) {
+  if (err.name === 'AbortError') {
+    console.log('Отменено по таймауту');
+  }
+}
+
+// AbortSignal.timeout (ES2023, Node 18+, браузеры)
+const response = await fetch('/api', {
+  signal: AbortSignal.timeout(5000)
+});
+```
+
+### Отмена собственных промисов
+
+```javascript
+function cancellableFetch(url, signal) {
+  return new Promise((resolve, reject) => {
+    const controller = new AbortController();
+
+    const abortHandler = () => {
+      controller.abort();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+
+    if (signal) signal.addEventListener('abort', abortHandler);
+
+    fetch(url, { signal: controller.signal })
+      .then(resolve)
+      .catch(reject)
+      .finally(() => {
+        if (signal) signal.removeEventListener('abort', abortHandler);
+      });
+  });
+}
+```
+
+---
+
+## Практика
+
+1. **Promise.all с лимитом**: Напишите `promisePool(tasks, concurrency)` — запускает промисы пачками по `concurrency`
+2. **Retry с backoff**: `retry(fn, attempts, delay)` — повторяет `fn` при ошибке с экспоненциальной задержкой
+3. **Timeout wrapper**: `withTimeout(promise, ms)` — отбрасывает ошибку, если промис не разрешился за `ms`
+4. **Debounce async**: `debounceAsync(fn, ms)` — для async функций
+5. **Sequential map**: `asyncMap(arr, asyncFn)` — выполняет asyncFn для каждого элемента последовательно
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Неправильно | Правильно | Пояснение |
+|--------|-------------|-----------|-----------|
+| Забытый await | `const data = fetch(url)` | `const data = await fetch(url)` | Без await — промис, не данные |
+| try/catch не ловит sync ошибки в async | `async () => { throw 1 }` | `async () => { try { throw 1 } catch {} }` | Sync throw в async превращается в rejected promise |
+| Параллельно вместо последовательно | `for (const x of arr) await fn(x)` | `await Promise.all(arr.map(fn))` | Если порядок не важен — параллельно быстрее |
+| Promise в цикле без await | `arr.forEach(x => promiseFn(x))` | `for (const x of arr) await promiseFn(x)` | forEach не ждёт промисы |
+| Необработанный reject | `fetch(...).then(...)` без catch | Всегда `.catch()` или `try/catch` | Unhandled rejection = баг |
+
+---
+
+## Контрольные вопросы
+
+1. В чём разница между микрозадачей и макрозадачей?
+2. Что выведет: `Promise.resolve().then(() => console.log(1)); console.log(2);`?
+3. Зачем нужен `Promise.allSettled`?
+4. Можно ли использовать `await` вне `async` функции?
+5. Что делает `Promise.race` vs `Promise.any`?
+6. Как отменить `fetch` запрос?
+7. Почему `forEach` не работает с `await`?
+
+---
+
+## Дополнительное чтение
+
+- [MDN: Promise](https://developer.mozilla.org/ru/docs/Web/JavaScript/Reference/Global_Objects/Promise)
+- [MDN: async function](https://developer.mozilla.org/ru/docs/Web/JavaScript/Reference/Statements/async_function)
+- [javascript.info: Promise](https://javascript.info/promise-basics)
+- [Jake Archibald: In The Loop](https://jakearchibald.com/2015/tasks-microtasks-queues-and-schedules/)
+- [Event Loop Spec](https://html.spec.whatwg.org/multipage/webappapis.html#event-loop)

@@ -1,0 +1,702 @@
+{
+  "title": "Урок 29: Build ABI",
+  "slug": "urok-29-network-grpc,-protobuf,-asio",
+  "short_description": "ASIO io_context, coroutines, gRPC codegen, Protobuf, HTTP/2",
+  "goals": [
+    "Понимать основы: ASIO io_context, coroutines, gRPC codegen, Protobuf, HTTP/2",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 29: Build/ABI — large CMake projects, ABI, symbols, modules, cross-compilation"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Освоить масштабируемую структуру CMake проектов",
+        "Понять ABI (Application Binary Interface) и совместимость",
+        "Изучить symbol visibility, versioning, mangling",
+        "Научиться работать с C++20 Modules",
+        "Разобраться в cross-compilation и toolchains"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Large CMake Projects Structure"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Modern CMake (Target-based)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "CMakeLists.txt root"
+    },
+    {
+      "type": "text",
+      "content": "cmake_minimum_required(VERSION 3.20)\nproject(MyProject VERSION 1.0.0 LANGUAGES CXX)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Policies"
+    },
+    {
+      "type": "text",
+      "content": "cmake_policy(SET CMP0077 NEW)  # option() honors normal vars\ncmake_policy(SET CMP0091 NEW)  # FindPython3\ncmake_policy(SET CMP0115 NEW)  # file(COPY) preserves timestamps"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Options"
+    },
+    {
+      "type": "text",
+      "content": "option(BUILD_SHARED_LIBS \"Build shared libraries\" ON)\noption(BUILD_TESTING \"Enable tests\" ON)\noption(ENABLE_SANITIZERS \"Enable sanitizers\" OFF)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Default build type"
+    },
+    {
+      "type": "text",
+      "content": "if(NOT CMAKE_BUILD_TYPE)\n    set(CMAKE_BUILD_TYPE Release)\nendif()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Global compile options"
+    },
+    {
+      "type": "text",
+      "content": "add_compile_options(\n    $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->\n    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>\n)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "C++ standard"
+    },
+    {
+      "type": "text",
+      "content": "set(CMAKE_CXX_STANDARD 20)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\nset(CMAKE_CXX_EXTENSIONS OFF)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Export compile commands для clangd"
+    },
+    {
+      "type": "text",
+      "content": "set(CMAKE_EXPORT_COMPILE_COMMANDS ON)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Subdirectories"
+    },
+    {
+      "type": "text",
+      "content": "add_subdirectory(src)\nadd_subdirectory(tests)\nadd_subdirectory(examples)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Library Target"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "src/mylib/CMakeLists.txt"
+    },
+    {
+      "type": "text",
+      "content": "cmake_minimum_required(VERSION 3.20)\n\nadd_library(mylib STATIC)  # или SHARED\ntarget_sources(mylib PRIVATE\n    mylib.cpp\n    detail/impl.cpp\n)\n\ntarget_include_directories(mylib\n    PUBLIC\n        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\n        $<INSTALL_INTERFACE:include>\n    PRIVATE\n        ${CMAKE_CURRENT_SOURCE_DIR}/detail\n)\n\ntarget_compile_features(mylib PUBLIC cxx_std_20)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Compile definitions"
+    },
+    {
+      "type": "text",
+      "content": "target_compile_definitions(mylib\n    PUBLIC MYLIB_EXPORT  # для shared library exports\n    PRIVATE MYLIB_INTERNAL\n)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Link dependencies"
+    },
+    {
+      "type": "text",
+      "content": "target_link_libraries(mylib PUBLIC fmt::fmt spdlog::spdlog)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Versioning для shared libs"
+    },
+    {
+      "type": "text",
+      "content": "set_target_properties(mylib PROPERTIES\n    VERSION ${PROJECT_VERSION}\n    SOVERSION ${PROJECT_VERSION_MAJOR}\n    CXX_VISIBILITY_PRESET hidden  # скрыть символы по умолчанию\n    VISIBILITY_INLINES_HIDDEN ON\n)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Install"
+    },
+    {
+      "type": "text",
+      "content": "install(TARGETS mylib\n    EXPORT MyProjectTargets\n    LIBRARY DESTINATION lib\n    ARCHIVE DESTINATION lib\n    RUNTIME DESTINATION bin\n    INCLUDES DESTINATION include\n)\ninstall(FILES include/mylib.h DESTINATION include)\ninstall(EXPORT MyProjectTargets\n    FILE MyProjectConfig.cmake\n    NAMESPACE MyProject::\n    DESTINATION lib/cmake/MyProject\n)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Header-Only Library"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "include/mylib/CMakeLists.txt"
+    },
+    {
+      "type": "text",
+      "content": "add_library(mylib_header INTERFACE)\ntarget_sources(mylib_header INTERFACE\n    header_only.hpp\n)\ntarget_include_directories(mylib_header INTERFACE\n    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>\n    $<INSTALL_INTERFACE:include>\n)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. ABI (Application Binary Interface)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что входит в ABI"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "- Name mangling схемы (Itanium C++ ABI для GCC/Clang, MSVC ABI)\n- Class layout: поля, vtable, virtual bases, padding\n- Calling convention: parameter passing, return values, stack cleanup\n- Exception handling: unwind tables, personality routines\n- RTTI: type_info layout\n- Template instantiation: exported vs implicit\n- Standard library ABI: libstdc++ vs libc++ vs MSVC STL"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Symbol Visibility"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// GCC/Clang visibility\n#define MYLIB_API __attribute__((visibility(\"default\")))\n#define MYLIB_INTERNAL __attribute__((visibility(\"hidden\")))\n\n// MSVC\n#ifdef _WIN32\n    #ifdef MYLIB_EXPORTS\n        #define MYLIB_API __declspec(dllexport)\n    #else\n        #define MYLIB_API __declspec(dllimport)\n    #endif\n    #define MYLIB_INTERNAL\n#else\n    #define MYLIB_API __attribute__((visibility(\"default\")))\n    #define MYLIB_INTERNAL __attribute__((visibility(\"hidden\")))\n#endif\n\n// Usage\nclass MYLIB_API PublicClass { ... };\nclass MYLIB_INTERNAL InternalImpl { ... };"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ABI Compatibility Rules"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// BREAKING changes (require SOVERSION bump):\n// - Add/remove virtual functions\n// - Change class size (add/remove non-static data members)\n// - Change base classes\n// - Change function signature (params, return type)\n// - Change enum underlying type\n// - Remove exported symbols\n\n// NON-BREAKING:\n// - Add non-virtual methods\n// - Add static members\n// - Add default parameter values (careful!)\n// - Change function body (implementation)\n// - Add new classes/functions (new symbols)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Version Scripts (Linux)"
+    },
+    {
+      "type": "code",
+      "language": "ld",
+      "content": "// mylib.version\nMYLIB_1.0 {\n    global:\n        PublicClass*;\n        public_function*;\n    local:\n        *;  // hide everything else\n};"
+    },
+    {
+      "type": "code",
+      "language": "cmake",
+      "content": "set_target_properties(mylib PROPERTIES\n    LINK_FLAGS \"-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/mylib.version\"\n)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. C++20 Modules"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Module Interface Unit"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// mylib.ixx (или .cppm)\nexport module mylib;\n\nimport <vector>;\nimport <string>;\nimport :internal;  // partition\n\nexport namespace mylib {\n\nexport class Widget {\n    int value_;\npublic:\n    Widget(int v = 0) : value_(v) {}\n    int get() const { return value_; }\n    void set(int v) { value_ = v; }\n};\n\nexport std::string format(const Widget& w);\n\n} // namespace mylib"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Module Partition"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// internal.ixx\nexport module mylib:internal;\n\nnamespace mylib::detail {\n    export int helper(int x) { return x * 2; }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Module Implementation Unit"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// mylib_impl.cpp\nmodule mylib;\n\nimport <format>;\n\nnamespace mylib {\n    std::string format(const Widget& w) {\n        return std::format(\"Widget({})\", w.get());\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CMake Module Support (3.28+)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "CMakeLists.txt"
+    },
+    {
+      "type": "text",
+      "content": "cmake_minimum_required(VERSION 3.28)\nproject(MyModules LANGUAGES CXX)\n\nset(CMAKE_CXX_STANDARD 20)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Experimental module support"
+    },
+    {
+      "type": "text",
+      "content": "set(CMAKE_CXX_SCAN_DEPENDENCIES ON)\n\nadd_library(mylib SHARED\n    mylib.ixx       # interface\n    internal.ixx    # partition\n    mylib_impl.cpp  # implementation\n)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "target_sources with FILE_SET для модулей"
+    },
+    {
+      "type": "text",
+      "content": "target_sources(mylib\n    PRIVATE\n        FILE_SET CXX_MODULES\n        FILES mylib.ixx internal.ixx mylib_impl.cpp\n)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "BMI (Built Module Interface) location"
+    },
+    {
+      "type": "text",
+      "content": "set_target_properties(mylib PROPERTIES\n    CXX_MODULE_DIRS \"${CMAKE_BINARY_DIR}/bmi\"\n)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Header Units (Import STL headers)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// std.ixx — std module (implementation-defined)\nexport module std;\nexport import <vector>;\nexport import <string>;\nexport import <memory>;\nexport import <algorithm>;\nexport import <iostream>;"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// usage.cpp\nimport std;  // вместо #include <...>\nimport mylib;\n\nint main() {\n    std::vector<int> v = {1,2,3};\n    mylib::Widget w(42);\n    std::cout << mylib::format(w) << '\\n';\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Cross-Compilation"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Toolchain File"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "toolchain-aarch64-linux.cmake"
+    },
+    {
+      "type": "text",
+      "content": "set(CMAKE_SYSTEM_NAME Linux)\nset(CMAKE_SYSTEM_PROCESSOR aarch64)\n\nset(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)\nset(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)\n\nset(CMAKE_SYSROOT /opt/aarch64-linux-gnu/sysroot)\n\nset(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)\nset(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)\nset(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)\nset(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Для Qt/пересборки зависимостей"
+    },
+    {
+      "type": "text",
+      "content": "set(QT_HOST_PATH /usr/lib/qt6)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Building"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cmake -B build-arm64 -DCMAKE_TOOLCHAIN_FILE=toolchain-aarch64-linux.cmake .\ncmake --build build-arm64"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cross-Compiling with vcpkg"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "vcpkg install --triplet arm64-linux fmt spdlog\ncmake -B build -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \\\n      -DVCPKG_TARGET_TRIPLET=arm64-linux ."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Canadian Cross (build on A, for B, running on C)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Build machine: x86_64-linux"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Host machine: aarch64-linux (where compiler runs)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Target machine: riscv64-baremetal (where code runs)"
+    },
+    {
+      "type": "text",
+      "content": "set(CMAKE_SYSTEM_NAME Generic)\nset(CMAKE_CROSSCOMPILING TRUE)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Symbol Management"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Name Mangling"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Itanium C++ ABI (GCC/Clang)\n// _ZN7MyClass4funcEi -> MyClass::func(int)\n// _ZN3Foo3BarC1Ev -> Foo::Bar::Bar()\n\n// Demangling\nextern \"C\" char* __cxa_demangle(const char* mangled, char* buf, size_t* n, int* status);\n\n// c++filt utility\n// $ c++filt _ZN7MyClass4funcEi\n// MyClass::func(int)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Symbol Inspection"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Linux"
+    },
+    {
+      "type": "text",
+      "content": "nm -C libmylib.so           # list symbols (demangled)\nobjdump -T libmylib.so      # dynamic symbols\nreadelf -s libmylib.so      # symbol table"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Windows"
+    },
+    {
+      "type": "text",
+      "content": "dumpbin /EXPORTS mylib.dll\ndumpbin /SYMBOLS mylib.lib"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Check undefined symbols"
+    },
+    {
+      "type": "text",
+      "content": "nm -u libmylib.so\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Version Symbols (Linux)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// symbol versioning в коде\n__asm__(\".symver old_func,old_func@MYLIB_1.0\");\n__asm__(\".symver new_func,new_func@MYLIB_2.0\");\n\n// или через .map file"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Packaging & Distribution"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CPack"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "CPackConfig.cmake"
+    },
+    {
+      "type": "text",
+      "content": "include(InstallRequiredSystemLibraries)\n\nset(CPACK_PACKAGE_NAME \"MyProject\")\nset(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})\nset(CPACK_PACKAGE_VENDOR \"MyCompany\")\nset(CPACK_PACKAGE_DESCRIPTION_SUMMARY \"Modern C++ Library\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "DEB"
+    },
+    {
+      "type": "text",
+      "content": "set(CPACK_DEBIAN_PACKAGE_MAINTAINER \"Me <me@example.com>\")\nset(CPACK_DEBIAN_PACKAGE_DEPENDS \"libfmt9, libspdlog1\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "RPM"
+    },
+    {
+      "type": "text",
+      "content": "set(CPACK_RPM_PACKAGE_LICENSE \"MIT\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "NSIS (Windows installer)"
+    },
+    {
+      "type": "text",
+      "content": "set(CPACK_NSIS_MUI_ICON \"icon.ico\")\n\ninclude(CPack)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Conan v2 Recipe"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "conanfile.py"
+    },
+    {
+      "type": "text",
+      "content": "from conan import ConanFile\nfrom conan.tools.cmake import CMake, cmake_layout\n\nclass MyLibConan(ConanFile):\n    name = \"mylib\"\n    version = \"1.0.0\"\n    license = \"MIT\"\n    url = \"https://github.com/me/mylib\"\n    settings = \"os\", \"compiler\", \"build_type\", \"arch\"\n    options = {\"shared\": [True, False], \"fPIC\": [True, False]}\n    default_options = {\"shared\": False, \"fPIC\": True}\n    exports_sources = \"src/*\", \"include/*\", \"CMakeLists.txt\"\n\n    def layout(self):\n        cmake_layout(self)\n\n    def requirements(self):\n        self.requires(\"fmt/10.2.1\")\n        self.requires(\"spdlog/1.12.0\")\n\n    def build(self):\n        cmake = CMake(self)\n        cmake.configure()\n        cmake.build()\n\n    def package(self):\n        cmake = CMake(self)\n        cmake.install()\n\n    def package_info(self):\n        self.cpp_info.libs = [\"mylib\"]\n        if self.settings.os == \"Linux\":\n            self.cpp_info.system_libs = [\"pthread\", \"dl\"]\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: CMake Project Structure"
+    },
+    {
+      "type": "text",
+      "content": "Создайте проект с структурой:"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "project/\n├── CMakeLists.txt\n├── src/\n│   ├── core/ (static lib)\n│   ├── network/ (shared lib, depends on core)\n│   └── cli/ (executable, depends on network)\n├── tests/\n└── third_party/"
+    },
+    {
+      "type": "text",
+      "content": "Настройте `target_link_libraries` с PUBLIC/PRIVATE/INTERFACE. Добавьте `install()` и `CPack`."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: ABI Breakage Detection"
+    },
+    {
+      "type": "text",
+      "content": "Напишите скрипт, использующий `abi-dumper` / `abi-compliance-checker` для сравнения двух версий shared library. Найдите breaking changes."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Symbol Visibility"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Public API (visible)",
+        "Internal implementation (hidden)",
+        "Plugin interface (visible, but not in main API)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Создайте shared library с:\n\n\n\nПроверьте `nm -D` и `objdump -T`."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: C++20 Modules"
+    },
+    {
+      "type": "text",
+      "content": "Создайте модуль `math` с partition `math:constants`, `math:algorithms`. Используйте в исполняемом файле. Настройте CMake 3.28+ для модулей."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Cross-Compilation"
+    },
+    {
+      "type": "text",
+      "content": "Настройте кросс-компиляцию под ARM64 (aarch64) используя toolchain file. Соберите проект с vcpkg dependencies. Запустите под QEMU user-mode."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Sanitizers in CI"
+    },
+    {
+      "type": "text",
+      "content": "Добавьте в CMake опции для AddressSanitizer, UBSan, TSan, MSan. Настройте CI (GitHub Actions) для запуска тестов под санитайзерами.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Modern CMake** — https://cliutils.gitlab.io/modern-cmake/",
+        "**CMake Documentation** — https://cmake.org/cmake/help/latest/",
+        "**Itanium C++ ABI** — https://itanium-cxx-abi.github.io/cxx-abi/",
+        "**C++ Modules** — https://en.cppreference.com/w/cpp/language/modules",
+        "**vcpkg** — https://vcpkg.io/",
+        "**Conan 2.0** — https://docs.conan.io/2/",
+        "**ABI Compliance Checker** — https://abi-laboratory.pro/",
+        "**P2300** — std::execution для унифицированного async"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Network: gRPC, Protobuf, ASIO",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Network: gRPC, Protobuf, ASIO' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C++",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c++ на GitHub",
+    "Конференции и митапы по C++"
+  ],
+  "key_takeaways": [
+    "Главная идея: ASIO io_context, coroutines, gRPC codegen, Protobuf, HTTP/2 — это фундамент для RAII, Move semantics, Perfect forwarding.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "cpp",
+  "lesson_order": 29,
+  "name_en": "Lesson: Network: gRPC, Protobuf, ASIO",
+  "short_description_en": "Learn Network: gRPC, Protobuf, ASIO in C++ with detailed explanations and examples"
+}

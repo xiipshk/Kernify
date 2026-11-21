@@ -1,0 +1,516 @@
+{
+  "title": "Урок 18: Тестирование",
+  "slug": "urok-18-генераторы-и-итераторы",
+  "short_description": "yield, yield from, itertools, itertools.islice, бесконечные последовательности",
+  "goals": [
+    "Понимать основы: yield, yield from, itertools, itertools.islice, бесконечные последовательности",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 2.7: Тестирование — pytest, unittest, mock, coverage, TDD"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Писать тесты с pytest (фикстуры, параметризация, маркеры)",
+        "Использовать unittest.mock для изоляции (patch, MagicMock)",
+        "Измерять покрытие кода (coverage)",
+        "Понимать TDD (Test-Driven Development)",
+        "Организовывать тесты в проекте"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. pytest — современный фреймворк"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка и запуск"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pytest\npytest                    # найти и запустить все test_*.py\npytest test_module.py     # конкретный файл\npytest -k \"test_add\"      # только тесты с \"add\" в имени\npytest -v                 # verbose\npytest --tb=short         # короткий трейсбек"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый тест"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "test_math.py"
+    },
+    {
+      "type": "text",
+      "content": "def add(a, b):\n    return a + b\n\ndef test_add():\n    assert add(2, 3) == 5\n    assert add(-1, 1) == 0\n    assert add(0, 0) == 0\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Assert — понятные сообщения об ошибках"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "pytest автоматически показывает diff для:"
+    },
+    {
+      "type": "text",
+      "content": "assert [1, 2, 3] == [1, 2, 4]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "AssertionError: assert [1, 2, 3] == [1, 2, 4]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "At index 2 diff: 3 != 4"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Фикстуры (fixtures) — подготовка и очистка"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простая фикстура"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import pytest\n\n@pytest.fixture\ndef sample_data():\n    return {\"users\": [\"Анна\", \"Борис\"], \"count\": 2}\n\ndef test_users(sample_data):\n    assert sample_data[\"count\"] == 2\n    assert \"Анна\" in sample_data[\"users\"]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фикстура с очисткой (yield)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@pytest.fixture\ndef temp_file(tmp_path):\n    f = tmp_path / \"test.txt\"\n    f.write_text(\"hello\")\n    yield f\n    # cleanup после теста\n    if f.exists():\n        f.unlink()\n\ndef test_read(temp_file):\n    assert temp_file.read_text() == \"hello\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Scope — область действия"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@pytest.fixture(scope=\"session\")      # на всю сессию\ndef db_connection():\n    conn = connect_to_db()\n    yield conn\n    conn.close()\n\n@pytest.fixture(scope=\"module\")       # на модуль\ndef api_client():\n    return APIClient()\n\n@pytest.fixture(scope=\"function\")     # на каждый тест (по умолчанию)\ndef fresh_list():\n    return []"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Автоматические фикстуры (autouse)"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "@pytest.fixture(autouse=True)\ndef reset_singleton():\n    Singleton._instance = None\n    yield\n    Singleton._instance = None"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Параметризация — запуск одного теста с разными данными"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Сложные параметры"
+    },
+    {
+      "type": "text",
+      "content": "@pytest.mark.parametrize(\"user,expected_role\", [\n    ({\"name\": \"admin\", \"role\": \"admin\"}, \"admin\"),\n    ({\"name\": \"user\", \"role\": \"user\"}, \"user\"),\n    ({\"name\": \"guest\"}, \"guest\"),\n], ids=[\"admin\", \"regular\", \"default\"])\ndef test_role(user, expected_role):\n    assert get_role(user) == expected_role\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Маркеры (marks) — метаданные тестов"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Запуск по маркерам"
+    },
+    {
+      "type": "text",
+      "content": "pytest -m \"not slow\"      # пропустить медленные\npytest -m \"slow\"          # только медленные\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфигурация маркеров (pyproject.toml)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[tool.pytest.ini_options]\nmarkers = [\n    \"slow: marks tests as slow\",\n    \"integration: marks tests as integration tests\",\n    \"unit: marks tests as unit tests\",\n]"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. unittest.mock — изоляция зависимостей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "patch — подмена объекта"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from unittest.mock import patch, MagicMock\nimport requests\n\ndef get_user(user_id):\n    resp = requests.get(f\"https://api.example.com/users/{user_id}\")\n    return resp.json()\n\n@patch(\"requests.get\")\ndef test_get_user(mock_get):\n    mock_get.return_value.json.return_value = {\"id\": 1, \"name\": \"Анна\"}\n\n    user = get_user(1)\n\n    assert user == {\"id\": 1, \"name\": \"Анна\"}\n    mock_get.assert_called_once_with(\"https://api.example.com/users/1\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "patch как контекстный менеджер"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def test_with_context_manager():\n    with patch(\"requests.get\") as mock_get:\n        mock_get.return_value.status_code = 200\n        mock_get.return_value.json.return_value = {\"ok\": True}\n\n        result = fetch_data()\n\n        assert result == {\"ok\": True}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "patch.object — подмена атрибута объекта"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class PaymentProcessor:\n    def charge(self, amount):\n        return api.charge(amount)\n\ndef test_payment():\n    processor = PaymentProcessor()\n    with patch.object(processor, \"charge\", return_value=True):\n        assert processor.charge(100) is True"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MagicMock — гибкий мок"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Автоматические атрибуты"
+    },
+    {
+      "type": "text",
+      "content": "mock.attribute = \"value\"\nmock[\"key\"] = \"value\"\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "side_effect — побочные эффекты"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Исключение"
+    },
+    {
+      "type": "text",
+      "content": "mock.side_effect = ValueError(\"ошибка\")\nmock()  # поднимает ValueError"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Функция"
+    },
+    {
+      "type": "text",
+      "content": "def dynamic_return(arg):\n    return arg * 2\nmock.side_effect = dynamic_return\nmock(5)  # 10\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Тестирование асинхронного кода"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Фикстура для event loop (pytest-asyncio)"
+    },
+    {
+      "type": "text",
+      "content": "@pytest.fixture\ndef event_loop():\n    loop = asyncio.new_event_loop()\n    yield loop\n    loop.close()\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Coverage — измерение покрытия"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Запуск с покрытием"
+    },
+    {
+      "type": "text",
+      "content": "pytest --cov=my_package --cov-report=term-missing"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "HTML отчёт"
+    },
+    {
+      "type": "text",
+      "content": "pytest --cov=my_package --cov-report=html"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Порог покрытия"
+    },
+    {
+      "type": "text",
+      "content": "pytest --cov=my_package --cov-fail-under=80\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфигурация (pyproject.toml)"
+    },
+    {
+      "type": "code",
+      "language": "toml",
+      "content": "[tool.coverage.run]\nsource = [\"my_package\"]\nomit = [\"*/tests/*\", \"*/migrations/*\"]\n\n[tool.coverage.report]\nexclude_lines = [\n    \"pragma: no cover\",\n    \"def __repr__\",\n    \"raise AssertionError\",\n    \"raise NotImplementedError\",\n]"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. TDD (Test-Driven Development)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Цикл Red-Green-Refactor"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "1. RED:    Напишите падающий тест\n2. GREEN:  Напишите минимальный код для прохождения теста\n3. REFACTOR: Улучшите код, сохраняя тесты зелёными"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: калькулятор"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "test_calc.py — сначала тесты"
+    },
+    {
+      "type": "text",
+      "content": "def test_add():\n    assert add(2, 3) == 5\n\ndef test_subtract():\n    assert subtract(5, 3) == 2"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "calc.py — потом реализация"
+    },
+    {
+      "type": "text",
+      "content": "def add(a, b):\n    return a + b\n\ndef subtract(a, b):\n    return a - b\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Организация тестов в проекте"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "project/\n├── src/\n│   └── mypackage/\n│       ├── __init__.py\n│       ├── core.py\n│       └── utils.py\n├── tests/\n│   ├── __init__.py\n│   ├── conftest.py          # общие фикстуры\n│   ├── unit/\n│   │   ├── test_core.py\n│   │   └── test_utils.py\n│   └── integration/\n│       └── test_api.py\n├── pyproject.toml\n└── pytest.ini (или в pyproject.toml)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "conftest.py — общие фикстуры"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "tests/conftest.py"
+    },
+    {
+      "type": "text",
+      "content": "import pytest\nfrom mypackage.database import Database\n\n@pytest.fixture(scope=\"session\")\ndef db():\n    db = Database(\":memory:\")\n    yield db\n    db.close()\n\n@pytest.fixture\ndef sample_user(db):\n    return db.create_user(\"test@example.com\")\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Продвинутые темы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Property-based testing (hypothesis)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install hypothesis"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from hypothesis import given, strategies as st\n\n@given(st.integers(), st.integers())\ndef test_add_commutative(a, b):\n    assert add(a, b) == add(b, a)\n\n@given(st.lists(st.integers()))\ndef test_sort_idempotent(lst):\n    assert sorted(sorted(lst)) == sorted(lst)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Snapshot testing (syrupy)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install syrupy"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def test_user_snapshot(snapshot):\n    user = create_user(\"Анна\", 25)\n    assert user == snapshot"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Mutation testing (mutmut)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Проверяет, находят ли тесты искусственные баги"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **API клиент**: протестируйте с моками `requests.get`, `post`, обработку ошибок 4xx/5xx\n2. **БД репозиторий**: используйте `sqlite3 :memory:` для быстрых интеграционных тестов\n3. **CLI приложение**: протестируйте через `capsys` (перехват stdout/stderr)\n4. **Покрытие**: добивайтесь 90%+ coverage, настройте `--cov-fail-under`\n5. **Property tests**: проверьте свойства сортировки, сериализации, кодирования\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| Тесты зависят друг от друга | Каждый тест изолирован, фикстуры дают свежие данные |\n| Моки не проверяют вызов | `mock.assert_called_once_with(...)` |\n| Патч не там, где используется | `@patch(\"module.where.used.Class\", ...)` не где определено |\n| Фикстура `scope=\"session\"` меняет состояние | Используйте `function` scope или сбрасывайте состояние |\n| Тестируют приватные методы | Тестируйте публичный API |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**pytest docs** — https://docs.pytest.org/",
+        "**unittest.mock docs** — https://docs.python.org/3/library/unittest.mock.html",
+        "**Real Python: pytest** — https://realpython.com/pytest-python-testing/",
+        "**pytest-cov** — https://pytest-cov.readthedocs.io/",
+        "**hypothesis** — https://hypothesis.readthedocs.io/",
+        "**Test-Driven Development by Example** — Kent Beck"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Генераторы и итераторы",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Генераторы и итераторы' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: yield, yield from, itertools, itertools.islice, бесконечные последовательности — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 18,
+  "name_en": "Lesson: Генераторы и итераторы",
+  "short_description_en": "Learn Генераторы и итераторы in Python with detailed explanations and examples"
+}

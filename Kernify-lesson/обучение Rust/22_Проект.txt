@@ -1,0 +1,688 @@
+# Урок 22: Проект — Параллельный веб-краулер (Intermediate)
+
+## Цели урока
+В этом уроке мы создадим полноценный многопоточный веб-краулер, который демонстрирует:
+- Асинхронный HTTP с `reqwest` + `tokio`
+- Управление параллелизмом через `Semaphore`
+- Парсинг HTML с `scraper`
+- Робастная обработка ошибок и ретраи
+- Graceful shutdown при Ctrl+C
+- Конфигурация через TOML
+- Логирование с `tracing`
+- Unit и integration тесты
+
+---
+
+## 1. Структура проекта
+
+```
+crawler/
+├── Cargo.toml
+├── config.toml
+├── src/
+│   ├── main.rs
+│   ├── lib.rs
+│   ├── config.rs
+│   ├── crawler.rs
+│   ├── fetcher.rs
+│   ├── parser.rs
+│   ├── storage.rs
+│   └── error.rs
+└── tests/
+    └── integration_test.rs
+```
+
+---
+
+## 2. Cargo.toml
+
+```toml
+[package]
+name = "crawler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full", "tracing"] }
+reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli", "rustls-tls"] }
+scraper = "0.18"
+url = "2.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+thiserror = "1.0"
+clap = { version = "4", features = ["derive"] }
+once_cell = "1.19"
+```
+
+---
+
+## 3. Конфигурация (config.toml)
+
+```toml
+# config.toml
+[crawler]
+start_urls = ["https://example.com", "https://rust-lang.org"]
+max_depth = 3
+max_concurrent = 10
+request_timeout_secs = 10
+delay_ms = 100
+user_agent = "RustCrawler/1.0"
+respect_robots_txt = true
+
+[storage]
+type = "json"  # json, sqlite
+path = "crawl_results.json"
+
+[logging]
+level = "info"
+file = "crawler.log"
+```
+
+---
+
+## 4. Ошибки (src/error.rs)
+
+```rust
+// src/error.rs
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum CrawlerError {
+    #[error("HTTP request failed: {0}")]
+    Request(#[from] reqwest::Error),
+
+    #[error("URL parse error: {0}")]
+    UrlParse(#[from] url::ParseError),
+
+    #[error("HTML parsing error: {0}")]
+    Parse(String),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Serialization error: {0}")]
+    Serde(#[from] serde_json::Error),
+
+    #[error("Configuration error: {0}")]
+    Config(String),
+
+    #[error("Max depth exceeded")]
+    MaxDepth,
+
+    #[error("Task cancelled")]
+    Cancelled,
+}
+
+pub type Result<T> = std::result::Result<T, CrawlerError>;
+```
+
+---
+
+## 5. Конфиг (src/config.rs)
+
+```rust
+// src/config.rs
+use serde::Deserialize;
+use std::path::Path;
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CrawlerConfig {
+    pub start_urls: Vec<String>,
+    pub max_depth: usize,
+    pub max_concurrent: usize,
+    pub request_timeout_secs: u64,
+    pub delay_ms: u64,
+    pub user_agent: String,
+    pub respect_robots_txt: bool,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct StorageConfig {
+    pub r#type: String,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LoggingConfig {
+    pub level: String,
+    pub file: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Config {
+    pub crawler: CrawlerConfig,
+    pub storage: StorageConfig,
+    pub logging: LoggingConfig,
+}
+
+impl Config {
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let config: Config = toml::from_str(&content)?;
+        Ok(config)
+    }
+}
+```
+
+---
+
+## 6. Fetcher (src/fetcher.rs)
+
+```rust
+// src/fetcher.rs
+use crate::error::{CrawlerError, Result};
+use reqwest::Client;
+use std::sync::Arc;
+use std::time::Duration;
+
+pub struct Fetcher {
+    client: Client,
+    timeout: Duration,
+    user_agent: String,
+}
+
+impl Fetcher {
+    pub fn new(timeout_secs: u64, user_agent: String) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(timeout_secs))
+            .user_agent(user_agent.clone())
+            .build()?;
+        Ok(Self {
+            client,
+            timeout: Duration::from_secs(timeout_secs),
+            user_agent,
+        })
+    }
+
+    pub async fn fetch(&self, url: &str) -> Result<String> {
+        let resp = self.client.get(url).send().await?;
+        if !resp.status().is_success() {
+            return Err(CrawlerError::Request(
+                reqwest::Error::from(resp.error_for_status().unwrap_err())
+            ));
+        }
+        let text = resp.text().await?;
+        Ok(text)
+    }
+
+    pub async fn fetch_with_retry(&self, url: &str, max_retries: u32) -> Result<String> {
+        let mut last_err = None;
+        for attempt in 0..=max_retries {
+            match self.fetch(url).await {
+                Ok(html) => return Ok(html),
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt < max_retries {
+                        tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempt))).await;
+                    }
+                }
+            }
+        }
+        Err(last_err.unwrap())
+    }
+}
+```
+
+---
+
+## 7. Парсер (src/parser.rs)
+
+```rust
+// src/parser.rs
+use crate::error::{CrawlerError, Result};
+use scraper::{Html, Selector};
+use url::Url;
+
+pub struct Parser {
+    link_selector: Selector,
+}
+
+impl Parser {
+    pub fn new() -> Result<Self> {
+        let link_selector = Selector::parse("a[href]")
+            .map_err(|e| CrawlerError::Parse(e.to_string()))?;
+        Ok(Self { link_selector })
+    }
+
+    pub fn extract_links(&self, base_url: &str, html: &str) -> Result<Vec<String>> {
+        let document = Html::parse_document(html);
+        let base = Url::parse(base_url)?;
+        let mut links = Vec::new();
+
+        for element in document.select(&self.link_selector) {
+            if let Some(href) = element.value().attr("href") {
+                if let Ok(absolute) = base.join(href) {
+                    let url_str = absolute.to_string();
+                    // Фильтруем только http/https
+                    if url_str.starts_with("http://") || url_str.starts_with("https://") {
+                        links.push(url_str);
+                    }
+                }
+            }
+        }
+        Ok(links)
+    }
+
+    pub fn extract_text(&self, html: &str) -> String {
+        let document = Html::parse_document(html);
+        document.root_element().text().collect::<Vec<_>>().join(" ")
+    }
+}
+```
+
+---
+
+## 8. Хранилище (src/storage.rs)
+
+```rust
+// src/storage.rs
+use crate::error::{CrawlerError, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use tokio::sync::RwLock;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CrawledPage {
+    pub url: String,
+    pub title: String,
+    pub content: String,
+    pub links: Vec<String>,
+    pub depth: usize,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CrawlResult {
+    pub pages: HashMap<String, CrawledPage>,
+    pub stats: CrawlStats,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct CrawlStats {
+    pub total_pages: usize,
+    pub total_links: usize,
+    pub errors: usize,
+}
+
+pub struct Storage {
+    path: String,
+    data: RwLock<CrawlResult>,
+}
+
+impl Storage {
+    pub fn new(path: String) -> Result<Self> {
+        let data = if Path::new(&path).exists() {
+            let content = fs::read_to_string(&path)?;
+            serde_json::from_str(&content)?
+        } else {
+            CrawlResult {
+                pages: HashMap::new(),
+                stats: CrawlStats::default(),
+            }
+        };
+        Ok(Self {
+            path,
+            data: RwLock::new(data),
+        })
+    }
+
+    pub async fn save_page(&self, page: CrawledPage) {
+        let mut data = self.data.write().await;
+        data.pages.insert(page.url.clone(), page.clone());
+        data.stats.total_pages = data.pages.len();
+        data.stats.total_links += page.links.len();
+    }
+
+    pub async fn increment_errors(&self) {
+        let mut data = self.data.write().await;
+        data.stats.errors += 1;
+    }
+
+    pub async fn persist(&self) -> Result<()> {
+        let data = self.data.read().await;
+        let json = serde_json::to_string_pretty(&*data)?;
+        fs::write(&self.path, json)?;
+        Ok(())
+    }
+
+    pub async fn get_visited(&self) -> Vec<String> {
+        let data = self.data.read().await;
+        data.pages.keys().cloned().collect()
+    }
+}
+```
+
+---
+
+## 9. Основной краулер (src/crawler.rs)
+
+```rust
+// src/crawler.rs
+use crate::config::CrawlerConfig;
+use crate::error::{CrawlerError, Result};
+use crate::fetcher::Fetcher;
+use crate::parser::Parser;
+use crate::storage::{CrawledPage, Storage};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio::time::{sleep, Duration};
+use tracing::{info, warn, error};
+use url::Url;
+
+pub struct Crawler {
+    config: CrawlerConfig,
+    fetcher: Arc<Fetcher>,
+    parser: Arc<Parser>,
+    storage: Arc<Storage>,
+    semaphore: Arc<Semaphore>,
+    visited: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
+}
+
+impl Crawler {
+    pub fn new(
+        config: CrawlerConfig,
+        fetcher: Fetcher,
+        parser: Parser,
+        storage: Storage,
+    ) -> Self {
+        let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
+        Self {
+            config,
+            fetcher: Arc::new(fetcher),
+            parser: Arc::new(parser),
+            storage: Arc::new(storage),
+            semaphore,
+            visited: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
+        }
+    }
+
+    pub async fn run(&self) -> Result<()> {
+        let mut handles = vec![];
+
+        for url in &self.config.start_urls {
+            let crawler = self.clone();
+            let url = url.clone();
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = crawler.crawl(&url, 0).await {
+                    error!("Error crawling {}: {}", url, e);
+                    crawler.storage.increment_errors().await;
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        self.storage.persist().await?;
+        info!("Crawl completed");
+        Ok(())
+    }
+
+    async fn crawl(&self, url: &str, depth: usize) -> Result<()> {
+        if depth > self.config.max_depth {
+            return Err(CrawlerError::MaxDepth);
+        }
+
+        // Проверка посещённых
+        {
+            let visited = self.visited.read().await;
+            if visited.contains(url) {
+                return Ok(());
+            }
+        }
+
+        // Записываем как посещённый
+        {
+            let mut visited = self.visited.write().await;
+            visited.insert(url.to_string());
+        }
+
+        // Получаем permit для ограничения параллелизма
+        let _permit = self.semaphore.acquire().await.unwrap();
+
+        // Задержка между запросами
+        sleep(Duration::from_millis(self.config.delay_ms)).await;
+
+        info!("Crawling: {} (depth {})", url, depth);
+
+        // Получаем HTML
+        let html = self.fetcher.fetch_with_retry(url, 3).await?;
+
+        // Парсим
+        let links = self.parser.extract_links(url, &html)?;
+        let text = self.parser.extract_text(&html);
+        let title = self.extract_title(&html);
+
+        // Сохраняем
+        let page = CrawledPage {
+            url: url.to_string(),
+            title,
+            content: text,
+            links: links.clone(),
+            depth,
+            timestamp: chrono::Utc::now(),
+        };
+        self.storage.save_page(page).await;
+
+        // Рекурсивно обходим ссылки
+        for link in links {
+            if let Err(e) = self.crawl(&link, depth + 1).await {
+                warn!("Failed to crawl {}: {}", link, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn extract_title(&self, html: &str) -> String {
+        let document = scraper::Html::parse_document(html);
+        let selector = scraper::Selector::parse("title").ok();
+        selector.and_then(|s| document.select(&s).next())
+            .map(|e| e.text().collect::<String>())
+            .unwrap_or_default()
+    }
+}
+
+// Clone для передачи в задачи
+impl Clone for Crawler {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            fetcher: self.fetcher.clone(),
+            parser: self.parser.clone(),
+            storage: self.storage.clone(),
+            semaphore: self.semaphore.clone(),
+            visited: self.visited.clone(),
+        }
+    }
+}
+```
+
+---
+
+## 10. Main (src/main.rs)
+
+```rust
+// src/main.rs
+mod config;
+mod crawler;
+mod error;
+mod fetcher;
+mod parser;
+mod storage;
+
+use clap::Parser;
+use std::path::PathBuf;
+use tracing_subscriber::{fmt, EnvFilter};
+
+#[derive(Parser)]
+#[command(name = "crawler", version, about = "Parallel web crawler")]
+struct Args {
+    #[arg(short, long, default_value = "config.toml")]
+    config: PathBuf,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Аргументы
+    let args = Args::parse();
+
+    // Загружаем конфиг
+    let config = config::Config::load(&args.config)?;
+
+    // Инициализируем логирование
+    init_logging(&config.logging)?;
+
+    tracing::info!("Starting crawler with config: {:?}", config.crawler);
+
+    // Создаём компоненты
+    let fetcher = fetcher::Fetcher::new(
+        config.crawler.request_timeout_secs,
+        config.crawler.user_agent.clone(),
+    )?;
+    let parser = parser::Parser::new()?;
+    let storage = storage::Storage::new(config.storage.path.clone())?;
+
+    // Запускаем краулер
+    let crawler = crawler::Crawler::new(
+        config.crawler,
+        fetcher,
+        parser,
+        storage,
+    );
+
+    // Graceful shutdown
+    let crawler_handle = tokio::spawn(async move {
+        if let Err(e) = crawler.run().await {
+            tracing::error!("Crawler error: {}", e);
+        }
+    });
+
+    // Ждём Ctrl+C
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("Shutdown signal received");
+
+    crawler_handle.await?;
+    Ok(())
+}
+
+fn init_logging(logging: &config::LoggingConfig) -> anyhow::Result<()> {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(&logging.level));
+
+    let file_appender = tracing_appender::rolling::daily(".", &logging.file);
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .init();
+
+    Ok(())
+}
+```
+
+---
+
+## 11. Тесты (tests/integration_test.rs)
+
+```rust
+// tests/integration_test.rs
+use crawler::{config, fetcher, parser, storage};
+use std::path::Path;
+
+#[tokio::test]
+async fn test_config_load() {
+    let config = config::Config::load(Path::new("../config.toml")).unwrap();
+    assert_eq!(config.crawler.max_depth, 3);
+    assert_eq!(config.crawler.max_concurrent, 10);
+}
+
+#[tokio::test]
+async fn test_fetcher() {
+    let fetcher = fetcher::Fetcher::new(5, "test-agent".into()).unwrap();
+    // Можно тестировать с mock сервером
+}
+
+#[tokio::test]
+async fn test_parser() {
+    let parser = parser::Parser::new().unwrap();
+    let html = r#"<html><body><a href="/page1">Link</a></body></html>"#;
+    let links = parser.extract_links("https://example.com", html).unwrap();
+    assert!(links.contains(&"https://example.com/page1".to_string()));
+}
+
+#[tokio::test]
+async fn test_storage() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let path = temp_dir.path().join("test.json");
+    let storage = storage::Storage::new(path.to_str().unwrap().to_string()).unwrap();
+
+    let page = storage::CrawledPage {
+        url: "https://example.com".into(),
+        title: "Test".into(),
+        content: "Content".into(),
+        links: vec![],
+        depth: 0,
+        timestamp: chrono::Utc::now(),
+    };
+
+    storage.save_page(page).await;
+    storage.persist().await.unwrap();
+
+    let visited = storage.get_visited().await;
+    assert!(visited.contains(&"https://example.com".to_string()));
+}
+```
+
+---
+
+## 12. Запуск
+
+```bash
+# Собрать
+cargo build --release
+
+# Запустить
+cargo run -- --config config.toml
+
+# Или с бинарником
+./target/release/crawler --config config.toml
+```
+
+---
+
+## 13. Расширения (идеи для практики)
+
+1. **Robots.txt** — парсинг и соблюдение `robots.txt`
+2. **SQLite хранение** — заменить JSON на `sqlx` + SQLite
+3. **Распределённый краулер** — координация через Redis
+4. **Метрики** — Prometheus экспорт (страниц/сек, ошибки, очередь)
+5. **Плагины** — динамическая загрузка парсеров для разных сайтов
+6. **Rate limiting per domain** — токен-бакет на домен
+
+---
+
+## Резюме проекта
+
+✅ **Что мы построили:**
+- Асинхронный краулер с контролем параллелизма (`Semaphore`)
+- Ретраи с экспоненциальным backoff
+- Парсинг ссылок и текста через `scraper`
+- Персистентное хранение в JSON
+- Graceful shutdown через `tokio::signal::ctrl_c`
+- Конфигурация через TOML
+- Структурированное логирование с `tracing`
+- Тесты (unit + integration)
+
+---
+
+**Следующий урок:** Продвинутое владение и память (`23_Memory_Ownership.txt`)

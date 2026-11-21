@@ -1,0 +1,475 @@
+# Урок 9: Исключения и работа с файлами — try/catch/finally, исключения, файловый ввод/вывод, пути
+
+**Целевая версия:** C# 12 / .NET 8
+
+---
+
+## 1. Что такое исключения
+
+Исключение (exception) — объект, сигнализирующий об ошибке во время выполнения. Прерывает нормальный поток программы, пока не будет обработано.
+
+```csharp
+// Код, который может выбросить исключение
+int a = 10;
+int b = 0;
+int result = a / b;  // DivideByZeroException — программа упадёт, если не поймать
+```
+
+---
+
+## 2. try / catch / finally — обработка исключений
+
+```csharp
+try
+{
+    // Опасный код
+    int a = 10;
+    int b = 0;
+    int result = a / b;
+}
+catch (DivideByZeroException ex)
+{
+    // Обработка конкретного типа исключения
+    Console.WriteLine($"Ошибка деления на ноль: {ex.Message}");
+}
+catch (Exception ex)
+{
+    // Ловит ВСЕ остальные исключения (базовый класс)
+    Console.WriteLine($"Другая ошибка: {ex.Message}");
+}
+finally
+{
+    // Выполняется ВСЕГДА (и при ошибке, и без неё)
+    Console.WriteLine("Блок finally — очистка ресурсов");
+}
+```
+
+### Порядок catch-блоков важен!
+
+От конкретных к общим. Если поставить `catch (Exception)` первым — остальные никогда не сработают.
+
+```csharp
+try { ... }
+catch (FileNotFoundException ex) { ... }      // Сначала конкретные
+catch (IOException ex) { ... }                 // Потом более общие
+catch (Exception ex) { ... }                   // В конце — базовый Exception
+```
+
+---
+
+## 3. Класс Exception — основные свойства
+
+```csharp
+try { ... }
+catch (Exception ex)
+{
+    Console.WriteLine(ex.Message);        // Текст ошибки
+    Console.WriteLine(ex.StackTrace);     // Стек вызовов (где упало)
+    Console.WriteLine(ex.Source);         // Имя сборки/приложения
+    Console.WriteLine(ex.TargetSite);     // Метод, где возникло
+    Console.WriteLine(ex.Data);           // Доп. пользовательские данные (IDictionary)
+    Console.WriteLine(ex.InnerException); // Вложенное исключение (при оборачивании)
+}
+```
+
+---
+
+## 4. Выброс исключений (throw)
+
+```csharp
+void SetAge(int age)
+{
+    if (age < 0 || age > 150)
+    {
+        throw new ArgumentOutOfRangeException(nameof(age), "Возраст должен быть 0-150");
+    }
+    // ...
+}
+
+// Повторный выброс (переброс) — сохраняет StackTrace
+try { ... }
+catch (Exception ex)
+{
+    Log(ex);
+    throw;  // НЕ throw ex! (throw ex сбрасывает StackTrace)
+}
+```
+
+---
+
+## 5. Стандартные типы исключений
+
+| Исключение | Когда возникает |
+|------------|-----------------|
+| `ArgumentException` | Некорректный аргумент |
+| `ArgumentNullException` | Аргумент null, а не должен быть |
+| `ArgumentOutOfRangeException` | Аргумент вне допустимого диапазона |
+| `InvalidOperationException` | Объект в недопустимом состоянии для операции |
+| `NotSupportedException` | Метод не поддерживается |
+| `NotImplementedException` | Метод не реализован (заглушка) |
+| `NullReferenceException` | Разыменование null (баг в коде) |
+| `IndexOutOfRangeException` | Индекс за границей массива |
+| `DivideByZeroException` | Деление на ноль |
+| `FormatException` | Неверный формат при парсинге |
+| `FileNotFoundException` | Файл не найден |
+| `DirectoryNotFoundException` | Папка не найдена |
+| `IOException` | Общая ошибка ввода/вывода |
+| `UnauthorizedAccessException` | Нет прав доступа |
+
+---
+
+## 6. Создание собственных исключений
+
+```csharp
+// Наследуем от Exception (или ApplicationException)
+[Serializable]
+public class InsufficientFundsException : Exception
+{
+    public decimal CurrentBalance { get; }
+    public decimal RequestedAmount { get; }
+
+    public InsufficientFundsException(decimal balance, decimal requested)
+        : base($"Недостаточно средств. Баланс: {balance:C}, Запрошено: {requested:C}")
+    {
+        CurrentBalance = balance;
+        RequestedAmount = requested;
+    }
+
+    // Для сериализации (если нужно передавать между процессами)
+    protected InsufficientFundsException(SerializationInfo info, StreamingContext context)
+        : base(info, context)
+    {
+        CurrentBalance = info.GetDecimal("CurrentBalance");
+        RequestedAmount = info.GetDecimal("RequestedAmount");
+    }
+
+    public override void GetObjectData(SerializationInfo info, StreamingContext context)
+    {
+        base.GetObjectData(info, context);
+        info.AddValue("CurrentBalance", CurrentBalance);
+        info.AddValue("RequestedAmount", RequestedAmount);
+    }
+}
+
+// Использование
+void Withdraw(decimal amount)
+{
+    if (amount > _balance)
+        throw new InsufficientFundsException(_balance, amount);
+    _balance -= amount;
+}
+```
+
+---
+
+## 7. Использование using и IDisposable — автоматическая очистка
+
+Многие ресурсы (файлы, соединения, потоки) реализуют `IDisposable`. Блок `using` гарантирует вызов `Dispose()`.
+
+```csharp
+// Классический using (C# 1-7)
+using (var writer = new StreamWriter("file.txt"))
+{
+    writer.WriteLine("Привет");
+}  // writer.Dispose() вызывается автоматически
+
+// Using declaration (C# 8+) — без лишних скобок
+using var reader = new StreamReader("file.txt");
+string content = reader.ReadToEnd();
+// reader.Dispose() вызовется в конце области видимости
+
+// Несколько ресурсов в одном using (C# 8+)
+using var fs = new FileStream("file.txt", FileMode.Open);
+using var sr = new StreamReader(fs);
+// ...
+```
+
+### Реализация IDisposable (паттерн Dispose)
+
+```csharp
+class ResourceHolder : IDisposable
+{
+    private FileStream _stream;
+    private bool _disposed = false;
+
+    public ResourceHolder(string path)
+    {
+        _stream = File.OpenRead(path);
+    }
+
+    // Публичный Dispose — для явного вызова
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);  // не вызывать финализатор
+    }
+
+    // Защищённый виртуальный — для наследников
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
+        {
+            // Освобождение управляемых ресурсов
+            _stream?.Dispose();
+        }
+
+        // Освобождение неуправляемых ресурсов (если есть)
+        _disposed = true;
+    }
+
+    // Финализатор (деструктор) — страховка, если забыли вызвать Dispose()
+    ~ResourceHolder()
+    {
+        Dispose(false);
+    }
+}
+```
+
+---
+
+## 8. Работа с файлами — System.IO
+
+### Основные классы
+
+| Класс | Назначение |
+|-------|------------|
+| `File` | Статические методы для работы с файлами |
+| `Directory` | Статические методы для работы с папками |
+| `FileInfo` / `DirectoryInfo` | Объектно-ориентированная работа |
+| `FileStream` | Низкоуровневый байтовый поток |
+| `StreamReader` / `StreamWriter` | Чтение/запись текста (кодировки) |
+| `BinaryReader` / `BinaryWriter` | Чтение/запись примитивов в бинарном виде |
+
+### File — статические удобные методы
+
+```csharp
+using System.IO;
+
+// Запись всего текста сразу
+File.WriteAllText("test.txt", "Привет, мир!");
+File.WriteAllLines("lines.txt", new[] { "Строка 1", "Строка 2" });
+
+// Дописывание в конец
+File.AppendAllText("test.txt", "\nЕщё строка");
+
+// Чтение всего текста
+string allText = File.ReadAllText("test.txt");
+string[] lines = File.ReadAllLines("test.txt");
+
+// Проверка существования
+if (File.Exists("test.txt")) { ... }
+
+// Копирование, перемещение, удаление
+File.Copy("source.txt", "dest.txt", overwrite: true);
+File.Move("old.txt", "new.txt");
+File.Delete("temp.txt");
+
+// Информация о файле
+FileInfo info = new FileInfo("test.txt");
+Console.WriteLine(info.Length);        // размер в байтах
+Console.WriteLine(info.CreationTime);  // дата создания
+Console.WriteLine(info.Extension);     // ".txt"
+Console.WriteLine(info.DirectoryName); // путь к папке
+```
+
+### StreamReader / StreamWriter — потоковое чтение/запись (для больших файлов)
+
+```csharp
+// Запись
+using (var writer = new StreamWriter("big.txt", append: false, Encoding.UTF8))
+{
+    for (int i = 0; i < 10000; i++)
+    {
+        writer.WriteLine($"Строка номер {i}");
+    }
+}
+
+// Чтение построчно (не загружает весь файл в память)
+using (var reader = new StreamReader("big.txt", Encoding.UTF8))
+{
+    string? line;
+    while ((line = reader.ReadLine()) != null)
+    {
+        Console.WriteLine(line);
+    }
+}
+```
+
+### FileStream — бинарная работа
+
+```csharp
+// Запись байтов
+byte[] data = { 0x48, 0x65, 0x6C, 0x6C, 0x6F }; // "Hello"
+using (var fs = new FileStream("binary.dat", FileMode.Create))
+{
+    fs.Write(data, 0, data.Length);
+}
+
+// Чтение байтов
+using (var fs = new FileStream("binary.dat", FileMode.Open))
+{
+    byte[] buffer = new byte[fs.Length];
+    fs.Read(buffer, 0, buffer.Length);
+    // buffer теперь содержит данные
+}
+```
+
+---
+
+## 9. Работа с путями — Path и Path.Combine
+
+Никогда не склеивайте пути строками! Используйте `Path.Combine`.
+
+```csharp
+using System.IO;
+
+string folder = @"C:\Data";
+string file = "test.txt";
+
+// Правильно — кроссплатформенно
+string fullPath = Path.Combine(folder, file);  // C:\Data\test.txt (Windows)
+                                                // /home/user/Data/test.txt (Linux)
+
+// Получение частей пути
+Path.GetFileName(fullPath);       // "test.txt"
+Path.GetDirectoryName(fullPath);  // "C:\Data"
+Path.GetExtension(fullPath);      // ".txt"
+Path.GetFileNameWithoutExtension(fullPath); // "test"
+Path.ChangeExtension(fullPath, ".bak");     // "C:\Data\test.bak"
+
+// Временные файлы
+string tempFile = Path.GetTempFileName();    // создаёт файл, возвращает путь
+string tempPath = Path.GetTempPath();        // папка для временных файлов
+
+// Относительные пути
+Path.GetRelativePath(@"C:\Data\", @"C:\Data\Sub\file.txt"); // "Sub\file.txt"
+Path.IsPathRooted(@"C:\Data");  // true
+Path.IsPathRooted(@"Sub\file"); // false
+```
+
+---
+
+## 10. Кодировки (Encoding)
+
+```csharp
+using System.Text;
+
+// UTF-8 (по умолчанию в .NET Core / .NET 5+) — БЕЗ BOM
+var utf8 = Encoding.UTF8;
+
+// UTF-8 с BOM (Byte Order Mark)
+var utf8Bom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+
+// Windows-1251 (кириллица в старых системах)
+var win1251 = Encoding.GetEncoding("windows-1251");
+
+// Явное указание кодировки
+File.WriteAllText("ru.txt", "Привет", Encoding.UTF8);
+string text = File.ReadAllText("ru.txt", Encoding.GetEncoding("windows-1251"));
+```
+
+---
+
+## 11. Асинхронная работа с файлами (async/await)
+
+```csharp
+using System.IO;
+
+async Task WriteAsync(string path, string content)
+{
+    await File.WriteAllTextAsync(path, content);
+}
+
+async Task<string> ReadAsync(string path)
+{
+    return await File.ReadAllTextAsync(path);
+}
+
+// StreamReader/Writer асинхронно
+async Task ProcessLargeFileAsync(string inputPath, string outputPath)
+{
+    using var reader = new StreamReader(inputPath);
+    using var writer = new StreamWriter(outputPath);
+
+    string? line;
+    while ((line = await reader.ReadLineAsync()) != null)
+    {
+        await writer.WriteLineAsync(line.ToUpper());
+    }
+}
+```
+
+---
+
+## 12. Обработка ошибок при работе с файлами
+
+```csharp
+try
+{
+    string content = File.ReadAllText("config.json");
+}
+catch (FileNotFoundException)
+{
+    Console.WriteLine("Файл конфигурации не найден, используем настройки по умолчанию");
+}
+catch (UnauthorizedAccessException)
+{
+    Console.WriteLine("Нет прав на чтение файла");
+}
+catch (IOException ex)
+{
+    Console.WriteLine($"Ошибка ввода/вывода: {ex.Message}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Неожиданная ошибка: {ex}");
+    // Логирование для диагностики
+}
+```
+
+---
+
+## 13. Домашнее задание
+
+1. Напишите программу: создаёт файл `numbers.txt`, записывает в него числа 1-100 (по одному на строке), затем читает и считает сумму
+2. Создайте класс `Logger` с методом `Log(string message)`, который дописывает сообщения с timestamp в файл `log.txt` (используйте `File.AppendAllText` и `DateTime.Now`)
+3. Напишите метод `CopyFileSafe(source, dest)`, который копирует файл с обработкой ошибок: файл не найден, нет прав, диск переполнен. Возвращает `bool` — успех/неуспех
+4. Создайте собственное исключение `InvalidConfigException` с полем `ConfigKey`. Напишите метод, читающий JSON-конфиг и бросающий это исключение при отсутствии обязательного ключа
+5. *Реализуйте класс `TempFileManager : IDisposable`, который при создании создаёт временный файл, а в `Dispose()` — удаляет его. Используйте в `using` блоке*
+
+---
+
+## 14. Краткая шпаргалка
+
+```
+try { ... }
+catch (SpecificException ex) { ... }
+catch (Exception ex) { ... }
+finally { ... }  // всегда выполняется
+
+throw new ArgumentException("msg", paramName);
+throw;  // переброс с сохранением стека
+
+using var fs = File.OpenRead("file.txt");  // авто-Dispose
+
+File.WriteAllText(path, text);
+File.ReadAllText(path);
+File.AppendAllText(path, text);
+File.Exists(path);
+File.Copy(src, dst, true);
+File.Delete(path);
+
+Path.Combine(dir, file);
+Path.GetFileName(path);
+Path.GetExtension(path);
+Path.GetTempFileName();
+
+Encoding.UTF8
+new UTF8Encoding(true)  // с BOM
+Encoding.GetEncoding("windows-1251")
+
+await File.WriteAllTextAsync(path, text);
+await File.ReadAllTextAsync(path);
+```

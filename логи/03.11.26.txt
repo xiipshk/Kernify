@@ -1,0 +1,228 @@
+=== Лог от 03.11.2026 ===
+
+ЭТАП 1 — АНАЛИЗ (согласно ТЗ)
+
+## 1. СТРУКТУРА СУЩЕСТВУЮЩЕГО ПРОЕКТА
+
+### Расположение
+`C:\Users\maksy\OneDrive\Рабочий стол\логи клауде\проект\`
+
+### Файлы проекта
+```
+проект/
+├── config.py              # Настройки (Pydantic Settings)
+├── database.py            # SQLAlchemy async engine + sessions
+├── models.py              # ORM модели (11.2 KB)
+├── main.py                # Точка входа Telegram-бота
+├── requirements.txt       # Зависимости
+├── handlers/              # Обработчики команд/колбэков
+│   ├── __init__.py
+│   ├── start.py
+│   ├── help_command.py
+│   ├── language_callback.py
+│   ├── level_callback.py
+│   ├── topic_callback.py
+│   ├── practice_callback.py
+│   ├── test_callback.py
+│   ├── ai_chat_callback.py
+│   ├── menu_callback.py
+│   ├── cancel_callback.py
+│   └── error_handler.py
+├── keyboards/             # Inline клавиатуры (пусто)
+├── locales/               # Локализация (пусто)
+├── services/              # Бизнес-логика (пусто)
+├── models/                # Дубликат? (пусто)
+├── tests/                 # Тесты (пусто)
+└── utils/                 # Утилиты (пусто)
+```
+
+---
+
+## 2. БАЗА ДАННЫХ
+
+### Статус
+**База данных НЕ СУЩЕСТВУЕТ** — файл `bot.db` будет создан при первом запуске через `init_db()`.
+
+### Конфигурация (config.py)
+```python
+DATABASE_URL: str = "sqlite+aiosqlite:///./bot.db"
+```
+- Драйвер: `aiosqlite` (async SQLite)
+- Расположение: рабочая директория при запуске
+
+### Схема БД (models.py — 11 таблиц)
+
+| Таблица | Назначение | Ключевые поля |
+|---------|------------|---------------|
+| `users` | Пользователи Telegram | id (BigInteger, PK), username, first_name, preferred_language, current_level, is_admin |
+| `courses` | Курсы по языкам | id, language (Enum), name, description, version |
+| `topics` | Темы/уроки курса | id, course_id (FK), level, order, title, description, content, code_examples, prerequisites, is_base_topic |
+| `test_questions` | Вопросы входного теста | id, topic_id (FK), question_text, question_type, expected_answer, difficulty |
+| `test_results` | Ответы пользователей | id, user_id (FK), question_id (FK), topic_id (FK), score (0-2), user_answer, ai_feedback, status |
+| `user_progress` | Прогресс по темам | id, user_id (FK), topic_id (FK), status (Enum), score, completed_at, review_count, error_patterns |
+| `practice_tasks` | Практические задания | id, topic_id (FK), level, task_type, title, description, starter_code, solution, test_cases (JSON), hints, difficulty, xp_reward |
+| `practice_sessions` | Попытки решения | id, user_id (FK), task_id (FK), topic_id (FK), submitted_code, language, status, test_results (JSON), ai_feedback, hints_used, attempts, time_spent, xp_earned |
+| `error_repetitions` | Ошибки для повторения | id, user_id (FK), topic_id (FK), task_id (FK), error_type, error_description, user_code, correct_code, count, next_review, is_resolved |
+| `ai_chats` | История ИИ-чатов | id, user_id (FK), topic_id (FK), message_role, content, metadata (JSON), tokens_used |
+| `search_queries` | Поисковые запросы | id, user_id (FK), query, language, ai_response, sources (JSON) |
+
+### Enums (переиспользуемые)
+- `Language`: PYTHON, CPP, CSHARP, JAVASCRIPT, RUST, CSS, C
+- `Level`: BEGINNER, INTERMEDIATE, ADVANCED
+- `TopicStatus`: MASTERED, PARTIAL, NOT_MASTERED, UNCLEAR, UNTESTED
+
+### Связи
+- User → UserProgress (1:N) → Topic
+- User → TestResult (1:N) → TestQuestion → Topic
+- User → PracticeSession (1:N) → PracticeTask → Topic
+- User → ErrorRepetition (1:N)
+- User → AIChat (1:N)
+- Course → Topic (1:N)
+- Topic → TestQuestion (1:N), PracticeTask (1:N), UserProgress (1:N)
+
+---
+
+## 3. ЗАВИСИМОСТИ (requirements.txt)
+
+### Telegram-специфичные (УДАЛИТЬ)
+- `python-telegram-bot==21.4` — весь бот фреймворк
+- `piston-api==0.1.0` — выполнение кода (можно оставить для веба)
+
+### Полезные для веб-приложения (СОХРАНИТЬ/АДАПТИРОВАТЬ)
+- `sqlalchemy==2.0.32` — ORM (совместим с Django через отдельную настройку, но лучше использовать Django ORM)
+- `alembic==1.13.1` — миграции (Django имеет свои)
+- `asyncpg==0.29.0` — PostgreSQL драйвер (для будущего перехода)
+- `pydantic==2.8.2`, `pydantic-settings==2.4.1` — валидация настроек
+- `python-dotenv==1.0.1` — .env файлы
+- `structlog==24.1.0` — логирование
+- `openai==1.52.1`, `anthropic==0.39.0` — для будущего ИИ (архитектурно оставить)
+- `APScheduler==3.10.4` — планировщик (для повторения ошибок)
+
+### Для тестирования (СОХРАНИТЬ)
+- `pytest==8.2.2`, `pytest-asyncio`, `pytest-cov`
+- `mypy==1.10.0` — типизация
+
+### НУЖНО ДОБАВИТЬ для Django
+- `Django>=5.0`
+- `djangorestframework` — если нужен API
+- `django-environ` — настройки
+- `Pillow` — изображения
+- `django-crispy-forms` — формы (опционально)
+
+---
+
+## 4. TELEGRAM-КОМПОНЕНТЫ (ДЛЯ УДАЛЕНИЯ)
+
+### Полностью удалить
+1. `main.py` — точка входа бота, polling, Application builder
+2. `handlers/` — все 11 файлов обработчиков (Commands, CallbackQuery, ConversationHandler)
+3. `keyboards/` — InlineKeyboardMarkup генерация
+4. Telegram-специфичные паттерны в коде: `Update`, `ContextTypes`, `CallbackQueryHandler`, `CommandHandler`, `ConversationHandler`, `PicklePersistence`
+
+### Содержат полезную логику (ПЕРЕНЕСТИ В DJANGO)
+| Компонент | Что перенести | Куда |
+|-----------|---------------|------|
+| `models.py` | Вся схема БД (11 таблиц, Enums, связи) | Django models.py (адаптировать под Django ORM) |
+| `services/` (пусто) | Бизнес-логика: тесты, практика, ИИ, прогресс | Django services / managers |
+| `config.py` | Настройки (BOT_TOKEN, AI_KEYS, DB_URL) | Django settings.py + .env |
+| `database.py` | Сессии, init_db | Django migrations + manage.py |
+
+### Адаптация моделей под Django ORM
+- `BigInteger` → `BigIntegerField` (Telegram user_id)
+- `Enum` → `CharField` с `choices`
+- `JSON` → `JSONField`
+- `DateTime` с `func.now()` → `auto_now_add` / `auto_now`
+- `UniqueConstraint` → `Meta.constraints`
+- `relationship` → `ForeignKey` / `ManyToManyField`
+
+---
+
+## 5. ЧТО СОХРАНИТЬ ИЗ ДАННЫХ
+
+Поскольку **БД не существует** (никогда не запускался бот), данных для сохранения нет.
+Однако **структура моделей** полностью соответствует ТЗ и должна быть перенесена:
+
+✅ **Сохранить полностью:**
+- Пользователи с полями: language, level, is_admin
+- Курсы по 6 языкам (Language Enum)
+- Темы с уровнем, порядком, контентом, пререквизитами
+- Вопросы тестов с типами и сложностью
+- Прогресс пользователей по темам
+- Практические задания с тест-кейсами
+- Сессии практики с результатами
+- Ошибки для интервальных повторений
+- История ИИ-чатов
+
+⚠️ **Требует расширения под ТЗ:**
+- Добавить: `ProgrammingLanguage` (админом управляемая), `CourseProgram`, `SubTopic`, `Lesson`, `LessonAttachment`, `Test`, `TestQuestion` (раздельно от входных тестов), `LearningProgress`, `LessonProgress`, `ErrorHistory`
+- Добавить статусы публикации: DRAFT, PUBLISHED, HIDDEN, ARCHIVED
+- Добавить поля для импорта/экспорта
+- Добавить историю изменений (versioning)
+
+---
+
+## 6. РИСКИ И ПРОБЛЕМЫ
+
+| Риск | Оценка | Митигация |
+|------|--------|-----------|
+| Потеря структуры БД при переходе на Django ORM | Высокий | Пошаговая миграция моделей, тестирование на пустой БД |
+| Telegram user_id (BigInteger) не совпадает с Django User PK | Средний | Использовать `BigIntegerField` для `telegram_id`, связывать с `AbstractUser` |
+| Async SQLAlchemy vs Sync Django ORM | Средний | Полный переход на Django ORM (sync), async только для views если нужно |
+| Нужны миграции для существующей схемы | Низкий (БД пуста) | Создать initial migration из Django моделей |
+| AI интеграция требует архитектурного слоя | Низкий | Создать абстрактный `AIProvider` интерфейс заранее |
+
+---
+
+## 7. ПЛАН ПЕРЕХОДА (СОГЛАСНО ТЗ)
+
+### Этап 1 — Анализ ✅ (ЭТОТ ОТЧЁТ)
+- Изучена структура, модели, зависимости
+- Определены Telegram-компоненты
+- Подготовлен этот отчёт
+
+### Этап 2 — Подготовка (СЛЕДУЮЩИЙ)
+1. **Резервная копия БД** — не нужна (пуста), но подготовить скрипт
+2. **Django проект** — `django-admin startproject config .`
+3. **Приложения**:
+   - `accounts` — пользователи, авторизация, профили
+   - `learning` — языки, программы, темы, подтемы, уроки
+   - `practice` — задания, тесты, проверка
+   - `progress` — прогресс, ошибки, статистика
+   - `ai` — слой интеграции с ИИ (пустой интерфейс)
+   - `core` — общие утилиты, базовые модели
+4. **Модели** — перенести и расширить из `models.py`
+5. **Миграции** — `makemigrations`, `migrate`
+6. **Админка** — зарегистрировать все модели
+
+### Этап 3 — Реализация
+1. Удалить Telegram файлы
+2. Auth (регистрация, вход, выход, сброс пароля)
+3. Профиль + выбор языка (onboarding)
+4. Личный кабинет (7 разделов + боковая навигация)
+5. Настройки
+6. Админка + модели управления контентом
+7. Страницы-заглушки для обучения
+8. `install.bat`, `start.bat`, `README.md`
+9. Docker/VPS конфигурация
+
+### Этап 4 — Проверка
+- Все пользовательские флоу
+- Админка
+- Адаптивность
+- Windows запуск
+
+---
+
+## 8. ЗАКЛЮЧЕНИЕ
+
+**Проект готов к преобразованию.**
+- База данных пуста — нет риска потери данных
+- Модели SQLAlchemy полностью документированы и соответствуют предметной области
+- Архитектура позволяет чистый переход на Django ORM
+- Все Telegram-компоненты изолированы в `handlers/`, `main.py`, `keyboards/`
+
+**Рекомендация:** Приступать к Этапу 2 — создание Django-проекта и перенос моделей.
+
+---
+
+*Отчёт подготовлен для согласования перед началом Этапа 2.*

@@ -1,0 +1,322 @@
+# Урок 2.1: Модель объектов — ссылки, изменяемость, истинность, is и ==
+
+## Цели урока
+- Понимать, как Python хранит объекты в памяти
+- Различать изменяемые и неизменяемые типы
+- Правильно использовать `is` vs `==`
+- Знать про интернирование и кэширование
+
+---
+
+## 1. Объектная модель Python
+
+### Всё — объект
+```python
+type(42)          # <class 'int'>
+type("hello")     # <class 'str'>
+type([1, 2])      # <class 'list'>
+type(len)         # <class 'builtin_function_or_method'>
+type(type)        # <class 'type'>  (метакласс)
+```
+
+### Структура объекта (упрощённо)
+```
+PyObject_HEAD
+- refcount (счётчик ссылок)
+- type pointer (указатель на тип)
+- данные объекта
+```
+
+---
+
+## 2. Ссылки и присваивание
+
+```python
+# Присваивание — создание НОВОЙ ССЫЛКИ на ТОТ ЖЕ объект
+a = [1, 2, 3]
+b = a          # b ссылается на ТОТ ЖЕ список
+b.append(4)
+print(a)       # [1, 2, 3, 4] — a изменился!
+
+# Неизменяемые объекты — "изменение" создаёт НОВЫЙ объект
+x = 10
+y = x
+y = y + 1      # создаётся НОВЫЙ int 11
+print(x)       # 10 (не изменился)
+print(y)       # 11
+```
+
+### id() — адрес объекта в памяти
+```python
+a = [1, 2]
+b = a
+c = [1, 2]
+
+print(id(a) == id(b))  # True (один объект)
+print(id(a) == id(c))  # False (разные объекты)
+```
+
+---
+
+## 3. Изменяемые vs Неизменяемые типы
+
+### Неизменяемые (immutable)
+| Тип | Описание |
+|-----|----------|
+| `int`, `float`, `complex` | Числа |
+| `str` | Строки |
+| `tuple` | Кортежи |
+| `frozenset` | Неизменяемые множества |
+| `bytes` | Байты |
+| `bool`, `None` | Булевы, None |
+
+```python
+s = "hello"
+# s[0] = "H"  # TypeError!
+s = "Hello"    # новый объект
+
+t = (1, 2, 3)
+# t.append(4)  # AttributeError!
+```
+
+### Изменяемые (mutable)
+| Тип | Описание |
+|-----|----------|
+| `list` | Списки |
+| `dict` | Словари |
+| `set` | Множества |
+| `bytearray` | Изменяемые байты |
+| Пользовательские классы | По умолчанию изменяемые |
+
+```python
+lst = [1, 2]
+lst.append(3)      # тот же объект, изменён на месте
+lst[0] = 10        # тот же объект
+
+d = {"a": 1}
+d["b"] = 2         # изменён на месте
+```
+
+---
+
+## 4. Опасность изменяемых аргументов по умолчанию
+
+```python
+# ПРОБЛЕМА
+def add_item(item, lst=[]):
+    lst.append(item)
+    return lst
+
+print(add_item(1))  # [1]
+print(add_item(2))  # [1, 2] — список общий!
+
+# РЕШЕНИЕ
+def add_item(item, lst=None):
+    if lst is None:
+        lst = []
+    lst.append(item)
+    return lst
+```
+
+---
+
+## 5. Копирование объектов
+
+```python
+import copy
+
+original = [1, [2, 3], 4]
+
+# Поверхностная копия (shallow)
+shallow = original.copy()        # или list(original), original[:]
+shallow[0] = 99                  # OK
+shallow[1].append(999)           # ПРОБЛЕМА: вложенный список общий!
+print(original[1])               # [2, 3, 999]
+
+# Глубокая копия (deep)
+deep = copy.deepcopy(original)
+deep[1].append(888)
+print(original[1])               # [2, 3, 999] — исходник не затронут
+```
+
+---
+
+## 6. is vs ==
+
+### == — равенство ЗНАЧЕНИЯ (value equality)
+```python
+[1, 2] == [1, 2]     # True
+"hello" == "hello"   # True
+```
+
+### is — тождество ОБЪЕКТА (identity)
+```python
+a = [1, 2]
+b = a
+c = [1, 2]
+
+a is b   # True (один и тот же объект)
+a is c   # False (разные объекты, но равны по значению)
+```
+
+### Когда использовать is:
+```python
+# Только для None, True, False, и одиночных объектов (sentinel)
+if x is None:
+    ...
+
+# Сравнение с константами
+if value is True:    # не value == True
+    ...
+```
+
+---
+
+## 7. Интернирование (кэширование) малых объектов
+
+```python
+# Целые числа от -5 до 256 заранее созданы
+a = 256
+b = 256
+print(a is b)   # True
+
+c = 257
+d = 257
+print(c is d)   # False (в CPython может быть True в одном блоке кода!)
+
+# Строки — иногда интернируются
+s1 = "hello"
+s2 = "hello"
+print(s1 is s2)   # True (короткие идентификаторы)
+
+s3 = "hello world!"
+s4 = "hello world!"
+print(s3 is s4)   # False (обычно)
+
+# Принудительное интернирование
+import sys
+sys.intern("hello world!")  # возвращает интернированную версию
+```
+
+---
+
+## 8. Истинность (Truthy / Falsy)
+
+```python
+# Falsy (ложь в булевом контексте)
+bool(False)      # False
+bool(None)       # False
+bool(0)          # False
+bool(0.0)        # False
+bool("")         # False
+bool([])         # False
+bool({})         # False
+bool(set())      # False
+bool(())         # False
+bool(range(0))   # False
+
+# Truthy — всё остальное
+bool(True)       # True
+bool(1)          # True
+bool(-1)         # True
+bool(" ")        # True (пробел!)
+bool([None])     # True (непустой список)
+bool({0: 0})     # True
+```
+
+### __bool__ и __len__
+```python
+class Container:
+    def __init__(self, items):
+        self.items = items
+
+    def __len__(self):
+        return len(self.items)
+
+    # Если нет __bool__, используется __len__: 0 -> False, >0 -> True
+    # Можно переопределить:
+    def __bool__(self):
+        return len(self.items) > 0
+
+c = Container([1, 2])
+if c:    # работает благодаря __len__ или __bool__
+    print("Непустой")
+```
+
+---
+
+## 9. Сборка мусора (Garbage Collection)
+
+```python
+import gc
+import sys
+
+# Счётчик ссылок — основной механизм
+a = []
+print(sys.getrefcount(a))  # >= 2 (переменная + аргумент функции)
+
+# Циклические ссылки — требуют GC
+class Node:
+    def __init__(self):
+        self.ref = None
+
+n1 = Node()
+n2 = Node()
+n1.ref = n2
+n2.ref = n1  # цикл!
+del n1, n2   # __del__ не вызовется сразу, ждёт gc.collect()
+
+gc.collect()  # принудительная сборка
+gc.get_count()  # (generation0, gen1, gen2) объекты на сборе
+gc.get_threshold()  # пороги запуска автосборки
+```
+
+---
+
+## 10. Weak References — слабые ссылки
+
+```python
+import weakref
+
+class Cache:
+    def __init__(self):
+        self._cache = weakref.WeakValueDictionary()
+
+    def get(self, key, factory):
+        if key not in self._cache:
+            self._cache[key] = factory()
+        return self._cache[key]
+
+# Объект удалится, когда на него не останется сильных ссылок
+```
+
+---
+
+## Практические задания
+
+1. **Счётчик ссылок**: напишите функцию, показывающую refcount объекта (через ctypes или sys.getrefcount)
+2. **Immutable wrapper**: создайте класс, делающий любой объект неизменяемым (перехватывайте атрибуты)
+3. **Cache с weakref**: реализуйте кэш, не удерживающий объекты в памяти
+4. **Deep equal**: напишите функцию глубокого сравнения двух структур данных
+5. **Memory leak hunt**: создайте циклическую ссылку, покажите, что gc.collect() её убирает
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `if x == None:` | `if x is None:` |
+| `def f(lst=[]):` | `def f(lst=None): if lst is None: lst = []` |
+| `copy.copy()` для вложенных структур | `copy.deepcopy()` |
+| Использование `is` для сравнения чисел/строк | `==` для значений, `is` только для None/True/False/sentinel |
+| Модификация аргумента-списка внутри функции | Создавайте копию или документируйте side effect |
+
+---
+
+## Полезные ресурсы
+- **Python Docs: Data Model** — https://docs.python.org/3/reference/datamodel.html
+- **Real Python: Python "is" vs "=="** — https://realpython.com/python-is-vs-equality/
+- **Real Python: Copying Objects** — https://realpython.com/copying-python-objects/
+- **Python GC docs** — https://docs.python.org/3/library/gc.html
+- **Pymotw: weakref** — https://pymotw.com/3/weakref/

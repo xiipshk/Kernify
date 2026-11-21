@@ -1,0 +1,443 @@
+# Урок 8: DOM — Document Object Model
+
+## Цели урока
+- Понять, что такое DOM и как браузер строит дерево документа
+- Научиться находить элементы: селекторы, навигация
+- Освоить манипуляцию: создание, изменение, удаление элементов
+- Работать с атрибутами, классами, стилями, data-атрибутами
+- Понять события: фазы, делегирование, объект события
+
+---
+
+## Что такое DOM?
+
+DOM (Document Object Model) — это программный интерфейс для HTML/XML документов. Браузер парсит HTML и строит дерево объектов, где каждый тег — узел (Node).
+
+```html
+<!DOCTYPE html>
+<html>
+<head><title>Страница</title></head>
+<body>
+  <h1 id="title">Привет</h1>
+  <p class="text">Текст <span>внутри</span></p>
+</body>
+</html>
+```
+
+```
+document
+└── html
+    ├── head
+    │   └── title → "Страница"
+    └── body
+        ├── h1#title → "Привет"
+        └── p.text
+            ├── textNode: "Текст "
+            └── span → "внутри"
+```
+
+**Типы узлов:**
+- `Element` — теги (`div`, `span`, `h1`...)
+- `Text` — текст внутри тегов
+- `Comment` – `<!-- комментарий -->`
+- `Document` — корень (`document`)
+- `DocumentFragment` — контейнер для батча
+
+---
+
+## Получение элементов
+
+### Современные селекторы
+
+```javascript
+// Один элемент
+const el = document.querySelector('#title');      // по ID
+const el2 = document.querySelector('.text');      // по классу (первый)
+const el3 = document.querySelector('h1');         // по тегу
+const el4 = document.querySelector('[data-id]');  // по атрибуту
+const el5 = document.querySelector('article > h2'); // сложный селектор
+
+// Несколько элементов — NodeList (НЕ массив!)
+const items = document.querySelectorAll('.item');
+items.forEach(el => ...); // forEach есть
+// items.map(...) — ОШИБКИ! NodeList не массив
+// Используйте: [...items].map(...) или Array.from(items)
+```
+
+### Быстрые методы (для ID/тег/класс)
+
+```javascript
+document.getElementById('title');           // только ID, очень быстро
+document.getElementsByClassName('text');    // HTMLCollection (живой!)
+document.getElementsByTagName('p');         // HTMLCollection (живой!)
+document.querySelectorAll('.text');         // NodeList (статичный)
+```
+
+> **HTMLCollection vs NodeList:** HTMLCollection «живой» — обновляется при изменении DOM. NodeList от `querySelectorAll` — статичный снимок.
+
+### Навигация по дереву
+
+```javascript
+const el = document.querySelector('.item');
+
+// Родители
+el.parentElement;      // родитель-элемент (null у document)
+el.parentNode;         // родитель-узел (может быть document)
+el.closest('.container'); // ближайший предок по селектору (включая себя!)
+
+// Дети (только элементы, без текстовых узлов)
+el.children;               // HTMLCollection
+el.firstElementChild;      // первый дочерний элемент
+el.lastElementChild;       // последний
+el.childElementCount;      // количество
+
+// Соседи
+el.previousElementSibling;
+el.nextElementSibling;
+
+// Все узлы (включая текстовые, комментарии)
+el.childNodes;        // NodeList
+el.firstChild;
+el.lastChild;
+el.previousSibling;
+el.nextSibling;
+```
+
+---
+
+## Манипуляция элементами
+
+### Создание элементов
+
+```javascript
+// Один элемент
+const div = document.createElement('div');
+const text = document.createTextNode('Текст');
+const comment = document.createComment('Комментарий');
+
+// DocumentFragment — для батча (не вставляется в DOM, только контейнер)
+const fragment = document.createDocumentFragment();
+for (let i = 0; i < 100; i++) {
+  const li = document.createElement('li');
+  li.textContent = `Item ${i}`;
+  fragment.append(li);
+}
+list.append(fragment); // одна перерисовка вместо 100
+```
+
+### Атрибуты
+
+```javascript
+const img = document.querySelector('img');
+
+// Стандартные атрибуты — свойства (быстрее, типизированы)
+img.src = 'photo.jpg';
+img.alt = 'Фото';
+img.id = 'photo';
+img.hidden = true; // boolean
+
+// Любые атрибуты
+el.setAttribute('data-id', '42');
+el.getAttribute('data-id');     // '42'
+el.hasAttribute('data-id');     // true
+el.removeAttribute('data-id');
+
+// data-* атрибуты — через dataset (camelCase → kebab-case)
+el.dataset.id;           // '42'
+el.dataset.userName;     // 'alex' → data-user-name
+el.dataset.userName = 'bob'; // data-user-name="bob"
+```
+
+### Классы
+
+```javascript
+el.classList.add('active', 'visible');  // несколько сразу
+el.classList.remove('hidden');
+el.classList.toggle('open');            // true/false — добавил/удалил
+el.classList.replace('old', 'new');     // замена
+el.classList.contains('active');        // boolean
+el.classList.forEach(c => ...);         // итерация
+
+// Старый способ (строка)
+el.className = 'a b c'; // перезаписывает все!
+```
+
+### Стили
+
+```javascript
+// Inline стили
+el.style.color = 'red';
+el.style.fontSize = '16px';
+el.style.cssText = 'color: red; font-size: 16px'; // пачкой
+
+// Вычисленные стили (после CSS)
+getComputedStyle(el).color;       // 'rgb(255, 0, 0)'
+getComputedStyle(el).fontSize;    // '16px'
+
+// CSS переменные
+el.style.setProperty('--theme-color', '#abc');
+getComputedStyle(el).getPropertyValue('--theme-color');
+```
+
+### Вставка, замена, удаление
+
+```javascript
+const parent = document.querySelector('#parent');
+const child = document.createElement('div');
+const newChild = document.createElement('span');
+const ref = document.querySelector('#reference');
+
+// Вставка внутрь
+parent.append(child, 'текст', newChild);    // в конец (поддерживает строки, узлы)
+parent.prepend(child);                       // в начало
+
+// Вставка рядом (снаружи)
+parent.before(child);        // перед parent
+parent.after(child);         // после parent
+ref.before(child);           // перед ref
+ref.after(child);            // после ref
+
+// Замена и удаление
+ref.replaceWith(newChild);   // замена
+child.remove();              // удаление
+parent.innerHTML = '';       // удалить всех детей (ОПАСНО — XSS!)
+
+// Безопасная очистка
+while (parent.firstChild) {
+  parent.firstChild.remove();
+}
+```
+
+### Template и клонирование
+
+```html
+<template id="card-tpl">
+  <article class="card">
+    <h2></h2>
+    <p></p>
+  </article>
+</template>
+```
+
+```javascript
+const tpl = document.querySelector('#card-tpl');
+const clone = tpl.content.cloneNode(true); // true = deep clone
+clone.querySelector('h2').textContent = 'Заголовок';
+clone.querySelector('p').textContent = 'Описание';
+document.body.append(clone);
+```
+
+---
+
+## Опасные методы (избегайте)
+
+```javascript
+// ❌ innerHTML — XSS уязвимость!
+el.innerHTML = `<img src=x onerror=alert(1)>`;
+el.innerHTML = userInput; // НИКОГДА не делайте так с пользовательскими данными!
+
+// ✅ Безопасно
+el.textContent = userInput; // экранирует HTML
+
+// ✅ Или создавайте элементы
+const div = document.createElement('div');
+div.textContent = userInput;
+el.append(div);
+
+// ❌ outerHTML — заменяет сам элемент, те же риски
+// ✅ replaceWith / remove / append
+```
+
+---
+
+## События (Events)
+
+### addEventListener
+
+```javascript
+element.addEventListener('click', handler, options);
+
+// options:
+{
+  capture: false,     // true = фаза перехвата (сверху вниз)
+  once: false,        // true = удалить после первого вызова
+  passive: false,     // true = никогда не вызовет preventDefault()
+  signal: abortSignal // AbortSignal для удаления
+}
+
+// Удаление
+element.removeEventListener('click', handler, { capture: false });
+```
+
+### Фазы события
+
+```
+CAPTURING (вниз) → TARGET → BUBBLING (вверх)
+window → document → html → body → ... → target → ... → body → html → document → window
+```
+
+```javascript
+// Фаза перехвата (capture: true)
+parent.addEventListener('click', () => console.log('capture'), { capture: true });
+// Фаза цели и всплытия (по умолчанию)
+parent.addEventListener('click', () => console.log('bubble'));
+child.addEventListener('click', () => console.log('target'));
+
+// Порядок: capture(parent) → target(child) → bubble(parent)
+```
+
+### Объект события
+
+```javascript
+element.addEventListener('click', (e) => {
+  e.type;               // 'click'
+  e.target;             // элемент, где сработало событие
+  e.currentTarget;      // элемент, на котором висит слушатель (=== this)
+  e.eventPhase;         // 1=capturing, 2=target, 3=bubbling
+  e.bubbles;            // true/false — всплывает ли
+  e.cancelable;         // true/false — можно ли preventDefault
+  e.preventDefault();   // отменить действие по умолчанию (link, submit, etc.)
+  e.stopPropagation();  // остановить всплытие
+  e.stopImmediatePropagation(); // остановить + другие слушатели НА ЭТОМ элементе
+  e.isTrusted;          // true = пользователь, false = dispatchEvent
+
+  // Координаты мыши
+  e.clientX, e.clientY;     // относительно viewport
+  e.pageX, e.pageY;         // относительно документа
+  e.offsetX, e.offsetY;     // относительно элемента
+
+  // Клавиши
+  e.key, e.code, e.keyCode; // клавиша
+  e.ctrlKey, e.shiftKey, e.altKey, e.metaKey; // модификаторы
+});
+```
+
+### Делегирование событий
+
+```javascript
+// Вместо 100 слушателей на <li> — один на <ul>
+const ul = document.querySelector('ul');
+
+ul.addEventListener('click', (e) => {
+  const li = e.target.closest('li'); // найдёт li или null
+  if (!li || !ul.contains(li)) return; // клик не в li или не наш ul
+
+  const id = li.dataset.id;
+  console.log('Clicked:', id);
+});
+```
+
+### Кастомные события
+
+```javascript
+// Создание
+const event = new CustomEvent('user-login', {
+  detail: { userId: 42, role: 'admin' },
+  bubbles: true,
+  cancelable: true
+});
+
+// Диспатч
+document.dispatchEvent(event);
+
+// Слушание
+document.addEventListener('user-login', (e) => {
+  console.log(e.detail.userId); // 42
+});
+```
+
+### Полезные события
+
+```javascript
+// DOM готов (до картинок/стилей)
+document.addEventListener('DOMContentLoaded', () => {});
+
+// Полная загрузка
+window.addEventListener('load', () => {});
+
+// Resize — с debounce!
+window.addEventListener('resize', debounce(() => {}, 150));
+
+// Scroll — passive для производительности
+window.addEventListener('scroll', () => {}, { passive: true });
+
+// Клавиатура
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) submit();
+});
+
+// Фокус
+input.addEventListener('focusin', () => {}); // пузырится
+input.addEventListener('focus', () => {});   // не пузырится
+
+// Видимость вкладки
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pauseVideo();
+  else playVideo();
+});
+
+// Онлайн/офлайн
+window.addEventListener('online', () => {});
+window.addEventListener('offline', () => {});
+
+// Хранилище в другом окне
+window.addEventListener('storage', (e) => {
+  console.log(e.key, e.oldValue, e.newValue, e.storageArea);
+});
+```
+
+---
+
+## Практика
+
+1. **DOM Builder**: Напишите `h(tag, props, ...children)` — гиперскрипт:
+   ```javascript
+   h('div', { class: 'card', onclick: fn }, 'Текст', h('span', {}, 'Вложено'))
+   ```
+
+2. **Todo с делегированием**: Список задач — один слушатель на `<ul>`:
+   - клик по чекбоксу → toggle
+   - клик по кнопке удаления → remove
+   - клик по тексту → edit inline
+
+3. **Модальное окно**: Создайте функцию `createModal(content, options)` с:
+   - overlay, закрытие по Esc/клику снаружи/кнопке
+   - фокус-трап (Tab внутри модалки)
+   - возврат фокуса при закрытии
+
+4. **Виртуальный список**: Рендерите только видимые элементы большого списка (10000+)
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `el.innerHTML = userInput` — XSS | `el.textContent = userInput` или `createElement` |
+| `querySelectorAll` → массив | Это `NodeList` — используйте `[...els]` или `Array.from(els)` |
+| `addEventListener` без удаления — утечка памяти | `{ once: true }` или `AbortController` / `removeEventListener` в cleanup |
+| `e.target` вместо `e.currentTarget` | `e.currentTarget` === `this` — элемент со слушателем |
+| `for...in` по NodeList | `for...of` или `forEach` |
+| `parentNode` вместо `parentElement` | `parentElement` возвращает только Element, `parentNode` может быть Document |
+
+---
+
+## Контрольные вопросы
+
+1. Чем `querySelector` отличается от `getElementById`?
+2. Что вернёт `el.closest('.class')` если у самого элемента есть этот класс?
+3. В чём разница между `capture: true` и `capture: false`?
+4. Зачем нужен `DocumentFragment`?
+5. Почему `innerHTML` опасен?
+6. Чем `stopPropagation` отличается от `stopImmediatePropagation`?
+7. Как сделать так, чтобы событие не всплывало, но сработало на родителе в фазе capture?
+
+---
+
+## Дополнительное чтение
+
+- [MDN: DOM](https://developer.mozilla.org/ru/docs/Web/API/Document_Object_Model)
+- [MDN: Event reference](https://developer.mozilla.org/ru/docs/Web/Events)
+- [javascript.info: DOM](https://javascript.info/dom-nodes)
+- [DOM Spec](https://dom.spec.whatwg.org/)
+- [Events Spec](https://dom.spec.whatwg.org/#events)

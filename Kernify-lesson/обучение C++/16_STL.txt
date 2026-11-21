@@ -1,0 +1,416 @@
+# Урок 16: STL — контейнеры, итераторы, алгоритмы, лямбды, optional, variant, tuple, string_view, span
+
+## Цели урока
+- Освоить основные контейнеры STL и выбрать правильный для задачи
+- Понять категории итераторов и их требования
+- Использовать алгоритмы вместо ручных циклов
+- Работать с лямбдами, захватом, `std::function`
+- Применять `optional`, `variant`, `tuple`, `string_view`, `span` (C++17/20)
+
+---
+
+## Теория
+
+### Контейнеры — выбор правильного
+
+| Контейнер | Сложность доступа | Сложность вставки/удаления | Когда использовать |
+|-----------|-------------------|----------------------------|-------------------|
+| `vector` | O(1) по индексу | O(n) в середине, O(1) amortized в конце | По умолчанию, кэш-френдли |
+| `array` | O(1) | N/A (фиксированный размер) | Stack-allocated, известный размер |
+| `deque` | O(1) | O(1) в начале/конце | Очередь, нужен push_front |
+| `list`/`forward_list` | O(n) | O(1) с итератором | Частые вставки в середину, стабильные итераторы |
+| `map`/`set` | O(log n) | O(log n) | Упорядоченные ключи, уникальность |
+| `unordered_map/set` | O(1) среднее | O(1) среднее | Быстрый lookup, порядок не важен |
+| `priority_queue` | O(1) top | O(log n) push/pop | Куча, задачи по приоритету |
+
+```cpp
+#include <vector>
+#include <deque>
+#include <list>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <algorithm>
+#include <iostream>
+
+void containersDemo() {
+    // vector — основной контейнер
+    std::vector<int> v = {1, 2, 3};
+    v.push_back(4);
+    v.emplace_back(5);          // in-place construction
+    v.reserve(100);             // избежать реаллокаций
+
+    // deque — push_front
+    std::deque<int> d = {1, 2, 3};
+    d.push_front(0);
+    d.push_back(4);
+
+    // map — упорядоченный словарь
+    std::map<std::string, int> m = {{"a", 1}, {"b", 2}};
+    m["c"] = 3;                 // вставка/доступ
+    auto it = m.find("b");      // O(log n)
+
+    // unordered_map — хеш-таблица
+    std::unordered_map<int, std::string> um = {{1, "one"}, {2, "two"}};
+    um.reserve(100);            // bucket count
+
+    // set — уникальные упорядоченные элементы
+    std::set<int> s = {3, 1, 4, 1, 5}; // {1, 3, 4, 5}
+}
+```
+
+### Итераторы и категории
+
+```
+input_iterator  -> forward_iterator -> bidirectional_iterator -> random_access_iterator -> contiguous_iterator
+     |                 |                    |                        |                      |
+  однопроход      многопроход           ++/--                  +n, -, []             data(), ptr
+  (istream)       (forward_list)        (list, map)            (vector, deque)       (vector, string)
+```
+
+```cpp
+#include <iterator>
+#include <vector>
+#include <list>
+#include <algorithm>
+
+void iteratorDemo() {
+    std::vector<int> v = {1, 2, 3, 4, 5};
+    std::list<int> l = {1, 2, 3, 4, 5};
+
+    // Random access — можно v.begin() + 2, v[2]
+    auto it_v = v.begin() + 2;
+    std::cout << *it_v << '\n'; // 3
+
+    // Bidirectional — только ++/--
+    auto it_l = l.begin();
+    std::advance(it_l, 2);      // O(n)
+    std::cout << *it_l << '\n'; // 3
+
+    // distance работает для всех, но O(n) для не random_access
+    std::cout << std::distance(v.begin(), v.end()) << '\n'; // 5
+    std::cout << std::distance(l.begin(), l.end()) << '\n'; // 5
+
+    // Reverse iterators
+    for (auto rit = v.rbegin(); rit != v.rend(); ++rit) {
+        std::cout << *rit << ' '; // 5 4 3 2 1
+    }
+}
+```
+
+### Алгоритмы — `<algorithm>`, `<numeric>`
+
+```cpp
+#include <algorithm>
+#include <numeric>
+#include <vector>
+#include <string>
+#include <iostream>
+
+void algorithmsDemo() {
+    std::vector<int> v = {5, 2, 8, 1, 9, 3};
+
+    // Поиск
+    auto it = std::find(v.begin(), v.end(), 8);
+    auto it2 = std::find_if(v.begin(), v.end(), [](int x){ return x > 5; });
+
+    // Сортировка
+    std::sort(v.begin(), v.end());           // 1 2 3 5 8 9
+    std::stable_sort(v.begin(), v.end());    // сохраняет порядок равных
+    std::partial_sort(v.begin(), v.begin()+3, v.end()); // первые 3 отсортированы
+
+    // Бинарный поиск (требует отсортированный)
+    bool found = std::binary_search(v.begin(), v.end(), 5);
+    auto range = std::equal_range(v.begin(), v.end(), 3); // pair<lower, upper>
+
+    // Модификация
+    std::transform(v.begin(), v.end(), v.begin(), [](int x){ return x * 2; });
+    std::for_each(v.begin(), v.end(), [](int& x){ x += 1; });
+
+    // Копирование/удаление
+    std::vector<int> dest;
+    std::copy_if(v.begin(), v.end(), std::back_inserter(dest), [](int x){ return x % 2 == 0; });
+    v.erase(std::remove(v.begin(), v.end(), 4), v.end()); // erase-remove idiom
+
+    // Агрегация (<numeric>)
+    int sum = std::accumulate(v.begin(), v.end(), 0);
+    int prod = std::reduce(v.begin(), v.end(), 1, std::multiplies{}); // C++17, может быть параллельным
+    std::iota(v.begin(), v.end(), 10); // заполнить 10, 11, 12...
+
+    // Min/max
+    auto [minIt, maxIt] = std::minmax_element(v.begin(), v.end());
+}
+```
+
+### Лямбды (C++11/14/20)
+
+```cpp
+#include <functional>
+#include <vector>
+#include <algorithm>
+
+void lambdaDemo() {
+    int x = 10, y = 20;
+
+    // Захват по значению
+    auto byValue = [x, y]() { return x + y; }; // копии x, y
+    // Захват по ссылке
+    auto byRef = [&x, &y]() { return x + y; }; // ссылки на x, y
+    // Захват всего по значению
+    auto allVal = [=]() { return x + y; };
+    // Захват всего по ссылке
+    auto allRef = [&]() { return x + y; };
+    // Смешанный
+    auto mixed = [=, &y]() { return x + y; }; // x по значению, y по ссылке
+    auto mixed2 = [&, x]() { return x + y; }; // x по ссылке, y по значению
+
+    // Mutable — позволяет менять захваченные по значению
+    auto counter = [count = 0]() mutable { return ++count; };
+    std::cout << counter() << counter() << '\n'; // 1 2
+
+    // Generic lambda (C++14) — abbreviated template
+    auto add = [](auto a, auto b) { return a + b; };
+    std::cout << add(1, 2) << add(1.5, 2.5) << '\n';
+
+    // C++20: template lambda
+    auto vecAdd = []<typename T>(const std::vector<T>& v) {
+        T sum = 0;
+        for (auto x : v) sum += x;
+        return sum;
+    };
+
+    // Захват инициализатора (C++14)
+    auto ptr = std::make_unique<int>(42);
+    auto usePtr = [p = std::move(ptr)]() { std::cout << *p << '\n'; };
+
+    // std::function — type erasure для любого callable
+    std::function<int(int)> func = [](int x) { return x * 2; };
+    func = [](int x) { return x + 1; }; // можно перезаписать
+}
+```
+
+### `std::optional` (C++17) — значение или ничего
+
+```cpp
+#include <optional>
+#include <string>
+#include <iostream>
+
+std::optional<int> parseInt(const std::string& s) {
+    try {
+        return std::stoi(s);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+void optionalDemo() {
+    auto o1 = parseInt("42");      // optional<int> со значением 42
+    auto o2 = parseInt("abc");     // nullopt
+
+    if (o1) std::cout << *o1 << '\n';           // разыменование (UB если пустой!)
+    std::cout << o1.value() << '\n';            // бросает bad_optional_access если пустой
+    std::cout << o2.value_or(-1) << '\n';       // -1 (default)
+
+    // Monadic operations (C++23)
+    // auto o3 = o1.and_then([](int x){ return std::optional{x * 2}; });
+    // auto o4 = o1.transform([](int x){ return x * 2; });
+    // auto o5 = o1.or_else([]{ return std::optional{0}; });
+}
+```
+
+### `std::variant` (C++17) — type-safe union
+
+```cpp
+#include <variant>
+#include <string>
+#include <iostream>
+
+using Value = std::variant<int, double, std::string>;
+
+void variantDemo() {
+    Value v = 42;           // int
+    v = 3.14;               // double
+    v = "hello";            // string
+
+    // Проверка типа
+    if (std::holds_alternative<int>(v)) {
+        std::cout << "int: " << std::get<int>(v) << '\n';
+    }
+
+    // Безопасное получение (pointer, nullptr если не тот тип)
+    if (auto* p = std::get_if<double>(&v)) {
+        std::cout << "double: " << *p << '\n';
+    }
+
+    // Посещение (visitor) — рекомендуемый способ
+    std::visit([](auto&& arg) {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, int>) std::cout << "int: " << arg << '\n';
+        else if constexpr (std::is_same_v<T, double>) std::cout << "double: " << arg << '\n';
+        else if constexpr (std::is_same_v<T, std::string>) std::cout << "string: " << arg << '\n';
+    }, v);
+
+    // Индекс текущего типа
+    std::cout << "index: " << v.index() << '\n'; // 2 (string)
+}
+```
+
+### `std::tuple` и structured bindings (C++17)
+
+```cpp
+#include <tuple>
+#include <string>
+#include <iostream>
+
+auto makePerson() {
+    return std::tuple<std::string, int, double>("Alice", 30, 165.5);
+}
+
+void tupleDemo() {
+    auto [name, age, height] = makePerson(); // structured binding
+    std::cout << name << ' ' << age << ' ' << height << '\n';
+
+    // Доступ по индексу
+    auto t = std::make_tuple(1, 2.5, "three");
+    std::cout << std::get<0>(t) << '\n'; // 1
+    std::cout << std::get<1>(t) << '\n'; // 2.5
+
+    // Tuple cat, tie
+    auto t2 = std::tuple_cat(std::make_tuple(1, 2), std::make_tuple(3, 4));
+    int a, b; std::tie(a, b) = std::make_tuple(10, 20); // разборка
+}
+```
+
+### `std::string_view` (C++17) — невладеющая строка
+
+```cpp
+#include <string_view>
+#include <string>
+#include <iostream>
+
+void stringViewDemo() {
+    std::string s = "Hello, World!";
+    std::string_view sv(s);           // не копирует данные
+    std::string_view sv2 = "literal"; // от строкового литерала
+
+    // Подстроки — O(1), без аллокаций
+    auto word = sv.substr(0, 5);      // "Hello"
+    auto rest = sv.substr(7);         // "World!"
+
+    // Поиск
+    auto pos = sv.find(',');          // 5
+    auto pos2 = sv.find("World");     // 7
+
+    // Преобразование в string при необходимости
+    std::string owned(word);          // копия
+
+    // ВАЖНО: string_view не владеет данными!
+    // std::string_view dangling = std::string("temp").substr(0, 2); // UB!
+}
+```
+
+### `std::span` (C++20) — невладеющая ссылка на непрерывную последовательность
+
+```cpp
+#include <span>
+#include <vector>
+#include <array>
+#include <iostream>
+
+void process(std::span<int> s) {      // принимает vector, array, указатель+размер
+    for (int& x : s) x *= 2;
+}
+
+void spanDemo() {
+    std::vector<int> v = {1, 2, 3, 4, 5};
+    std::array<int, 3> a = {10, 20, 30};
+    int arr[] = {100, 200};
+
+    process(v);        // OK
+    process(a);        // OK
+    process(arr);      // OK (размер выводится)
+    process({1, 2, 3}); // OK (initializer_list -> span)
+
+    // Динамический и статический span
+    std::span<int, 3> fixed(a);     // размер известен на этапе компиляции
+    std::span<int> dynamic(v);      // размер во время выполнения
+}
+```
+
+### Range-based algorithms (C++20) — `<ranges>`
+
+```cpp
+#include <ranges>
+#include <vector>
+#include <iostream>
+
+void rangesDemo() {
+    std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+
+    // Pipeline syntax
+    auto even = v | std::views::filter([](int x){ return x % 2 == 0; });
+    auto squared = even | std::views::transform([](int x){ return x * x; });
+
+    for (int x : squared) std::cout << x << ' '; // 4 16 36 64 100
+
+    // Actions (модифицируют контейнер)
+    // std::ranges::sort(v);
+    // std::ranges::reverse(v);
+
+    // Алгоритмы с проекциями
+    struct Person { std::string name; int age; };
+    std::vector<Person> people = {{"Alice", 30}, {"Bob", 25}, {"Carol", 35}};
+    auto oldest = std::ranges::max_element(people, {}, &Person::age);
+}
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Phone book с `unordered_map`
+Создайте телефонную книгу: `unordered_map<string, vector<string>>` (имя -> список номеров). Реализуйте добавление, поиск по имени, поиск по номеру (обратный индекс), удаление. Используйте `string_view` в интерфейсе поиска.
+
+### Задание 2: Обработка логов с алгоритмами
+Дан `vector<string>` логов. Используя ТОЛЬКО алгоритмы (`transform`, `copy_if`, `sort`, `unique`, `count_if`):
+- Отфильтруйте ERROR логи
+- Извлеките таймстемпы (regex или find)
+- Посчитайте уникальные уровни логирования
+- Выведите топ-5 частых сообщений
+
+### Задание 3: Parser с `variant`
+Напишите парсер простого выражения: число, сложение, умножение. AST как `variant<Number, Add, Mul>` где `Add` и `Mul` содержат `unique_ptr<Expr>`. Реализуйте `evaluate` через `std::visit`.
+
+### Задание 4: `optional` в конфигурации
+Создайте `Config` с `optional<string> host`, `optional<int> port`, `optional<vector<string>> tags`. Реализуйте загрузку из JSON (используйте nlohmann/json или простой парсинг). Демонстрируйте `value_or` для дефолтов.
+
+### Задание 5: Range pipeline
+Дан `vector<int>` от 1 до 100. Используя `std::views`:
+- Оставьте только простые числа (напишите `is_prime` predicate)
+- Возведите в квадрат
+- Возьмите первые 10
+- Сложите их (`std::ranges::fold_left` или `accumulate`)
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| Итератор инвалидирован | `vector::push_back` может реаллоцировать | Резервируйте `reserve`, используйте индексы или `list` |
+| `string_view` висит | Временная строка уничтожена | Не храните `string_view` дольше владельца |
+| `variant` — необработанный тип | `visit` не покрывает все альтернативы | Используйте `if constexpr` или generic visitor |
+| `optional` UB | `*opt` когда пустой | Проверяйте `if (opt)` или используйте `value_or` |
+| Лямбда захватывает `this` неявно | `[=]` в методе класса захватывает `this` | Явно `[this]` или `[*this]` (C++17 copy capture) |
+| `std::function` overhead | Type erasure + heap allocation | Используйте template / auto / function_ref где возможно |
+
+---
+
+## Ресурсы
+- [cppreference: Containers](https://en.cppreference.com/w/cpp/container)
+- [cppreference: Algorithms](https://en.cppreference.com/w/cpp/algorithm)
+- [cppreference: Ranges](https://en.cppreference.com/w/cpp/ranges)
+- **Книга:** Josuttis "The C++ Standard Library" (2nd ed.)
+- **Книга:** Meyers "Effective STL"
+- **CppCon:** "C++20 Ranges: The Future of Algorithms" (Casey Carter)

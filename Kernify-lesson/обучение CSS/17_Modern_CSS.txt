@@ -1,0 +1,526 @@
+# Урок 17: Современный CSS — aspect-ratio, object-fit, focus-visible, логические свойства, цветовые функции
+
+## Цели урока
+- Освоить современные CSS-свойства для контроля соотношения сторон и встраиваемого контента
+- Понять псевдокласс :focus-visible и отличия от :focus
+- Изучить логические свойства для интернационализации (LTR/RTL)
+- Научиться использовать цветовые функции: oklch, oklab, color-mix, lab, lch
+- Применить новые возможности на практике в доступном, адаптивном интерфейсе
+
+---
+
+## 1. aspect-ratio — соотношение сторон без хака с padding
+
+### Проблема старого подхода
+Раньше соотношение сторон эмулировалось через `padding-bottom: 56.25%` (16:9) и абсолютное позиционирование контента. Это громоздко и ломается при изменении контента.
+
+### aspect-ratio — современное решение
+```css
+.video {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  background: #000;
+}
+
+.avatar {
+  aspect-ratio: 1 / 1;
+  width: 80px;
+  height: auto;
+  border-radius: 50%;
+}
+```
+
+```html
+<!-- Видео 16:9 без лишних обёрток -->
+<div class="video">
+  <iframe src="..." loading="lazy"></iframe>
+</div>
+
+<!-- Карточка с фиксированным соотношением -->
+<div class="card-media" style="aspect-ratio: 4 / 3;">
+  <img src="photo.jpg" alt="">
+</div>
+```
+
+### Важные нюансы
+- `aspect-ratio` работает вместе с `width`/`height` — если задать оба, браузер может игнорировать aspect-ratio (конфликт)
+- Для `img` aspect-ratio применяется только если нет явных `width` и `height` (иначе они имеют приоритет)
+- Может принимать `auto` — элемент определяет соотношение сам (по умолчанию для заменяемых элементов)
+
+```css
+.card-media {
+  aspect-ratio: 4 / 3;
+  width: 100%;
+  /* height не задаём — вычислится из aspect-ratio */
+}
+```
+
+---
+
+## 2. object-fit и object-position — встраиваемый контент
+
+### object-fit — как заполнять область
+Работает с `img`, `video`, `canvas`, `object`, `iframe` и другими заменяемыми элементами.
+
+```css
+.img-cover {
+  width: 300px;
+  height: 200px;
+  object-fit: cover;    /* Заполняет весь блок, обрезая лишнее */
+  object-position: center;
+}
+
+.img-contain {
+  width: 300px;
+  height: 200px;
+  object-fit: contain;  /* Всё изображение видно, могут быть пустоты */
+}
+
+.img-fill {
+  width: 300px;
+  height: 200px;
+  object-fit: fill;     /* Растягивает (может исказить) — редко нужно */
+}
+
+.img-none {
+  width: 300px;
+  height: 200px;
+  object-fit: none;     /* Размер по умолчанию, без масштабирования */
+}
+
+.img-scale-down {
+  width: 300px;
+  height: 200px;
+  object-fit: scale-down; /* Меньшее из contain и none */
+}
+```
+
+### object-position — где находится объект внутри области
+```css
+.portrait {
+  width: 200px;
+  height: 200px;
+  object-fit: cover;
+  object-position: top center;   /* focus на лицо */
+}
+
+/* Конкретные координаты */
+.special {
+  object-position: 30% 70%;
+}
+```
+
+### Практика: галерея с обрезкой
+```html
+<div class="gallery">
+  <img src="a.jpg" alt="..." class="gallery__img">
+  <img src="b.jpg" alt="..." class="gallery__img">
+  <img src="c.jpg" alt="..." class="gallery__img">
+</div>
+```
+
+```css
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.gallery__img {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  border-radius: 0.5rem;
+  transition: transform 0.2s;
+}
+
+.gallery__img:hover {
+  transform: scale(1.05);
+}
+```
+
+---
+
+## 3. :focus-visible — фокус только для клавиатуры
+
+### :focus vs :focus-visible
+- `:focus` — срабатывает при любом фокусе (включая клик мышкой) — часто выглядит громоздко
+- `:focus-visible` — только когда браузер决定л, что нужен видимый индикатор фокуса (клавиатура, Tab)
+
+```css
+/* Кнопка: мышкой кликнули — нет обводки, Tab нажали — есть обводка */
+.btn {
+  padding: 0.5rem 1rem;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  outline: none;
+}
+
+.btn:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+  border-color: #2563eb;
+}
+
+/* Обычный :focus — скрываем для мыши */
+.btn:focus:not(:focus-visible) {
+  outline: none;
+}
+```
+
+### Почему важно
+- Пользователи мыши не нуждаются в обводке — она визуально шумная
+- Пользователи клавиатуры нуждаются в чётком индикаторе фокуса (требование WCAG 2.4.7)
+- `:focus-visible` даёт точечное решение
+
+```css
+/* Глобальный сброс — базовый стиль фокуса для всей страницы */
+:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/*:focus-visible within — когда фокус внутри контейнера */
+.search-form:focus-within {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.2);
+}
+```
+
+---
+
+## 4. Логические свойства — вместо left/right, top/bottom
+
+### Проблема физических свойств
+В RTL-языках (арабский, иврит) `left` и `right` меняются местами. Физические свойства ломают верстку.
+
+### Логические свойства (CSS Logical Properties)
+| Физическое | Логическое (LTR → RTL) |
+|------------|------------------------|
+| `margin-left` | `margin-inline-start` |
+| `margin-right` | `margin-inline-end` |
+| `padding-left` | `padding-inline-start` |
+| `padding-right` | `padding-inline-end` |
+| `text-align: left` | `text-align: start` |
+| `text-align: right` | `text-align: end` |
+| `border-left` | `border-inline-start` |
+| `border-right` | `border-inline-end` |
+| `margin-top` | `margin-block-start` |
+| `margin-bottom` | `margin-block-end` |
+| `width` | `inline-size` |
+| `height` | `block-size` |
+| `min-width` | `min-inline-size` |
+| `max-height` | `max-block-size` |
+
+### Пример: карточка, работающая в LTR и RTL
+```css
+.card {
+  padding: 1rem;              /* физическое — ок для равномерного */
+  padding-inline-start: 1rem; /* отступ с начала строки */
+  padding-inline-end: 1rem;   /* отступ с конца строки */
+  margin-block-start: 1rem;   /* отступ сверху (block start) */
+  margin-block-end: 1rem;     /* отступ снизу (block end) */
+  border-inline-start: 1px solid #e5e7eb; /* граница слева/справа в зависимости от языка */
+  text-align: start;          /* выравнивание по началу строки */
+}
+
+html[dir="rtl"] {
+  /* логические свойства автоматически переключаются */
+}
+
+html[dir="ltr"] {
+  /* то же самое */
+}
+```
+
+### direction и writing-mode
+```css
+/* Направление текста */
+.rtl-block {
+  direction: rtl;
+  unicode-bidi: embed;
+}
+
+/* Вертикальный текст (японский стиль) */
+.vertical {
+  writing-mode: vertical-rl;   /* текст сверху вниз, строки справа налево */
+  /* writing-mode: horizontal-tb; */ /* по умолчанию */
+}
+
+/* Логические свойства подчиняются writing-mode */
+```
+
+---
+
+## 5. Цветовые функции — OKLCH, OKLAB, color-mix
+
+### Почему не HEX/RGB
+sRGB (HEX, RGB) неравномерно воспринимается глазом. OKLCH/OKLAB — perceptually uniform (равномерные) цветовые пространства, легко создавать гармоничные палитры и вариации.
+
+### OKLCH — L (светлота), C (хрома/насыщенность), H (оттенок)
+```css
+:root {
+  /* oklch(светлота 0-1, насыщенность, оттенок в градусах) */
+  --color-primary: oklch(0.62 0.22 264);   /* синий */
+  --color-success: oklch(0.75 0.18 150);   /* зелёный */
+  --color-danger: oklch(0.65 0.22 20);     /* красный */
+  --color-warning: oklch(0.80 0.15 60);    /* жёлтый */
+}
+
+.btn {
+  background: var(--color-primary);
+  color: white;
+}
+
+.btn:hover {
+  /* Уменьшаем светлоту для ховера — предсказуемо */
+  background: oklch(0.55 0.22 264);
+}
+```
+
+### color-mix — смешивание цветов
+```css
+:root {
+  --primary: oklch(0.62 0.22 264);
+}
+
+.btn--primary {
+  background: var(--primary);
+  border: 1px solid var(--primary);
+}
+
+.btn--primary:hover {
+  /* Затемняем на 20% — меняем только светлоту через color-mix */
+  background: color-mix(in oklch, var(--primary), black 20%);
+}
+
+.btn--ghost {
+  background: color-mix(in oklch, var(--primary), white 90%);
+  color: var(--primary);
+}
+
+/* Тень цвета */
+.card {
+  box-shadow: 0 4px 6px color-mix(in oklch, var(--primary), black 40%);
+}
+```
+
+### CSS-цветовые пространства
+```css
+/* Oklab —軸овые координаты, хорош для градиентов */
+.gradient {
+  background: linear-gradient(
+    in oklch,
+    oklch(0.7 0.15 264),
+    oklch(0.4 0.15 280)
+  );
+}
+
+/* lab — похож на Oklab, старше */
+.lab-color {
+  color: lab(65% 20 30);
+}
+
+/* lch — cyl­индрическая версия lab */
+.lch-color {
+  color: lch(65% 30 40);
+}
+
+/* hwb — оттенок, белый, чёрный (интуитивный) */
+.hwb {
+  color: hwb(200 30% 20%);
+}
+
+/* lab/lch/oкlab/oкlch поддерживаются в современных браузерах */
+```
+
+### Прогрессивное улучшение цветов
+```css
+.card {
+  /* Fallback для старых браузеров */
+  background: #2563eb;
+  /* Современный вариант */
+  background: oklch(0.62 0.22 264);
+}
+
+@supports (color: oklch(0 0 0)) {
+  .card {
+    background: oklch(0.62 0.22 264);
+  }
+}
+```
+
+---
+
+## 6. Комплексный пример: карточка товара
+
+```html
+<article class="product-card">
+  <div class="product__media">
+    <img src="product.jpg" alt="Наушники Sony WH-1000XM5" class="product__img">
+  </div>
+  <div class="product__body">
+    <h3 class="product__title">Наушники Sony WH-1000XM5</h3>
+    <p class="product__text">Беспроводные наушники с шумоподавлением и 30 часами автономной работы.</p>
+    <div class="product__price">299 $</div>
+    <button class="btn btn--primary" type="button">В корзину</button>
+  </div>
+</article>
+```
+
+```css
+.product-card {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem;
+  border: 1px solid oklch(0.88 0.006 285);
+  border-radius: 1rem;
+  background: white;
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.product-card:hover {
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.08);
+  border-color: oklch(0.62 0.22 264);
+}
+
+.product__media {
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  background: oklch(0.95 0.001 285);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.product__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
+.product__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: oklch(0.21 0.006 285);
+  margin: 0;
+}
+
+.product__text {
+  font-size: 0.875rem;
+  color: oklch(0.55 0.01 285);
+  line-height: 1.5;
+  margin-block-end: 1rem;
+}
+
+.product__price {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: oklch(0.21 0.006 285);
+  margin-block-end: 1rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+
+.btn--primary {
+  background: oklch(0.62 0.22 264);
+  color: white;
+}
+
+.btn--primary:hover {
+  background: oklch(0.55 0.22 264);
+}
+
+.btn--primary:focus-visible {
+  outline: 3px solid oklch(0.62 0.22 264);
+  outline-offset: 2px;
+}
+
+.btn--primary:active {
+  transform: scale(0.97);
+}
+
+/* RTL 지원 */
+[dir="rtl"] .product-card {
+  /* логические свойства уже работают корректно */
+}
+```
+
+---
+
+## 7. Таблица поддержки (2024)
+
+| Фича | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| aspect-ratio | 88+ | 89+ | 15+ | 88+ |
+| object-fit/object-position | 32+ | 36+ | 10+ | 79+ |
+| :focus-visible | 86+ | 85+ | 13.1+ | 86+ |
+| Логические свойства | 89+ | 89+ | 14.1+ | 89+ |
+| oklch/oklab | 111+ | 113+ | 15.4+ | 111+ |
+| color-mix | 111+ | 113+ | 15.4+ | 111+ |
+
+---
+
+## 8. Практическое задание
+
+### Задача 1: Адаптивная медиа-карточка
+Создай карточку со встроенным видео 16:9 и заголовком ниже:
+- Видео/изображение должно сохранять `aspect-ratio: 16 / 9`
+- Изображение внутри — `object-fit: cover`
+- Карточка работает в LTR и RTL (используй логические свойства)
+- Кнопка "Подробнее" с `:focus-visible` стилем
+
+### Задача 2: Цветовая палитра на OKLCH
+Создай набор переменных:
+- Базовый бренд-цвет `oklch(...)`
+- Вариации: hover (темнее), ghost (прозрачный), active (ещё темнее)
+- Используй `color-mix` для получения вариантов, не задавая новые значения вручную
+
+### Задача 3: Проверка фокуса
+Открой страницу в браузере:
+1. Пройдись по всем интерактивным элементам клавишей Tab
+2. Убедись, что `:focus-visible` показывает чёткую обводку
+3. Кликни мышкой на кнопку — обводки быть не должно
+
+---
+
+## 9. Полезные ресурсы
+
+- [MDN: aspect-ratio](https://developer.mozilla.org/en-US/docs/Web/CSS/aspect-ratio)
+- [MDN: object-fit](https://developer.mozilla.org/en-US/docs/Web/CSS/object-fit)
+- [MDN: :focus-visible](https://developer.mozilla.org/en-US/docs/Web/CSS/:focus-visible)
+- [MDN: CSS Logical Properties](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_logical_properties_and_values)
+- [OKLCH в CSS](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value/oklch)
+- [color-mix()](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value/color-mix)
+- [A11Y Project: Focus styles](https://a11yproject.com/)
+
+---
+
+## 10. Ключевые выводы
+
+1. **`aspect-ratio`** — remplace padding-хак, но следи за конфликтом с width/height
+2. **`object-fit: cover`** — стандарт для галерей и аватаров, не искажает картинку
+3. **`:focus-visible`** — показывай индикатор фокуса только для клавиатуры, скрывай для мыши
+4. **Логические свойства** (`margin-inline-start`, `padding-block-end`) — must-have для RTL и интернационализации
+5. **OKLCH + color-mix** — предсказуемый способ создавать цветовые вариации без хардкода hex-значений
+
+*Следующий урок: 18_Accessibility.txt — Доступность: focus, контраст, масштабирование текста, клавиатурное взаимодействие*

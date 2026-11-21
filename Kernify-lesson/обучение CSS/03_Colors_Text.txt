@@ -1,0 +1,504 @@
+# Урок 3: Цвета и типографика — Цветовые модели, шрифты, Variable Fonts
+
+## Цели урока
+- Освоить все современные цветовые модели: HEX, RGB, HSL, HWB, LCH, OKLCH, color()
+- Понять цветовые пространства и gamut mapping
+- Глубоко изучить типографику: font-face, variable fonts, clamp(), fluid type
+- Научиться работать с system-ui, локальными шрифтами, font-display
+- Освоить CSS-логические свойства для международной типографики
+
+---
+
+## 1. Цветовые модели — от классики к современности
+
+### Классические (sRGB gamut)
+```css
+/* HEX */
+color: #2563eb;
+color: #2563ebff;  /* с альфой (8 цифр) */
+
+/* RGB */
+color: rgb(37, 99, 235);
+color: rgb(37 99 235 / 0.8);  /* современный синтаксис с пробелами */
+
+/* HSL — интуитивно понятен */
+color: hsl(221, 83%, 53%);
+color: hsl(221 83% 53% / 0.8);
+
+/* HWB (Hue-Whiteness-Blackness) — проще для модификации */
+color: hwb(221 15% 8%);  /* 15% белого, 8% чёрного */
+```
+
+### Современные (Wide Gamut / P3 и дальше)
+```css
+/* Display-P3 — шире sRGB (~35% больше цветов) */
+color: color(display-p3 0.15 0.39 0.92);
+color: rgb(37 99 235 / 0.8)  /* fallback для старых браузеров */
+
+/* LCH — перцептивно-равномерное (Lightness, Chroma, Hue) */
+color: lch(55% 115 264);  /* L=55%, C=115, H=264° */
+
+/* OKLCH — исправленная версия LCH (лучше для интерполяции) */
+color: oklch(0.62 0.22 264);  /* Рекомендуемый современный формат */
+
+/* OKLAB — как OKLCH но в декартовых координатах */
+color: oklab(0.62 -0.02 -0.21);
+
+/* color() — универсальная функция для любых пространств */
+color: color(srgb 0.15 0.39 0.92);
+color: color(display-p3 0.15 0.39 0.92);
+color: color(rec2020 0.1 0.4 0.9);  /* Ultra-wide gamut */
+```
+
+### Поддержка браузерами (2024)
+| Формат | Chrome | Firefox | Safari | Edge |
+|--------|--------|---------|--------|------|
+| rgb/hsl с пробелами | 66+ | 52+ | 15+ | 79+ |
+| HWB | 101+ | 96+ | 15+ | 101+ |
+| LCH/LAB | 111+ | 113+ | 15+ | 111+ |
+| OKLCH/OKLAB | 111+ | 113+ | 15.4+ | 111+ |
+| color() | 111+ | 113+ | 15.4+ | 111+ |
+| P3 | 111+ | 113+ | 15.4+ | 111+ |
+
+### Стратегия прогрессивного улучшения
+```css
+:root {
+  /* Базовый sRGB */
+  --brand: #2563eb;
+
+  /* Wide gamut для поддерживающих */
+  @supports (color: oklch(0 0 0)) {
+    --brand: oklch(0.62 0.22 264);
+  }
+
+  /* P3 для максимального охвата */
+  @supports (color: color(display-p3 0 0 0)) {
+    --brand: color(display-p3 0.15 0.39 0.92);
+  }
+}
+```
+
+---
+
+## 2. Color Manipulation — color-mix(), relative color syntax
+
+### color-mix() — смешивание цветов (CSS Color Level 5)
+```css
+/* Базовое смешивание */
+color: color-mix(in srgb, #2563eb, white 20%);  /* 20% белого */
+color: color-mix(in oklch, var(--brand), white 30%);
+
+/* В разных цветовых пространствах */
+color: color-mix(in srgb, red, blue);        /* фиолетовый в sRGB */
+color: color-mix(in oklch, red, blue);       /* перцептивно правильный */
+color: color-mix(in lch, red, blue);         /* LCH интерполяция */
+
+/* Практические примеры */
+:root {
+  --primary: oklch(0.62 0.22 264);
+  --primary-hover: color-mix(in oklch, var(--primary), black 15%);
+  --primary-light: color-mix(in oklch, var(--primary), white 40%);
+  --primary-text: color-mix(in oklch, var(--primary), black 45%);
+}
+```
+
+### Relative Color Syntax — модификация каналов
+```css
+/* Базовый синтаксис: color(from исходный цвет координаты) */
+color: color(from var(--brand) l c h);           /* копия в LCH */
+color: color(from var(--brand) l calc(c * 1.2) h);  /* +20% chroma */
+color: color(from var(--brand) l c calc(h + 30));   /* сдвиг оттенка */
+
+/* В OKLCH */
+color: color(from var(--brand) l c h / 0.5);  /* 50% прозрачности */
+
+/* Генерация палитры из одного цвета */
+:root {
+  --base: oklch(0.62 0.22 264);
+  --base-lighter: color(from var(--base) l calc(l + 0.2) c h);
+  --base-darker: color(from var(--base) l calc(l - 0.2) c h);
+  --base-muted: color(from var(--base) l calc(c * 0.5) h);
+  --complement: color(from var(--base) l c calc(h + 180));
+  --triadic-1: color(from var(--base) l c calc(h + 120));
+  --triadic-2: color(from var(--base) l c calc(h + 240));
+}
+```
+
+### color-contrast() — доступность (экспериментально)
+```css
+/* Автоматический выбор контрастного цвета */
+color: color-contrast(
+  var(--bg)
+  vs
+  white, black, var(--brand)
+);  /* Вернёт white, black или --brand — какой даст лучший контраст */
+```
+
+---
+
+## 3. Градиенты — современный синтаксис
+
+### Линейные и радиальные
+```css
+/* Линейный — современный синтаксис с to */
+background: linear-gradient(to right, #2563eb, #7c3aed);
+background: linear-gradient(135deg, #2563eb, #7c3aed);
+
+/* С цветовыми остановками */
+background: linear-gradient(
+  to right,
+  #2563eb 0%,
+  #3b82f6 50%,
+  #7c3aed 100%
+);
+
+/* Повторяющиеся */
+background: repeating-linear-gradient(
+  45deg,
+  #2563eb 0 20px,
+  #3b82f6 20px 40px
+);
+
+/* Радиальные */
+background: radial-gradient(circle at center, #2563eb, #1e1e2e);
+background: radial-gradient(ellipse 80% 50% at 20% 80%, #2563eb, transparent);
+```
+
+### Конусные (conic) — для pie charts, color pickers
+```css
+/* Круговая диаграмма */
+.conic-chart {
+  background: conic-gradient(
+    #2563eb 0deg 90deg,
+    #10b981 90deg 180deg,
+    #f59e0b 180deg 270deg,
+    #ef4444 270deg 360deg
+  );
+  border-radius: 50%;
+}
+
+/* Color picker hue slider */
+.hue-slider {
+  background: conic-gradient(from 0deg, red, yellow, lime, cyan, blue, magenta, red);
+}
+```
+
+### Интерполяция в разных пространствах
+```css
+/* По умолчанию — в sRGB (может давать грязные переходы) */
+.gradient-srgb {
+  background: linear-gradient(to right, #2563eb, #f472b6);
+}
+
+/* В OKLCH — перцептивно правильные, яркие переходы */
+.gradient-oklch {
+  background: linear-gradient(in oklch, #2563eb, #f472b6);
+}
+
+/* В LCH */
+.gradient-lch {
+  background: linear-gradient(in lch, #2563eb, #f472b6);
+}
+
+/* В HSL — более короткий путь по hue */
+.gradient-hsl {
+  background: linear-gradient(in hsl shorter hue, #2563eb, #f472b6);
+}
+```
+
+---
+
+## 4. Типографика — @font-face и Variable Fonts
+
+### @font-face — полный контроль загрузки
+```css
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-variable.woff2') format('woff2-variations'),
+       url('/fonts/Inter-variable.woff2') format('woff2');
+  font-weight: 100 900;           /* диапазон весов */
+  font-stretch: 75% 125%;         /* диапозон ширины */
+  font-style: normal;             /* или italic, oblique */
+  font-display: swap;             /* критично для производительности */
+  unicode-range: U+0000-00FF, U+0400-04FF;  /* только кириллица + латиница */
+}
+
+/* Отдельный файл для italic */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Italic-variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+```
+
+### font-display стратегии
+| Значение | Блокировка | Swap | Использование |
+|----------|------------|------|---------------|
+| `auto` | ~3s | да | Браузер решает |
+| `block` | ~3s | да | Критичные шрифты (заголовки) |
+| `swap` | 0 | да | **Рекомендуемый default** — текст сразу виден |
+| `fallback` | ~100ms | да (~3s) | Компромисс |
+| `optional` | ~100ms | нет | Не критично, если не загрузился |
+
+### Variable Fonts — один файл, бесконечные вариации
+```css
+/* Оси вариаций (стандартные) */
+:root {
+  --font-weight: 400;
+  --font-width: 100;      /* wdth */
+  --font-slant: 0;        /* slnt (объём) */
+  --font-italic: 0;       /* ital (0/1) */
+  --font-optical-size: auto;  /* opsz */
+}
+
+/* Применение */
+.text {
+  font-family: 'Inter Variable', system-ui;
+  font-weight: var(--font-weight);
+  font-stretch: var(--font-width);
+  font-style: oblique var(--font-slant)deg;
+  font-optical-sizing: auto;  /* включить opsz автоматически */
+}
+
+/* Анимация веса */
+@keyframes weight-pulse {
+  0%, 100% { font-weight: 300; }
+  50% { font-weight: 700; }
+}
+.pulse { animation: weight-pulse 2s infinite; }
+
+/* Кастомные оси (зависят от шрифта) */
+.custom-axis {
+  font-variation-settings:
+    'wght' 400,
+    'wdth' 100,
+    'GRAD' 0,      /* Grade — толщина без изменения ширины */
+    'XOPQ' 1;      /* Optical size override */
+}
+```
+
+### Стандартные оси вариаций
+| Тег | CSS свойство | Диапазон | Описание |
+|-----|--------------|----------|----------|
+| `wght` | `font-weight` | 1–999 | Толщина |
+| `wdth` | `font-stretch` | 50–200% | Ширина |
+| `slnt` | `font-style: oblique` | -90deg–90deg | Наклон |
+| `ital` | `font-style: italic` | 0/1 | Курсив (бинарный) |
+| `opsz` | `font-optical-sizing` | auto/число | Оптический размер |
+| `GRAD` | `font-variation-settings` | -200–150 | Grade (толщина без перекомпоновки) |
+
+---
+
+## 5. Fluid Typography — clamp(), min(), max()
+
+### Базовые формулы
+```css
+/* clamp(минимум, предпочтительное, максимум) */
+font-size: clamp(1rem, 2vw + 0.5rem, 2.5rem);
+
+/* Расшифровка:
+   Минимум: 1rem (16px) — на мобильных
+   Предпочтительное: 2vw + 0.5rem — масштабируется с viewport
+   Максимум: 2.5rem (40px) — на больших экрана
+*/
+
+/* Эквивалент без clamp (для понимания) */
+font-size: max(1rem, min(2.5rem, 2vw + 0.5rem));
+```
+
+### Продвинутые формулы
+```css
+/* Точная формула для заданных breakpoint'ов */
+/* При 320px = 16px, при 1440px = 32px */
+font-size: clamp(
+  1rem,                              /* 16px min */
+  calc(1rem + (32 - 16) * (100vw - 320px) / (1440 - 320)),  /* линейная интерполяция */
+  2rem                               /* 32px max */
+);
+
+/* С CSS переменными — чище */
+:root {
+  --fs-min: 1rem;
+  --fs-max: 2rem;
+  --vp-min: 320px;
+  --vp-max: 1440px;
+}
+
+.fluid-type {
+  font-size: clamp(
+    var(--fs-min),
+    calc(var(--fs-min) + (var(--fs-max) - var(--fs-min)) * (100vw - var(--vp-min)) / (var(--vp-max) - var(--vp-min))),
+    var(--fs-max)
+  );
+}
+```
+
+### Полная типографическая система
+```css
+:root {
+  /* Fluid type scale */
+  --step-0: clamp(0.75rem, 0.7rem + 0.25vw, 1rem);      /* 12-16px */
+  --step-1: clamp(1rem, 0.9rem + 0.5vw, 1.25rem);       /* 16-20px */
+  --step-2: clamp(1.25rem, 1.1rem + 0.75vw, 1.5rem);    /* 20-24px */
+  --step-3: clamp(1.5rem, 1.25rem + 1.25vw, 2rem);      /* 24-32px */
+  --step-4: clamp(2rem, 1.5rem + 2.5vw, 3rem);          /* 32-48px */
+  --step-5: clamp(2.5rem, 2rem + 3vw, 4rem);            /* 40-64px */
+
+  /* Line heights */
+  --lh-tight: 1.1;
+  --lh-normal: 1.5;
+  --lh-relaxed: 1.75;
+}
+
+h1 { font-size: var(--step-5); line-height: var(--lh-tight); }
+h2 { font-size: var(--step-4); line-height: var(--lh-tight); }
+h3 { font-size: var(--step-3); line-height: var(--lh-normal); }
+p { font-size: var(--step-1); line-height: var(--lh-relaxed); }
+small { font-size: var(--step-0); line-height: var(--lh-normal); }
+```
+
+---
+
+## 6. Логические свойства типографики (i18n)
+
+```css
+/* Направление письма */
+html { direction: ltr; }  /* или rtl для арабского/иврита */
+html[dir="rtl"] { direction: rtl; }
+
+/* Логические свойства вместо физических */
+.text {
+  /* Вместо text-align: left/right */
+  text-align: start;    /* left в LTR, right в RTL */
+  text-align: end;      /* right в LTR, left в RTL */
+
+  /* Вместо margin-left/right */
+  margin-inline-start: 1rem;
+  margin-inline-end: 1rem;
+
+  /* Вместо padding-left/right */
+  padding-inline-start: 1rem;
+  padding-inline-end: 1rem;
+
+  /* Border radius логические */
+  border-start-start-radius: 8px;   /* top-left в LTR */
+  border-start-end-radius: 8px;     /* top-right в LTR */
+  border-end-start-radius: 8px;     /* bottom-left в LTR */
+  border-end-end-radius: 8px;       /* bottom-right в LTR */
+}
+
+/* Writing mode для вертикального текста */
+.vertical-text {
+  writing-mode: vertical-rl;   /* Сверху вниз, справа налево */
+  text-orientation: upright;   /* Буквы вертикально */
+}
+```
+
+---
+
+## 7. Практическое задание
+
+### Задача 1: Цветовая система
+Создай полную цветовую систему с OKLCH:
+```css
+/* 1. Базовые примитивы (10 оттенков каждого hue) */
+--color-blue-50 ... --color-blue-950
+--color-green-50 ... --color-green-950
+/* ... */
+
+/* 2. Семантические токены */
+--color-primary: var(--color-blue-600);
+--color-primary-hover: color-mix(in oklch, var(--color-primary), black 10%);
+--color-success: var(--color-green-600);
+--color-danger: var(--color-red-600);
+
+/* 3. Surface tokens */
+--color-bg: white;
+--color-bg-elevated: #f8fafc;
+--color-border: #e2e8f0;
+
+/* 4. Dark mode через @media */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: oklch(0.15 0 0);
+    --color-bg-elevated: oklch(0.18 0 0);
+    --color-border: oklch(0.25 0 0);
+    --color-primary: var(--color-blue-400);
+  }
+}
+```
+
+### Задача 2: Variable Font настройка
+Подключи Inter Variable (или любой другой VF):
+1. Настрой @font-face с font-display: swap
+2. Создай CSS переменные для wght, wdth, slnt
+3. Сделай интерактивный демо: range input → font-variation-settings
+4. Добавь анимацию GRAD axis при hover
+
+### Задача 3: Fluid Type Scale
+Реализуй типографическую систему с clamp():
+- 6 шагов от --step-0 до --step-5
+- Min viewport 320px, max 1440px
+- Примени к h1-h6, p, small, lead
+- Проверь в DevTools device toolbar
+
+### Задача 4: Градиенты в OKLCH
+Создай набор градиентов для бренда:
+- Primary gradient (brand → brand-light)
+- Success gradient (green → teal)
+- Sunset gradient (orange → pink → purple)
+- Все в `linear-gradient(in oklch, ...)`
+- Сравни с sRGB версией визуально
+
+---
+
+## 8. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| Только HEX/RGB | Нет wide gamut, сложно модифицировать | OKLCH + color-mix() |
+| font-display: block | Текст невидим до загрузки (FOIT) | swap для body, optional для декоративных |
+| Нет unicode-range | Загружаются все глифы (мегабайты) | unicode-range: U+0000-00FF, U+0400-04FF |
+| Фиксированные px для шрифтов | Не масштабируется, доступность | rem + clamp() fluid type |
+| line-height: 1.2 везде | Плохая читаемость длинных текстов | 1.5-1.75 для body, 1.1-1.3 для заголовков |
+| Градиенты в sRGB | Грязные серые переходы | `in oklch` или `in lch` |
+| Нет fallback для P3 | Цвет не покажется в старых браузерах | Два объявления: sRGB потом P3 |
+
+---
+
+## 9. Полезные ресурсы
+
+### Цвет
+- [OKLCH Color Picker](https://oklch.com/) — лучший пикер для OKLCH
+- [CSS Color Level 4 Spec](https://www.w3.org/TR/css-color-4/)
+- [Evil Martians: OKLCH in CSS](https://evilmartians.com/chronicles/oklch-in-css-why-quit-rgb-hsl)
+- [Color.js](https://colorjs.io/) — манипуляция цветами в JS
+
+### Типографика
+- [Variable Fonts Guide](https://web.dev/variable-fonts/)
+- [Google Fonts Variable](https://fonts.google.com/variablefonts)
+- [Clamp Calculator](https://royalfig.github.io/fluid-typography-calculator/)
+- [Modern Fluid Typography](https://www.smashingmagazine.com/2022/01/modern-fluid-typography-css-clamp/)
+
+### Инструменты
+- [Font Squirrel Webfont Generator](https://www.fontsquirrel.com/tools/webfont-generator)
+- [Wakamaifondue](https://wakamaifondue.com/) — анализ variable fonts
+- [Font Drop](https://fontdrop.info/) — инспектор шрифтов
+
+---
+
+## 10. Ключевые выводы
+
+1. **OKLCH — новый стандарт** для цветов: перцептивно равномерный, отлично интерполируется, работает с color-mix().
+2. **color-mix() + relative color syntax** = генерация всей палитры из 1-2 базовых цветов.
+3. **Градиенты в OKLCH/LCH** дают красивые яркие переходы без "грязных" серых зон.
+4. **Variable Fonts** — один файл вместо 10-20, анимация любых осей, GRAD для hover без рефлоу.
+5. **font-display: swap** — обязательно для производительности (Core Web Vitals).
+6. **Fluid typography с clamp()** — никаких медиа-запросов для размеров шрифта.
+7. **Логические свойства** (start/end, inline/block) — основа i18n-готовой верстки.
+
+---
+
+*Следующий урок: 04_Box_Model.txt — Box Model, box-sizing, margin collapse, логические свойства размеров*

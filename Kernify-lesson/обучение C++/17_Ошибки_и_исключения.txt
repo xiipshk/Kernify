@@ -1,0 +1,374 @@
+# Урок 17: Обработка ошибок — исключения, гарантии безопасности, expected
+
+## Цели урока
+- Понять механизм исключений в C++ и стоимость zero-cost exceptions
+- Освоить три гарантии exception safety: basic, strong, nothrow
+- Использовать `std::expected` (C++23) и аналоги для ошибок без исключений
+- Правильно проектировать API с учетом обработки ошибок
+- Избегать UB при noexcept нарушении и terminate
+
+---
+
+## Теория
+
+### Исключения — базовый механизм
+
+```cpp
+#include <stdexcept>
+#include <string>
+#include <iostream>
+
+// Стандартные исключения
+// logic_error: domain_error, invalid_argument, length_error, out_of_range
+// runtime_error: range_error, overflow_error, underflow_error
+
+void validateAge(int age) {
+    if (age < 0) throw std::invalid_argument("age cannot be negative");
+    if (age > 150) throw std::domain_error("age unrealistic");
+}
+
+void exceptionDemo() {
+    try {
+        validateAge(-5);
+    } catch (const std::invalid_argument& e) {
+        std::cerr << "Invalid: " << e.what() << '\n';
+    } catch (const std::domain_error& e) {
+        std::cerr << "Domain: " << e.what() << '\n';
+    } catch (const std::exception& e) { // базовый catch-all для std::
+        std::cerr << "Std: " << e.what() << '\n';
+    } catch (...) { // всё остальное (не рекомендуется без причины)
+        std::cerr << "Unknown\n";
+    }
+}
+```
+
+### Свои типы исключений
+
+```cpp
+#include <exception>
+#include <string>
+#include <system_error>
+
+// Наследование от std::exception
+class ConfigError : public std::exception {
+    std::string msg_;
+public:
+    explicit ConfigError(std::string msg) : msg_(std::move(msg)) {}
+    const char* what() const noexcept override { return msg_.c_str(); }
+};
+
+// С кодом ошибки (для системных ошибок)
+class FileError : public std::system_error {
+public:
+    FileError(std::errc code, std::string path)
+        : std::system_error(std::make_error_code(code), std::move(path)) {}
+};
+
+// Использование
+void customExceptionDemo() {
+    try {
+        throw ConfigError("missing key 'port'");
+    } catch (const ConfigError& e) {
+        std::cerr << "Config: " << e.what() << '\n';
+    }
+}
+```
+
+### Exception Safety Guarantees (Гарантии безопасности)
+
+```cpp
+#include <vector>
+#include <algorithm>
+#include <memory>
+
+class StringBuffer {
+    char* data_;
+    size_t size_, capacity_;
+public:
+    // Basic guarantee: инварианты класса сохранены, нет утечек
+    // Состояние может измениться (size изменился, но данные валидны)
+    void appendBasic(const char* s) {
+        size_t len = strlen(s);
+        if (size_ + len > capacity_) {
+            size_t newCap = std::max(capacity_ * 2, size_ + len);
+            char* newData = new char[newCap]; // может бросить bad_alloc
+            std::copy(data_, data_ + size_, newData);
+            delete[] data_;
+            data_ = newData;
+            capacity_ = newCap;
+        }
+        std::copy(s, s + len, data_ + size_);
+        size_ += len;
+    }
+
+    // Strong guarantee: транзакционность — либо успех, либо состояние как до вызова
+    // Copy-and-swap идиома
+    void appendStrong(const char* s) {
+        size_t len = strlen(s);
+        StringBuffer temp(*this); // копия (strong для копирования)
+        temp.appendBasic(s);      // если бросит — *this не тронут
+        swap(temp);               // noexcept swap
+    }
+
+    // Nothrow guarantee: никогда не бросает
+    void appendNothrow(const char* s) noexcept {
+        // Только операции noexcept
+        // В реальности сложно для аллокаций — используйте noexcept аллокаторы
+    }
+
+    void swap(StringBuffer& other) noexcept {
+        std::swap(data_, other.data_);
+        std::swap(size_, other.size_);
+        std::swap(capacity_, other.capacity_);
+    }
+
+    // ...
+};
+```
+
+### RAII и исключения в конструкторах
+
+```cpp
+#include <memory>
+#include <fstream>
+
+class ResourceManager {
+    std::unique_ptr<Resource> res1_;
+    std::unique_ptr<Resource> res2_;
+    std::ifstream file_;
+public:
+    // Если конструктор бросит — деструкторы УЖЕ СОЗДАННЫХ членов вызовутся
+    ResourceManager()
+        : res1_(std::make_unique<Resource>())
+        , file_("config.txt") // может бросить
+        , res2_(std::make_unique<Resource>()) // не создастся если file_ бросил
+    {
+        if (!file_) throw std::runtime_error("no config");
+    }
+    // Деструктор не нужен — unique_ptr и ifstream сами всё закроют
+};
+
+// НЕПРАВИЛЬНО: ручное управление в конструкторе
+class BadManager {
+    Resource* res1_;
+    Resource* res2_;
+public:
+    BadManager() : res1_(new Resource), res2_(new Resource) {
+        if (/* error */) {
+            delete res1_; // УТЕЧКА если res2_ конструктор бросит!
+            throw std::runtime_error("fail");
+        }
+    }
+};
+```
+
+### noexcept — контракт небросания
+
+```cpp
+#include <vector>
+#include <utility>
+
+// Правило: move операции ДОЛЖНЫ быть noexcept для STL
+class Movable {
+    std::vector<int> data_;
+public:
+    Movable(Movable&& other) noexcept
+        : data_(std::move(other.data_)) {} // vector move noexcept
+    Movable& operator=(Movable&& other) noexcept {
+        data_ = std::move(other.data_);
+        return *this;
+    }
+};
+
+// noexcept specifier — часть сигнатуры (C++17)
+void func() noexcept;           // обещает не бросать
+void func() noexcept(true);     // то же
+void func() noexcept(false);    // может бросать
+
+// noexcept(expression) — условный noexcept
+template<typename T>
+void swap(T& a, T& b) noexcept(noexcept(a = std::move(b))) {
+    T tmp = std::move(a);
+    a = std::move(b);
+    b = std::move(tmp);
+}
+
+// Нарушение noexcept -> std::terminate
+void terminateDemo() noexcept {
+    throw std::runtime_error("oops"); // terminate!
+}
+```
+
+### std::expected (C++23) — ошибки как значения
+
+```cpp
+// C++23: #include <expected>
+// До C++23: tl::expected (https://github.com/TartanLlama/expected)
+
+#include <expected>
+#include <string>
+#include <system_error>
+#include <iostream>
+
+enum class ParseError { InvalidFormat, OutOfRange, EmptyInput };
+
+// Функция возвращает значение ИЛИ ошибку
+std::expected<int, ParseError> parseInt(std::string_view s) {
+    if (s.empty()) return std::unexpected(ParseError::EmptyInput);
+
+    int result = 0;
+    bool neg = false;
+    size_t i = 0;
+
+    if (s[0] == '-') { neg = true; i = 1; }
+    else if (s[0] == '+') { i = 1; }
+
+    if (i == s.size()) return std::unexpected(ParseError::InvalidFormat);
+
+    for (; i < s.size(); ++i) {
+        char c = s[i];
+        if (c < '0' || c > '9') return std::unexpected(ParseError::InvalidFormat);
+
+        // Проверка overflow
+        if (result > (INT_MAX - (c - '0')) / 10)
+            return std::unexpected(ParseError::OutOfRange);
+        result = result * 10 + (c - '0');
+    }
+
+    return neg ? -result : result;
+}
+
+void expectedDemo() {
+    auto r1 = parseInt("42");
+    if (r1) {
+        std::cout << "Value: " << *r1 << '\n'; // 42
+    }
+
+    auto r2 = parseInt("abc");
+    if (!r2) {
+        std::cout << "Error: " << static_cast<int>(r2.error()) << '\n';
+    }
+
+    // Monadic operations (C++23)
+    auto r3 = parseInt("10")
+        .and_then([](int x) { return parseInt(std::to_string(x * 2)); })
+        .transform([](int x) { return x + 1; })
+        .value_or(-1);
+
+    // Обработка ошибки
+    auto r4 = parseInt("").or_else([](ParseError e) {
+        return std::expected<int, ParseError>(0);
+    });
+}
+```
+
+### Error codes vs Exceptions — когда что
+
+```cpp
+#include <system_error>
+#include <expected>
+
+// Error codes — для ожидаемых, часто встречающихся ошибок
+std::error_code readFile(const std::string& path, std::string& out) {
+    std::ifstream f(path);
+    if (!f) return std::make_error_code(std::errc::no_such_file_or_directory);
+    out = std::string(std::istreambuf_iterator<char>(f), {});
+    return {}; // success
+}
+
+// Exceptions — для исключительных, "невозможных" ситуаций
+// (нарушение инвариантов, баги, OOM)
+
+// expected — современный гибрид, предпочтительно для новых API
+std::expected<std::string, std::error_code> readFileExpected(const std::string& path) {
+    std::string content;
+    if (auto ec = readFile(path, content); ec) return std::unexpected(ec);
+    return content;
+}
+```
+
+### try/catch в деструкторах — ОПАСНО
+
+```cpp
+class Dangerous {
+    std::unique_ptr<Resource> res_;
+public:
+    ~Dangerous() {
+        try {
+            res_->save(); // может бросить!
+        } catch (...) {
+            // ПОГЛОЩАЕМ — нельзя бросать из деструктора во время stack unwinding
+            std::cerr << "Save failed in dtor\n";
+        }
+    }
+};
+
+// Лучше: делайте сохранение явно через метод, не в деструкторе
+class Better {
+    std::unique_ptr<Resource> res_;
+public:
+    void save() { res_->save(); } // может бросить — вызывающий решает
+    ~Better() = default; // noexcept по умолчанию
+};
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Exception-safe вектор
+Реализуйте `StrongVector<T>` с методом `push_back`, дающим strong guarantee (copy-and-swap). Используйте `std::allocator_traits` для аллокаций. Протестируйте с типом, бросающим в move constructor.
+
+### Задание 2: Result/Expected monad
+Реализуйте свой `Result<T, E>` (алиас для `std::expected` или свой до C++23) с методами:
+- `map` / `transform` (функция над значением)
+- `and_then` / `flat_map` (функция возвращающая Result)
+- `map_error` / `or_else` (работа с ошибкой)
+- `value_or` (default)
+
+### Задание 3: Error code hierarchy
+Создайте иерархию `std::error_code` для приложения:
+- `AppError` enum class с кодами: ConfigMissing, NetworkTimeout, DatabaseError, ValidationFailed
+- `make_error_code` специализация
+- `error_category` с понятными сообщениями
+- Функцию, возвращающую `std::expected<void, std::error_code>`
+
+### Задание 4: Scope guard (finally)
+Реализуйте `ScopeGuard` (как `defer` в Go) с помощью лямбды + деструктора:
+```cpp
+auto guard = makeScopeGuard([]{ cleanup(); });
+// при выходе из области видимости cleanup() вызовется
+// dismiss() — отмена
+```
+Используйте для транзакций: начало/коммит/откат.
+
+### Задание 5: Benchmark: exceptions vs error codes
+Напишите бенчмарк, сравнивающий:
+- try/catch в горячем пути (exception не бросается)
+- try/catch с броском исключения
+- возврат `expected` / `error_code`
+- `std::optional` с проверкой
+Используйте `std::chrono` и отключите оптимизации для честного сравнения.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `throw` в деструкторе при unwinding | `std::terminate` | Никогда не бросайте из деструктора; используйте try/catch внутри |
+| Нет `noexcept` на move | vector копирует при реаллокации | Всегда `noexcept` для move ctor/assign |
+| Ловить по значению | Object slicing исключения | Ловите по `const std::exception&` |
+| Игнорировать `[[nodiscard]]` на `expected` | Потеря ошибки | Всегда проверяйте результат |
+| Смешивание исключений и кодов ошибок | Непоследовательный API | Выберите одну стратегию для модуля |
+| `catch(...)` без `throw;` | Потеря стека | Перебрасывайте: `catch(...) { log(); throw; }` |
+
+---
+
+## Ресурсы
+- [cppreference: Exceptions](https://en.cppreference.com/w/cpp/language/exceptions)
+- [cppreference: Expected](https://en.cppreference.com/w/cpp/utility/expected)
+- **Книга:** Sutter "Exceptional C++" / "More Exceptional C++"
+- **Книга:** Meyers "Effective C++", Item 29 (nothrow swap)
+- **CppCon:** "Error Handling in C++" (Andrei Alexandrescu / Herb Sutter)
+- **P0709:** `std::expected` proposal

@@ -1,0 +1,891 @@
+# Урок 31: Инструменты — PostCSS, препроцессоры, CSS Modules, CSS-in-JS, линтинг, визуальная регрессия
+
+## Цели урока
+- Понять экосистему инструментов CSS: от препроцессоров до PostCSS
+- Научиться настраивать PostCSS с плагинами (autoprefixer, cssnano, nesting)
+- Сравнить препроцессоры (Sass, Less, Stylus) и современный нативный CSS
+- Использовать CSS Modules для изоляции стилей компонентов
+- Понять CSS-in-JS подходы (styled-components, Emotion) и их плюсы/минусы
+- Настроить линтинг CSS (stylelint) и автоматизацию форматирования
+- Внедрить визуальную регрессию (Chromatic, Percy, Loki)
+- Выбрать правильный стек инструментов для проекта
+
+---
+
+## 1. Обзор экосистемы инструментов CSS
+
+### Эволюция инструментов CSS
+```
+Нативный CSS → Препроцессоры (Sass/Less) → PostCSS → CSS Modules → CSS-in-JS → Нативный CSS ( nesting, vars, layers )
+```
+
+### Когда использовать что
+| Инструмент | Когда использовать | Когда не использовать |
+|------------|-------------------|----------------------|
+| Нативный CSS | Абсолютно всегда, основа | Nunca |
+| Sass/SCSS | Большие проекты, вложенность, миксины, функции | Маленькие проекты, если нативный CSS достаточно |
+| PostCSS | Автопрефиксы, оптимизация, трансформация CSS | Если не нужны плагины |
+| CSS Modules | Компонентная изоляция, React/Vue без CSS-in-JS | Глобальные темы, простые сайты |
+| CSS-in-JS | Динамические темы, JS-логика в стилях, React Native | Производительность критична, SSR без оптимизации |
+| Нативный CSS (современный) | Новые проекты, переменные, nesting, каскадные слои | Старые браузеры без транспиляции |
+
+---
+
+## 2. Препроцессоры CSS
+
+### Sass/SCSS — самый популярный
+
+#### Установка
+```bash
+npm install -g sass
+# Или в проекте
+npm install --save-dev sass
+```
+
+#### Компиляция
+```bash
+# Один файл
+sass src/styles.scss dist/styles.css
+
+# Наблюдение за изменениями
+sass --watch src/styles.scss:dist/styles.css
+
+# Сжатый вывод
+sass --style compressed src/styles.scss dist/styles.min.css
+```
+
+#### Особенности Sass
+
+**Вложенность (nesting):**
+```scss
+// SCSS
+.c-card {
+  display: flex;
+  flex-direction: column;
+
+  &__title {
+    font-size: 1.25rem;
+    font-weight: 600;
+
+    &--featured {
+      color: var(--color-primary);
+    }
+  }
+
+  &:hover {
+    box-shadow: var(--shadow-md);
+  }
+
+  @media (max-width: 768px) {
+    padding: 1rem;
+  }
+}
+```
+
+**Переменные:**
+```scss
+$primary: #2563eb;
+$spacing-md: 1rem;
+$radius-md: 0.5rem;
+
+.c-btn {
+  background: $primary;
+  padding: $spacing-md;
+  border-radius: $radius-md;
+}
+```
+
+**Миксины:**
+```scss
+@mixin button-base($padding: 1rem, $radius: 0.5rem) {
+  padding: $padding;
+  border-radius: $radius;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.c-btn-primary {
+  @include button-base;
+  background: $primary;
+  color: white;
+}
+
+.c-btn-secondary {
+  @include button-base(0.75rem, 0.25rem);
+  background: transparent;
+  color: $primary;
+  border: 1px solid $primary;
+}
+```
+
+**Функции:**
+```scss
+@function rem($px) {
+  @return $px / 16 * 1rem;
+}
+
+.c-card {
+  padding: rem(24);  // 1.5rem
+}
+```
+
+**Директива @extend:**
+```scss
+.btn-base {
+  display: inline-flex;
+  align-items: center;
+  padding: 1rem;
+  border-radius: 0.5rem;
+}
+
+.btn-primary {
+  @extend .btn-base;
+  background: blue;
+  color: white;
+}
+```
+
+**Условия и циклы:**
+```scss
+@each $color in (primary, secondary, danger) {
+  .btn-#{$color} {
+    background: $colors[$color];
+  }
+}
+
+@for $i from 1 through 12 {
+  .col-#{$i} {
+    width: percentage($i / 12);
+  }
+}
+```
+
+#### Sass vs нативный CSS (современный)
+| Возможность | Sass | Нативный CSS |
+|-------------|------|--------------|
+| Переменные | `$var` | `--var` (custom properties) |
+| Вложенность | `&` | `&` (CSS Nesting, современные браузеры) |
+| Миксины | `@mixin` / `@include` | Нетdirect (используйте классы или JS) |
+| Функции | `@function` | `calc()`, `color-mix()`, etc. |
+| Условия/циклы | `@if`, `@each`, `@for` | Нет (используйте JS или generar CSS) |
+| Импорт | `@import` / `@use` | `@import` (CSS) |
+| Компиляция | Нужна | Не нужна |
+
+### Less
+```less
+@primary: #2563eb;
+@spacing-md: 1rem;
+
+.c-btn {
+  background: @primary;
+  padding: @spacing-md;
+}
+
+.button-styles(@color) when (@color = primary) {
+  background: blue;
+}
+
+.c-btn-primary {
+  .button-styles(primary);
+}
+```
+
+### Stylus
+```stylus
+primary = #2563eb
+spacing-md = 1rem
+
+.c-btn
+  background primary
+  padding spacing-md
+```
+
+---
+
+## 3. PostCSS — инструмент трансформации CSS
+
+### Что такое PostCSS
+PostCSS — это инструмент для трансформации CSS с помощью JavaScript-плагинов. Он не компилирует Sass, он обрабатывает уже готовый CSS.
+
+### Установка и настройка
+```bash
+npm install --save-dev postcss postcss-cli autoprefixer cssnano postcss-nesting
+```
+
+### postcss.config.js
+```javascript
+module.exports = {
+  plugins: [
+    require('postcss-import'),      // @import в CSS
+    require('postcss-nesting'),     // CSS вложенность
+    require('autoprefixer'),        // вендорные префиксы
+    require('cssnano')({            // минификация
+      preset: 'default',
+    }),
+  ],
+}
+```
+
+### Запуск
+```bash
+# CLI
+npx postcss src/styles.css -o dist/styles.css
+
+# С наблюдением
+npx postcss src/styles.css -o dist/styles.css --watch
+
+# Через npm script
+"build:css": "postcss src/styles.css -o dist/styles.css"
+```
+
+### Основные плагины PostCSS
+
+| Плагин | Назначение |
+|--------|------------|
+| `autoprefixer` | Автоматические вендорные префиксы (-webkit-, -moz-, etc.) |
+| `cssnano` | Сжатие и оптимизация CSS |
+| `postcss-import` | Встраивание @import файлов |
+| `postcss-nesting` | CSS вложенность (нативный синтаксис) |
+| `postcss-custom-properties` | Трансформация CSS переменных |
+| `postcss-preset-env` | Набор плагинов для современного CSS |
+| `postcss-flexbugs-fixes` | Исправление багов flexbox в браузерах |
+
+### postcss-preset-env — современный CSS с транспиляцией
+```javascript
+// postcss.config.js
+module.exports = {
+  plugins: [
+    require('postcss-preset-env')({
+      stage: 0,  // 실험льные функции
+      features: {
+        'nesting-rules': true,
+        'custom-media': true,
+        'custom-selectors': true,
+      },
+    }),
+    require('autoprefixer'),
+  ],
+}
+```
+
+```css
+/* Исходный CSS с современными возможностями */
+.custom-media --mobile (max-width: 768px);
+
+.c-card {
+  @nest .c-card:hover & {
+    box-shadow: var(--shadow-md);
+  }
+
+  @media (--mobile) {
+    padding: 1rem;
+  }
+}
+```
+
+---
+
+## 4. CSS Modules — изоляция стилей компонентов
+
+### Что такое CSS Modules
+CSS Modules — это CSS файлы, в которых все имена классов и анимаций локальны по умолчанию. Каждый класс получает уникальное имя (хэш), что prevents конфликтов.
+
+### Установка (Webpack)
+```bash
+npm install --save-dev css-loader style-loader
+```
+
+### webpack.config.js
+```javascript
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.module\.css$/,
+        use: [
+          'style-loader',
+          {
+            loader: 'css-loader',
+            options: {
+              modules: {
+                localIdentName: '[name]__[local]__[hash:base64:5]',
+              },
+            },
+          },
+        ],
+      },
+      {
+        test: /\.css$/,
+        exclude: /\.module\.css$/,
+        use: ['style-loader', 'css-loader'],
+      },
+    ],
+  },
+}
+```
+
+### Использование CSS Modules
+```css
+/* Button.module.css */
+.button {
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+}
+
+.primary {
+  background: #2563eb;
+  color: white;
+}
+
+.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+```
+
+```jsx
+// Button.jsx (React)
+import styles from './Button.module.css';
+
+function Button({ variant = 'primary', disabled, children }) {
+  return (
+    <button className={`${styles.button} ${styles[variant]}`} disabled={disabled}>
+      {children}
+    </button>
+  );
+}
+```
+
+### Глобальные селекторы в CSS Modules
+```css
+/* Button.module.css */
+:global(.body) {
+  font-family: system-ui, sans-serif;
+}
+
+:global(.c-btn) {
+  /* Глобальный класс для обратной совместимости */
+}
+
+.button {
+  /* Локальный класс */
+  composes: primary from './variables.module.css';  /* Импорт из другого модуля */
+}
+```
+
+### CSS Modules + Sass
+```css
+/* Button.module.scss */
+.button {
+  $padding: 1rem;
+  padding: $padding;
+  border-radius: 0.5rem;
+}
+```
+
+### Преимущества CSS Modules
+- ✅ Изоляция стилей — нет конфликтов имён
+- ✅ Мёртвый код легко удалить (unused CSS)
+- ✅ Явные зависимости — импортируете только нужное
+- ✅ Работает с любым препроцессором
+- ✅ Поддержка в Webpack, Vite, Next.js, Create React App
+
+### Недостатки CSS Modules
+- ❌ Динамические классы сложнее (нужно conditionally объединять строки)
+- ❌ Глобальные темы требуют :global() или CSS-переменных
+- ❌ Отладка сложнее (имена классов с хэшами)
+
+---
+
+## 5. CSS-in-JS
+
+### styled-components
+```bash
+npm install styled-components
+```
+
+```jsx
+// Button.jsx
+import styled from 'styled-components';
+
+const Button = styled.button`
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.2s;
+
+  ${props => props.primary && css`
+    background: #2563eb;
+    color: white;
+  `}
+
+  ${props => !props.primary && css`
+    background: transparent;
+    color: #2563eb;
+    border: 2px solid #2563eb;
+  `}
+
+  &:focus-visible {
+    outline: 3px solid #2563eb;
+    outline-offset: 2px;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`;
+
+function App() {
+  return <Button primary>Кнопка</Button>;
+}
+```
+
+### Emotion
+```bash
+npm install @emotion/react @emotion/styled
+```
+
+```jsx
+/** @jsxImportSource @emotion/react */
+import { css } from '@emotion/react';
+import styled from '@emotion/styled';
+
+const buttonStyles = css`
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+`;
+
+const Button = styled.button`
+  ${buttonStyles}
+  background: #2563eb;
+  color: white;
+`;
+```
+
+### Плюсы CSS-in-JS
+- ✅ Динамические стили на основе props/state
+- ✅ Критически重要 CSS только для используемых компонентов
+- ✅ Типизация с TypeScript
+- ✅ Нет конфликтов имён (автоматически уникальные классы)
+- ✅ Темы через JS-объекты
+
+### Минусы CSS-in-JS
+- ❌ Runtime overhead (стили вычисляются в JS)
+- ❌ Больше JavaScript для парсинга
+- ❌ Сложнее SSR (нужно извлекать критические стили)
+- ❌ Инструменты DevTools meno удобны
+- ❌ Накладные расходы на выполнение JS для стилей
+
+### Когда использовать CSS-in-JS
+- Динамические темы (цвета depend on user preferences)
+- Стили зависят от JS-состояния (アニメーション coordinated with state)
+- React Native (общий подход для веба и мобилки)
+- Большая команда с строгими требованиями к изоляции
+
+### Когда НЕ использовать CSS-in-JS
+- Производительность критична (много анимаций, слабые устройства)
+- Простой сайт без динамики
+- Нужна максимальная скорость загрузки (меньше JS = быстрее)
+
+---
+
+## 6. Линтинг и форматирование CSS
+
+### stylelint — линтер для CSS
+```bash
+npm install --save-dev stylelint stylelint-config-standard
+```
+
+### .stylelintrc.json
+```json
+{
+  "extends": "stylelint-config-standard",
+  "rules": {
+    "selector-pseudo-class-no-unknown": [
+      true,
+      {
+        "ignorePseudoClasses": ["global", "local", "deep", "slotted"]
+      }
+    ],
+    "at-rule-no-unknown": [
+      true,
+      {
+        "ignoreAtRules": ["tailwind", "apply", "variants", "screen", "function"]
+      }
+    ],
+    "declaration-no-important": true,
+    "color-no-invalid-hex": true,
+    "font-family-no-duplicate-names": true,
+    "indentation": 2,
+    "string-quotes": "double",
+    "unit-no-unknown": true,
+    "value-keyword-case": "lower"
+  }
+}
+```
+
+### Скрипты в package.json
+```json
+{
+  "scripts": {
+    "lint:css": "stylelint 'src/**/*.css'",
+    "lint:css:fix": "stylelint 'src/**/*.css' --fix",
+    "format:css": "stylelint 'src/**/*.css' --fix"
+  }
+}
+```
+
+### Prettier для CSS
+```bash
+npm install --save-dev prettier
+```
+
+### .prettierrc
+```json
+{
+  "semi": false,
+  "singleQuote": true,
+  "tabWidth": 2,
+  "useTabs": false,
+  "bracketSpacing": true,
+  "arrowParens": "avoid",
+  "endOfLine": "lf"
+}
+```
+
+### stylelint + prettier (конфликт правил)
+```bash
+npm install --save-dev stylelint-prettier stylelint-config-prettier
+```
+
+```json
+{
+  "extends": [
+    "stylelint-config-standard",
+    "stylelint-config-prettier",
+    "stylelint-prettier/recommended"
+  ],
+  "plugins": ["stylelint-prettier"],
+  "rules": {
+    "prettier/prettier": true
+  }
+}
+```
+
+### Запуск линтинга
+```bash
+# Проверить все CSS файлы
+npx stylelint 'src/**/*.css'
+
+# Автоисправление
+npx stylelint 'src/**/*.css' --fix
+
+# Только форматирование
+npx prettier --write 'src/**/*.css'
+```
+
+### Husky + lint-staged (pre-commit)
+```bash
+npm install --save-dev husky lint-staged
+```
+
+```json
+{
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged"
+    }
+  },
+  "lint-staged": {
+    "*.css": [
+      "stylelint --fix",
+      "prettier --write",
+      "git add"
+    ]
+  }
+}
+```
+
+---
+
+## 7. Визуальная регрессия
+
+### Что такое визуальная регрессия
+Автоматическое сравнение скриншотов компонентов до и после изменений для обнаружения нежелательных визуальных изменений.
+
+### Инструменты визуальной регрессии
+
+| Инструмент | Тип | Стоимость | Особенности |
+|------------|-----|-----------|-------------|
+| Chromatic (Storybook) | SaaS | Бета/платный | Интеграция со Storybook, CI/CD |
+| Percy (BrowserStack) | SaaS | Бета/платный | Работает с любым фреймворком |
+| Loki | Open Source | Бесплатно | CLI, для Storybook |
+| BackstopJS | Open Source | Бесплатно | Сценарии, локальный запуск |
+| Cypress Image Snapshot | Open Source | Бесплатно | E2E тесты со скриншотами |
+| Playwright | Open Source | Бесплатно | `toHaveScreenshot()` |
+
+### Loki — пример настройки
+```bash
+npm install --save-dev loki
+```
+
+```javascript
+// .loki-config.js
+module.exports = {
+  projects: {
+    'my-ui': {
+      target: 'http://localhost:6006',  // Storybook
+      preset: 'react',
+      scenarios: {
+        'button.default': {
+          selector: '.c-btn--primary',
+        },
+        'button.disabled': {
+          selector: '.c-btn--primary[disabled]',
+        },
+        'card.default': {
+          selector: '.c-card',
+        },
+      },
+    },
+  },
+};
+```
+
+```json
+{
+  "scripts": {
+    "loki:update": "loki update",
+    "loki:test": "loki test",
+    "loki:approve": "loki approve"
+  }
+}
+```
+
+### Chromatic (Storybook)
+```bash
+npx chromatic --project-token=<token>
+```
+
+### BackstopJS — пример
+```bash
+npm install --save-dev backstopjs
+```
+
+```javascript
+// backstop.js
+module.exports = {
+  id: 'demo',
+  viewports: [
+    { name: 'phone', width: 320, height: 480 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'desktop', width: 1920, height: 1080 },
+  ],
+  scenarios: [
+    {
+      label: 'Homepage',
+      url: 'https://example.com',
+      hideSelectors: [],
+      removeSelectors: [],
+      selectorExpansion: true,
+      misMatchThreshold: 0.1,
+      requireSameDimensions: true,
+    },
+  ],
+  paths: {
+    bitmaps_reference: 'backstop_data/bitmaps_reference',
+    bitmaps_test: 'backstop_data/bitmaps_test',
+    engine_scripts: 'engine_scripts',
+    reports: 'backstop_data/reports',
+    ci_report: 'backstop_data/ci_report',
+  },
+  engine: 'puppeteer',
+  report: ['browser'],
+  cli: {
+    exit_on_first_failure: true,
+  },
+};
+```
+
+```json
+{
+  "scripts": {
+    "backstop:reference": "backstop reference",
+    "backstop:test": "backstop test",
+    "backstop:approve": "backstop approve"
+  }
+}
+```
+
+### Интеграция в CI/CD
+```yaml
+# .github/workflows/visual-regression.yml
+name: Visual Regression
+on: [push, pull_request]
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - run: npm ci
+      - run: npm run build
+      - run: npm run storybook:build
+      - run: npx chromatic --exit-zero-on-changes
+        env:
+          CHROMATIC_PROJECT_TOKEN: ${{ secrets.CHROMATIC_TOKEN }}
+```
+
+---
+
+## 8. Выбор стека инструментов
+
+### Матрица принятия решений
+
+| Проект | Рекомендуемый стек |
+|--------|-------------------|
+| Лендинг, небольшой сайт | Нативный CSS + PostCSS (autoprefixer, cssnano) |
+| Компонентная библиотека | CSS Modules + Sass/Less + PostCSS |
+| Приложение React/Vue | CSS Modules или CSS-in-JS + PostCSS |
+| Дизайн-система | CSS Modules + CSS-переменные + Storybook + Chromatic |
+| Дизайн-система с динамическими темами | CSS-in-JS или нативные CSS-переменные + JS |
+| Большой энтерпрайз проект | Sass + CSS Modules + PostCSS + stylelint + визуальная регрессия |
+
+### Рекомендуемый современный стек (2024-2025)
+```json
+{
+  "devDependencies": {
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0",
+    "cssnano": "^6.0.0",
+    "postcss-import": "^15.0.0",
+    "postcss-nesting": "^12.0.0",
+    "stylelint": "^15.0.0",
+    "stylelint-config-standard": "^30.0.0",
+    "prettier": "^3.0.0",
+    "husky": "^8.0.0",
+    "lint-staged": "^13.0.0"
+  }
+}
+```
+
+### postcss.config.js (рекомендуемый)
+```javascript
+module.exports = {
+  plugins: [
+    require('postcss-import'),
+    require('postcss-nesting'),
+    require('autoprefixer'),
+    process.env.NODE_ENV === 'production' ? require('cssnano')({ preset: 'default' }) : null,
+  ].filter(Boolean),
+}
+```
+
+---
+
+## 9. Чек-лист инструментов
+
+| Критерий | Статус |
+|----------|--------|
+| PostCSS настроен с autoprefixer и cssnano | ☐ |
+| Препроцессор выбран (Sass или нативный CSS) | ☐ |
+| CSS Modules для изоляции компонентов | ☐ |
+| CSS-in-JS только если нужны динамические стили | ☐ |
+| stylelint с конфигом и правилами | ☐ |
+| Prettier для форматирования | ☐ |
+| Husky + lint-staged для pre-commit | ☐ |
+| Визуальная регрессия (Chromatic/Percy/Loki) | ☐ |
+| CI/CD интеграция для линтинга и регрессии | ☐ |
+| Документация стека инструментов | ☐ |
+
+---
+
+## 10. Практическое задание
+
+### Задача 1: Настройка PostCSS
+Создай проект с:
+- `postcss.config.js` с autoprefixer, cssnano, postcss-import, postcss-nesting
+- `src/styles.css` с современным CSS (nesting, переменные)
+- Скрипт сборки в package.json
+- Проверь, что префиксы добавляются автоматически
+
+### Задача 2: CSS Modules
+Создай компонент кнопки с CSS Modules:
+- `Button.module.css` с локальными классами
+- Импорт в JS/React файл
+- Проверь, что классы получают уникальные имена (хэши)
+- Создай глобальный стиль через `:global()`
+
+### Задача 3: Препроцессор Sass
+Установи Sass и создай:
+- Переменные для цветов, отступов, радиусов
+- Миксин для кнопки с параметрами
+- Вложенные селекторы для компонента карточки
+- Компиляцию в CSS
+
+### Задача 4: Линтинг
+Настрой stylelint:
+- `.stylelintrc.json` с правилами
+- Скрипт `lint:css` в package.json
+- Проверь несколько CSS файлов на ошибки
+- Настрой auto-fix
+
+### Задача 5: Визуальная регрессия
+Настрой Loki или BackstopJS:
+- 3-5 сценариев для ключевых компонентов (кнопка, карточка, модалка)
+- Создай эталонные скриншоты
+- Запусти тест и проверь, что он проходит
+- Внеси изменение в компонент и проверь, что регрессия обнаружена
+
+### Задача 6: Полный стек
+Создай проект с полным стеком:
+- Нативный CSS + PostCSS
+- CSS Modules для компонентов
+- stylelint + prettier
+- Husky pre-commit
+- Визуальная регрессия для 2 компонентов
+- Документация стека (README)
+
+---
+
+## 11. Полезные ресурсы
+
+- [PostCSS — официальный сайт](https://postcss.org/)
+- [Autoprefixer — GitHub](https://github.com/postcss/autoprefixer)
+- [cssnano — GitHub](https://github.com/cssnano/cssnano)
+- [CSS Modules — GitHub](https://github.com/css-modules/css-modules)
+- [styled-components — официальный сайт](https://styled-components.com/)
+- [Emotion — официальный сайт](https://emotion.sh/)
+- [stylelint — официальный сайт](https://stylelint.io/)
+- [Prettier — официальный сайт](https://prettier.io/)
+- [Loki — визуальная регрессия](https://loki.js.org/)
+- [Chromatic — Storybook визуальное тестирование](https://www.chromatic.com/)
+- [Percy — визуальное тестирование](https://percy.io/)
+- [BackstopJS — визуальная регрессия](https://github.com/garris/BackstopJS)
+
+---
+
+## 12. Ключевые выводы
+
+1. **Нативный CSS — основа** — переменные, nesting, каскадные слои уменьшают необходимость в препроцессорах
+2. **PostCSS** — для автопрефиксов, минификации, трансформации современного CSS
+3. **CSS Modules** — изоляция стилей компонентов, уникальные имена классов
+4. **CSS-in-JS** — только когда нужны динамические стили на основе JS-состояния
+5. **stylelint** — ловит ошибки CSS до попадания в продакшен
+6. **Prettier** — единое форматирование команды
+7. **Визуальная регрессия** — автотестирование скриншотов компонентов
+8. **CI/CD** — линтинг и регрессия на каждом пулл-реквесте
+9. **Выбор стека** — зависит от размера проекта, команды, требований к производительности
+10. **Меньше инструментов = лучше** — не добавляйте сложность без реальной потребности
+
+*Следующий урок: 32_Project_Design_System.txt — Проект — масштабируемая дизайн-система: адаптивные компоненты, доступность и производительность аудит*

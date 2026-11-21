@@ -1,0 +1,485 @@
+{
+  "title": "Урок 33: Project",
+  "slug": "urok-33-развeртывание-docker,-ci-cd,-cross-compilation",
+  "short_description": "Multi-stage Docker, musl, cargo-chef, GitHub Actions, cargo-dist, cargo-release",
+  "goals": [
+    "Понимать основы: Multi-stage Docker, musl, cargo-chef, GitHub Actions, cargo-dist, cargo-release",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 33: Проект — библиотека, системный инструмент или сетевой сервис"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Выбрать тип проекта: библиотека, системный инструмент или сетевой сервис",
+        "Организовать структуру проекта (единичный крейт или workspace)",
+        "Обеспечить гарантии безопасности (безопасные API, clippy, fuzzing, Miri, аудит зависимостей)",
+        "Написать тесты: unit, integration и doc-тесты",
+        "Написать документацию с rustdoc и примерами",
+        "Настроить CI/CD: тесты, clippy, fmt, аудит, сборка, релиз",
+        "Подготовить и (опционально) опубликовать крейт на crates.io"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "После изучения этого урока вы сможете:\n\n\n\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Выбор типа проекта и структура"
+    },
+    {
+      "type": "text",
+      "content": "Выберите один из трёх типов в зависимости от цели:\n\n| Тип | Что создаём | Основные крейты | Пример использования |\n|-----|-------------|-----------------|----------------------|\n| **Библиотека** | `src/lib.rs` с публичным API | `thiserror`, `serde`, `anyhow` | パкет для других проектов, публикуется на crates.io |\n| **Системный инструмент** | `src/main.rs` CLI-утилита | `clap`, `console`, `walkdir` | Инструмент командной строки, работа с файлами |\n| **Сетевой сервис** | `src/main.rs` сервер | `tokio`, `axum` / `actix-web`, `tower` | HTTP/TCP-сервер с асинхронной обработкой |"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура unitsного крейта (библиотека)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "my_project/\n├── Cargo.toml\n├── Cargo.lock\n├── .cargo/config.toml\n├── .github/workflows/ci.yml\n├── README.md\n├── LICENSE\n├── src/\n│   ├── lib.rs          # публичный API, re-export\n│   ├── error.rs        # ошибки (thiserror)\n│   └── ...\n├── benches/            # Criterion бенчмарки\n├── examples/           # примеры использования (и doc-тесты)\n├── tests/              # интеграционные тесты\n│   ├── integration.rs\n│   └── common/\n└── docs/               # дополнительная документация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Структура workspace (библиотека + CLI + сервер)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "my_project/\n├── Cargo.toml          # виртуальный манифест (workspace, без [package])\n├── Cargo.lock\n├── .cargo/config.toml\n├── .github/workflows/ci.yml\n├── core/               # библиотека с логикой\n│   ├── Cargo.toml\n│   └── src/lib.rs\n├── cli/                # системный инструмент\n│   ├── Cargo.toml\n│   └── src/main.rs\n├── server/             # сетевой сервис\n│   ├── Cargo.toml\n│   └── src/main.rs\n└── benches/            # общиеベンчмарки (опционально)"
+    },
+    {
+      "type": "text",
+      "content": "Виртуальный манифест:\n```toml"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml (корень workspace)"
+    },
+    {
+      "type": "text",
+      "content": "[workspace]\nresolver = \"2\"\nmembers = [\"core\", \"cli\", \"server\"]\n\n[workspace.dependencies]\nserde = { version = \"1.0\", features = [\"derive\"] }\ntokio = { version = \"1.0\", features = [\"full\"] }\nanyhow = \"1.0\"\nthiserror = \"1.0\"\ntracing = \"0.1\""
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Член workspace:"
+    },
+    {
+      "type": "text",
+      "content": "toml"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "core/Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[package]\nname = \"my-project-core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde = { workspace = true }\nanyhow = { workspace = true }\nthiserror = { workspace = true }\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Гарантии безопасности"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Запрет unsafe там, где не нужен"
+    },
+    {
+      "type": "text",
+      "content": "В корне библиотеки можно явно запретить unsafe-код:"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/lib.rs\n#![forbid(unsafe_code)]\n\n// если нужно разрешить в одном модуле:\n// #[allow(unsafe_code)]\n// mod unsafe_module;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Safe wrappers над unsafe"
+    },
+    {
+      "type": "text",
+      "content": "Если unsafe unavoidable, инкапсулируйте его в безопасный API с документированными инвариантами:"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "/// Safe wrapper over raw buffer.\n/// # Safety invariants\n/// - `ptr` must be non-null and properly aligned for `T`.\n/// - `len` must be the number of valid elements.\npub struct Buffer<T> {\n    ptr: *mut T,\n    len: usize,\n    cap: usize,\n}\n\nimpl<T> Buffer<T> {\n    /// Создаёт буфер. Все операции с указателем инкапсулированы.\n    pub fn new(cap: usize) -> Self { /* ... */ }\n    pub fn as_slice(&self) -> &[T] {\n        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }\n    }\n}\n\nimpl<T> Drop for Buffer<T> {\n    fn drop(&mut self) {\n        unsafe { /* освобождение памяти */ }\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Статический анализ"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo install clippy          # обычно уже есть с rustup\ncargo clippy --workspace --all-targets --all-features -- -D warnings\ncargo fmt --all --check"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Аудит зависимостей"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo install cargo-audit cargo-deny\ncargo audit                   # проверка уязвимостей (RustSec)\ncargo deny check              # лицензии, advisories, múltiples версии"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Фаззинг и Miri для безопасности"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Добавьте цели фаззинга в `fuzz/` для парсеров и обработки входных данных.",
+        "Прогонайте unsafe-тесты под `cargo miri test`."
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Тестирование: unit, integration, doc"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unit-тесты (внутри исходников)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// src/lib.rs\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn test_add() {\n        assert_eq!(add(2, 3), 5);\n    }\n\n    #[test]\n    fn test_add_negative() {\n        assert_eq!(add(-1, 1), 0);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Integration-тесты (в `tests/`)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// tests/integration.rs\nuse my_project_core::add;\n\n#[test]\nfn test_add_integration() {\n    assert_eq!(add(10, 20), 30);\n}"
+    },
+    {
+      "type": "text",
+      "content": "Общий код для интеграционных тестов — в `tests/common/mod.rs`:"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// tests/common/mod.rs\npub fn setup() { /* общая инициализация */ }\n\n// tests/integration.rs\nmod common;\nuse common::setup;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Doc-тесты (в комментариях `///`)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "/// Складывает два числа.\n///\n/// # Examples\n///\n/// ```\n/// use my_project_core::add;\n/// assert_eq!(add(2, 3), 5);\n/// ```\n///\n/// # Errors\n/// Возвращает ошибку, если ...\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}"
+    },
+    {
+      "type": "text",
+      "content": "Запуск тестов:"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo test                    # все тесты (unit + integration + doc)\ncargo test --lib              # только unit\ncargo test --test integration # конкретный integration-тест\ncargo test --doc              # только doc-тесты\ncargo test -- --nocapture     # показать println!"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Документация (rustdoc)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Комментарии к публичным элементам"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "/// Краткое описание типа или функции.\n///\n/// Более подробное описание, почему это нужно и как использовать.\n///\n/// # Examples\n///\n/// Базовое использование:\n/// ```\n/// let result = my_crate::compute(42);\n/// assert_eq!(result, 42);\n/// ```\n///\n/// # Panics\n///\n/// Паникует если `input` пуст.\n///\n/// # Errors\n///\n/// Возвращает `MyError`, если не удалось ...\npub fn compute(input: i32) -> i32 {\n    input * 2\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Примеры в папке `examples/`"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// examples/quickstart.rs\nuse my_project_core::add;\n\nfn main() {\n    println!(\"{}\", add(1, 2));\n}"
+    },
+    {
+      "type": "text",
+      "content": "Сборка и просмотр документации:"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cargo doc --no-deps --open   # открыть docs.rs-подобную документацию локально\ncargo doc --document-private-items  # включить приватные элементы"
+    },
+    {
+      "type": "text",
+      "content": "Для публикации на docs.rs достаточно publicar крейт на crates.io — документация соберётся автоматически."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ссылки между элементами"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "/// См. также [`add`](fn.add.html) и [`MyError`](enum.MyError.html)."
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. CI/CD (GitHub Actions)"
+    },
+    {
+      "type": "text",
+      "content": "Пример `.github/workflows/ci.yml`:"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Install Rust\n        uses: actions-rust-lang/setup-rust-toolchain@v1\n        with:\n          toolchain: stable\n          components: rustfmt, clippy\n      - name: Cache dependencies\n        uses: actions/cache@v4\n        with:\n          path: target\n          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}\n      - name: Format check\n        run: cargo fmt --all --check\n      - name: Clippy\n        run: cargo clippy --workspace --all-targets --all-features -- -D warnings\n      - name: Tests\n        run: cargo test --workspace --all-features\n      - name: Doc tests\n        run: cargo test --workspace --doc\n      - name: Build release\n        run: cargo build --workspace --release\n      - name: Audit dependencies\n        run: |\n          cargo install cargo-audit\n          cargo audit\n\n  # Опционально:ベンчмарки\n  bench:\n    needs: test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions-rust-lang/setup-rust-toolchain@v1\n      - name: Benchmarks\n        run: cargo bench --workspace\n\n  # Опционально: Miri для unsafe\n  miri:\n    needs: test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions-rust-lang/setup-rust-toolchain@v1\n      - run: rustup component add miri\n      - run: cargo miri test --workspace"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "CD / релиз"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "name: Release\n\non:\n  push:\n    tags: ['v*']\n\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions-rust-lang/setup-rust-toolchain@v1\n      - name: Publish to crates.io\n        run: cargo publish\n        env:\n          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}"
+    },
+    {
+      "type": "text",
+      "content": "Добавьте секрет `CARGO_REGISTRY_TOKEN` в настройки репозитория (токен с crates.io, полученный через `cargo login`).\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Подготовка к публикации на crates.io"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cargo.toml"
+    },
+    {
+      "type": "text",
+      "content": "[package]\nname = \"my-awesome-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\nauthors = [\"Your Name <email@example.com>\"]\ndescription = \"Краткое описание (до одной строки)\"\nreadme = \"README.md\"\nlicense = \"MIT OR Apache-2.0\"\nrepository = \"https://github.com/user/repo\"\nhomepage = \"https://docs.rs/my-awesome-crate\"\ndocumentation = \"https://docs.rs/my-awesome-crate\"\nkeywords = [\"async\", \"web\", \"http\"]\ncategories = [\"web-programming\", \"asynchronous\"]\nexclude = [\n    \"**/tests/fixtures/**\",\n    \".github/**\",\n    \"benches/**\",\n]"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "Проверка и публикация:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`0.y.z` — ранняя разработка, ломающие изменения допустимы",
+        "`1.0.0` — стабильный API",
+        "MAJOR — ломающие изменения",
+        "MINOR — новые 기능, обратно совместимо",
+        "PATCH — исправления ошибок"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "bash\ncargo package --list      # что войдёт в пакет\ncargo package --dry-run   # симуляция\ncargo login               # сохранить токен crates.io\ncargo publish\n```\n\nВерсионирование (SemVer):\n\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "list",
+      "items": [
+        "хотя бы 3 unit-теста (`#[cfg(test)] mod tests`),",
+        "1 integration-тест в `tests/`,",
+        "2 doc-теста с примерами в комментариях `///`."
+      ],
+      "ordered": true
+    },
+    {
+      "type": "text",
+      "content": "1. **Выбор типа проекта**: Определите тип вашего проекта (библиотека, системный инструмент или сетевой сервис) и создайте соответствующую структуру папок с `Cargo.toml`.\n\n2. **Безопасность**: Добавьте `#![forbid(unsafe_code)]` (если проект не требует unsafe), настройте `cargo clippy` с `-D warnings` и `cargo fmt --all --check`. Прогоните `cargo audit` на уязвимости зависимостей.\n\n3. **Тестирование**: Напишите:\n\n\n\n   Запустите `cargo test` и убедитесь, что всё зелёное.\n\n4. **Документация**: Напишите полную rustdoc-документацию для всех публичных функций и типов с разделами `# Examples`, `# Panics`, `# Errors`. Запустите `cargo doc --no-deps --open` и проверьте вывод.\n\n5. **CI/CD**: Добавьте в репозиторий `.github/workflows/ci.yml` со шагами: `cargo fmt --check`, `cargo clippy`, `cargo test`, `cargo build --release`, `cargo audit`.\n\n6. **Опубликовать (опционально)**: Подготовьте `Cargo.toml` для публикации, запустите `cargo publish --dry-run`, и при желании опубликуйте крейт на crates.io.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| `cargo clippy` ругается на warnings | Код не соответствует стилю или имеет потенциальные баги | Исправьте все warnings или обоснованно добавьте `#[allow(...)]` |\n| Doc-тест не компилируется | Пример использует непубличный элемент или неверный путь | Сделайте элемент `pub` или используйте полный путь `crate::...` |\n| Integration-тест не видит библиотеку | Тест в `tests/` использует имя крейта, не модуль | Используйте `use my_crate::...` (имя из `[package]`) |\n| `cargo publish` ошибка аутентификации | Нет токена crates.io | Выполните `cargo login` и добавьте `CARGO_REGISTRY_TOKEN` в secrets |\n| Публикация включает лишние файлы (target/, .git) | Нет `exclude` в Cargo.toml | Добавьте секцию `exclude` со списком файлов |\n| Разные версии одной зависимости в workspace | Отсутствует `resolver = \"2\"` и `[workspace.dependencies]` | Настройте общие зависимости в workspace |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Шпаргалка: Структура и CI проекта"
+    },
+    {
+      "type": "table",
+      "content": "| Задача | Команда / файл |\n|--------|----------------|\n| Unit-тесты | `cargo test --lib` |\n| Integration-тесты | `cargo test --test <name>` |\n| Doc-тесты | `cargo test --doc` |\n| Все тесты | `cargo test --workspace --all-features` |\n| Форматирование | `cargo fmt --all --check` |\n| Clippy | `cargo clippy --workspace --all-targets -- -D warnings` |\n| Сборка релиза | `cargo build --workspace --release` |\n| Документация | `cargo doc --no-deps --open` |\n| Аудит зависимостей | `cargo audit` |\n| Подготовка к публикации | `cargo package --list && cargo publish --dry-run` |\n| Публикация | `cargo publish` (нужен `CARGO_REGISTRY_TOKEN`) |\n| CI конфиг | `.github/workflows/ci.yml` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**The Book — Projects**: https://doc.rust-lang.org/book/",
+        "**API Guidelines**: https://rust-lang.github.io/api-guidelines/",
+        "**rustdoc**: https://doc.rust-lang.org/rustdoc/",
+        "**docs.rs**: https://docs.rs/",
+        "**crates.io publishing**: https://doc.rust-lang.org/cargo/reference/publishing.html",
+        "**SemVer**: https://semver.org/",
+        "**GitHub Actions for Rust**: https://github.com/actions-rust-lang/setup-rust-toolchain",
+        "**cargo-audit**: https://github.com/rustsec/rustsec/tree/main/cargo-audit",
+        "**cargo-deny**: https://github.com/EmbarkStudios/cargo-deny"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Типы проектов**: библиотека, системный инструмент, сетевой сервис; структура unitsного крейта и workspace",
+        "**Безопасность**: `#![forbid(unsafe_code)]`, safe wrappers, `clippy`, `cargo audit`, `cargo deny`, fuzzing и Miri",
+        "**Тестирование**: unit-тесты, integration-тесты в `tests/`, doc-тесты, общий код в `tests/common/`",
+        "**Документация**: rustdoc (`///`, `# Examples`, `# Panics`, `# Errors`), `examples/`, `cargo doc --open`",
+        "**CI/CD**: GitHub Actions (fmt, clippy, test, build, audit), Veröffentlichung на crates.io, SemVer"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "✅ **Что мы изучили:**\n\n\n\n\n\n\nЭто был последний урок курса Rust. Поздравляем с завершением обучения!"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Развёртывание: Docker, CI/CD, cross-compilation",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Развёртывание: Docker, CI/CD, cross-compilation' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Rust",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-rust на GitHub",
+    "Конференции и митапы по Rust"
+  ],
+  "key_takeaways": [
+    "Главная идея: Multi-stage Docker, musl, cargo-chef, GitHub Actions, cargo-dist, cargo-release — это фундамент для Ownership, Borrowing, Lifetimes.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "rust",
+  "lesson_order": 33,
+  "name_en": "Lesson: Развёртывание: Docker, CI/CD, cross-compilation",
+  "short_description_en": "Learn Развёртывание: Docker, CI/CD, cross-compilation in Rust with detailed explanations and examples"
+}

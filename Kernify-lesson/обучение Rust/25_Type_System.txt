@@ -1,0 +1,743 @@
+# Урок 25: Продвинутая система типов (Advanced Type System)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Работать с DST (Dynamically Sized Types): `str`, `[T]`, `dyn Trait`
+- Использовать `Unsize` и `CoerceUnsized` для кастомных DST
+- Понимать Type Erasure и type erasure patterns
+- Использовать PhantomData для variance, dropck, unused type parameters
+- Работать с Function Pointers и их coercion
+- Использовать Raw Pointers (`*const T`, `*mut T`) безопасно
+- Понимать `ManuallyDrop`, `MaybeUninit` в контексте типов
+- Применять `Never` type (`!`) для divergent functions
+- Использовать `TypeId`, `Any` для runtime type information
+
+---
+
+## 1. Dynamically Sized Types (DST)
+
+### Что такое DST
+```rust
+// Sized типы: известный размер на этапе компиляции
+let x: i32 = 42;        // size = 4
+let y: Box<i32> = Box::new(42); // size = 8 (указатель)
+
+// DST: размер известен ТОЛЬКО во время выполнения
+let s: &str = "hello";        // fat pointer: (ptr, len)
+let arr: &[i32] = &[1, 2, 3]; // fat pointer: (ptr, len)
+let trait_obj: &dyn Debug = &42; // fat pointer: (ptr, vtable)
+```
+
+### Thin vs Fat pointers
+```rust
+// Thin pointer (1 word) — Sized типы
+let thin: &i32 = &42;
+let thin_box: Box<i32> = Box::new(42);
+
+// Fat pointer (2 words) — DST
+let fat_str: &str = "hello";        // (data_ptr, length)
+let fat_slice: &[i32] = &[1, 2, 3]; // (data_ptr, length)
+let fat_dyn: &dyn Debug = &42;      // (data_ptr, vtable_ptr)
+```
+
+### `?Sized` bound
+```rust
+// По умолчанию T: Sized
+fn takes_sized<T>(t: T) {}
+
+// Разрешаем DST
+fn takes_unsized<T: ?Sized>(t: &T) {}
+
+fn main() {
+    takes_sized(42);           // OK
+    takes_unsized(&42);        // OK
+    takes_unsized("hello");    // OK, &str: ?Sized
+    takes_unsized(&[1,2,3]);   // OK, &[i32]: ?Sized
+    takes_unsized(&42 as &dyn Debug); // OK
+}
+```
+
+### Кастомные DST с `Unsize` и `CoerceUnsized`
+```rust
+use std::marker::Unsize;
+use std::ops::CoerceUnsized;
+
+// Thin wrapper, который становится fat при unsizing
+#[repr(transparent)]
+struct MyWrapper<T: ?Sized> {
+    inner: T,
+}
+
+// Автоматически реализуется для #[repr(transparent)] структур
+// MyWrapper<T>: Unsize<MyWrapper<U>> если T: Unsize<U>
+
+// CoerceUnsized для умных указателей
+struct MyBox<T: ?Sized> {
+    ptr: *mut T,
+}
+
+impl<T: ?Sized> MyBox<T> {
+    fn new(x: T) -> Self where T: Sized {
+        MyBox { ptr: Box::into_raw(Box::new(x)) }
+    }
+}
+
+// Реализация CoerceUnsized (nightly)
+#![feature(coerce_unsized)]
+impl<T: ?Sized, U: ?Sized> CoerceUnsized<MyBox<U>> for MyBox<T>
+where
+    T: Unsize<U>,
+{}
+```
+
+### `str` и `[T]` — примитивные DST
+```rust
+// str — UTF-8 строка, DST
+let s: &str = "hello";        // &str = fat pointer
+let owned: String = s.to_string(); // String = Vec<u8> (Sized!)
+
+// Срез [T] — DST
+let slice: &[i32] = &[1, 2, 3];
+let vec: Vec<i32> = slice.to_vec(); // Vec = Sized
+
+// Методы работают через Deref
+println!("len: {}", s.len());      // str::len
+println!("len: {}", slice.len());  // slice::len
+```
+
+---
+
+## 2. Type Erasure
+
+### Проблема: стирание типов
+```rust
+// Хотим хранить разные типы в одной коллекции
+// Но Vec<T> требует одинаковый T
+
+// Решение 1: Trait Object (dyn Trait)
+trait Draw {
+    fn draw(&self);
+}
+
+struct Circle { r: f64 }
+impl Draw for Circle { fn draw(&self) { println!("Circle {}", self.r); } }
+
+struct Square { s: f64 }
+impl Draw for Square { fn draw(&self) { println!("Square {}", self.s); } }
+
+fn main() {
+    let shapes: Vec<Box<dyn Draw>> = vec![
+        Box::new(Circle { r: 5.0 }),
+        Box::new(Square { s: 3.0 }),
+    ];
+    for s in shapes { s.draw(); }
+}
+```
+
+### Type Erasure через `Any`
+```rust
+use std::any::Any;
+
+fn print_type<T: Any + 'static>(x: &T) {
+    if let Some(s) = x.downcast_ref::<String>() {
+        println!("String: {}", s);
+    } else if let Some(i) = x.downcast_ref::<i32>() {
+        println!("i32: {}", i);
+    } else {
+        println!("Unknown type: {}", std::any::type_name::<T>());
+    }
+}
+
+fn main() {
+    print_type(&String::from("hello"));
+    print_type(&42i32);
+}
+```
+
+### `TypeId` для сравнения типов
+```rust
+use std::any::{Any, TypeId};
+
+fn is_string<T: Any>(x: &T) -> bool {
+    TypeId::of::<T>() == TypeId::of::<String>()
+}
+
+fn main() {
+    println!("{}", is_string(&"hello")); // false (&str != String)
+    println!("{}", is_string(&String::from("hello"))); // true
+}
+```
+
+### Downcasting
+```rust
+fn process_any(x: Box<dyn Any>) {
+    if let Ok(s) = x.downcast::<String>() {
+        println!("Got String: {}", s);
+    } else if let Ok(i) = x.downcast::<i32>() {
+        println!("Got i32: {}", i);
+    } else {
+        println!("Other type");
+    }
+}
+```
+
+---
+
+## 3. `PhantomData` — детальное использование
+
+### Для variance
+```rust
+use std::marker::PhantomData;
+use std::cell::Cell;
+
+// Инвариантный по T
+struct Invariant<T> {
+    _marker: PhantomData<Cell<T>>,
+}
+
+// Ковариантный по T
+struct Covariant<T> {
+    _marker: PhantomData<fn() -> T>,
+}
+
+// Контрвариантный по T
+struct Contravariant<T> {
+    _marker: PhantomData<fn(T)>,
+}
+
+// Бивариантный (всегда)
+struct Bivariant<T> {
+    _marker: PhantomData<*const T>,
+}
+```
+
+### Для dropck (drop check)
+```rust
+use std::marker::PhantomData;
+
+struct Wrapper<'a, T: 'a> {
+    data: &'a T,
+    // Без PhantomData: T должен outlive 'a строго
+    // С PhantomData<&'a T>: компилятор понимает связь
+    _marker: PhantomData<&'a T>,
+}
+
+impl<'a, T> Drop for Wrapper<'a, T> {
+    fn drop(&mut self) {
+        // Мы не используем self.data в drop!
+        // Но компилятор не знает этого без #[may_dangle]
+    }
+}
+```
+
+### Для unused type parameters
+```rust
+use std::marker::PhantomData;
+
+struct MyIter<'a, T> {
+    ptr: *const T,
+    // T не используется в полях, но нужен для типа
+    _phantom: PhantomData<&'a T>,
+}
+
+// Без PhantomData: error[E0392]: parameter `T` is never used
+```
+
+### `PhantomPinned` для `!Unpin`
+```rust
+use std::marker::PhantomPinned;
+use std::pin::Pin;
+
+struct SelfRef {
+    data: String,
+    ptr: *const String,
+    _pin: PhantomPinned, // Делает !Unpin
+}
+```
+
+---
+
+## 4. Function Pointers
+
+### Типы функций
+```rust
+// Function pointer (thin pointer, Sized)
+fn add(a: i32, b: i32) -> i32 { a + b }
+
+let f: fn(i32, i32) -> i32 = add; // Тип: fn(i32, i32) -> i32
+
+// Замыкание БЕЗ capture — можно привести к fn pointer
+let closure = |a, b| a + b;
+let f: fn(i32, i32) -> i32 = closure; // OK!
+
+// Замыкание С capture — НЕЛЬЗЯ
+let x = 10;
+let closure = |a| a + x;
+// let f: fn(i32) -> i32 = closure; // ERROR!
+
+// Но можно через trait object
+let f: &dyn Fn(i32) -> i32 = &closure; // fat pointer
+```
+
+### Coercion function pointers
+```rust
+fn takes_fn_ptr(f: fn(i32) -> i32) {}
+
+fn main() {
+    fn foo(x: i32) -> i32 { x }
+    takes_fn_ptr(foo); // OK
+
+    // unsafe fn -> fn (если не использует unsafe)
+    unsafe fn unsafe_foo(x: i32) -> i32 { x }
+    takes_fn_ptr(unsafe_foo); // OK, coercion
+
+    // fn с разными lifetimes
+    fn with_ref<'a>(x: &'a i32) -> &'a i32 { x }
+    takes_fn_ptr(with_ref); // OK, higher-ranked
+}
+```
+
+### Function pointer vs closure traits
+| Тип | Size | Capture | Use case |
+|-----|------|---------|----------|
+| `fn(...)` | 1 word | Нет | FFI, callbacks |
+| `&dyn Fn(...)` | 2 words | Да | Общий случай |
+| `&mut dyn FnMut(...)` | 2 words | Да (mut) | Mutating closures |
+| `Box<dyn FnOnce(...)>` | 2 words | Да (once) | Передача владения |
+
+---
+
+## 5. Raw Pointers (`*const T`, `*mut T`)
+
+### Создание
+```rust
+let x = 42;
+let raw_const: *const i32 = &x as *const i32;
+let raw_mut: *mut i32 = &mut x as *mut i32;
+
+// Из Box
+let boxed = Box::new(42);
+let raw: *mut i32 = Box::into_raw(boxed);
+
+// Из références
+let r: &i32 = &x;
+let raw: *const i32 = r as *const i32;
+```
+
+### Разыменование (unsafe)
+```rust
+let x = 42;
+let raw = &x as *const i32;
+
+unsafe {
+    println!("{}", *raw); // Чтение
+}
+
+let mut y = 0;
+let raw_mut = &mut y as *mut i32;
+unsafe {
+    *raw_mut = 10; // Запись
+}
+```
+
+### Pointer arithmetic
+```rust
+let arr = [1, 2, 3, 4, 5];
+let ptr = arr.as_ptr(); // *const i32
+
+unsafe {
+    let second = ptr.add(1);     // ptr + 1 * size_of::<i32>()
+    let third = ptr.add(2);
+    println!("{} {}", *second, *third); // 2 3
+
+    // offset (подписанная арифметика)
+    let back = third.offset(-1);
+    println!("{}", *back); // 2
+}
+```
+
+### Null pointers
+```rust
+let null: *const i32 = std::ptr::null();
+let null_mut: *mut i32 = std::ptr::null_mut();
+
+if null.is_null() {
+    println!("Null pointer");
+}
+
+// NonNull<T> — гарантированно не null
+use std::ptr::NonNull;
+let non_null = NonNull::new(ptr); // Option<NonNull<T>>
+```
+
+### Aliasing rules ( 엄격!)
+```rust
+// ПРАВИЛА (UB при нарушении):
+// 1. *mut T — эксклюзивный доступ (как &mut T)
+// 2. *const T — shared доступ (как &T)
+// 3. Нельзя иметь *mut и *const одновременно на одно место
+// 4. Нельзя создавать *mut из &T (кроме UnsafeCell)
+
+// ПРАВИЛЬНО:
+let mut x = 42;
+let raw_mut = &mut x as *mut i32;
+let raw_const = raw_mut as *const i32; // OK: *mut -> *const
+
+// НЕПРАВИЛЬНО:
+// let raw_const = &x as *const i32;
+// let raw_mut = raw_const as *mut i32; // UB! *const -> *mut через общий доступ
+```
+
+---
+
+## 6. Never Type (`!`)
+
+### Divergent functions
+```rust
+fn forever() -> ! {
+    loop {
+        std::thread::park();
+    }
+}
+
+fn panic_fn() -> ! {
+    panic!("Always panics");
+}
+
+fn exit_fn() -> ! {
+    std::process::exit(0);
+}
+```
+
+### Использование в `match`
+```rust
+fn get_or_exit(opt: Option<i32>) -> i32 {
+    match opt {
+        Some(x) => x,
+        None => {
+            eprintln!("No value!");
+            std::process::exit(1); // Тип !, совместим с любым
+        }
+    }
+}
+```
+
+### `!` в типах
+```rust
+// Result<T, !> — не может быть Err
+type InfallibleResult<T> = Result<T, !>;
+
+fn never_fails() -> InfallibleResult<i32> {
+    Ok(42)
+}
+
+// match на ! — exhaustiveness checking
+fn handle_infallible(r: InfallibleResult<i32>) -> i32 {
+    match r {
+        Ok(x) => x,
+        // Err(e) -> ! не нужно, невозможно
+    }
+}
+```
+
+### `!` в enum
+```rust
+enum Void {} // Пустой enum = !
+
+// Option<&T> оптимизируется в nullable pointer
+// Option<&Void> = *const Void (всегда null)
+```
+
+---
+
+## 7. `TypeId`, `Any` — Runtime Type Information
+
+### `Any` trait
+```rust
+use std::any::Any;
+
+trait Plugin: Any {
+    fn name(&self) -> &str;
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+struct MyPlugin;
+impl Plugin for MyPlugin {
+    fn name(&self) -> &str { "MyPlugin" }
+    fn as_any(&self) -> &dyn Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+}
+
+fn load_plugin(p: Box<dyn Plugin>) {
+    // Downcast к конкретному типу
+    if let Some(plugin) = p.as_any().downcast_ref::<MyPlugin>() {
+        println!("Loaded: {}", plugin.name());
+    }
+}
+```
+
+### `TypeId` для type-safe хранилищ
+```rust
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
+
+struct TypeMap {
+    map: HashMap<TypeId, Box<dyn Any>>,
+}
+
+impl TypeMap {
+    fn new() -> Self {
+        TypeMap { map: HashMap::new() }
+    }
+
+    fn insert<T: Any + 'static>(&mut self, value: T) {
+        self.map.insert(TypeId::of::<T>(), Box::new(value));
+    }
+
+    fn get<T: Any + 'static>(&self) -> Option<&T> {
+        self.map.get(&TypeId::of::<T>())
+            .and_then(|b| b.downcast_ref())
+    }
+
+    fn get_mut<T: Any + 'static>(&mut self) -> Option<&mut T> {
+        self.map.get_mut(&TypeId::of::<T>())
+            .and_then(|b| b.downcast_mut())
+    }
+}
+```
+
+---
+
+## 8. Advanced Type Patterns
+
+### Type-level state machine
+```rust
+struct Closed;
+struct Open;
+struct Reading;
+
+struct File<S> {
+    handle: std::fs::File,
+    _state: PhantomData<S>,
+}
+
+impl File<Closed> {
+    fn open(path: &str) -> std::io::Result<File<Open>> {
+        let handle = std::fs::File::open(path)?;
+        Ok(File { handle, _state: PhantomData })
+    }
+}
+
+impl File<Open> {
+    fn read(self) -> File<Reading> {
+        File { handle: self.handle, _state: PhantomData }
+    }
+    fn close(self) -> File<Closed> {
+        File { handle: self.handle, _state: PhantomData }
+    }
+}
+
+impl File<Reading> {
+    fn read_bytes(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.handle.read(buf)
+    }
+}
+```
+
+### Branding (PhantomData для уникальности)
+```rust
+use std::marker::PhantomData;
+
+struct UserId(PhantomData<*const ()>, u64);
+struct PostId(PhantomData<*const ()>, u64);
+
+fn get_user(id: UserId) -> String { format!("User {}", id.1) }
+fn get_post(id: PostId) -> String { format!("Post {}", id.1) }
+
+fn main() {
+    let user = UserId(PhantomData, 42);
+    let post = PostId(PhantomData, 42);
+
+    // get_user(post); // ОШИБКА! Разные типы
+    get_user(user); // OK
+}
+```
+
+---
+
+## 9. Практические упражнения
+
+### Упражнение 1: Heterogeneous коллекция с Any
+```rust
+use std::any::Any;
+use std::collections::HashMap;
+
+struct ComponentStore {
+    components: HashMap<TypeId, Box<dyn Any>>,
+}
+
+impl ComponentStore {
+    fn add<T: Any + 'static>(&mut self, component: T) {
+        self.components.insert(TypeId::of::<T>(), Box::new(component));
+    }
+
+    fn get<T: Any + 'static>(&self) -> Option<&T> {
+        self.components.get(&TypeId::of::<T>())
+            .and_then(|b| b.downcast_ref())
+    }
+
+    fn get_mut<T: Any + 'static>(&mut self) -> Option<&mut T> {
+        self.components.get_mut(&TypeId::of::<T>())
+            .and_then(|b| b.downcast_mut())
+    }
+}
+```
+
+### Упражнение 2: Type-safe builder с PhantomData
+```rust
+use std::marker::PhantomData;
+
+struct HttpRequestBuilder<HasMethod, HasUrl, HasBody> {
+    method: Option<String>,
+    url: Option<String>,
+    body: Option<String>,
+    _marker: PhantomData<(HasMethod, HasUrl, HasBody)>,
+}
+
+// Состояния
+struct Yes;
+struct No;
+
+impl<M, U, B> HttpRequestBuilder<M, U, B> {
+    fn new() -> HttpRequestBuilder<No, No, No> {
+        HttpRequestBuilder { method: None, url: None, body: None, _marker: PhantomData }
+    }
+}
+
+impl<U, B> HttpRequestBuilder<No, U, B> {
+    fn method(mut self, method: &str) -> HttpRequestBuilder<Yes, U, B> {
+        self.method = Some(method.into());
+        HttpRequestBuilder { method: self.method, url: self.url, body: self.body, _marker: PhantomData }
+    }
+}
+
+impl<M, B> HttpRequestBuilder<M, No, B> {
+    fn url(mut self, url: &str) -> HttpRequestBuilder<M, Yes, B> {
+        self.url = Some(url.into());
+        HttpRequestBuilder { method: self.method, url: self.url, body: self.body, _marker: PhantomData }
+    }
+}
+
+impl<M, U> HttpRequestBuilder<M, U, No> {
+    fn body(mut self, body: &str) -> HttpRequestBuilder<M, U, Yes> {
+        self.body = Some(body.into());
+        HttpRequestBuilder { method: self.method, url: self.url, body: self.body, _marker: PhantomData }
+    }
+}
+
+// build только когда все поля заданы
+impl HttpRequestBuilder<Yes, Yes, Yes> {
+    fn build(self) -> HttpRequest {
+        HttpRequest {
+            method: self.method.unwrap(),
+            url: self.url.unwrap(),
+            body: self.body.unwrap(),
+        }
+    }
+}
+
+struct HttpRequest { method: String, url: String, body: String }
+```
+
+### Упражнение 3: Function pointer table для плагинов
+```rust
+#[repr(C)]
+struct PluginVTable {
+    name: fn() -> &'static str,
+    init: fn(*mut ()),
+    process: fn(*mut (), *const u8, usize) -> i32,
+    deinit: fn(*mut ()),
+}
+
+struct Plugin {
+    vtable: &'static PluginVTable,
+    state: *mut (),
+}
+
+impl Plugin {
+    unsafe fn new(vtable: &'static PluginVTable) -> Self {
+        let mut state = std::ptr::null_mut();
+        (vtable.init)(&mut state);
+        Plugin { vtable, state }
+    }
+
+    fn name(&self) -> &'static str {
+        (self.vtable.name)()
+    }
+
+    fn process(&self, data: &[u8]) -> i32 {
+        (self.vtable.process)(self.state, data.as_ptr(), data.len())
+    }
+}
+
+impl Drop for Plugin {
+    fn drop(&mut self) {
+        unsafe { (self.vtable.deinit)(self.state); }
+    }
+}
+```
+
+---
+
+## 10. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `the size for values of type cannot be known` | DST без указателя | Используйте `&dyn Trait`, `Box<dyn Trait>`, `&str`, `&[T]` |
+| `parameter T is never used` | PhantomData отсутствует | Добавьте `PhantomData<T>` |
+| `cannot downcast` | Тип не `Any` или не `'static` | Добавьте `Any + 'static` bounds |
+| `unaligned reference` | Raw pointer cast на packed struct | Используйте `ptr::read_unaligned` |
+| `use of moved value` | `Box::into_raw` без `from_raw` | Всегда восстанавливайте Box или leak |
+
+---
+
+## 11. Шпаргалка: Type System
+
+| Концепция | Ключевые типы/трейты |
+|-----------|---------------------|
+| DST | `str`, `[T]`, `dyn Trait`, `?Sized` |
+| Fat pointers | `&str`, `&[T]`, `&dyn Trait`, `Box<dyn Trait>` |
+| Type Erasure | `dyn Trait`, `Any`, `TypeId` |
+| PhantomData | `PhantomData<T>`, `PhantomPinned` |
+| Function pointers | `fn(Args) -> Ret` |
+| Raw pointers | `*const T`, `*mut T`, `NonNull<T>` |
+| Never type | `!` |
+| RTTI | `Any::downcast`, `TypeId::of` |
+
+---
+
+## 12. Полезные ресурсы
+
+- **DST**: https://doc.rust-lang.org/nomicon/exotic-sizes.html
+- **Type Erasure**: https://doc.rust-lang.org/nomicon/trait-objects.html
+- **PhantomData**: https://doc.rust-lang.org/std/marker/struct.PhantomData.html
+- **Raw Pointers**: https://doc.rust-lang.org/nomicon/vec/vec-raw-pointers.html
+- **Never Type**: https://doc.rust-lang.org/std/primitive.never.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- **DST**: `str`, `[T]`, `dyn Trait` — fat pointers, `?Sized` bound, `Unsize`/`CoerceUnsized`
+- **Type Erasure**: `dyn Trait` для object safety, `Any`/`TypeId` для runtime type info
+- **PhantomData**: variance control, dropck, unused type parameters, `PhantomPinned`
+- **Function Pointers**: `fn(...)`, coercion, отличие от замыканий
+- **Raw Pointers**: создание, разыменование, арифметика, aliasing rules, `NonNull`
+- **Never Type (`!`)**: divergent functions, `match` exhaustiveness, `Result<T, !>`
+- **Advanced Patterns**: Type-level state machines, branding, vtable для плагинов
+
+---
+
+**Следующий урок:** Unsafe Rust (`26_Unsafe_Rust.txt`)

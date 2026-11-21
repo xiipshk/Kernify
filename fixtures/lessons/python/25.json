@@ -1,0 +1,446 @@
+{
+  "title": "Урок 25: Архитектура приложений",
+  "slug": "urok-25-cli-click,-typer,-argparse",
+  "short_description": "Команды, аргументы, опции, автокомплит, подкоманды",
+  "goals": [
+    "Понимать основы: Команды, аргументы, опции, автокомплит, подкоманды",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.3: Архитектура приложений — слои, DDD, чистая архитектура, паттерны"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать принципы чистой архитектуры",
+        "Разделять код на слои (domain, application, infrastructure)",
+        "Применять DDD (Domain-Driven Design) паттерны",
+        "Использовать Dependency Injection",
+        "Организовывать большие проекты"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Проблема: спагетти-код"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ПЛОХО: всё в одном месте"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Нельзя протестировать без БД и SMTP",
+        "Смена БД ломает бизнес-логику",
+        "Дублирование кода"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "def process_order(order_data):\n    # БД\n    conn = sqlite3.connect(\"db.sqlite\")\n    cursor = conn.cursor()\n    cursor.execute(\"INSERT INTO orders ...\", order_data)\n    conn.commit()\n\n    # Бизнес-логика\n    total = sum(item.price * item.qty for item in order_data.items)\n    if total > 1000:\n        total *= 0.9  # скидка\n\n    # Email\n    smtp = smtplib.SMTP(\"smtp.gmail.com\")\n    smtp.sendmail(...)\n\n    # Логирование\n    logging.info(f\"Order processed: {total}\")\n```\n\nПроблемы:\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Чистая архитектура (Clean Architecture)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "┌─────────────────────────────────────┐\n│         Entities (Domain)           │  ← Бизнес-правила, нет зависимостей\n├─────────────────────────────────────┤\n│      Use Cases (Application)        │  ← Orchestration, зависит от Domain\n├─────────────────────────────────────┤\n│   Interface Adapters (Controllers)  │  ← Преобразование данных (API, CLI)\n├─────────────────────────────────────┤\n│     Frameworks (Infrastructure)     │  ← DB, Web, Email, UI\n└─────────────────────────────────────┘"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правило зависимостей"
+    },
+    {
+      "type": "text",
+      "content": "**Внутренние слои НЕ знают о внешних**. Зависимости направлены ВНУТРЬ.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Domain Layer — ядро бизнеса"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Entities (сущности)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "domain/order.py"
+    },
+    {
+      "type": "text",
+      "content": "from dataclasses import dataclass, field\nfrom datetime import datetime\nfrom typing import List\nfrom uuid import UUID, uuid4\n\n@dataclass\nclass OrderItem:\n    product_id: UUID\n    quantity: int\n    price: float\n\n@dataclass\nclass Order:\n    id: UUID = field(default_factory=uuid4)\n    customer_id: UUID = None\n    items: List[OrderItem] = field(default_factory=list)\n    status: str = \"pending\"\n    created_at: datetime = field(default_factory=datetime.now)\n\n    def add_item(self, product_id: UUID, quantity: int, price: float):\n        if quantity <= 0:\n            raise ValueError(\"Quantity must be positive\")\n        self.items.append(OrderItem(product_id, quantity, price))\n\n    def total(self) -> float:\n        return sum(item.price * item.quantity for item in self.items)\n\n    def apply_discount(self, threshold: float, rate: float):\n        if self.total() > threshold:\n            for item in self.items:\n                item.price *= (1 - rate)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Value Objects (объекты-значения)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "domain/value_objects.py"
+    },
+    {
+      "type": "text",
+      "content": "from dataclasses import dataclass\n\n@dataclass(frozen=True)  # immutable!\nclass Money:\n    amount: float\n    currency: str = \"USD\"\n\n    def __add__(self, other: \"Money\") -> \"Money\":\n        if self.currency != other.currency:\n            raise ValueError(\"Currency mismatch\")\n        return Money(self.amount + other.amount, self.currency)\n\n    def __mul__(self, factor: float) -> \"Money\":\n        return Money(self.amount * factor, self.currency)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Domain Events"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "domain/events.py"
+    },
+    {
+      "type": "text",
+      "content": "from dataclasses import dataclass\nfrom datetime import datetime\nfrom uuid import UUID\n\n@dataclass\nclass OrderCreated:\n    order_id: UUID\n    customer_id: UUID\n    total: float\n    occurred_at: datetime = datetime.now()\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Repository Interface (абстракция)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "domain/repositories.py"
+    },
+    {
+      "type": "text",
+      "content": "from abc import ABC, abstractmethod\nfrom typing import Optional\nfrom uuid import UUID\n\nclass OrderRepository(ABC):\n    @abstractmethod\n    def save(self, order: Order) -> None: ...\n\n    @abstractmethod\n    def get(self, order_id: UUID) -> Optional[Order]: ...\n\n    @abstractmethod\n    def list_by_customer(self, customer_id: UUID) -> list[Order]: ...\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Application Layer — Use Cases"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "application/order_service.py"
+    },
+    {
+      "type": "text",
+      "content": "from dataclasses import dataclass\nfrom uuid import UUID\nfrom domain.order import Order, OrderItem\nfrom domain.repositories import OrderRepository\nfrom domain.events import OrderCreated\nfrom application.events import EventPublisher\n\n@dataclass\nclass CreateOrderCommand:\n    customer_id: UUID\n    items: list[dict]  # [{\"product_id\": \"...\", \"qty\": 1, \"price\": 10.0}]\n\nclass OrderService:\n    def __init__(\n        self,\n        repo: OrderRepository,\n        events: EventPublisher,\n    ):\n        self.repo = repo\n        self.events = events\n\n    def create_order(self, cmd: CreateOrderCommand) -> Order:\n        order = Order(customer_id=cmd.customer_id)\n        for item in cmd.items:\n            order.add_item(\n                UUID(item[\"product_id\"]),\n                item[\"qty\"],\n                item[\"price\"]\n            )\n\n        self.repo.save(order)\n        self.events.publish(OrderCreated(\n            order_id=order.id,\n            customer_id=order.customer_id,\n            total=order.total()\n        ))\n        return order\n\n    def get_order(self, order_id: UUID) -> Order:\n        order = self.repo.get(order_id)\n        if not order:\n            raise OrderNotFound(order_id)\n        return order\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Infrastructure Layer — реализации"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SQLAlchemy Repository"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "infrastructure/sqlalchemy_repo.py"
+    },
+    {
+      "type": "text",
+      "content": "from sqlalchemy import select\nfrom sqlalchemy.orm import Session\nfrom domain.order import Order\nfrom domain.repositories import OrderRepository\nfrom infrastructure.models import OrderModel\n\nclass SqlAlchemyOrderRepository(OrderRepository):\n    def __init__(self, session: Session):\n        self.session = session\n\n    def save(self, order: Order) -> None:\n        model = OrderModel.from_domain(order)\n        self.session.merge(model)\n        self.session.commit()\n\n    def get(self, order_id: UUID) -> Optional[Order]:\n        model = self.session.get(OrderModel, order_id)\n        return model.to_domain() if model else None\n\n    def list_by_customer(self, customer_id: UUID) -> list[Order]:\n        stmt = select(OrderModel).where(OrderModel.customer_id == customer_id)\n        return [m.to_domain() for m in self.session.scalars(stmt)]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Event Publisher (Redis, Kafka, in-memory)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "infrastructure/event_publisher.py"
+    },
+    {
+      "type": "text",
+      "content": "from application.events import EventPublisher\nfrom domain.events import OrderCreated\nimport json\nimport redis\n\nclass RedisEventPublisher(EventPublisher):\n    def __init__(self, client: redis.Redis):\n        self.client = client\n\n    def publish(self, event: OrderCreated) -> None:\n        self.client.publish(\n            \"order_events\",\n            json.dumps({\n                \"type\": \"OrderCreated\",\n                \"order_id\": str(event.order_id),\n                \"customer_id\": str(event.customer_id),\n                \"total\": event.total,\n            })\n        )\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Dependency Injection — связывание"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "main.py / composition_root.py"
+    },
+    {
+      "type": "text",
+      "content": "from sqlalchemy import create_engine\nfrom sqlalchemy.orm import sessionmaker\nimport redis\nfrom infrastructure.sqlalchemy_repo import SqlAlchemyOrderRepository\nfrom infrastructure.event_publisher import RedisEventPublisher\nfrom application.order_service import OrderService"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Конфигурация"
+    },
+    {
+      "type": "text",
+      "content": "engine = create_engine(\"postgresql://user:pass@localhost/db\")\nSessionLocal = sessionmaker(bind=engine)\nredis_client = redis.Redis()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Фабрика сервисов"
+    },
+    {
+      "type": "text",
+      "content": "def create_order_service() -> OrderService:\n    session = SessionLocal()\n    repo = SqlAlchemyOrderRepository(session)\n    events = RedisEventPublisher(redis_client)\n    return OrderService(repo, events)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "В FastAPI — через Depends"
+    },
+    {
+      "type": "text",
+      "content": "from fastapi import Depends, FastAPI\n\napp = FastAPI()\n\ndef get_order_service():\n    return create_order_service()\n\n@app.post(\"/orders\")\ndef create_order(cmd: CreateOrderCommand, service: OrderService = Depends(get_order_service)):\n    return service.create_order(cmd)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "DI контейнеры (python-dependency-injector)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install dependency-injector"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "containers.py"
+    },
+    {
+      "type": "text",
+      "content": "from dependency_injector import containers, providers\nfrom sqlalchemy import create_engine\nfrom sqlalchemy.orm import sessionmaker\nimport redis\n\nclass Container(containers.DeclarativeContainer):\n    config = providers.Configuration()\n\n    engine = providers.Singleton(\n        create_engine,\n        config.db.url,\n    )\n\n    session_factory = providers.Factory(\n        sessionmaker,\n        bind=engine,\n    )\n\n    session = providers.Factory(session_factory)\n\n    redis_client = providers.Singleton(\n        redis.Redis.from_url,\n        config.redis.url,\n    )\n\n    order_repo = providers.Factory(\n        SqlAlchemyOrderRepository,\n        session=session,\n    )\n\n    event_publisher = providers.Factory(\n        RedisEventPublisher,\n        client=redis_client,\n    )\n\n    order_service = providers.Factory(\n        OrderService,\n        repo=order_repo,\n        events=event_publisher,\n    )"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Использование"
+    },
+    {
+      "type": "text",
+      "content": "container = Container()\ncontainer.config.db.url.from_env(\"DATABASE_URL\")\ncontainer.config.redis.url.from_env(\"REDIS_URL\")\n\nservice = container.order_service()\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. DDD паттерны"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Aggregate Root"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "domain/customer.py"
+    },
+    {
+      "type": "text",
+      "content": "from dataclasses import dataclass, field\nfrom uuid import UUID, uuid4\nfrom typing import List\n\n@dataclass\nclass Customer:\n    id: UUID = field(default_factory=uuid4)\n    name: str = \"\"\n    email: str = \"\"\n    _orders: List[UUID] = field(default_factory=list)  # только ID!\n\n    def place_order(self, order_id: UUID):\n        if not self.is_active:\n            raise DomainError(\"Customer not active\")\n        self._orders.append(order_id)\n\n    @property\n    def order_ids(self) -> List[UUID]:\n        return list(self._orders)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Domain Services (логика не в Entity)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "domain/services/pricing.py"
+    },
+    {
+      "type": "text",
+      "content": "from domain.order import Order\nfrom domain.customer import Customer\n\nclass PricingService:\n    def calculate_price(self, order: Order, customer: Customer) -> float:\n        base = order.total()\n        if customer.is_vip:\n            base *= 0.9\n        if order.total() > 1000:\n            base *= 0.95\n        return round(base, 2)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Specification Pattern"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "domain/specifications.py"
+    },
+    {
+      "type": "text",
+      "content": "from abc import ABC, abstractmethod\nfrom domain.order import Order\n\nclass OrderSpecification(ABC):\n    @abstractmethod\n    def is_satisfied_by(self, order: Order) -> bool: ...\n\nclass HighValueOrderSpec(OrderSpecification):\n    def __init__(self, threshold: float):\n        self.threshold = threshold\n\n    def is_satisfied_by(self, order: Order) -> bool:\n        return order.total() > self.threshold"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Использование"
+    },
+    {
+      "type": "text",
+      "content": "spec = HighValueOrderSpec(1000)\norders = [o for o in all_orders if spec.is_satisfied_by(o)]\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Структура проекта"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "my_project/\n├── src/\n│   └── myapp/\n│       ├── domain/\n│       │   ├── __init__.py\n│       │   ├── order.py\n│       │   ├── customer.py\n│       │   ├── value_objects.py\n│       │   ├── events.py\n│       │   ├── repositories.py\n│       │   ├── specifications.py\n│       │   └── exceptions.py\n│       ├── application/\n│       │   ├── __init__.py\n│       │   ├── order_service.py\n│       │   ├── customer_service.py\n│       │   ├── events.py\n│       │   └── dto.py\n│       ├── infrastructure/\n│       │   ├── __init__.py\n│       │   ├── sqlalchemy_repo.py\n│       │   ├── event_publisher.py\n│       │   ├── email_sender.py\n│       │   └── models.py\n│       ├── presentation/\n│       │   ├── __init__.py\n│       │   ├── api/\n│       │   │   ├── routes.py\n│       │   │   └── schemas.py\n│       │   └── cli/\n│       └── config/\n│           └── settings.py\n├── tests/\n│   ├── unit/\n│   │   ├── domain/\n│   │   └── application/\n│   └── integration/\n├── pyproject.toml\n└── README.md"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Тестирование архитектуры"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Unit тесты Domain (без моков!)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def test_order_total():\n    order = Order()\n    order.add_item(UUID(...), 2, 10.0)\n    order.add_item(UUID(...), 1, 25.0)\n    assert order.total() == 45.0\n\ndef test_order_discount():\n    order = Order()\n    order.add_item(UUID(...), 10, 200.0)  # 2000\n    order.apply_discount(1000, 0.1)\n    assert order.total() == 1800.0"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Application тесты (с моками репозиториев)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def test_create_order():\n    mock_repo = Mock(spec=OrderRepository)\n    mock_events = Mock(spec=EventPublisher)\n    service = OrderService(mock_repo, mock_events)\n\n    order = service.create_order(CreateOrderCommand(...))\n\n    mock_repo.save.assert_called_once_with(order)\n    mock_events.publish.assert_called_once()"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Refactor**: возьмите монолитный скрипт и разделите на слои\n2. **DDD**: смоделируйте домен \"Интернет-магазин\" (Customer, Order, Product, Cart)\n3. **DI**: внедрите dependency-injector в FastAPI проект\n4. **Events**: реализуйте Event Sourcing для Order\n5. **Hexagonal**: добавьте второй адаптер (CLI + REST API) к одному Use Case\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| Бизнес-логика в репозитории | Репозиторий — только CRUD |\n| Entity знает о БД | Entity — чистый Python, нет импортов SQLAlchemy |\n| Use Case делает валидацию полей | Валидация в Entity / Value Object / Pydantic DTO |\n| Циклические импорты между слоями | Зависимости только внутрь (domain → application → infra) |\n| Анемичная модель (только данные) | Богатая модель: поведение в Entity |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Clean Architecture** — Robert Martin (Uncle Bob)",
+        "**Domain-Driven Design** — Eric Evans",
+        "**Architecture Patterns with Python** — Harry Percival, Bob Gregory (бесплатно онлайн)",
+        "**Dependency Injection in Python** — https://python-dependency-injector.ets-labs.org/",
+        "**DDD в Python** — https://github.com/cosmicpython/code"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: CLI (click, typer, argparse)",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'CLI (click, typer, argparse)' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: Команды, аргументы, опции, автокомплит, подкоманды — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 25,
+  "name_en": "Lesson: CLI (click, typer, argparse)",
+  "short_description_en": "Learn CLI (click, typer, argparse) in Python with detailed explanations and examples"
+}

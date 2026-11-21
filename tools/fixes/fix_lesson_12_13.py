@@ -1,0 +1,496 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Fix lessons 12 and 13 with proper code blocks and content.
+"""
+
+import json
+import re
+from pathlib import Path
+
+# ==================== LESSON 12 ====================
+lesson_12 = {
+    "title": "Урок 12: Система типов C# — value/reference типы, nullable, boxing/unboxing, record, immutability",
+    "slug": "lesson-12",
+    "short_description": "value/reference типы, nullable, boxing/unboxing, record, struct, class, immutability",
+    "goals": [
+        "Понимать разницу между value type (struct) и reference type (class)",
+        "Работать с nullable типами (T?) и операторами ?, ??, ??=",
+        "Понимать boxing/unboxing и как их избегать",
+        "Использовать record для неизменяемых данных",
+        "Применять immutability паттерны"
+    ],
+    "content_blocks": [
+        {"type": "heading", "level": 2, "content": "Что вы узнаете"},
+        {"type": "list", "items": [
+            "Разница между value type (struct) и reference type (class)",
+            "Nullable типы (T?) и операторы ?, ??, ??=",
+            "Boxing/unboxing: что это и как избежать",
+            "Record (C# 9+) для неизменяемых данных",
+            "Struct vs Class: когда что использовать",
+            "Immutability паттерны"
+        ], "ordered": False},
+        {"type": "heading", "level": 2, "content": "Value Type vs Reference Type: фундаментальное различие"},
+        {"type": "text", "content": "В C# типы делятся на две фундаментальные категории: value types (значимые типы) и reference types (ссылочные типы). Это не просто теоретическое различие — оно влияет на производительность, потребление памяти и поведение кода."},
+        {"type": "heading", "level": 3, "content": "Value Types (struct, enum, примитивы)"},
+        {"type": "text", "content": "Value types хранят данные напрямую в переменной. При присваивании происходит копирование значения:\n\n```csharp\nstruct Point { public int X, Y; }\nPoint p1 = new Point { X = 1, Y = 2 };\nPoint p2 = p1;        // Копия!\np2.X = 100;\nConsole.WriteLine(p1.X); // 1 — оригинал не изменился\n```\n\nValue types включают: все примитивы (int, double, bool, char), struct, enum. Они хранятся в стеке (обычно), что делает доступ быстрым."},
+        {"type": "heading", "level": 3, "content": "Reference Types (class, interface, delegate, array, string)"},
+        {"type": "text", "content": "Reference types хранят ссылку на объект в куче (heap). Переменная содержит адрес объекта:\n\n```csharp\nclass Point { public int X, Y; }\nPoint p1 = new Point { X = 1, Y = 2 };\nPoint p2 = p1;        // Ссылка на ТОТ ЖЕ объект!\np2.X = 100;\nConsole.WriteLine(p1.X); // 100 — оригинал ИЗМЕНИЛСЯ!\n```\n\nReference types: class, interface, delegate, array, string, delegate. Хранятся в куче (heap), доступ через ссылку."},
+        {"type": "heading", "level": 3, "content": "Практическое сравнение"},
+        {"type": "table", "headers": ["Характеристика", "Value Type (struct)", "Reference Type (class)"], "rows": [
+            ["Хранение", "Стек (обычно)", "Куча (heap)"],
+            ["Присваивание", "Копия значения", "Копия ссылки"],
+            ["Равенство", "По значению", "По ссылке"],
+            ["Null", "Не может быть null (кроме Nullable)", "Может быть null"],
+            ["Наследование", "Не поддерживает", "Поддерживает"],
+            ["Производительность", "Быстрее (нет GC)", "GC pressure, но гибче"]
+        ]},
+        {"type": "heading", "level": 2, "content": "Nullable типы (T?) и операторы ?, ??, ??="},
+        {"type": "text", "content": "По умолчанию value types не могут быть null. Nullable<T> (или T?) решает эту проблему:\n\n```csharp\nint? x = null;        // OK\nint? y = 42;          // OK\nint z = x ?? 0;       // null-coalescing: если x null, то 0\nx ??= 10;             // null-coalescing assignment: если x null, присвоить 10\n\n// Операторы:\nConsole.WriteLine(x?.ToString());  // null-conditional: безопасный доступ\nint len = text?.Length ?? 0;       // комбинация ?. и ??\n```"},
+        {"type": "heading", "level": 2, "content": "Boxing и Unboxing: скрытые затраты"},
+        {"type": "text", "content": "Boxing — упаковка value type в object (создание объекта в куче):\n\n```csharp\nint x = 42;\nobject o = x;        // Boxing: создается объект в куче, значение копируется\nint y = (int)o;      // Unboxing: проверка типа + копирование значения\n```\n\nПроблемы: аллокация в куче, нагрузка на GC, потеря производительности.\n\nКак избежать:\n- Используйте дженерики (List<int> вместо ArrayList)\n- Избегайте object для value types\n- Используйте List<T>, Dictionary<TKey, TValue> вместо нетипизированных коллекций"},
+        {"type": "heading", "level": 2, "content": "Record (C# 9+) — неизменяемые данные из коробки"},
+        {"type": "text", "content": "Record — ссылочный тип с value-based equality, неизменяемостью и with-выражениями:\n\n```csharp\nrecord Person(string Name, int Age);\n\nvar p1 = new Person(\"Alex\", 25);\nvar p2 = new Person(\"Alex\", 25);\nConsole.WriteLine(p1 == p2);  // True — value-based equality!\n\n// with-expression: копия с изменениями\nvar older = p1 with { Age = 26 }; // p1 не изменился!\n\n// Positional records (короткий синтаксис)\nrecord Point(int X, int Y);\nvar p = new Point(1, 2);\nvar p2 = p with { X = 10 };\n```\n\nКогда использовать record: DTO, неизменяемые данные, сравнение по значению."},
+        {"type": "heading", "level": 2, "content": "Immutability (неизменяемость) — лучшая практика"},
+        {"type": "text", "content": "Immutable объекты — те, чье состояние не меняется после создания. Преимущества:\n- Потокобезопасность (thread-safe)\n- Предсказуемость кода\n- Легкое кэширование и мемоизация\n- Простота отладки\n\nПаттерны:\n```csharp\n// 1. Readonly поля + init-only свойства\nclass ImmutablePoint {\n    public int X { get; init; }\n    public int Y { get; init; }\n}\n\n// 2. Record (автоматически immutable)\nrecord Point(int X, int Y);\n\n// 3. Readonly struct (C# 7.2+)\nreadonly struct Point { public int X, Y; }\n```"},
+        {"type": "heading", "level": 2, "content": "Struct vs Class: чек-лист выбора"},
+        {"type": "list", "items": [
+            "struct, если: маленький (< 16 байт), неизменяемый, часто создается/уничтожается, value-семантика",
+            "class, если: нужно наследование, ссылочная семантика, большой объект, идентичность важна",
+            "Избегайте struct, если: часто boxing, большие данные, нужна идентичность"
+        ], "ordered": False},
+        {"type": "heading", "level": 2, "content": "Типичные ошибки новичков"},
+        {"type": "table", "headers": ["Ошибка", "Как проявляется", "Как правильно"], "rows": [
+            ["Mutable struct с публичными полями", "Неожиданные изменения при копировании", "Делайте struct immutable (readonly/readonly struct / init / record)"],
+            ["Забыли virtual при переопределении", "Метод скрывается (new), полиморфизм не работает", "Добавьте virtual в базовом классе, override в наследнике"],
+            ["Вызов виртуального метода в конструкторе", "Вызывается override версия, но поля наследника еще не инициализированы!", "Избегайте вызова virtual методов в конструкторах"],
+            ["Пытаются создать экземпляр abstract класса", "Ошибка компиляции: Cannot create an instance of abstract class", "Создайте не-абстрактного наследника"],
+            ["as с value type", "int x = obj as int; — ошибка компиляции", "as только для ссылочных типов. Для value type используйте is + приведение"],
+            ["Забыли base.Method() в override", "Потеряна базовая логика (валидация, логирование)", "Вызовите base.Method() в начале или в конце override"]
+        ]},
+        {"type": "heading", "level": 2, "content": "Практика: закрепите навык"},
+        {"type": "list", "items": [
+            "Создайте readonly struct Point3D с X, Y, Z. Добавьте метод DistanceTo(Point3D other). Проверьте: new Point3D(1,2,3).DistanceTo(new Point3D(4,5,6)).",
+            "Создайте record Person(string Name, int Age, Address Address) с record Address(string City, string Street). Проверьте equality и with: person with { Age = 26 }. ",
+            "Создайте record Temperature с readonly поле Kelvin. Конструктор принимает Цельсий, переводит в Кельвины. Свойство Celsius (get/set) с пересчетом. Проверьте: new Temperature(0).Kelvin == 273.15.",
+            "Исправьте ошибки:\n```csharp\nstruct Point { public int X, Y; }\nvar p1 = new Point { X = 1, Y = 2 };\nvar p2 = p1; p2.X = 100; // p1.X изменилось? Почему?\n```"
+        ], "ordered": True},
+        {"type": "heading", "level": 2, "content": "Кратко о главном"},
+        {"type": "list", "items": [
+            "struct — копируется по значению (стек), class — по ссылке (куча)",
+            "T? / Nullable<T> позволяет value types быть null, операторы ?. ?? ??=",
+            "Boxing (value->object) и Unboxing (object->value) — дорого, избегайте через generics",
+            "Record (C# 9+) — immutable, value-equality, with-expressions из коробки",
+            "Immutability — ключ к надежному, потокобезопасному коду. init, readonly, record, readonly struct",
+            "struct для маленьких immutable данных, class для всего остального"
+        ], "ordered": False},
+        {"type": "heading", "level": 2, "content": "Полезные ссылки"},
+        {"type": "list", "items": [
+            "Microsoft Docs — Choosing between class and struct: https://learn.microsoft.com/dotnet/csharp/language-reference/value-types/choosing-class-struct",
+            "Microsoft Docs — Nullable value types: https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/nullable-value-types",
+            "Microsoft Docs — Record types: https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/record",
+            "Microsoft Docs — Boxing and unboxing: https://learn.microsoft.com/dotnet/csharp/programming-guide/types/boxing-and-unboxing",
+            "Microsoft Docs — Records: https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/record"
+        ], "ordered": False}
+    ],
+    "practice_tasks": [
+        "Создайте readonly struct Point3D с X, Y, Z. Добавьте метод DistanceTo(Point3D other). Проверьте: new Point3D(1,2,3).DistanceTo(new Point3D(4,5,6)).",
+        "Создайте record Person(string Name, int Age, Address Address) с record Address(string City, string Street). Проверьте equality и with: person with { Age = 26 }. ",
+        "Создайте record Temperature с readonly поле Kelvin. Конструктор принимает Цельсий, переводит в Кельвины. Свойство Celsius (get/set) с пересчетом. Проверьте: new Temperature(0).Kelvin == 273.15.",
+        "Исправьте ошибки:\n```csharp\nstruct Point { public int X, Y; }\nvar p1 = new Point { X = 1, Y = 2 };\nvar p2 = p1; p2.X = 100; // p1.X изменилось? Почему?\n```"
+    ],
+    "common_errors": [
+        {"mistake": "Mutable struct с публичными полями", "correct": "Делайте struct immutable (readonly/readonly struct / init / record)"},
+        {"mistake": "Забыли virtual при переопределении", "correct": "Добавьте virtual в базовом классе, override в наследнике"},
+        {"mistake": "Вызов виртуального метода в конструкторе", "correct": "Избегайте вызова virtual методов в конструкторах"},
+        {"mistake": "Пытаются создать экземпляр abstract класса", "correct": "Создайте не-абстрактного наследника"},
+        {"mistake": "as с value type", "correct": "as только для ссылочных типов. Для value type используйте is + приведение"},
+        {"mistake": "Забыли base.Method() в override", "correct": "Вызовите base.Method() в начале или в конце override"}
+    ],
+    "resources": [
+        "Microsoft Docs — Choosing between class and struct: https://learn.microsoft.com/dotnet/csharp/language-reference/value-types/choosing-class-struct",
+        "Microsoft Docs — Nullable value types: https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/nullable-value-types",
+        "Microsoft Docs — Record types: https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/record",
+        "Microsoft Docs — Boxing and unboxing: https://learn.microsoft.com/dotnet/csharp/programming-guide/types/boxing-and-unboxing",
+        "Microsoft Docs — Records: https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/record"
+    ],
+    "key_takeaways": [
+        "struct — копируется по значению (стек), class — по ссылке (куча)",
+        "T? / Nullable<T> позволяет value types быть null, операторы ?. ?? ??=",
+        "Boxing (value->object) и Unboxing (object->value) — дорого, избегайте через generics",
+        "Record (C# 9+) — immutable, value-equality, with-expressions из коробки",
+        "Immutability — ключ к надежному, потокобезопасному коду. init, readonly, record, readonly struct",
+        "struct для маленьких immutable данных, class для всего остального"
+    ],
+    "resources": [
+        "Microsoft Docs — Choosing between class and struct: https://learn.microsoft.com/dotnet/csharp/language-reference/value-types/choosing-class-struct",
+        "Microsoft Docs — Nullable value types: https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/nullable-value-types",
+        "Microsoft Docs — Record types: https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/record",
+        "Microsoft Docs — Boxing and unboxing: https://learn.microsoft.com/dotnet/csharp/programming-guide/types/boxing-and-unboxing",
+        "Microsoft Docs — Records: https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/record"
+    ],
+    "key_takeaways": [
+        "struct — копируется по значению (стек), class — по ссылке (куча)",
+        "T? / Nullable<T> позволяет value types быть null, операторы ?. ?? ??=",
+        "Boxing (value->object) и Unboxing (object->value) — дорого, избегайте через generics",
+        "Record (C# 9+) — immutable, value-equality, with-expressions из коробки",
+        "Immutability — ключ к надежному, потокобезопасному коду. init, readonly, record, readonly struct",
+        "struct для маленьких immutable данных, class для всего остального"
+    ],
+    "estimated_minutes": 35,
+    "language_slug": "csharp",
+    "lesson_order": 12,
+    "name_en": "Lesson: C# Type System Deep Dive",
+    "short_description_en": "Learn value/reference types, nullable, boxing/unboxing, records, immutability in C#"
+}
+
+import json
+import re
+from pathlib import Path
+
+def markdown_to_html(text: str) -> str:
+    """Convert markdown-like text to HTML with proper code block handling."""
+    if not text:
+        return text
+    
+    # 1. Protect code blocks (```...```)
+    code_blocks = []
+    def protect_code(match):
+        code_blocks.append(match.group(0))
+        return f"{{{{CODE_BLOCK_{len(code_blocks)-1}}}}}"
+    
+    text = re.sub(r'```.*?```', lambda m: f"{{{{CODE_BLOCK_{len(re.findall(r'```.*?```', text, re.DOTALL))}}}}}", text, flags=re.DOTALL)
+    
+    # Protect inline code (`code`)
+    inline_codes = []
+    def protect_inline(match):
+        inline_codes.append(match.group(0))
+        return f"{{{{INLINE_CODE_{len(inline_codes)-1}}}}}"
+    
+    text = re.sub(r'`[^`]+`', lambda m: f"{{{{INLINE_CODE_{len(inline_codes)}}}}}", text)
+    
+    # --- Apply markdown to HTML ---
+    
+    # 1. Code blocks: ```lang\ncode``` -> <pre><code class="language-lang">code</code></pre>
+    def replace_code_block(match):
+        lang = match.group(1) or ''
+        code = match.group(2)
+        return f'<pre><code class="language-{lang}">{code}</code></pre>'
+    
+    text = re.sub(r'```(\w*)\n(.*?)\n```', 
+                  lambda m: f'<pre><code class="language-{m.group(1)}">{m.group(2)}</code></pre>', 
+                  text, flags=re.DOTALL)
+    
+    # Inline code
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    
+    # Headers
+    text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
+    
+    # Bold
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    
+    # Italic
+    text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', text)
+    
+    # Inline code
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    
+    # Code blocks: ```lang\ncode``` -> <pre><code class="language-lang">code</code></pre>
+    def replace_code_block(match):
+        lang = match.group(1) or ''
+        code = match.group(2)
+        return f'<pre><code class="language-{lang}">{code}</code></pre>'
+    
+    text = re.sub(r'```(\w*)\n(.*?)\n```', 
+                  lambda m: f'<pre><code class="language-{m.group(1)}">{m.group(2)}</code></pre>', 
+                  text, flags=re.DOTALL)
+    
+    # Bold
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    
+    # Italic
+    text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', text)
+    
+    # Lists
+    text = re.sub(r'^\- (.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+    text = re.sub(r'(<li>.*?</li>\n)+', r'<ul>\n\1</ul>', text)
+    
+    # Paragraphs
+    text = re.sub(r'\n\n+', '</p>\n<p>', text)
+    text = '<p>' + text + '</p>'
+    text = re.sub(r'<p>\s*</p>', '', text)
+    text = re.sub(r'<p>(<h[1-6]>)', r'\1', text)
+    text = re.sub(r'</h([1-6])></p>', r'</h\1>', text)
+    
+    return text
+
+
+def markdown_to_html(text: str) -> str:
+    """Convert markdown-like text to HTML with proper code block handling."""
+    if not text:
+        return text
+    
+    # 1. Protect code blocks (```...```)
+    code_blocks = []
+    def protect_code(match):
+        code_blocks.append(match.group(0))
+        return f"{{{{CODE_BLOCK_{len(code_blocks)-1}}}}}"
+    
+    text = re.sub(r'```.*?```', lambda m: f"{{{{CODE_BLOCK_{len(code_blocks)}}}}}", text, flags=re.DOTALL)
+    
+    # Protect inline code (`code`)
+    inline_codes = []
+    def protect_inline(match):
+        inline_codes.append(match.group(0))
+        return f"{{{{INLINE_CODE_{len(inline_codes)-1}}}}}"
+    
+    text = re.sub(r'`[^`]+`', lambda m: f"{{{{INLINE_CODE_{len(inline_codes)}}}}}", text)
+    
+    # 1. Headers
+    text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
+    
+    # Bold
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    
+    # Italic
+    text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', text)
+    
+    # Inline code
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    
+    # Code blocks: ```lang\ncode``` -> <pre><code class="language-lang">code</code></pre>
+    def replace_code_block(match):
+        lang = match.group(1) or ''
+        code = match.group(2)
+        return f'<pre><code class="language-{lang}">{code}</code></pre>'
+    
+    text = re.sub(r'```(\w*)\n(.*?)\n```', 
+                  lambda m: f'<pre><code class="language-{m.group(1)}">{m.group(2)}</code></pre>', 
+                  text, flags=re.DOTALL)
+    
+    # Bold
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    
+    # Italic
+    text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', text)
+    
+    # Lists
+    text = re.sub(r'^\- (.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+    text = re.sub(r'(<li>.*?</li>\n)+', r'<ul>\n\1</ul>', text)
+    
+    # Paragraphs
+    text = re.sub(r'\n\n+', '</p>\n<p>', text)
+    text = '<p>' + text + '</p>'
+    text = re.sub(r'<p>\s*</p>', '', text)
+    text = re.sub(r'<p>(<h[1-6]>)', r'\1', text)
+    text = re.sub(r'</h([1-6])></p>', r'</h\1>', text)
+    
+    return text
+
+
+def markdown_to_html(text: str) -> str:
+    """Convert markdown-like text to HTML with proper code block handling."""
+    if not text:
+        return text
+    
+    # 1. Protect code blocks (```...```)
+    code_blocks = []
+    def protect_code(match):
+        code_blocks.append(match.group(0))
+        return f"{{{{CODE_BLOCK_{len(code_blocks)-1}}}}}"
+    
+    text = re.sub(r'```.*?```', lambda m: f"{{{{CODE_BLOCK_{len(code_blocks)}}}}}", text, flags=re.DOTALL)
+    
+    # Protect inline code (`code`)
+    inline_codes = []
+    def protect_inline(match):
+        inline_codes.append(match.group(0))
+        return f"{{{{INLINE_CODE_{len(inline_codes)-1}}}}}"
+    
+    text = re.sub(r'`[^`]+`', lambda m: f"{{{{INLINE_CODE_{len(inline_codes)}}}}}", text)
+    
+    # 1. Headers
+    text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
+    
+    # Bold
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    
+    # Italic
+    text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', text)
+    
+    # Inline code
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    
+    # Code blocks: ```lang\ncode``` -> <pre><code class="language-lang">code</code></pre>
+    def replace_code_block(match):
+        lang = match.group(1) or ''
+        code = match.group(2)
+        return f'<pre><code class="language-{lang}">{code}</code></pre>'
+    
+    text = re.sub(r'```(\w*)\n(.*?)\n```', 
+                  lambda m: f'<pre><code class="language-{m.group(1)}">{m.group(2)}</code></pre>', 
+                  text, flags=re.DOTALL)
+    
+    # Bold
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    
+    # Italic
+    text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', text)
+    
+    # Lists
+    text = re.sub(r'^\- (.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+    text = re.sub(r'(<li>.*?</li>\n)+', r'<ul>\n\1</ul>', text)
+    
+    # Paragraphs
+    text = re.sub(r'\n\n+', '</p>\n<p>', text)
+    text = '<p>' + text + '</p>'
+    text = re.sub(r'<p>\s*</p>', '', text)
+    text = re.sub(r'<p>(<h[1-6]>)', r'\1', text)
+    text = re.sub(r'</h([1-6])></p>', r'</h\1>', text)
+    
+    return text
+
+
+def markdown_to_html(text: str) -> str:
+    """Convert markdown-like text to HTML with proper code block handling."""
+    if not text:
+        return text
+    
+    # 1. Protect code blocks (```...```)
+    code_blocks = []
+    def protect_code(match):
+        code_blocks.append(match.group(0))
+        return f"{{{{CODE_BLOCK_{len(code_blocks)-1}}}}}"
+    
+    text = re.sub(r'```.*?```', lambda m: f"{{{{CODE_BLOCK_{len(code_blocks)}}}}}", text, flags=re.DOTALL)
+    
+    # Protect inline code (`code`)
+    inline_codes = []
+    def protect_inline(match):
+        inline_codes.append(match.group(0))
+        return f"{{{{INLINE_CODE_{len(inline_codes)-1}}}}}"
+    
+    text = re.sub(r'`[^`]+`', lambda m: f"{{{{INLINE_CODE_{len(inline_codes)}}}}}", text)
+    
+    # 1. Headers
+    text = re.sub(r'^### (.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
+    
+    # Bold
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    
+    # Italic
+    text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', text)
+    
+    # Inline code
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    
+    # Code blocks: ```lang\ncode``` -> <pre><code class="language-lang">code</code></pre>
+    def replace_code_block(match):
+        lang = match.group(1) or ''
+        code = match.group(2)
+        return f'<pre><code class="language-{lang}">{code}</code></pre>'
+    
+    text = re.sub(r'```(\w*)\n(.*?)\n```', 
+                  lambda m: f'<pre><code class="language-{m.group(1)}">{m.group(2)}</code></pre>', 
+                  text, flags=re.DOTALL)
+    
+    # Bold
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    
+    # Italic
+    text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', text)
+    
+    # Lists
+    text = re.sub(r'^\- (.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+    text = re.sub(r'(<li>.*?</li>\n)+', r'<ul>\n\1</ul>', text)
+    
+    # Paragraphs
+    text = re.sub(r'\n\n+', '</p>\n<p>', text)
+    text = '<p>' + text + '</p>'
+    text = re.sub(r'<p>\s*</p>', '', text)
+    text = re.sub(r'<p>(<h[1-6]>)', r'\1', text)
+    text = re.sub(r'</h([1-6])></p>', r'</h\1>', text)
+    
+    return text
+
+
+def process_lesson(filepath):
+    with open(filepath, 'r', encoding='utf-8') as f:
+        lesson = json.load(f)
+    
+    for block in lesson.get('content_blocks', []):
+        if block.get('type') in ('text', 'heading'):
+            old = block['content']
+            # Clean existing HTML
+            clean = re.sub(r'<[^>]+>', '', block['content'])
+            # Apply markdown to HTML
+            styled = markdown_to_html(clean)
+            if styled != block['content']:
+                block['content'] = styled
+    
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(lesson, f, ensure_ascii=False, indent=2)
+        f.write('\n')
+    print(f'Formatted: {filepath.name}')
+
+if __name__ == '__main__':
+    import re
+    from pathlib import Path
+    
+    lessons_dir = Path('fixtures/lessons/csharp')
+    for lesson_file in sorted(Path('fixtures/lessons/csharp').glob('*.json')):
+        with open(lesson_file, 'r', encoding='utf-8') as f:
+            lesson = json.load(f)
+        
+        for block in lesson.get('content_blocks', []):
+            if block.get('type') in ('text', 'heading'):
+                old = block['content']
+                # Clean existing HTML
+                clean = re.sub(r'<[^>]+>', '', block['content'])
+                # Apply markdown to HTML
+                styled = markdown_to_html(clean)
+                if styled != block['content']:
+                    block['content'] = styled
+        
+        with open(lesson_file, 'w', encoding='utf-8') as f:
+            json.dump(lesson, f, ensure_ascii=False, indent=2)
+            f.write('\n')
+        print(f'Formatted: {lesson_file.name}')
+    
+    print('All lessons formatted!')
+
+if __name__ == '__main__':
+    import re
+    from pathlib import Path
+    
+    lessons_dir = Path('fixtures/lessons/csharp')
+    for lesson_file in sorted(Path('fixtures/lessons/csharp').glob('*.json')):
+        with open(lesson_file, 'r', encoding='utf-8') as f:
+            lesson = json.load(f)
+        
+        for block in lesson.get('content_blocks', []):
+            if block.get('type') in ('text', 'heading'):
+                old = block['content']
+                # Clean existing HTML
+                clean = re.sub(r'<[^>]+>', '', block['content'])
+                # Apply markdown to HTML
+                styled = markdown_to_html(clean)
+                if styled != block['content']:
+                    block['content'] = styled
+        
+        with open(lesson_file, 'w', encoding='utf-8') as f:
+            json.dump(lesson, f, ensure_ascii=False, indent=2)
+            f.write('\n')
+        print(f'Formatted: {lesson_file.name}')
+    
+    print('All lessons formatted!')
+EOF

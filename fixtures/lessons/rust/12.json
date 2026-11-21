@@ -1,0 +1,597 @@
+{
+  "title": "Урок 12: Ownership Deep",
+  "slug": "urok-12-параллелизм-потоки,-каналы,-мьютексы",
+  "short_description": "std::thread, spawn, join, mpsc, Mutex, RwLock, Condvar, OnceLock, park",
+  "goals": [
+    "Понимать основы: std::thread, spawn, join, mpsc, Mutex, RwLock, Condvar, OnceLock, park",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 12: Глубокое погружение во владение (Ownership Deep Dive)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать внутреннее устройство String, Vec, Box",
+        "Работать с частичным перемещением (partial move)",
+        "Использовать `mem::swap`, `mem::replace`, `mem::take`",
+        "Понимать drop order и Drop trait детально",
+        "Работать с `ManuallyDrop` и `std::mem::forget`",
+        "Понимать stack vs heap allocation",
+        "Использовать `Pin` для самозареференцирующихся структур"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "После изучения этого урока вы сможете:\n\n\n\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Внутреннее устройство умных указателей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`String` — три слова в стеке"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Упрощённо:\nstruct String {\n    ptr: *mut u8,      // указатель на кучу\n    len: usize,        // текущая длина\n    capacity: usize,   // выделенная ёмкость\n}\n\n// При clone() — аллоцируется новая память, данные копируются\n// При move — три слова копируются (bitwise), ptr указывает на ту же кучу"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Vec<T>` — аналогично"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Vec<T> {\n    ptr: *mut T,\n    len: usize,\n    capacity: usize,\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Box<T>` — один указатель"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: smart pointers**\n\n**Что делает:** unique_ptr, shared_ptr, weak_ptr — умные указатели с автоматическим управлением памятью\n\n**Зачем нужно:** Исключают утечки памяти, dangling pointers, double free; владеют объектом\n\n**Как работает:** auto ptr = std::make_unique<Widget>(); // unique_ptr — единственный владелец"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Box<T> {\n    ptr: *mut T,  // или Unique<T> для ковариантности\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Частичное перемещение (Partial Move)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Person {\n    name: String,\n    age: u32,\n    address: String,\n}\n\nfn main() {\n    let p = Person {\n        name: \"Alice\".into(),\n        age: 30,\n        address: \"123 Main St\".into(),\n    };\n\n    let name = p.name; // move name\n    // p теперь частично перемещён!\n    // println!(\"{}\", p.name); // ОШИБКА: use of moved value\n    // Но p.age и p.address всё ещё доступны!\n    println!(\"age: {}, address: {}\", p.age, p.address);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Решение: `ref` / `ref mut` в паттернах"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn main() {\n    let p = Person { name: \"Alice\".into(), age: 30, address: \"123\".into() };\n\n    // Заимствуем поля вместо перемещения\n    let Person { ref name, ref age, address } = p;\n    // name: &String, age: &u32, address: String (moved)\n\n    println!(\"name: {}\", name);\n    println!(\"age: {}\", age);\n    // p.address недоступен, но p.name и p.age — да!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Частичное перемещение в функциях"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn process_name(name: String) { println!(\"Processing: {}\", name); }\n\nfn main() {\n    let p = Person { name: \"Alice\".into(), age: 30, address: \"123\".into() };\n    process_name(p.name); // move только name\n    // p.age, p.address ещё живы\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. `std::mem` утилиты"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`mem::swap` — обмен значениями"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::mem;\n\nfn main() {\n    let mut a = String::from(\"hello\");\n    let mut b = String::from(\"world\");\n    mem::swap(&mut a, &mut b);\n    println!(\"a={}, b={}\", a, b); // a=world, b=hello\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`mem::replace` — замена с возвратом старого"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::mem;\n\nfn main() {\n    let mut s = String::from(\"hello\");\n    let old = mem::replace(&mut s, String::from(\"world\"));\n    println!(\"old={}, new={}\", old, s); // old=hello, new=world\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`mem::take` — замена на Default"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::mem;\n\nfn main() {\n    let mut v = vec![1, 2, 3];\n    let taken = mem::take(&mut v); // v становится пустым vec![]\n    println!(\"taken={:?}, v={:?}\", taken, v); // taken=[1,2,3], v=[]\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`mem::forget` — предотвращение drop"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::mem;\n\nfn main() {\n    let s = String::from(\"hello\");\n    mem::forget(s); // s НЕ дропается, память утекает намеренно\n    // Полезно для FFI, передачи владения в C\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Порядок деструкции (Drop Order)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Правила"
+    },
+    {
+      "type": "text",
+      "content": "1. Поля структуры дропаются в **обратном порядке объявления**\n2. Локальные переменные дропаются в **обратном порядке создания** (LIFO)\n3. `drop` не вызывается явно (кроме `std::mem::drop`)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct A(&'static str);\nimpl Drop for A {\n    fn drop(&mut self) { println!(\"drop {}\", self.0); }\n}\n\nfn main() {\n    let _a = A(\"a\");\n    let _b = A(\"b\");\n    let _c = A(\"c\");\n}\n// Вывод:\n// drop c\n// drop b\n// drop a"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Порядок полей структуры"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct S {\n    a: A,\n    b: A,\n    c: A,\n}\n\nfn main() {\n    let _s = S { a: A(\"a\"), b: A(\"b\"), c: A(\"c\") };\n}\n// Вывод (обратный порядку объявления):\n// drop c\n// drop b\n// drop a"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`drop` вручную (редко нужно)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::mem;\n\nfn main() {\n    let mut s = String::from(\"hello\");\n    drop(s); // Явный drop (std::mem::drop)\n    // s больше нельзя использовать\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. `ManuallyDrop<T>` — ручное управление жизнью"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::mem::ManuallyDrop;\n\nfn main() {\n    let mut data = ManuallyDrop::new(String::from(\"hello\"));\n    println!(\"{}\", data); // Работает как обычная строка\n\n    // Ручной drop когда нам угодно\n    unsafe { ManuallyDrop::drop(&mut data) };\n    // data больше невалидна\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Массив с `ManuallyDrop`"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::mem::ManuallyDrop;\n\nfn main() {\n    let mut arr: [ManuallyDrop<String>; 3] = [\n        ManuallyDrop::new(\"a\".into()),\n        ManuallyDrop::new(\"b\".into()),\n        ManuallyDrop::new(\"c\".into()),\n    ];\n\n    // Drопим в произвольном порядке\n    unsafe { ManuallyDrop::drop(&mut arr[1]); }\n    unsafe { ManuallyDrop::drop(&mut arr[0]); }\n    unsafe { ManuallyDrop::drop(&mut arr[2]); }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. `Pin<P>` — закрепление в памяти"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема: самозареференцирующиеся структуры"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// НЕБЕЗОПАСНО! При перемещении self-referential указатель становится невалидным\nstruct SelfRef {\n    data: String,\n    ptr: *const String, // Указатель на self.data\n}\n\nimpl SelfRef {\n    fn new() -> Self {\n        let data = String::from(\"hello\");\n        let ptr = &data as *const String;\n        SelfRef { data, ptr } // При возврате происходит move!\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Решение: `Pin<Box<T>>`"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\nuse std::marker::PhantomPinned;\n\nstruct SelfRef {\n    data: String,\n    ptr: *const String,\n    _pin: PhantomPinned, // Запрещает реализацию Unpin\n}\n\nimpl SelfRef {\n    fn new() -> Pin<Box<Self>> {\n        let mut boxed = Box::pin(SelfRef {\n            data: String::from(\"hello\"),\n            ptr: std::ptr::null(),\n            _pin: PhantomPinned,\n        });\n        // После pin'а адрес стабилен\n        let ptr = &boxed.data as *const String;\n        unsafe { boxed.as_mut().get_unchecked_mut().ptr = ptr; }\n        boxed\n    }\n\n    fn print(&self) {\n        println!(\"data: {}, ptr: {:?}\", self.data, unsafe { &*self.ptr });\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Unpin` маркер"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Большинство типов: `Unpin` (можно перемещать после pin)",
+        "`PhantomPinned` делает `!Unpin`",
+        "`Pin<&mut T>` даёт доступ к `get_unchecked_mut()` только для `!Unpin`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Stack vs Heap — когда что"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стек (Stack)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Быстрое выделение (просто сдвиг указателя)",
+        "Ограниченный размер (~8MB на поток в Linux)",
+        "Автоматическое освобождение при выходе из scope",
+        "Подходит для: примитивы, маленькие структуры, известный размер"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Куча (Heap)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Медленнее (аллокатор, поиск свободного блока)",
+        "Практически неограничен (до RAM)",
+        "Требует явного управления (Box, Vec, String, Arc)",
+        "Подходит для: большие данные, динамический размер,共享 владение"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Box::new` vs стек"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: smart pointers**\n\n**Что делает:** unique_ptr, shared_ptr, weak_ptr — умные указатели с автоматическим управлением памятью\n\n**Зачем нужно:** Исключают утечки памяти, dangling pointers, double free; владеют объектом\n\n**Как работает:** auto ptr = std::make_unique<Widget>(); // unique_ptr — единственный владелец"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn on_stack() -> [u8; 1000] { [0; 1000] } // 1KB на стеке — OK\nfn on_stack_big() -> [u8; 10_000_000] { [0; 10_000_000] } // 10MB — STACK OVERFLOW!\n\nfn on_heap() -> Box<[u8; 10_000_000]> { Box::new([0; 10_000_000]) } // OK"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`alloca` / `stacker` для больших стековых массивов (редко)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Требует feature или unsafe"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. `#[repr(C)]`, `#[repr(transparent)]`, `#[repr(packed)]`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[repr(C)]` — C-совместимый layout"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(C)]\nstruct CLayout {\n    a: u8,\n    b: u32,\n    c: u16,\n}\n// Порядок и выравнивание как в C"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[repr(transparent)]` — новая обёртка с тем же layout"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(transparent)]\nstruct Meters(f64); // Идентично f64 в памяти"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`#[repr(packed)]` — без выравнивания"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[repr(packed)]\nstruct Packed {\n    a: u8,\n    b: u32, // Сразу после a, без padding\n}\n// Осторожно: невыровненный доступ медленнее/UB на некоторых архитектурах"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Частичное перемещение и ref"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Config {\n    host: String,\n    port: u16,\n    timeout: u64,\n    retries: u32,\n}\n\nfn connect(host: &str, port: u16) { println!(\"Connecting to {}:{}\", host, port); }\n\nfn main() {\n    let cfg = Config {\n        host: \"localhost\".into(),\n        port: 8080,\n        timeout: 30,\n        retries: 3,\n    };\n\n    // Используем ref для host/port, двигаем остальное\n    let Config { ref host, ref port, timeout, retries } = cfg;\n    connect(host, *port);\n    println!(\"timeout={}, retries={}\", timeout, retries);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: `mem::replace` для state machine"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::mem;\n\nenum State {\n    Disconnected,\n    Connecting,\n    Connected(String),\n}\n\nstruct Connection {\n    state: State,\n}\n\nimpl Connection {\n    fn connect(&mut self, addr: String) {\n        // Заменяем состояние атомарно\n        let old = mem::replace(&mut self.state, State::Connecting);\n        println!(\"Was: {:?}\", old);\n        // ... асинхронное подключение ...\n        self.state = State::Connected(addr);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: `Pin` для async стейт-машины"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: borrowing**\n\n**Что делает:** Заимствование (&T, &mut T) — временный доступ без передачи владения\n\n**Зачем нужно:** Позволяет читать/менять данные без передачи владения, проверки на этапе компиляции\n\n**Как работает:** fn read(s: &String) { println!(\"{}\", s); } let s = String::from(\"hi\"); read(&s);"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::pin::Pin;\nuse std::future::Future;\nuse std::task::{Context, Poll};\n\nstruct MyFuture {\n    state: u32,\n}\n\nimpl Future for MyFuture {\n    type Output = u32;\n    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<u32> {\n        self.state += 1;\n        if self.state >= 3 {\n            Poll::Ready(self.state)\n        } else {\n            Poll::Pending\n        }\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| `use of partially moved value` | Частичный move структуры | Используйте `ref`/`ref mut` в паттерне |\n| `cannot move out of borrowed content` | Попытка move через `&` | Используйте `mem::replace`/`take` или клонируйте |\n| `drop order` неожиданный | Не знание правил | Поля: reverse declaration order; vars: reverse creation |\n| `Pin` не работает | Тип реализует `Unpin` | Добавьте `PhantomPinned` |\n| Stack overflow | Слишком большой массив на стеке | Используйте `Box`/`Vec` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Шпаргалка: Ownership Cheatsheet"
+    },
+    {
+      "type": "table",
+      "content": "| Операция | Stack | Heap | Drop |\n|----------|-------|------|------|\n| `let x = y` (Copy) | копия | — | нет |\n| `let x = y` (Move) | копия указателя | общий | y инвалиден |\n| `let x = y.clone()` | копия указателя | глубокая копия | оба валидны |\n| `Box::new(x)` | указатель | аллокация + копия | при выходе из scope |\n| `mem::replace(&mut x, y)` | — | — | старое значение возвращается |\n| `mem::forget(x)` | — | — | НЕТ (утечка) |\n| `ManuallyDrop::new(x)` | — | — | ручной `drop()` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**The Book — Drop**: https://doc.rust-lang.org/book/ch15-03-drop.html",
+        "**std::mem**: https://doc.rust-lang.org/std/mem/",
+        "**std::pin**: https://doc.rust-lang.org/std/pin/",
+        "**Pin RFC**: https://rust-lang.github.io/rfcs/2349-pin.html"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Внутреннее устройство `String`, `Vec`, `Box` (fat pointers)",
+        "Частичное перемещение и `ref`/`ref mut` в паттернах",
+        "`std::mem::swap`, `replace`, `take`, `forget`",
+        "Порядок drop: поля — reverse declaration, vars — reverse creation",
+        "`ManuallyDrop<T>` для ручного управления деструктором",
+        "`Pin<P>` и `PhantomPinned` для самозареференцирующихся структур",
+        "Stack vs Heap, `#[repr(...)]` атрибуты"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "✅ **Что мы изучили:**\n\n\n\n\n\n\n\n\n---\n\n**Следующий урок:** Продвинутые типы (`13_Types_Advanced.txt`)"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Параллелизм: потоки, каналы, мьютексы",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Параллелизм: потоки, каналы, мьютексы' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Rust",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-rust на GitHub",
+    "Конференции и митапы по Rust"
+  ],
+  "key_takeaways": [
+    "Главная идея: std::thread, spawn, join, mpsc, Mutex, RwLock, Condvar, OnceLock, park — это фундамент для Ownership, Borrowing, Lifetimes.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "rust",
+  "lesson_order": 12,
+  "name_en": "Lesson: Параллелизм: потоки, каналы, мьютексы",
+  "short_description_en": "Learn Параллелизм: потоки, каналы, мьютексы in Rust with detailed explanations and examples"
+}

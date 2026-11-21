@@ -1,0 +1,216 @@
+# Урок 1.1: Введение — язык, компилятор, сборка, main, консольный вывод
+
+## Цели урока
+- Понять, что такое C++ и где он применяется
+- Установить компилятор (GCC/Clang/MSVC) и настроить среду
+- Научиться собирать и запускать программы
+- Понять структуру программы: функция main
+- Выводить текст в консоль с помощью std::cout
+
+---
+
+## 1. Что такое C++
+
+C++ — статически типизированный, компилируемый язык общего назначения с поддержкой:
+- Процедурного программирования
+- Объектно-ориентированного программирования (ООП)
+- Обобщённого программирования (шаблоны)
+- Метапрограммирования (compile-time computation)
+
+**Применение**: системное ПО, движки игр, HPC, встроенные системы, браузеры, БД, GUI-фреймворки.
+
+**Стандарты**: C++98, C++11, C++14, C++17, C++20, C++23. В курсе используем **C++20**.
+
+---
+
+## 2. Установка компилятора
+
+### Windows
+- **MSVC** (Visual Studio 2022 Community) — нативный для Windows
+- **MinGW-w64** (gcc) — через `choco install mingw` или `scoop install gcc`
+- **Clang** — `choco install llvm`
+
+### Linux
+```bash
+# Ubuntu/Debian
+sudo apt update && sudo apt install build-essential gdb
+
+# Arch
+sudo pacman -S base-devel gdb
+
+# Fedora
+sudo dnf install gcc-c++ make gdb
+```
+
+### macOS
+```bash
+xcode-select --install  # clang + toolchain
+# или
+brew install gcc llvm
+```
+
+### Проверка
+```bash
+g++ --version
+clang++ --version
+cl.exe  # MSVC
+```
+
+---
+
+## 3. Сборка и запуск
+
+### Один файл
+```bash
+g++ -std=c++20 -Wall -Wextra -O2 main.cpp -o app
+./app                    # Linux/macOS
+app.exe                  # Windows
+```
+
+### Флаги компилятора
+| Флаг | Назначение |
+|------|------------|
+| `-std=c++20` | Стандарт C++20 |
+| `-Wall -Wextra` | Включить предупреждения |
+| `-Werror` | Предупреждения = ошибки |
+| `-O2` | Оптимизация скорости |
+| `-g` | Debug-символы |
+| `-fsanitize=address,undefined` | Sanitizers (UB detection) |
+
+---
+
+## 4. Первая программа
+
+```cpp
+// main.cpp
+#include <iostream>  // Подключение заголовочного файла ввода/вывода
+
+int main() {         // Точка входа: возвращает int, 0 = успех
+    std::cout << "Hello, C++20!\n";  // Вывод в stdout
+    return 0;
+}
+```
+
+### Разбор
+- `#include <iostream>` — подключает объявления `std::cout`, `std::cin`
+- `std::cout` — объект потока вывода (в namespace `std`)
+- `<<` — оператор вставки (stream insertion operator)
+- `"...\n"` — строковый литерал с newline
+- `return 0;` — код возврата ОС (успех)
+
+---
+
+## 5. Комментарии
+
+```cpp
+// Однострочный комментарий
+
+/*
+  Многострочный
+  комментарий
+*/
+
+/// Doxygen-стиль для документации
+/// @param x входной параметр
+/// @return x * 2
+int double_it(int x) { return x * 2; }
+```
+
+---
+
+## 6. Типы ошибок
+
+| Тип | Когда возникает | Пример |
+|-----|----------------|--------|
+| **Синтаксическая** | На этапе компиляции | Пропущена `;` |
+| **Семантическая** | На этапе компиляции | Использование необъявленной переменной |
+| **Линковки (linker)** | После компиляции | Не найдено определение функции |
+| **Время выполнения (runtime)** | Во время работы программы | Деление на ноль, UB |
+| **Логическая** | Программа работает, но неверно | Неправильный алгоритм |
+
+```cpp
+// Синтаксическая ошибка
+std::cout << "Hello"  // error: expected ';'
+
+// Семантическая ошибка
+std::cout << x;  // error: 'x' was not declared
+
+// Runtime ошибка (UB)
+int* p = nullptr;
+*p = 42;  // Segfault / UB
+```
+
+---
+
+## 7. IDE и редакторы
+
+| Инструмент | Особенности |
+|------------|-------------|
+| **VS Code** + C/C++ Extension | Лёгкий, кроссплатформенный, IntelliSense |
+| **CLion** (JetBrains) | Мощный рефакторинг, CMake нативная поддержка |
+| **Visual Studio 2022** | Лучшая отладка на Windows, MSVC |
+| **Qt Creator** | Для Qt-проектов, хорошая CMake интеграция |
+| **Neovim/Vim** + clangd | Для любителей модального редактирования |
+
+**Рекомендация для новичка**: VS Code + C/C++ Extension + CMake Tools.
+
+---
+
+## 8. CMake — система сборки (введение)
+
+```cmake
+# CMakeLists.txt
+cmake_minimum_required(VERSION 3.20)
+project(HelloCpp LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+add_executable(hello main.cpp)
+
+# Включение предупреждений
+target_compile_options(hello PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->)
+```
+
+```bash
+# Сборка через CMake
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/hello
+```
+
+---
+
+## Практические задания
+
+1. **Установка**: Установите компилятор, проверьте версию, соберите "Hello World"
+2. **Флаги**: Добавьте `-Wall -Wextra -Werror`, специально допустите предупреждение (unused variable)
+3. **CMake**: Создайте `CMakeLists.txt`, соберите через `cmake --build`
+4. **Ошибки**: Намеренно допустите синтаксическую, семантическую и runtime ошибку — прочитайте сообщения компилятора
+5. **Эксперимент**: Уберите `return 0;` — что вернёт программа? (в C++ `main` неявно возвращает 0)
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `cout << "Hello";` без `std::` | `std::cout << "Hello";` или `using namespace std;` (в main.cpp допустимо) |
+| `void main()` | `int main()` — стандарт требует возврат int |
+| Забыли `#include <iostream>` | Всегда подключайте нужные заголовки |
+| Использование `.h` заголовков (`iostream.h`) | Только стандартные без `.h`: `<iostream>`, `<vector>` |
+| Смешивание `\n` и `std::endl` без причины | `\n` быстрее (не флашит буфер), `std::endl` — когда нужен flush |
+
+---
+
+## Полезные ресурсы
+
+- **cppreference.com** — https://en.cppreference.com/ (главная справочная)
+- **C++ Core Guidelines** — https://isocpp.github.io/CppCoreGuidelines/
+- **Compiler Explorer** — https://godbolt.org/ (посмотреть ассемблер)
+- **C++20 Reference** — https://cppreference.com/w/cpp/20
+- **Learn C++** — https://www.learncpp.com/
+- **Effective Modern C++** (Scott Meyers) — луч practices для C++11/14

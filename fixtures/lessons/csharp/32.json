@@ -1,0 +1,692 @@
+{
+  "title": "Урок 32: Platforms Ecosystem",
+  "slug": "urok-32-nativeaot-и-trimming",
+  "short_description": "PublishAot, ILLink, DynamicallyAccessedMembers, Native Library Export",
+  "goals": [
+    "Понимать основы: PublishAot, ILLink, DynamicallyAccessedMembers, Native Library Export",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.10: Platforms/Ecosystem — .NET Versions, Publishing, Containers, Cross-Platform, Dependency Compatibility"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понимать .NET release cadence: LTS, STS, preview, EOL",
+        "Публикация: self-contained, framework-dependent, trimmed, Native AOT",
+        "Контейнеризация: multi-stage Dockerfile, distroless, security scanning",
+        "Cross-platform: Linux, macOS, Windows, ARM64, browser (WASM)",
+        "Управление зависимостями: Central Package Management, version locking, vulnerability scanning"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. .NET Release Cadence"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Release Types"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ".NET 8 (LTS) ──────────────────────► Nov 2026 EOL\n    │\n    ├── 8.0.0 (Nov 2023)\n    ├── 8.0.1..8.0.x (monthly patches)\n    └── LTS = Long Term Support (3 years)\n\n.NET 9 (STS) ─────────────────────► May 2025 EOL\n    │\n    └── STS = Standard Term Support (18 months)\n\n.NET 10 (Preview) ────────────────►"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Versioning в проектах"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- Directory.Build.props (Central Package Management) -->\n<Project>\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n    <LangVersion>12</LangVersion>\n    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>\n  </PropertyGroup>\n\n  <!-- Версии пакетов в одном месте -->\n  <ItemGroup>\n    <PackageVersion Include=\"Microsoft.Extensions.*\" Version=\"8.0.*\" />\n    <PackageVersion Include=\"Serilog\" Version=\"3.1.*\" />\n    <PackageVersion Include=\"FluentValidation\" Version=\"11.9.*\" />\n    <PackageVersion Include=\"MediatR\" Version=\"12.2.*\" />\n  </ItemGroup>\n</Project>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Global.json для pin версии SDK"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "// global.json\n{\n  \"sdk\": {\n    \"version\": \"8.0.400\",\n    \"rollForward\": \"latestFeature\",\n    \"allowPrerelease\": false\n  }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Publishing Strategies"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Framework-Dependent (требует установленного .NET)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Маленький бинарник, нужна runtime на целевой машине"
+    },
+    {
+      "type": "text",
+      "content": "dotnet publish -c Release -r linux-x64 --self-contained false"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Output: ~1-5 MB + shared runtime"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Self-Contained (все включено)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Не требует установленного .NET"
+    },
+    {
+      "type": "text",
+      "content": "dotnet publish -c Release -r linux-x64 --self-contained true"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Output: ~60-100 MB"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Trimmed Self-Contained"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj -->\n<PropertyGroup>\n  <PublishTrimmed>true</PublishTrimmed>\n  <TrimMode>partial</TrimMode>           <!-- full = агрессивнее -->\n  <SuppressTrimAnalysisWarnings>false</SuppressTrimAnalysisWarnings>\n</PropertyGroup>\n\n<!-- Для библиотек, использующих рефлексию -->\n<ItemGroup>\n  <TrimmerRootAssembly Include=\"MyLibrary\" />\n</ItemGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Output: ~20-40 MB (зависит отtrim)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Native AOT (.NET 8+)"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj -->\n<PropertyGroup>\n  <PublishAot>true</PublishAot>\n  <StripSymbols>true</StripSymbols>\n  <InvariantGlobalization>true</InvariantGlobalization>\n  <IlcGenerateCompleteTypeMetadata>true</IlcGenerateCompleteTypeMetadata>\n</PropertyGroup>\n\n<!-- Для JSON сериализации -->\n<ItemGroup>\n  <PackageReference Include=\"System.Text.Json\" Version=\"8.0.*\" />\n</ItemGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Output: ~3-10 MB нативный бинарник, мгновенный старт, нет JIT"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ReadyToRun (R2R)"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<PropertyGroup>\n  <PublishReadyToRun>true</PublishReadyToRun>\n  <PublishReadyToRunComposite>true</PublishReadyToRunComposite>\n</PropertyGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Single File"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "В один файл (self-contained)"
+    },
+    {
+      "type": "text",
+      "content": "dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ReadyToRun в single file"
+    },
+    {
+      "type": "text",
+      "content": "dotnet publish -c Release -r linux-x64 -p:PublishReadyToRun=true -p:PublishSingleFile=true\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Docker — Multi-stage Builds"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Оптимизированный Dockerfile"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "===== BUILD STAGE ====="
+    },
+    {
+      "type": "text",
+      "content": "FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build\nWORKDIR /src"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Кэш NuGet пакетов"
+    },
+    {
+      "type": "text",
+      "content": "COPY [\"Directory.Build.props\", \".\"]\nCOPY [\"Directory.Packages.props\", \".\"]\nCOPY [\"*.sln\", \".\"]\nCOPY [\"src/*/*.csproj\", \"src/\"]\nRUN for f in src/*/*.csproj; do dotnet restore \"$f\"; done"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Копируем исходники и билдим"
+    },
+    {
+      "type": "text",
+      "content": "COPY . .\nRUN dotnet publish \"src/WebApi/WebApi.csproj\" -c Release -o /app/publish \\\n    --self-contained true -r linux-musl-x64 \\\n    /p:PublishTrimmed=true /p:TrimMode=partial"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "===== RUNTIME STAGE ====="
+    },
+    {
+      "type": "text",
+      "content": "FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-alpine AS runtime\nWORKDIR /app"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Non-root user"
+    },
+    {
+      "type": "text",
+      "content": "RUN addgroup -g 1000 -S appgroup && \\\n    adduser -u 1000 -S appuser -G appgroup\nUSER appuser\n\nCOPY --from=build --chown=appuser:appgroup /app/publish ."
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Health check"
+    },
+    {
+      "type": "text",
+      "content": "HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\\n    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1\n\nEXPOSE 8080\nENV ASPNETCORE_URLS=http://+:8080\nENV DOTNET_GCServer=1\nENV DOTNET_ThreadPool_UnfairSemaphoreSpinLimit=0\n\nENTRYPOINT [\"./WebApi\"]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Distroless / Scratch для Native AOT"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Build"
+    },
+    {
+      "type": "text",
+      "content": "FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build\nWORKDIR /src\nCOPY . .\nRUN dotnet publish -c Release -r linux-musl-x64 -o /app --self-contained true /p:PublishAot=true"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Runtime — gcr.io/distroless/static (нет shell, нет package manager)"
+    },
+    {
+      "type": "text",
+      "content": "FROM gcr.io/distroless/static-debian12 AS runtime\nWORKDIR /app\nCOPY --from=build /app .\nUSER 65532:65532\nEXPOSE 8080\nENTRYPOINT [\"./WebApi\"]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Docker Compose для Development"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "docker-compose.yml"
+    },
+    {
+      "type": "list",
+      "items": [
+        "ASPNETCORE_ENVIRONMENT=Development",
+        "ConnectionStrings__Default=Host=db;Database=app;Username=postgres;Password=postgres",
+        "./src:/src",
+        "~/.nuget/packages:/root/.nuget/packages",
+        "pgdata:/var/lib/postgresql/data"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "version: '3.8'\n\nservices:\n  app:\n    build:\n      context: .\n      dockerfile: Dockerfile\n      target: build\n    ports: [\"8080:8080\"]\n    environment:\n\n\n    depends_on:\n      db:\n        condition: service_healthy\n    volumes:\n\n\n\n  db:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_DB: app\n      POSTGRES_USER: postgres\n      POSTGRES_PASSWORD: postgres\n    ports: [\"5432:5432\"]\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]\n      interval: 5s\n      timeout: 5s\n      retries: 5\n    volumes:\n\n\nvolumes:\n  pgdata:\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Security Scanning"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Trivy — сканирование уязвимостей"
+    },
+    {
+      "type": "text",
+      "content": "trivy image myapp:latest"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Hadolint — линтинг Dockerfile"
+    },
+    {
+      "type": "text",
+      "content": "hadolint Dockerfile"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Cosign — подпись образов"
+    },
+    {
+      "type": "text",
+      "content": "cosign sign --key cosign.key myapp:latest\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Cross-Platform Development"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Platform-Specific Code"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// RuntimeInformation\nif (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))\n{\n    // Windows-specific: registry, WMI, named pipes\n}\nelse if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))\n{\n    // Linux-specific: systemd, inotify, /proc\n}\nelse if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))\n{\n    // macOS-specific: launchd, keychain\n}\n\n// Architecture\nvar arch = RuntimeInformation.ProcessArchitecture; // X64, Arm64, Arm, Wasm"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Conditional Compilation"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "#if NET8_0_OR_GREATER\n// .NET 8+ APIs\nvar timeProvider = TimeProvider.System;\n#else\n// Fallback\nvar timeProvider = new LegacyTimeProvider();\n#endif\n\n// Или через TargetFramework\n#if NET8_0\n// Specific to .NET 8\n#elif NET7_0\n// Specific to .NET 7\n#endif"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "File Paths Cross-Platform"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: nullish coalescing**\n\n**Что делает:** ?? возвращает правое значение только если левое null/undefined\n\n**Зачем нужно:** В отличие от || не срабатывает на 0, '', false — только на null/undefined\n\n**Как работает:** const name = user.name ?? 'Гость' — если name null/undefined, будет 'Гость'"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Path.Combine работает везде\nvar path = Path.Combine(\"data\", \"config.json\"); // data/config.json или data\\config.json\n\n// Path.GetFullPath нормализует\nvar full = Path.GetFullPath(path);\n\n// Для путей в контейнерах — используйте абсолютные Linux пути\nvar dataDir = Environment.GetEnvironmentVariable(\"DATA_DIR\") ?? \"/app/data\";"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Globalization / Invariant Mode"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- .csproj для контейнеров без locale -->\n<PropertyGroup>\n  <InvariantGlobalization>true</InvariantGlobalization>\n  <!-- Или в runtimeconfig.json -->\n  <!-- \"configProperties\": { \"System.Globalization.Invariant\": true } -->\n</PropertyGroup>"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// При InvariantGlobalization:\nCultureInfo.CurrentCulture = CultureInfo.InvariantCulture;\n// Парсинг дат/чисел только в invariant формате\nDateTime.Parse(\"2024-01-15\", CultureInfo.InvariantCulture);"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. ARM64 и Apple Silicon"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Building for ARM64"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Linux ARM64 (Raspberry Pi, AWS Graviton, Azure ARM)"
+    },
+    {
+      "type": "text",
+      "content": "dotnet publish -c Release -r linux-arm64 --self-contained true"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "macOS ARM64 (Apple Silicon)"
+    },
+    {
+      "type": "text",
+      "content": "dotnet publish -c Release -r osx-arm64 --self-contained true"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Windows ARM64"
+    },
+    {
+      "type": "text",
+      "content": "dotnet publish -c Release -r win-arm64 --self-contained true\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Multi-Arch Docker Images"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Dockerfile с поддержкой multi-arch"
+    },
+    {
+      "type": "text",
+      "content": "FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build\nARG TARGETARCH\nWORKDIR /src\nCOPY . .\nRUN dotnet publish -c Release -r linux-${TARGETARCH} -o /app --self-contained true\n\nFROM mcr.microsoft.com/dotnet/runtime-deps:8.0-alpine\nWORKDIR /app\nCOPY --from=build /app .\nENTRYPOINT [\"./WebApi\"]"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "bash"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Build multi-arch"
+    },
+    {
+      "type": "text",
+      "content": "docker buildx create --use\ndocker buildx build --platform linux/amd64,linux/arm64 -t myapp:latest --push .\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. WebAssembly (Blazor WASM)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Publishing WASM"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Blazor WASM"
+    },
+    {
+      "type": "text",
+      "content": "dotnet publish -c Release -r wasm"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Native AOT for WASM (.NET 8+)"
+    },
+    {
+      "type": "text",
+      "content": "dotnet publish -c Release -r wasm /p:PublishAot=true\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "WASM Specifics"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: console.log**\n\n**Что делает:** Выводит информацию в консоль браузера для отладки\n\n**Зачем нужно:** Это основной способ увидеть значения переменных, результаты вычислений и ошибки во время разработки\n\n**Как работает:** Принимает любые значения (строки, числа, объекты, массивы) и печатает их в консоль разработчика (F12)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Определение WASM runtime\nif (RuntimeInformation.ProcessArchitecture == Architecture.Wasm)\n{\n    // Нет: threads, SIMD (ограниченно), file system, sockets\n    // Есть: JS interop, IndexedDB, localStorage\n}\n\n// JS Interop\n[JSImport(\"console.log\")]\npublic static partial void Log(string message);\n\n[JSExport]\npublic static void CallFromJS(string data) { ... }"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Dependency Management"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Central Package Management (CPM)"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- Directory.Packages.props (в корне решения) -->\n<Project>\n  <PropertyGroup>\n    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>\n    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>\n  </PropertyGroup>\n\n  <ItemGroup>\n    <!-- Versions -->\n    <PackageVersion Include=\"Microsoft.Extensions.*\" Version=\"8.0.0\" />\n    <PackageVersion Include=\"Serilog.AspNetCore\" Version=\"8.0.0\" />\n    <PackageVersion Include=\"FluentValidation\" Version=\"11.9.0\" />\n    <PackageVersion Include=\"MediatR\" Version=\"12.2.0\" />\n    <PackageVersion Include=\"Mapster\" Version=\"7.4.0\" />\n    <PackageVersion Include=\"Scrutor\" Version=\"4.2.2\" />\n\n    <!-- Test packages -->\n    <PackageVersion Include=\"xunit\" Version=\"2.7.0\" />\n    <PackageVersion Include=\"FluentAssertions\" Version=\"6.12.0\" />\n    <PackageVersion Include=\"Moq\" Version=\"4.20.70\" />\n    <PackageVersion Include=\"Testcontainers\" Version=\"3.7.0\" />\n  </ItemGroup>\n</Project>"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- В проекте — без версий -->\n<Project>\n  <ItemGroup>\n    <PackageReference Include=\"Microsoft.Extensions.DependencyInjection\" />\n    <PackageReference Include=\"Serilog.AspNetCore\" />\n    <PackageReference Include=\"FluentValidation\" />\n  </ItemGroup>\n</Project>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Version Locking и Reproducible Builds"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- Directory.Build.props -->\n<PropertyGroup>\n  <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>\n  <Deterministic>true</Deterministic>\n  <PublishRepositoryUrl>true</PublishRepositoryUrl>\n  <EmbedUntrackedSources>true</EmbedUntrackedSources>\n  <IncludeSymbols>true</IncludeSymbols>\n  <SymbolPackageFormat>snupkg</SymbolPackageFormat>\n</PropertyGroup>"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Vulnerability Scanning"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "dotnet list package --vulnerable"
+    },
+    {
+      "type": "text",
+      "content": "dotnet list package --vulnerable --include-transitive"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "NuGet Audit в CI"
+    },
+    {
+      "type": "text",
+      "content": "dotnet nuget audit --level high"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "GitHub Dependabot / Renovate для авто-PR"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Private Feeds / Artifacts"
+    },
+    {
+      "type": "code",
+      "language": "xml",
+      "content": "<!-- NuGet.config -->\n<configuration>\n  <packageSources>\n    <add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />\n    <add key=\"MyPrivateFeed\" value=\"https://pkgs.dev.azure.com/org/_packaging/feed/nuget/v3/index.json\" />\n  </packageSources>\n  <packageSourceCredentials>\n    <MyPrivateFeed>\n      <add key=\"Username\" value=\"docker\" />\n      <add key=\"ClearTextPassword\" value=\"%PAT_TOKEN%\" />\n    </MyPrivateFeed>\n  </packageSourceCredentials>\n</configuration>"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. CI/CD Pipeline"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GitHub Actions для .NET"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".github/workflows/ci.yml"
+    },
+    {
+      "type": "list",
+      "items": [
+        "uses: actions/checkout@v4",
+        "name: Setup .NET",
+        "name: Restore",
+        "name: Build",
+        "name: Test",
+        "name: Security Audit",
+        "uses: actions/checkout@v4",
+        "name: Build Image",
+        "name: Scan",
+        "name: Push"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "name: CI\n\non: [push, pull_request]\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n\n\n        uses: actions/setup-dotnet@v4\n        with:\n          dotnet-version: '8.0.x'\n          cache: true\n\n        run: dotnet restore\n\n        run: dotnet build --no-restore -c Release\n\n        run: dotnet test --no-build -c Release --collect:\"XPlat Code Coverage\"\n\n        run: dotnet nuget audit --level high\n\n  docker:\n    needs: build\n    runs-on: ubuntu-latest\n    steps:\n\n\n        run: docker build -t myapp:${{ github.sha }} .\n\n        run: trivy image myapp:${{ github.sha }}\n\n        if: github.event_name == 'push'\n        run: |\n          echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USER }} --password-stdin\n          docker push myapp:${{ github.sha }}\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Multi-Platform Publishing**: Настройте публикацию одного приложения для: linux-x64, linux-arm64, win-x64, osx-arm64, wasm. Сравните размеры и время запуска\n\n2. **Optimized Docker Image**: Постройте Dockerfile < 50MB для ASP.NET Core приложения. Используйте multi-stage, trimmed, distroless. Пройдите Trivy scan с 0 HIGH/CRITICAL\n\n3. **Native AOT Migration**: Перенесите консольное приложение на Native AOT. Решите проблемы с рефлексией, JSON, DI. Измерьте cold start, память, размер бинарника\n\n4. **Dependency Management**: Настройте Central Package Management для решения с 10+ проектами. Добавьте Dependabot/Renovate, настройте авто-PR для minor/patch обновлений\n\n5. **Cross-Platform Library**: Создайте библиотеку с platform-specific кодом (file system, processes, networking). Покройте тестами на Windows, Linux, macOS в CI\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| Не используют global.json | Всегда pin SDK версию через global.json |\n| Публикуют без --self-contained для контейнеров | В контейнерах лучше self-contained или Native AOT |\n| Игнорируют trimming warnings | Исправляйте или используют [DynamicallyAccessedMembers] |\n| Не сканируют образы на уязвимости | Trivy/Snyk в CI pipeline |\n| Хардкодят пути с \\ | Path.Combine, Environment.SpecialFolder |\n| Забывают про InvariantGlobalization в контейнерах | Включают для уменьшения размера и избежания locale issues |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**.NET Release Schedule** — https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core",
+        "**Publishing .NET Apps** — https://learn.microsoft.com/dotnet/core/deploying/",
+        "**Native AOT** — https://learn.microsoft.com/dotnet/core/deploying/native-aot",
+        "**Docker for .NET** — https://learn.microsoft.com/dotnet/core/docker/",
+        "**Central Package Management** — https://learn.microsoft.com/nuget/consume-packages/central-package-management",
+        "**Trivy** — https://aquasecurity.github.io/trivy/",
+        "**Cross-Platform Development** — https://learn.microsoft.com/dotnet/core/porting/",
+        "**WASM with .NET** — https://learn.microsoft.com/aspnet/core/blazor/wasm"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: NativeAOT и Trimming",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'NativeAOT и Trimming' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C#",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c# на GitHub",
+    "Конференции и митапы по C#"
+  ],
+  "key_takeaways": [
+    "Главная идея: PublishAot, ILLink, DynamicallyAccessedMembers, Native Library Export — это фундамент для LINQ, Generics, Delegates/Events.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "csharp",
+  "lesson_order": 32,
+  "name_en": "Lesson: NativeAOT и Trimming",
+  "short_description_en": "Learn NativeAOT и Trimming in C# with detailed explanations and examples"
+}

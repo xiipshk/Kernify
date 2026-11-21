@@ -1,0 +1,687 @@
+# Урок 28: Производительность рендеринга — style/layout/paint/compositing, layout thrashing, профилирование анимаций
+
+## Цели урока
+- Понять конвейер рендеринга браузера (Style → Layout → Paint → Composite → Display)
+- Изучить, какие CSS-свойства затрагивают какой этап конвейера
+- Научиться находить и устранять layout thrashing (forced reflow)
+- Освоить профилирование анимаций и рендеринга в DevTools
+- Применять contain, will-change, CSS containment для оптимизации
+
+---
+
+## 1. Конвейер рендеринга браузера
+
+### Пять этапов конвейера
+```
+JavaScript ──→ Style ──→ Layout ──→ Paint ──→ Composite ──→ Display
+                    ↓          ↓          ↓           ↓
+               Вычисление   Геометрия   Растровая   Слои на экране
+               стилей         элементов   обработка
+```
+
+### Этап 1: Style (Расчет стилей)
+Браузер определяет, какие CSS-правила применяются к каждому элементу, и вычисляет итоговые значения свойств.
+
+**Что влияет:**
+- Сложность селекторов (специфичность, количество правил)
+- Количество элементов в DOM
+- CSS-переменные, каскадные слои, @layer
+
+**Как оптимизировать:**
+- Держи селекторы простыми (избегай `.a .b .c .d .e`)
+- Минимизируй количество правил CSS
+- Используй классы вместо теговых селекторов
+
+```css
+/* Плохо: глубокая вложенность, дорого вычислять */
+div ul li a span { color: red; }
+
+/* Хорошо: простой класс */
+.link-text { color: red; }
+```
+
+### Этап 2: Layout (Расчет геометрии / Reflow)
+Браузер вычисляет размеры и позиции всех элементов на странице.
+
+**Свойства, вызывают Layout:**
+- `width`, `height`, `min-width`, `max-height`
+- `margin`, `padding`, `border`
+- `top`, `left`, `right`, `bottom` (для positioned)
+- `font-size`, `line-height`
+- `flex`, `grid`, `display`, `position`
+- `float`, `clear`
+
+**Стоимость:** 🔴 Высокая — пересчитывает всю дерево layout
+
+### Этап 3: Paint (Растровая обработка)
+Браузер определяет, какие цвета, текстуры, границы, тени рисовать.
+
+**Свойства, вызывают Paint:**
+- `color`, `background`, `background-image`
+- `box-shadow`, `text-shadow`
+- `border`, `border-radius`, `border-color`
+- `outline`
+
+**Стоимость:** 🟡 Средняя
+
+### Этап 4: Composite (Композитинг)
+Браузер объединяет слои в итоговое изображение на экране. Это происходит на compositing потоке (GPU).
+
+**Свойства, затрагивают только Composite:**
+- `transform` (translate, scale, rotate)
+- `opacity`
+- `filter` (аккуратно —blur может быть дорог)
+- `will-change`
+
+**Стоимость:** 🟢 Низкая (60fps возможна)
+
+### Этап 5: Display
+Отображение итогового кадра на экране.
+
+---
+
+## 2. Свойства по этапам конвейера — шпаргалка
+
+| Свойство | Style | Layout | Paint | Composite |
+|----------|-------|--------|-------|-----------|
+| color | ✅ | | ✅ | |
+| background | ✅ | | ✅ | |
+| box-shadow | ✅ | | ✅ | |
+| border-radius | ✅ | | ✅ | |
+| opacity | ✅ | | | ✅ |
+| transform | ✅ | | | ✅ |
+| filter | ✅ | | | ✅ |
+| width | ✅ | ✅ | ✅ | |
+| height | ✅ | ✅ | ✅ | |
+| margin | ✅ | ✅ | ✅ | |
+| padding | ✅ | ✅ | ✅ | |
+| top/left (positioned) | ✅ | ✅ | ✅ | |
+| font-size | ✅ | ✅ | ✅ | |
+| display | ✅ | ✅ | ✅ | |
+| will-change | | | | ✅ (подсказка) |
+
+### Что анимировать — дешево
+```css
+/* 🟢 Дешево — только Composite */
+.anim-cheap {
+  animation: move 0.5s;
+}
+@keyframes move {
+  to {
+    transform: translate3d(100px, 0, 0);  /* translateZ(0) создает слой */
+    opacity: 0.5;
+  }
+}
+```
+
+### Что не анимировать — дорого
+```css
+/* 🔴 Дорого — Layout + Paint */
+.anim-expensive {
+  animation: move 0.5s;
+}
+@keyframes move {
+  to {
+    width: 200px;
+    height: 200px;
+    margin: 20px;
+    top: 50px;
+    left: 50px;
+    background: red;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+    border-radius: 10px;
+  }
+}
+```
+
+### Замена дорогого на дешевое
+```css
+/* Вместо width/height анимации — transform: scale() */
+.bad {
+  animation: grow 0.3s;
+}
+@keyframes grow {
+  to { width: 200px; height: 200px; }
+}
+
+.good {
+  animation: grow 0.3s;
+}
+@keyframes grow {
+  to { transform: scale(1.25); }  /* Только Composite */
+}
+
+/* Вместо top/left — transform: translate() */
+.bad {
+  animation: slide 0.3s;
+}
+@keyframes slide {
+  to { top: 100px; left: 100px; }
+}
+
+.good {
+  animation: slide 0.3s;
+}
+@keyframes slide {
+  to { transform: translate3d(100px, 100px, 0); }
+}
+```
+
+---
+
+## 3. Layout Thrashing (Forced Reflow / Layout Thrashing)
+
+### Что такое layout thrashing
+Чередование чтения и записи layout-свойств в цикле заставляет браузер пересчитывать геометрию на каждой итерации.
+
+### Пример проблемы
+```javascript
+// ПЛОХО — Layout Thrashing
+const items = document.querySelectorAll('.item');
+for (let i = 0; i < items.length; i++) {
+  // Чтение layout (вызывает reflow)
+  const width = items[i].offsetWidth;
+  // Запись layout (вызывает recalculation)
+  items[i].style.width = (width + 10) + 'px';
+}
+// На each итерации: чтение + запись = forced reflow
+// При 100 элементах — 200 forced reflow!
+```
+
+### Решение — разделить чтение и запись
+```javascript
+// ХОРОШО — сначала читаем все, потом пишем все
+const items = document.querySelectorAll('.item');
+
+// Фаза 1: Чтение (все layout-значения сразу)
+const widths = [];
+for (let i = 0; i < items.length; i++) {
+  widths.push(items[i].offsetWidth);
+}
+
+// Фаза 2: Запись (все изменения сразу)
+for (let i = 0; i < items.length; i++) {
+  items[i].style.width = (widths[i] + 10) + 'px';
+}
+// Только 2 прохода, нет thrashing
+```
+
+### RequestAnimationFrame для пакетной обработки
+```javascript
+// ХОРОШО —批量 в следующем кадре
+function updateItems() {
+  const items = document.querySelectorAll('.item');
+  const measurements = [];
+
+  // Чтение
+  items.forEach(item => {
+    measurements.push(item.getBoundingClientRect());
+  });
+
+  // Запись
+  items.forEach((item, i) => {
+    item.style.transform = `translateX(${measurements[i].left}px)`;
+  });
+}
+
+requestAnimationFrame(updateItems);
+```
+
+### Свойства, которые вызывают forced reflow при чтении
+```
+offsetTop, offsetLeft, offsetWidth, offsetHeight
+scrollTop, scrollLeft, scrollWidth, scrollHeight
+clientTop, clientLeft, clientWidth, clientHeight
+getComputedStyle()
+getBoundingClientRect()
+```
+
+### Антипаттерн — чтение в цикле
+```javascript
+// ПЛОХО
+for (let i = 0; i < elements.length; i++) {
+  elements[i].style.top = elements[i].offsetTop + 'px';  // Чтение + запись
+}
+```
+
+---
+
+## 4. CSS Containment (contain)
+
+### contain: layout
+Изолирует внутреннюю верстку элемента — изменения внутри не влияют на родителей.
+
+```css
+.card {
+  contain: layout;
+}
+```
+
+### contain: paint
+Изолирует отрисовку — содержимое не выходит за границы элемента.
+
+```css
+.card {
+  contain: paint;
+}
+```
+
+### contain: style
+Изолирует пересчет стилей.
+
+```css
+.card {
+  contain: style;
+}
+```
+
+### contain: size
+Элемент не зависит от размера содержимого для своего собственного размера.
+
+```css
+.card {
+  contain: size;
+}
+```
+
+### contain: strict / content
+```css
+/* strict = layout + paint + size + style */
+.card {
+  contain: strict;
+}
+
+/* content = layout + paint + style (без size) */
+.card {
+  contain: content;
+}
+```
+
+### Практический кейс — длинный список
+```html
+<ul class="list">
+  <li class="list-item">...</li>
+  <li class="list-item">...</li>
+  <!-- 100+ элементов -->
+</ul>
+```
+
+```css
+.list {
+  contain: strict;  /* Анимация одного элемента не пересчитывает весь список */
+}
+
+.list-item {
+  animation: slide 0.3s ease;
+  contain: paint;   /* Отрисовка элемента изолирована */
+}
+
+@keyframes slide {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+```
+
+### Когда использовать contain
+- Долгосрочные списки и таблицы с множеством элементов
+- Компоненты с частыми анимациями внутри
+- Изолированные виджеты ( рекламные блоки, встроенные компоненты)
+- Когда изменение одной части страницы не должно влиять на другую
+
+### Ограничения contain
+- `contain: size` требует явной высоты/ширины элемента (иначе он схлопнется)
+- `contain: layout` не работает с элементами, которые должны влиять на родителя (например, floated элементы)
+- Не используй contain на элементах, которые должны участвовать в общем layout
+
+---
+
+## 5. will-change — правильное использование
+
+###will-change говорит браузеру, что свойство скоро изменится
+```css
+/* Включаем заранее */
+.will-animate {
+  will-change: transform, opacity;
+}
+
+/* Сбрасываем после */
+.will-animate {
+  will-change: auto;
+}
+```
+
+### Антипаттерны will-change
+```css
+/* ПЛОХО — на всё подряд, пожирает память */
+.bad {
+  will-change: all;
+  will-change: transform, opacity, filter, width, height, margin, padding;
+}
+
+/* ПЛОХО — никогда не сбрасывается */
+.stuck {
+  will-change: transform;  /* Память не освобождается */
+}
+
+/* ПЛОХО — на статических элементах */
+.static {
+  will-change: transform;  /* Ничего не анимируется, память wasted */
+}
+```
+
+### Правильный паттерн через JavaScript
+```javascript
+function prepareAnimation(element) {
+  element.style.willChange = 'transform, opacity';
+}
+
+function cleanupAnimation(element) {
+  element.style.willChange = 'auto';
+}
+
+// Использование
+const card = document.querySelector('.card');
+prepareAnimation(card);
+
+card.animate(
+  [{ transform: 'translateX(0)' }, { transform: 'translateX(100px)' }],
+  { duration: 500 }
+).finished.then(() => {
+  cleanupAnimation(card);
+});
+```
+
+###will-change и compositing слои
+`will-change: transform` создает отдельный compositing слой для элемента. Это хорошо для анимации, но потребляет память. Слишком много слоев = снижение производительности.
+
+---
+
+## 6. Профилирование в DevTools
+
+### Performance панель
+1. Открой DevTools → Performance
+2. Нажми кнопку записи (круг)
+3. Выполни действие на странице (прокрутка, анимация, клик)
+4. Останови запись
+5. Анализируй:
+
+### Что смотреть в Performance
+- **FPS** (кадры в секунду) — должен быть близко к 60
+- **CPU** — загрузка процессора
+- **NET** — сетевые запросы
+- **Main** — главный поток (JS, Layout, Paint)
+- **Compositor** — compositing поток (трансформации, opacity)
+- **Experience** — метрики пользовательского опыта (LCP, CLS, FID)
+
+### Анализ анимации
+В Performance записи:
+- Желтые блоки — Layout
+- Фиолетовые блоки — Paint
+- Зеленые блоки — Composite
+- Если анимация создает много желтых/фиолетовых блоков — она неоптимальна
+
+### Бейдж GPU в Animations панели
+1. DevTools → Animations
+2. Выбери анимацию
+3. Ищи бейдж «GPU» — значит анимация идет на compositing потоке
+
+### Layers панель
+1. DevTools → More tools → Layers
+2. Показывает все compositing слои страницы
+3. Каждый слой — потребление памяти
+4. Много слоев = проблемы с памятью
+
+### Rendering панель
+1. DevTools → Rendering
+2. Включи «Paint flashing» — мерцание при перерисовке
+3. Включи «Layer borders» — границы compositing слоев
+4. Включи «Layout shift regions» — зоны сдвига макета (CLS)
+
+---
+
+## 7. Оптимизация анимаций
+
+### CSS vs JavaScript анимации
+| CSS Animation | JS Animation (Web Animations API) |
+|---------------|-----------------------------------|
+| Деclareтивно | Импертивно |
+| Лучше оптимизируется браузером | Более гибко |
+| Может использовать compositing поток | То же самое |
+| Меньше кода для простых случаев | Сложные сценарии, синхронизация |
+
+### requestAnimationFrame для JS анимаций
+```javascript
+// ПЛОХО — setInterval не синхронизирован с кадрами
+setInterval(() => {
+  element.style.transform = `translateX(${x}px)`;
+  x += 1;
+}, 16);
+
+// ХОРОШО — синхронизировано с refresh rate экрана
+function animate() {
+  element.style.transform = `translateX(${x}px)`;
+  x += 1;
+  if (x < 100) requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+```
+
+### Отложенная загрузка и рендеринг
+```css
+/* Контент ниже фolda не рендерится до прокрутки (браузер сам управляет) */
+/* Но можно подсказать через loading="lazy" для изображений */
+<img src="below-fold.jpg" loading="lazy">
+
+/* font-display: swap — шрифт не блокирует рендеринг */
+@font-face {
+  font-family: 'Custom';
+  font-display: swap;  /* Пока системный шрифт, потом заменим */
+}
+```
+
+---
+
+## 8. Комплексный пример: оптимизированный список с анимацией
+
+```html
+<div class="optimized-list">
+  <div class="list-item" data-id="1">
+    <img src="photo1.jpg" alt="" loading="lazy">
+    <div class="content">
+      <h3>Заголовок 1</h3>
+      <p>Описание...</p>
+    </div>
+  </div>
+  <!-- 50+ элементов -->
+</div>
+```
+
+```css
+.optimized-list {
+  contain: strict;  /* Изоляция всего списка */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.list-item {
+  contain: paint;  /* Изоляция отрисовки элемента */
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid oklch(0.88 0.006 285);
+  border-radius: 0.75rem;
+  background: white;
+
+  /* Дешевая анимация — только transform + opacity */
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.2s ease;
+
+  will-change: auto;
+}
+
+.list-item:hover {
+  will-change: transform, box-shadow;  /* Включаем перед ховером */
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.1);
+}
+
+.list-item:not(:hover) {
+  will-change: auto;  /* Сбрасываем после */
+}
+
+.list-item img {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  border-radius: 0.5rem;
+  display: block;
+}
+
+/* Изображения не вызывают layout shift */
+.list-item img {
+  width: 100%;
+  height: 200px;  /* Явные размеры для предотвращения CLS */
+}
+```
+
+```javascript
+// app.js — оптимизированные операции со списком
+const list = document.querySelector('.optimized-list');
+const items = document.querySelectorAll('.list-item');
+
+// Функция обновления без layout thrashing
+function updateItemsPositions() {
+  // Фаза 1: Чтение всех значений
+  const rects = [];
+  items.forEach(item => {
+    rects.push(item.getBoundingClientRect());
+  });
+
+  // Фаза 2: Запись всех изменений
+  items.forEach((item, i) => {
+    item.style.transform = `translateX(${rects[i].left}px)`;
+  });
+}
+
+// Вызывать в requestAnimationFrame
+let ticking = false;
+function requestUpdate() {
+  if (!ticking) {
+    requestAnimationFrame(() => {
+      updateItemsPositions();
+      ticking = false;
+    });
+    ticking = true;
+  }
+}
+
+// Использовать при изменении размера окна
+window.addEventListener('resize', requestUpdate);
+
+// Анимация при добавлении элемента
+function addItem(itemElement) {
+  itemElement.style.willChange = 'transform, opacity';
+  itemElement.style.opacity = '0';
+  itemElement.style.transform = 'translateY(20px)';
+
+  list.appendChild(itemElement);
+
+  requestAnimationFrame(() => {
+    itemElement.style.transition = 'opacity 0.3s, transform 0.3s';
+    itemElement.style.opacity = '1';
+    itemElement.style.transform = 'translateY(0)';
+  });
+
+  // Сбрасываем will-change после анимации
+  itemElement.getAnimations()[0]?.finished.then(() => {
+    itemElement.style.willChange = 'auto';
+  });
+}
+```
+
+---
+
+## 9. Чек-лист производительности
+
+| Критерий | Как проверить | Инструмент |
+|----------|---------------|------------|
+| Анимации только на transform/opacity | Поиск width/height/top/left в @keyframes | Код review |
+| will-change сбрасывается после анимации | Нет永久 will-change | Код review |
+| contain на списках и сложных компонентах | contain: strict/layout/paint | Код review |
+| Нет layout thrashing в JS | Чтение/запись разделены | Performance панель |
+| FPS стабильно ~60 | Performance запись анимации | DevTools Performance |
+| GPU-слой создан для анимаций | Бейдж GPU в Animations панели | DevTools Animations |
+| Нет forced reflow в циклах | Чтение offsetWidth в цикле | Код review |
+| Изображения с явными размерами | width/height на img | Код review / Lighthouse |
+| font-display: swap для шрифтов | @font-face | Код review |
+| CLS минимален (без сдвигов) | Lighthouse / Performance → Experience | DevTools Lighthouse |
+
+---
+
+## 10. Практическое задание
+
+### Задача 1: Анализ конвейера
+Создай страницу с элементом, который анимирует:
+1. `width` и `height` (дорого — Layout + Paint)
+2. `transform: scale()` (дешево — Composite)
+
+Запиши оба варианта в DevTools Performance и сравни FPS и количество Layout/Paint событий.
+
+### Задача 2: Layout Thrashing
+Напиши код, который вызывает layout thrashing (чтение offsetWidth в цикле с записью style.width). Затем исправь его — раздели чтение и запись. Измерь разницу в DevTools.
+
+### Задача 3: will-change контроль
+Создай кнопку с анимацией при клике:
+- will-change включается через JS перед анимацией
+- will-change сбрасывается через .finished.then()
+- Проверь в DevTools Layers панель, что compositing слой создается и удаляется
+
+### Задача 4: Contain для списка
+Создай список из 100 элементов:
+- contain: strict на контейнере
+- contain: paint на элементах
+- Анимация Appear при загрузке
+- Сравни производительность с и без contain
+
+### Задача 5: DevTools профилирование
+Проведи полный аудит страницы:
+1. Performance запись при скролле — нету ли лишних Layout/Paint
+2. Animations панель — есть ли бейдж GPU на анимациях
+3. Rendering → Paint flashing — минимальное перерисование
+4. Lighthouse — Performance оценка
+
+### Задача 6: Замена дорогой анимации на дешевую
+Возьми существующую анимацию с width/height/top/left и замени на transform: scale()/translate(). Проверь в DevTools, что теперь анимация идет на compositing потоке.
+
+---
+
+## 11. Полезные ресурсы
+
+- [MDN: How browsers work](https://developer.mozilla.org/en-US/docs/Web/Performance/How_browsers_work)
+- [MDN: CSS Containment](https://developer.mozilla.org/en-US/docs/Web/CSS/contain)
+- [MDN: will-change](https://developer.mozilla.org/en-US/docs/Web/CSS/will-change)
+- [High Performance Animations](https://www.html5rocks.com/en/tutorials/speed/high-performance-animations/)
+- [Web Vitals — CLS](https://web.dev/vitals/cls)
+- [Web Vitals — INP](https://web.dev/vitals/inp)
+- [Google Chrome DevTools — Performance](https://developer.chrome.com/docs/devtools/evaluate-performance/)
+- [FLIP Your Animations](https://aerotwist.com/blog/flip-your-animations/)
+- [CSS Triggers](https://csstriggers.com/) — какие свойства вызывают какой этап конвейера
+
+---
+
+## 12. Ключевые выводы
+
+1. **Конвейер рендеринга** — Style → Layout → Paint → Composite → Display. Чем дальше этап, тем дешевле операция.
+2. **Дешевые свойства** — transform, opacity, filter (только Composite, GPU, 60fps).
+3. **Дорогие свойства** — width, height, margin, top, left (Layout + Paint, главный поток).
+4. **Layout Thrashing** — чтение и запись layout-свойств в цикле. Решение: сначала читать всё, потом писать всё.
+5. **contain: strict** — изоляция списков и компонентов от пересчета всей страницы.
+6. **will-change** — включать перед анимацией, сбрасывать после. Никогда `will-change: all`.
+7. **DevTools Performance** — основной инструмент для профилирования. Ищи FPS, Layout/Paint/Composite события, бейдж GPU.
+8. **Явные размеры изображений** — предотвращают Layout Shift (CLS).
+
+*Следующий урок: 29_Design_Systems.txt — Дизайн-системы: токены, темы, custom properties, конвенции компонентов, мультибрендовые системы*

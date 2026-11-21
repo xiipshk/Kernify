@@ -1,0 +1,523 @@
+# Урок 17: Умные указатели (Smart Pointers)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Использовать `Box<T>` для владения данными в куче
+- Работать с `Rc<T>` / `Arc<T>` для разделяемого владения
+- Использовать `RefCell<T>` / `Mutex<T>` / `RwLock<T>` для внутренней изменяемости
+- Понимать `Weak<T>` для предотвращения циклов ссылок
+- Работать с `Cow<T>` для Copy-on-Write
+- Использовать `Pin<P>` для самозареференцирующихся структур
+- Создавать свои умные указатели через `Deref` / `DerefMut` / `Drop`
+
+---
+
+## 1. `Box<T>` — простое владение в куче
+
+### Базовое использование
+```rust
+fn main() {
+    let b = Box::new(5);
+    println!("{}", *b); // Разыменование через Deref
+}
+```
+
+### Рекурсивные типы (связные списки, деревья)
+```rust
+enum List {
+    Cons(i32, Box<List>),
+    Nil,
+}
+
+use List::{Cons, Nil};
+
+fn main() {
+    let list = Cons(1, Box::new(Cons(2, Box::new(Cons(3, Box::new(Nil))))));
+}
+```
+
+### Trait objects
+```rust
+trait Draw {
+    fn draw(&self);
+}
+
+struct Circle { r: f64 }
+impl Draw for Circle { fn draw(&self) { println!("Circle {}", self.r); } }
+
+struct Square { s: f64 }
+impl Draw for Square { fn draw(&self) { println!("Square {}", self.s); } }
+
+fn main() {
+    let shapes: Vec<Box<dyn Draw>> = vec![
+        Box::new(Circle { r: 5.0 }),
+        Box::new(Square { s: 3.0 }),
+    ];
+    for s in shapes { s.draw(); }
+}
+```
+
+---
+
+## 2. `Rc<T>` / `Arc<T>` — разделяемое владение (Reference Counting)
+
+### `Rc<T>` — single-threaded
+```rust
+use std::rc::Rc;
+
+fn main() {
+    let a = Rc::new(String::from("hello"));
+    let b = Rc::clone(&a); // Увеличивает strong count
+    let c = a.clone();     // Тоже самое
+
+    println!("count = {}", Rc::strong_count(&a)); // 3
+    drop(b);
+    println!("count = {}", Rc::strong_count(&a)); // 2
+}
+```
+
+### `Arc<T>` — atomic (thread-safe)
+```rust
+use std::sync::Arc;
+use std::thread;
+
+fn main() {
+    let data = Arc::new(vec![1, 2, 3]);
+    let mut handles = vec![];
+
+    for i in 0..3 {
+        let data = Arc::clone(&data);
+        handles.push(thread::spawn(move || {
+            println!("Thread {}: {:?}", i, data);
+        }));
+    }
+    for h in handles { h.join().unwrap(); }
+}
+```
+
+### Сравнение
+| Тип | Потокобезопасность | Overhead | Использование |
+|-----|-------------------|----------|---------------|
+| `Box<T>` | Нет (exclusive) | 1 указатель | Рекурсивные типы, trait objects |
+| `Rc<T>` | Нет (!Send, !Sync) | 2 счётчика (strong/weak) | Графы, кэши в одном потоке |
+| `Arc<T>` | Да (Send + Sync) | Атомарные счётчики | Shared state между потоками |
+
+---
+
+## 3. Внутренняя изменяемость (Interior Mutability)
+
+### Проблема: `&T` обычно неизменяем
+```rust
+fn main() {
+    let x = 5;
+    // let y = &x; *y = 10; // ОШИБКА
+}
+```
+
+### `RefCell<T>` — runtime borrow checking (single-threaded)
+```rust
+use std::cell::RefCell;
+
+fn main() {
+    let data = RefCell::new(vec![1, 2, 3]);
+
+    // Неизменяемое заимствование
+    let borrowed: std::cell::Ref<Vec<i32>> = data.borrow();
+    println!("{:?}", *borrowed);
+
+    // Изменяемое заимствование
+    {
+        let mut borrowed_mut = data.borrow_mut();
+        borrowed_mut.push(4);
+    } // borrow_mut дропается здесь
+
+    println!("{:?}", data.borrow());
+}
+```
+
+### Правила `RefCell` (паника при нарушении)
+```rust
+// Паника: already borrowed: BorrowMutError
+let mut_ref = data.borrow_mut();
+let _ = data.borrow(); // PANIC!
+
+// Паника: already mutably borrowed: BorrowMutError
+let mut_ref1 = data.borrow_mut();
+let mut_ref2 = data.borrow_mut(); // PANIC!
+```
+
+### `Mutex<T>` — thread-safe interior mutability
+```rust
+use std::sync::Mutex;
+use std::thread;
+
+fn main() {
+    let data = Mutex::new(vec![1, 2, 3]);
+    let mut handles = vec![];
+
+    for i in 0..3 {
+        let data = Arc::new(data.clone()); // Arc<Mutex<T>>
+        handles.push(thread::spawn(move || {
+            let mut lock = data.lock().unwrap(); // Блокирует поток
+            lock.push(i);
+        }));
+    }
+    for h in handles { h.join().unwrap(); }
+
+    println!("{:?}", data.lock().unwrap());
+}
+```
+
+### `RwLock<T>` — много читателей, один писатель
+```rust
+use std::sync::RwLock;
+
+fn main() {
+    let data = RwLock::new(vec![1, 2, 3]);
+
+    // Множественные читатели
+    let r1 = data.read().unwrap();
+    let r2 = data.read().unwrap();
+    println!("{:?}, {:?}", *r1, *r2);
+    drop((r1, r2));
+
+    // Один писатель
+    let mut w = data.write().unwrap();
+    w.push(4);
+}
+```
+
+### Сравнение
+| Тип | Потоки | Правила | Блокировка |
+|-----|--------|---------|------------|
+| `RefCell<T>` | 1 | Runtime panic | Нет (проверка в коде) |
+| `Mutex<T>` | Мн. | Блокировка потока | OS mutex |
+| `RwLock<T>` | Мн. | Read/Write lock | OS rwlock |
+
+---
+
+## 4. `Weak<T>` — слабые ссылки (предотвращение циклов)
+
+### Проблема: цикл Rc -> утечка памяти
+```rust
+use std::rc::Rc;
+use std::cell::RefCell;
+
+struct Node {
+    value: i32,
+    parent: RefCell<Option<Rc<Node>>>,
+    children: RefCell<Vec<Rc<Node>>>,
+}
+
+fn main() {
+    let leaf = Rc::new(Node { value: 3, parent: RefCell::new(None), children: RefCell::new(vec![]) });
+    let branch = Rc::new(Node { value: 5, parent: RefCell::new(None), children: RefCell::new(vec![]) });
+
+    branch.children.borrow_mut().push(Rc::clone(&leaf));
+    *leaf.parent.borrow_mut() = Some(Rc::clone(&branch));
+
+    // Цикл! leaf -> branch -> leaf
+    // Память НЕ освободится при выходе из scope
+}
+```
+
+### Решение: `Weak<T>` для родительских ссылок
+```rust
+use std::rc::{Rc, Weak};
+use std::cell::RefCell;
+
+struct Node {
+    value: i32,
+    parent: RefCell<Weak<Node>>,  // Weak вместо Rc
+    children: RefCell<Vec<Rc<Node>>>,
+}
+
+fn main() {
+    let leaf = Rc::new(Node { value: 3, parent: RefCell::new(Weak::new()), children: RefCell::new(vec![]) });
+    let branch = Rc::new(Node { value: 5, parent: RefCell::new(Weak::new()), children: RefCell::new(vec![]) });
+
+    branch.children.borrow_mut().push(Rc::clone(&leaf));
+    *leaf.parent.borrow_mut() = Rc::downgrade(&branch); // Weak ссылка
+
+    // Нет цикла strong count!
+    println!("leaf strong: {}, weak: {}", Rc::strong_count(&leaf), Rc::weak_count(&leaf));
+    // leaf strong: 1, weak: 1
+
+    // Доступ через upgrade
+    if let Some(parent) = leaf.parent.borrow().upgrade() {
+        println!("Parent value: {}", parent.value);
+    }
+}
+```
+
+---
+
+## 5. `Cow<T>` — Copy on Write (Копирование при записи)
+
+### Концепция
+```rust
+use std::borrow::Cow;
+
+fn process(input: &str) -> Cow<str> {
+    if input.contains("bad") {
+        Cow::Owned(input.replace("bad", "good")) // Копия + изменение
+    } else {
+        Cow::Borrowed(input) // Заимствование без копирования
+    }
+}
+
+fn main() {
+    let good = process("hello world");      // Borrowed
+    let bad = process("hello bad world");   // Owned
+    println!("{}", good);
+    println!("{}", bad);
+}
+```
+
+### `Cow<[T]>` для векторов
+```rust
+fn process_vec(input: &[i32]) -> Cow<[i32]> {
+    if input.iter().any(|&x| x < 0) {
+        Cow::Owned(input.iter().map(|x| x.abs()).collect())
+    } else {
+        Cow::Borrowed(input)
+    }
+}
+```
+
+---
+
+## 6. `Pin<P>` — закрепление в памяти
+
+### Для самозареференцирующихся структур
+```rust
+use std::pin::Pin;
+use std::marker::PhantomPinned;
+
+struct SelfRef {
+    data: String,
+    ptr: *const String,
+    _pin: PhantomPinned, // !Unpin
+}
+
+impl SelfRef {
+    fn new() -> Pin<Box<Self>> {
+        let mut boxed = Box::pin(SelfRef {
+            data: String::from("hello"),
+            ptr: std::ptr::null(),
+            _pin: PhantomPinned,
+        });
+        let ptr = &boxed.data as *const String;
+        unsafe { boxed.as_mut().get_unchecked_mut().ptr = ptr; }
+        boxed
+    }
+
+    fn print(self: Pin<&Self>) {
+        println!("data: {}, ptr valid: {}", self.data, unsafe { &*self.ptr == &self.data });
+    }
+}
+```
+
+---
+
+## 7. Создание своих умных указателей
+
+### `Deref` / `DerefMut` / `Drop`
+```rust
+use std::ops::{Deref, DerefMut};
+
+struct MyBox<T>(T);
+
+impl<T> MyBox<T> {
+    fn new(x: T) -> Self { MyBox(x) }
+}
+
+impl<T> Deref for MyBox<T> {
+    type Target = T;
+    fn deref(&self) -> &T { &self.0 }
+}
+
+impl<T> DerefMut for MyBox<T> {
+    fn deref_mut(&mut self) -> &mut T { &mut self.0 }
+}
+
+impl<T> Drop for MyBox<T> {
+    fn drop(&mut self) { println!("Dropping MyBox"); }
+}
+
+fn main() {
+    let mut b = MyBox::new(5);
+    *b += 1; // DerefMut
+    println!("{}", *b); // Deref
+}
+```
+
+### `Receiver` типы для методов
+```rust
+impl MyBox<T> {
+    fn by_ref(&self) { }           // &self
+    fn by_mut(&mut self) { }       // &mut self
+    fn by_val(self) { }            // self
+    fn by_box(self: Box<Self>) { } // Box<Self>
+    fn by_rc(self: Rc<Self>) { }   // Rc<Self>
+}
+```
+
+---
+
+## 8. Практические упражнения
+
+### Упражнение 1: Граф с Rc/Weak
+```rust
+use std::rc::{Rc, Weak};
+use std::cell::RefCell;
+
+#[derive(Debug)]
+struct GraphNode {
+    id: u32,
+    neighbors: RefCell<Vec<Weak<GraphNode>>>,
+}
+
+impl GraphNode {
+    fn new(id: u32) -> Rc<Self> {
+        Rc::new(GraphNode { id, neighbors: RefCell::new(vec![]) })
+    }
+
+    fn add_edge(a: &Rc<GraphNode>, b: &Rc<GraphNode>) {
+        a.neighbors.borrow_mut().push(Rc::downgrade(b));
+        b.neighbors.borrow_mut().push(Rc::downgrade(a));
+    }
+
+    fn print_neighbors(node: &Rc<GraphNode>) {
+        println!("Node {} neighbors:", node.id);
+        for weak in node.neighbors.borrow().iter() {
+            if let Some(n) = weak.upgrade() {
+                println!("  -> {}", n.id);
+            }
+        }
+    }
+}
+
+fn main() {
+    let a = GraphNode::new(1);
+    let b = GraphNode::new(2);
+    let c = GraphNode::new(3);
+
+    GraphNode::add_edge(&a, &b);
+    GraphNode::add_edge(&b, &c);
+    GraphNode::add_edge(&c, &a);
+
+    GraphNode::print_neighbors(&a);
+}
+```
+
+### Упражнение 2: Кэш с Arc<RwLock>
+```rust
+use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+struct Cache<K, V> {
+    data: RwLock<HashMap<K, (V, Instant)>>,
+    ttl: Duration,
+}
+
+impl<K: Eq + std::hash::Hash + Clone, V: Clone> Cache<K, V> {
+    fn new(ttl: Duration) -> Self {
+        Cache { data: RwLock::new(HashMap::new()), ttl }
+    }
+
+    fn get(&self, key: &K) -> Option<V> {
+        let mut guard = self.data.write().unwrap();
+        if let Some((val, time)) = guard.get(key) {
+            if time.elapsed() < self.ttl {
+                return Some(val.clone());
+            }
+            guard.remove(key);
+        }
+        None
+    }
+
+    fn set(&self, key: K, value: V) {
+        self.data.write().unwrap().insert(key, (value, Instant::now()));
+    }
+}
+```
+
+### Упражнение 3: Copy-on-Write конфиг
+```rust
+use std::borrow::Cow;
+use std::collections::HashMap;
+
+struct Config {
+    data: HashMap<String, String>,
+}
+
+impl Config {
+    fn get(&self, key: &str) -> Cow<str> {
+        match self.data.get(key) {
+            Some(v) => Cow::Borrowed(v.as_str()),
+            None => Cow::Owned(String::new()),
+        }
+    }
+
+    fn set(&mut self, key: String, value: String) {
+        self.data.insert(key, value);
+    }
+}
+```
+
+---
+
+## 9. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `cannot move out of borrowed content` | Пытаетесь вынуть из `Rc`/`RefCell` | Используйте `Rc::try_unwrap` или клонируйте |
+| `already borrowed` | Два `borrow_mut` или `borrow` + `borrow_mut` | Сузьте область `borrow` через блоки `{}` |
+| `deadlock` | Mutex в одном потоке дважды | Не вызывайте `lock()` дважды, используйте `RwLock` |
+| `memory leak` | Цикл `Rc` | Используйте `Weak` для обратных ссылок |
+| `cannot send between threads` | `Rc`/`RefCell` не `Send` | Используйте `Arc`/`Mutex`/`RwLock` |
+
+---
+
+## 10. Шпаргалка: Smart Pointers
+
+| Указатель | Владение | Изменяемость | Потоки | Overhead |
+|-----------|----------|--------------|--------|----------|
+| `Box<T>` | Exclusive | `&mut` | Send | 1 ptr |
+| `Rc<T>` | Shared | `RefCell` | !Send | 2 counters |
+| `Arc<T>` | Shared | `Mutex`/`RwLock` | Send+Sync | Atomic counters |
+| `RefCell<T>` | Exclusive | Runtime check | !Send | 1 counter |
+| `Mutex<T>` | Exclusive | Lock | Send+Sync | OS mutex |
+| `RwLock<T>` | Exclusive | Read/Write lock | Send+Sync | OS rwlock |
+| `Cow<T>` | Borrowed/Owned | Copy-on-write | Зависит от T | Enum tag |
+| `Pin<P>` | Exclusive | `&mut` (pinned) | Зависит от P | 1 ptr |
+
+---
+
+## 11. Полезные ресурсы
+
+- **The Book — Smart Pointers**: https://doc.rust-lang.org/book/ch15-00-smart-pointers.html
+- **std::rc**: https://doc.rust-lang.org/std/rc/
+- **std::sync**: https://doc.rust-lang.org/std/sync/
+- **std::cell**: https://doc.rust-lang.org/std/cell/
+- **Pin**: https://doc.rust-lang.org/std/pin/
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- `Box<T>` — простое владение в куче, рекурсивные типы, trait objects
+- `Rc<T>` / `Arc<T>` — разделяемое владение с reference counting
+- `RefCell<T>` — interior mutability для single-threaded (runtime checks)
+- `Mutex<T>` / `RwLock<T>` — interior mutability для multi-threaded (blocking)
+- `Weak<T>` — слабые ссылки для предотвращения циклов Rc/Arc
+- `Cow<T>` — Copy-on-Write оптимизация
+- `Pin<P>` — закрепление для самозареференцирующихся структур
+- Реализация своих умных указателей через `Deref`/`DerefMut`/`Drop`
+
+---
+
+**Следующий урок:** Тестирование (`18_Testing.txt`)

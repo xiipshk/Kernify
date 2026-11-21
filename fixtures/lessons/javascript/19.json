@@ -1,0 +1,567 @@
+{
+  "title": "Урок 19: Code Quality",
+  "slug": "urok-19-прототипы-и-наследование",
+  "short_description": "prototype chain, Object.create, __proto__, Object.setPrototypeOf",
+  "goals": [
+    "Понимать основы: prototype chain, Object.create, __proto__, Object.setPrototypeOf",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 19: Code Quality — Линтеры, Форматтеры, Тесты, CI/CD, Документация"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "🎯 Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Настроить ESLint + Prettier для единого стиля кода",
+        "Понять виды тестов: unit, integration, e2e",
+        "Написать тесты на Vitest + Testing Library",
+        "Настроить Git Hooks (Husky + lint-staged)",
+        "Понять основы CI/CD (GitHub Actions)",
+        "Научиться документировать код (JSDoc, TypeDoc)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. ESLint — статический анализ кода"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка и базовая настройка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm init -y\nnpm install -D eslint @eslint/js globals\nnpx eslint --init"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Современный flat config (eslint.config.js, ESLint 9+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// eslint.config.js\nimport js from '@eslint/js';\nimport globals from 'globals';\n\nexport default [\n  // Игнорируемые файлы\n  { ignores: ['dist/', 'node_modules/', '*.config.js'] },\n\n  // Базовые рекомендации\n  js.configs.recommended,\n\n  // Настройки для браузера + Node.js + ES2022\n  {\n    languageOptions: {\n      ecmaVersion: 2022,\n      sourceType: 'module',\n      globals: {\n        ...globals.browser,\n        ...globals.node,\n        ...globals.es2022\n      }\n    },\n    rules: {\n      // Строгость\n      'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],\n      'no-undef': 'error',\n      'no-console': ['warn', { allow: ['warn', 'error'] }],\n\n      // Best practices\n      'prefer-const': 'error',\n      'no-var': 'error',\n      'prefer-arrow-callback': 'error',\n      'prefer-template': 'error',\n      'object-shorthand': 'error',\n      'array-callback-return': 'error',\n\n      // Сложность\n      'max-depth': ['warn', 4],\n      'max-lines-per-function': ['warn', 50],\n      'complexity': ['warn', 10],\n\n      // Стиль\n      'quotes': ['error', 'single', { avoidEscape: true }],\n      'semi': ['error', 'always'],\n      'comma-dangle': ['error', 'always-multiline']\n    }\n  },\n\n  // Тестовые файлы — другие globals\n  {\n    files: ['**/*.test.js', '**/*.spec.js'],\n    languageOptions: {\n      globals: { ...globals.browser, ...globals.node, ...globals.jest }\n    }\n  }\n];"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Запуск"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Проверка"
+    },
+    {
+      "type": "text",
+      "content": "npx eslint src/"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Автоисправление"
+    },
+    {
+      "type": "text",
+      "content": "npx eslint src/ --fix"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "В package.json scripts"
+    },
+    {
+      "type": "text",
+      "content": "\"scripts\": {\n  \"lint\": \"eslint src/\",\n  \"lint:fix\": \"eslint src/ --fix\"\n}\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Prettier — форматирование"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D prettier eslint-config-prettier eslint-plugin-prettier"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфиг (.prettierrc)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"semi\": true,\n  \"singleQuote\": true,\n  \"trailingComma\": \"es5\",\n  \"printWidth\": 100,\n  \"tabWidth\": 2,\n  \"useTabs\": false,\n  \"bracketSpacing\": true,\n  \"arrowParens\": \"avoid\",\n  \"endOfLine\": \"lf\"\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Игнор (.prettierignore)"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "dist/\nnode_modules/\n*.md\n*.yml\n*.yaml\npackage-lock.json"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Интеграция с ESLint (flat config)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// eslint.config.js (добавить в массив)\nimport pluginPrettier from 'eslint-plugin-prettier';\nimport configPrettier from 'eslint-config-prettier';\n\nexport default [\n  // ... предыдущие конфиги\n  {\n    plugins: { prettier: pluginPrettier },\n    rules: {\n      'prettier/prettier': 'error'\n    }\n  },\n  configPrettier // отключает конфликтующие правила\n];"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. TypeScript + ESLint (если используете TS)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D typescript @typescript-eslint/eslint-plugin @typescript-eslint/parser"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// eslint.config.js\nimport tseslint from 'typescript-eslint';\n\nexport default tseslint.config(\n  { ignores: ['dist/'] },\n  ...tseslint.configs.recommended,\n  {\n    rules: {\n      '@typescript-eslint/no-explicit-any': 'warn',\n      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }]\n    }\n  }\n);"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Тестирование"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Виды тестов"
+    },
+    {
+      "type": "table",
+      "content": "| Тип | Область | Скорость | Инструменты |\n|-----|---------|----------|-------------|\n| **Unit** | Функция/модуль | Очень быстро | Vitest, Jest |\n| **Integration** | Несколько модулей | Быстро | Vitest, Testing Library |\n| **E2E** | Весь пользовательский флоу | Медленно | Playwright, Cypress |"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Vitest — современный тест-раннер"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D vitest @testing-library/dom jsdom @vitest/coverage-v8"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// vitest.config.js\nimport { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    environment: 'jsdom',\n    globals: true,\n    include: ['src/**/*.test.{js,ts}'],\n    coverage: {\n      provider: 'v8',\n      reporter: ['text', 'json', 'html'],\n      thresholds: {\n        lines: 80,\n        functions: 80,\n        branches: 70,\n        statements: 80\n      }\n    }\n  }\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Примеры тестов"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// utils/math.test.js\nimport { describe, it, expect, vi, beforeEach } from 'vitest';\nimport { sum, multiply, asyncDivide } from './math.js';\n\ndescribe('math utilities', () => {\n  describe('sum', () => {\n    it('adds two numbers', () => {\n      expect(sum(2, 3)).toBe(5);\n    });\n\n    it('handles negative numbers', () => {\n      expect(sum(-1, 1)).toBe(0);\n    });\n\n    it('returns 0 for empty args', () => {\n      expect(sum()).toBe(0);\n    });\n  });\n\n  describe('asyncDivide', () => {\n    it('resolves with result', async () => {\n      const result = await asyncDivide(10, 2);\n      expect(result).toBe(5);\n    });\n\n    it('rejects on division by zero', async () => {\n      await expect(asyncDivide(10, 0)).rejects.toThrow('Division by zero');\n    });\n  });\n});\n\n// Mocking\nvi.mock('./api.js', () => ({\n  fetchUser: vi.fn()\n}));\n\nimport { fetchUser } from './api.js';\n\nit('calls api with correct id', async () => {\n  fetchUser.mockResolvedValue({ id: 1, name: 'Alex' });\n  const user = await fetchUser(1);\n  expect(fetchUser).toHaveBeenCalledWith(1);\n  expect(user.name).toBe('Alex');\n});"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Testing Library (DOM компоненты)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D @testing-library/dom @testing-library/user-event"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "// components/Counter.test.js\nimport { render, screen, fireEvent } from '@testing-library/dom';\nimport { Counter } from './Counter.js';\n\nit('increments on click', () => {\n  render(<Counter initial={0} />);\n\n  expect(screen.getByText('Count: 0')).toBeInTheDocument();\n\n  fireEvent.click(screen.getByRole('button', { name: /increment/i }));\n\n  expect(screen.getByText('Count: 1')).toBeInTheDocument();\n});"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Git Hooks — Husky + lint-staged"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D husky lint-staged\nnpx husky install\nnpx husky add .husky/pre-commit \"npx lint-staged\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "package.json"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"lint-staged\": {\n    \"*.{js,ts,jsx,tsx}\": [\n      \"eslint --fix\",\n      \"prettier --write\"\n    ],\n    \"*.{json,md,css,html}\": [\n      \"prettier --write\"\n    ]\n  },\n  \"scripts\": {\n    \"prepare\": \"husky install\"\n  }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "pre-commit хуки"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ".husky/\n└── pre-commit     → npx lint-staged"
+    },
+    {
+      "type": "text",
+      "content": "Теперь при `git commit`:\n1. Запускается `lint-staged`\n2. Проверяет/исправляет только **staged** файлы\n3. Если есть ошибки — коммит отменяется\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. CI/CD — GitHub Actions"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый workflow (.github/workflows/ci.yml)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "name: CI\n\non:\n  push:\n    branches: [main, develop]\n  pull_request:\n    branches: [main]\n\njobs:\n  lint-and-test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Setup Node.js\n        uses: actions/setup-node@v4\n        with:\n          node-version: '20'\n          cache: 'npm'\n\n      - name: Install dependencies\n        run: npm ci\n\n      - name: Run linter\n        run: npm run lint\n\n      - name: Run tests\n        run: npm run test -- --run\n\n      - name: Build\n        run: npm run build\n\n  # Отдельный джоб для e2e (медленнее)\n  e2e:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '20'\n          cache: 'npm'\n      - run: npm ci\n      - run: npm run build\n      - name: Run Playwright\n        uses: microsoft/playwright-github-action@v1\n      - run: npm run test:e2e"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Статус-бейджи в README"
+    },
+    {
+      "type": "code",
+      "language": "markdown",
+      "content": "![CI](https://github.com/user/repo/workflows/CI/badge.svg)\n![Coverage](https://img.shields.io/codecov/c/github/user/repo)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Документация — JSDoc + TypeDoc"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "JSDoc примеры"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "javascript",
+      "content": "/**\n * Суммирует числа.\n * @param {...number} numbers - Числа для суммирования\n * @returns {number} Сумма\n * @throws {TypeError} Если аргумент не число\n * @example\n * sum(1, 2, 3) // 6\n */\nfunction sum(...numbers) {\n  return numbers.reduce((a, b) => a + b, 0);\n}\n\n/**\n * Пользователь системы.\n * @typedef {Object} User\n * @property {string} id - UUID\n * @property {string} name - Имя\n * @property {string} [email] - Email (опционально)\n * @property {'admin'|'user'} role - Роль\n */\n\n/**\n * Создаёт пользователя.\n * @param {Omit<User, 'id'>} data - Данные без ID\n * @returns {User} Новый пользователь\n */\nfunction createUser(data) {\n  return { id: crypto.randomUUID(), ...data };\n}\n\n/**\n * Асинхронно загружает пользователя.\n * @param {string} id\n * @returns {Promise<User|null>} Пользователь или null\n * @async\n */\nasync function loadUser(id) {\n  const res = await fetch(`/api/users/${id}`);\n  return res.ok ? res.json() : null;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генерация документации (TypeDoc)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "npm install -D typedoc\nnpx typedoc --out docs src/"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "// typedoc.json\n{\n  \"entryPoints\": [\"src/index.ts\"],\n  \"out\": \"docs\",\n  \"theme\": \"default\",\n  \"name\": \"My Library\",\n  \"readme\": \"README.md\",\n  \"excludePrivate\": true,\n  \"excludeProtected\": true\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Полный чек-лист качества кода"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pre-commit (локально)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] `npm run lint` — проходит без ошибок",
+        "[ ] `npm run test` — все тесты зелёные",
+        "[ ] `npm run build` — сборка успешна"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "PR проверки (CI)"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] Линт проходит",
+        "[ ] Тесты проходят (coverage > 80%)",
+        "[ ] Типы валидны (`tsc --noEmit`)",
+        "[ ] Сборка успешна",
+        "[ ] E2E тесты проходят (опционально)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Архитектурные правила"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ ] Нет циклических зависимостей (madge, depcruise)",
+        "[ ] Размер бандла в норме (webpack-bundle-analyzer)",
+        "[ ] Нет `any` без необходимости",
+        "[ ] Публичный API задокументирован"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инструменты для анализа"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Анализ зависимостей"
+    },
+    {
+      "type": "text",
+      "content": "npx madge --circular --extensions js,ts src/\nnpx depcruise src/ --output-type dot | dot -T png > graph.png"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Размер бандла"
+    },
+    {
+      "type": "text",
+      "content": "npm install -D webpack-bundle-analyzer"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "В webpack config: new BundleAnalyzerPlugin()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Неиспользуемый код"
+    },
+    {
+      "type": "text",
+      "content": "npx knip  # или unimported\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Конфигурация редактора (VS Code)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ".vscode/settings.json"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"editor.formatOnSave\": true,\n  \"editor.defaultFormatter\": \"esbenp.prettier-vscode\",\n  \"editor.codeActionsOnSave\": {\n    \"source.fixAll.eslint\": \"explicit\"\n  },\n  \"eslint.validate\": [\"javascript\", \"typescript\", \"javascriptreact\", \"typescriptreact\"],\n  \"typescript.tsdk\": \"node_modules/typescript/lib\"\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": ".vscode/extensions.json (рекомендуемые расширения)"
+    },
+    {
+      "type": "code",
+      "language": "json",
+      "content": "{\n  \"recommendations\": [\n    \"esbenp.prettier-vscode\",\n    \"dbaeumer.vscode-eslint\",\n    \"vitest.explorer\",\n    \"bradlc.vscode-tailwindcss\"\n  ]\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Практика"
+    },
+    {
+      "type": "text",
+      "content": "1. **Настройте проект с нуля**: `npm init` → ESLint + Prettier + Vitest + Husky\n2. **Добавьте coverage threshold**: 80% lines, 70% branches\n3. **Напишите unit-тесты** для утилит из уроков 5-9\n4. **Настройте GitHub Actions** для репозитория\n5. **Документируйте** 5 функций JSDoc, сгенерируйте TypeDoc\n6. **Добавьте dependabot** для обновлений зависимостей (`.github/dependabot.yml`)\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Решение |\n|--------|---------|\n| ESLint и Prettier конфликтуют | `eslint-config-prettier` отключает конфликтующие правила |\n| Тесты падают в CI, но проходят локально | Разное окружение — проверьте Node версия, `npm ci` |\n| Husky не работает | `npm run prepare` после клонирования, проверьте `.husky/pre-commit` исполняемый |\n| Coverage низкий, но код работает | Покройте edge cases, не стремитесь к 100% фанатично |\n| Линтер ругается на сгенерированный код | Добавьте в `ignores` или `/* eslint-disable */` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Контрольные вопросы"
+    },
+    {
+      "type": "text",
+      "content": "1. В чём разница между `eslint:recommended` и `eslint:all`?\n2. Зачем нужен `eslint-config-prettier`?\n3. Что делает `lint-staged` и почему лучше, чем линтить весь проект?\n4. В чём разница между unit, integration, e2e тестами?\n5. Что такое `vi.mock` и когда он нужен?\n6. Зачем нужен `jsdom` environment в Vitest?\n7. Как настроить coverage thresholds?\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Дополнительное чтение"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[ESLint Flat Config](https://eslint.org/docs/latest/use/configure/configuration-files-new)",
+        "[Prettier Options](https://prettier.io/docs/en/options.html)",
+        "[Vitest Guide](https://vitest.dev/guide/)",
+        "[Testing Library](https://testing-library.com/docs/)",
+        "[Husky](https://typicode.github.io/husky/)",
+        "[GitHub Actions](https://docs.github.com/en/actions)",
+        "[JSDoc](https://jsdoc.app/)",
+        "[TypeDoc](https://typedoc.org/)",
+        "[Conventional Commits](https://www.conventionalcommits.org/) — для авто-генерации changelog"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Прототипы и наследование",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Прототипы и наследование' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация JavaScript",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-javascript на GitHub",
+    "Конференции и митапы по JavaScript"
+  ],
+  "key_takeaways": [
+    "Главная идея: prototype chain, Object.create, __proto__, Object.setPrototypeOf — это фундамент для Event Loop, Замыкания, Прототипы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "javascript",
+  "lesson_order": 19,
+  "name_en": "Lesson: Прототипы и наследование",
+  "short_description_en": "Learn Прототипы и наследование in JavaScript with detailed explanations and examples"
+}

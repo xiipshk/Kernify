@@ -1,0 +1,425 @@
+{
+  "title": "Урок 18: Сборка CMake",
+  "slug": "urok-18-simd-и-векторные-инструкции",
+  "short_description": "std::simd (C++26), intrinsics (AVX2/SSE/NEON), auto-vectorization",
+  "goals": [
+    "Понимать основы: std::simd (C++26), intrinsics (AVX2/SSE/NEON), auto-vectorization",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 18: Сборка — заголовки, единицы трансляции, ODR, CMake, библиотеки"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять модели компиляции: препроцессор, единицы трансляции, линковка",
+        "Освоить ODR (One Definition Rule) и избегать нарушений",
+        "Написать современный CMake (target-based, C++20)",
+        "Организовать проект: библиотеки, исполняемые файлы, установка",
+        "Работать с зависимостями: find_package, FetchContent, пакетные менеджеры"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Теория"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Модель компиляции C++"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "main.cpp          utils.cpp         math.cpp\n   |                 |                 |\n   v                 v                 v\n[Препроцессор]   [Препроцессор]    [Препроцессор]\n   |                 |                 |\n   v                 v                 v\nmain.i            utils.i           math.i\n   |                 |                 |\n   v                 v                 v\n[Компилятор]      [Компилятор]      [Компилятор]\n   |                 |                 |\n   v                 v                 v\nmain.o            utils.o           math.o    ← Объектные файлы (ELF/COFF)\n   |                 |                 |\n   +--------+--------+--------+--------+\n            |\n            v\n       [Линковщик]\n            |\n            v\n        app.exe       ← Исполняемый файл"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Заголовочные файлы и единицы трансляции"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: templates**\n\n**Что делает:** Параметризованные типы и функции (шаблоны)\n\n**Зачем нужно:** Пишем код один раз для любых типов, compile-time полиморфизм, ноль оверхеда\n\n**Как работает:** template<typename T> T max(T a, T b) { return a > b ? a : b; }"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// math.h — интерфейс (декларации)\n#pragma once  // или include guards\n#ifndef MATH_H\n#define MATH_H\n\nnamespace math {\n    int add(int a, int b);           // декларация\n    double sqrt(double x);           // декларация\n\n    // inline функция — определение в заголовке (ODR-safe)\n    inline int square(int x) { return x * x; }\n\n    // template — определение в заголовке\n    template<typename T>\n    T max(T a, T b) { return a > b ? a : b; }\n}\n\n#endif\n\n// math.cpp — реализация\n#include \"math.h\"\n#include <cmath>\n\nnamespace math {\n    int add(int a, int b) { return a + b; }\n    double sqrt(double x) { return std::sqrt(x); }\n}\n\n// main.cpp — использование\n#include \"math.h\"\n#include <iostream>\n\nint main() {\n    std::cout << math::add(2, 3) << '\\n';      // 5\n    std::cout << math::square(4) << '\\n';      // 16 (inline)\n    std::cout << math::max(3.14, 2.71) << '\\n'; // 3.14 (template)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ODR (One Definition Rule)"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ПРАВИЛА ODR:\n// 1. В каждой единице трансляции: не более одного определения\n// 2. Во всей программе: ровно одно определение для non-inline сущностей\n// 3. inline функции/переменные, templates, классы — могут быть в нескольких TU,\n//    но определения должны быть ИДЕНТИЧНЫ (token-for-token)\n\n// НАРУШЕНИЯ:\n// --- a.cpp ---\nint global = 42;  // определение\n\n// --- b.cpp ---\nint global = 100; // ОШИБКА ODR: второе определение global\n// Линкер может: выбрать одно, упасть, UB\n\n// ПРАВИЛЬНО:\n// --- globals.h ---\nextern int global;  // только декларация\n\n// --- globals.cpp ---\nint global = 42;    // ЕДИНОЕ определение\n\n// C++17: inline variables — определение в заголовке\n// --- config.h ---\ninline constexpr int MAX_CONNECTIONS = 100; // OK в нескольких TU\ninline std::string appName = \"MyApp\";       // OK (один объект)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Современный CMake (3.15+)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "CMakeLists.txt — корень проекта"
+    },
+    {
+      "type": "text",
+      "content": "cmake_minimum_required(VERSION 3.20)\nproject(MyProject\n    VERSION 1.0.0\n    LANGUAGES CXX\n    DESCRIPTION \"Modern C++ project\"\n)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Политики современного CMake"
+    },
+    {
+      "type": "text",
+      "content": "cmake_policy(SET CMP0077 NEW)  # option() honors normal variables\ncmake_policy(SET CMP0091 NEW)  # find_package() respects CMAKE_FIND_PACKAGE_SORT_ORDER"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Стандарт C++"
+    },
+    {
+      "type": "text",
+      "content": "set(CMAKE_CXX_STANDARD 20)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\nset(CMAKE_CXX_EXTENSIONS OFF)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Предупреждения"
+    },
+    {
+      "type": "text",
+      "content": "if(MSVC)\n    add_compile_options(/W4 /WX /permissive-)\nelse()\n    add_compile_options(-Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow)\nendif()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Конфигурации сборки"
+    },
+    {
+      "type": "text",
+      "content": "set(CMAKE_CXX_FLAGS_DEBUG \"-g -O0 -fsanitize=address,undefined\")\nset(CMAKE_CXX_FLAGS_RELEASE \"-O3 -DNDEBUG\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Поддиректории"
+    },
+    {
+      "type": "text",
+      "content": "add_subdirectory(src)\nadd_subdirectory(tests)\nenable_testing()\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Target-based CMake — библиотеки и исполняемые"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "src/CMakeLists.txt"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Статическая библиотека"
+    },
+    {
+      "type": "text",
+      "content": "add_library(math_lib STATIC\n    math.cpp\n    vector.cpp\n)\n\ntarget_include_directories(math_lib\n    PUBLIC\n        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\n        $<INSTALL_INTERFACE:include>\n    PRIVATE\n        ${CMAKE_CURRENT_SOURCE_DIR}/detail\n)\n\ntarget_compile_features(math_lib PUBLIC cxx_std_20)\ntarget_compile_options(math_lib PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/analyze>)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Динамическая библиотека"
+    },
+    {
+      "type": "text",
+      "content": "add_library(utils_lib SHARED utils.cpp)\ntarget_link_libraries(utils_lib PUBLIC math_lib)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Исполняемый файл"
+    },
+    {
+      "type": "text",
+      "content": "add_executable(my_app main.cpp)\ntarget_link_libraries(my_app PRIVATE math_lib utils_lib)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Установка"
+    },
+    {
+      "type": "text",
+      "content": "install(TARGETS math_lib utils_lib my_app\n    EXPORT MyProjectTargets\n    LIBRARY DESTINATION lib\n    ARCHIVE DESTINATION lib\n    RUNTIME DESTINATION bin\n    INCLUDES DESTINATION include\n)\ninstall(DIRECTORY include/ DESTINATION include)\ninstall(EXPORT MyProjectTargets\n    FILE MyProjectConfig.cmake\n    NAMESPACE MyProject::\n    DESTINATION lib/cmake/MyProject\n)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование зависимостей"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "find_package — системные/установленные пакеты"
+    },
+    {
+      "type": "text",
+      "content": "find_package(fmt REQUIRED)\nfind_package(Threads REQUIRED)\nfind_package(OpenSSL REQUIRED)\n\ntarget_link_libraries(my_app PRIVATE fmt::fmt Threads::Threads OpenSSL::SSL OpenSSL::Crypto)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "FetchContent — загрузка исходников при конфигурации (CMake 3.14+)"
+    },
+    {
+      "type": "text",
+      "content": "include(FetchContent)\nFetchContent_Declare(\n    googletest\n    GIT_REPOSITORY https://github.com/google/googletest.git\n    GIT_TAG        release-1.14.0\n)\nFetchContent_MakeAvailable(googletest)\n\ntarget_link_libraries(my_tests PRIVATE gtest_main)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "CPM.cmake — удобная обёртка над FetchContent"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "include(cmake/CPM.cmake)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "CPMAddPackage(\"gh:catchorg/Catch2@devel\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Modules (C++20) — замена заголовков"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: templates**\n\n**Что делает:** Параметризованные типы и функции (шаблоны)\n\n**Зачем нужно:** Пишем код один раз для любых типов, compile-time полиморфизм, ноль оверхеда\n\n**Как работает:** template<typename T> T max(T a, T b) { return a > b ? a : b; }"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// math.ixx — module interface unit\nexport module math;\n\nexport namespace math {\n    int add(int a, int b) { return a + b; }\n\n    export template<typename T>\n    T max(T a, T b) { return a > b ? a : b; }\n\n    // не экспортируется — внутренняя деталь\n    namespace detail {\n        int internalHelper();\n    }\n}\n\n// main.cpp\nimport math;\nimport <iostream>;\n\nint main() {\n    std::cout << math::add(2, 3) << '\\n';\n}"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "CMake для modules (3.28+)"
+    },
+    {
+      "type": "text",
+      "content": "cmake_minimum_required(VERSION 3.28)\nproject(ModulesDemo LANGUAGES CXX)\n\nset(CMAKE_CXX_STANDARD 20)\nset(CMAKE_CXX_EXTENSIONS OFF)\nset(CMAKE_CXX_SCAN_FOR_MODULES ON)\n\nadd_executable(main main.cpp math.ixx)\ntarget_link_libraries(main PRIVATE std)  // std module\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Компиляция и линковка вручную"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Компиляция в объектные файлы"
+    },
+    {
+      "type": "text",
+      "content": "g++ -std=c++20 -Wall -Wextra -c main.cpp -o main.o\ng++ -std=c++20 -Wall -Wextra -c math.cpp -o math.o"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Линковка"
+    },
+    {
+      "type": "text",
+      "content": "g++ main.o math.o -o app"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Одной командой"
+    },
+    {
+      "type": "text",
+      "content": "g++ -std=c++20 -Wall -Wextra main.cpp math.cpp -o app"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Статическая библиотека"
+    },
+    {
+      "type": "text",
+      "content": "ar rcs libmath.a math.o\ng++ main.cpp -L. -lmath -o app"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Динамическая библиотека"
+    },
+    {
+      "type": "text",
+      "content": "g++ -fPIC -shared math.cpp -o libmath.so\ng++ main.cpp -L. -lmath -Wl,-rpath,. -o app\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: CMake проект с библиотекой"
+    },
+    {
+      "type": "text",
+      "content": "Создайте структуру:"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "project/\n├── CMakeLists.txt\n├── include/myproject/math.h\n├── src/math.cpp\n├── src/main.cpp\n└── tests/test_math.cpp"
+    },
+    {
+      "type": "text",
+      "content": "Настройте: статическую lib, executable, тесты (gtest через FetchContent), установку, пакетный конфиг."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Header-only библиотека"
+    },
+    {
+      "type": "text",
+      "content": "Сделайте `string_utils` как header-only (только .h/.inl). Добавьте в CMake как INTERFACE библиотеку. Проверьте, что она не компилируется отдельно, но заголовки доступно."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: ODR violation hunt"
+    },
+    {
+      "type": "text",
+      "content": "Создайте два .cpp файла с одним и тем же `inline` функцией, но разным телом. Скомпилируйте и запустите — наблюдайте UB. Исправьте, вынеся в отдельный .cpp."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Зависимости через vcpkg/Conan"
+    },
+    {
+      "type": "text",
+      "content": "Подключите `fmt`, `spdlog`, `nlohmann/json` через vcpkg или Conan. Напишите программу, использующую все три. Настройте CMake toolchain file."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Module vs Header benchmark"
+    },
+    {
+      "type": "text",
+      "content": "Напишите простой модуль и заголовочный файл с одинаковым интерфейсом. Замерьте время компиляции (clean build) для 10, 50, 100 единиц трансляции, включающих их.\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| ODR violation | Определение non-inline в заголовке без `inline` | `inline` для функций/переменных, templates в .h, остальное в .cpp |\n| Circular dependency | A включает B, B включает A | Forward declaration, вынос в .cpp, пересмотр архитектуры |\n| CMake: target_link_libraries до add_executable | Цель не существует | Порядок: add_* → target_* |\n| Забытый PUBLIC/PRIVATE | Заголовки не попадают в потребителей | PUBLIC для интерфейса, PRIVATE для имплементации |\n| Modules не находятся | CMAKE_CXX_SCAN_FOR_MODULES OFF | Включить, проверить расширения .ixx/.cppm |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "[Modern CMake](https://cliutils.gitlab.io/modern-cmake/)",
+        "[CMake Documentation](https://cmake.org/cmake/help/latest/)",
+        "**Книга:** \"Professional CMake\" (Craig Scott)",
+        "**CppCon:** \"Modern CMake for Modular Design\" (Mathias Stearn)",
+        "[C++ Modules TS](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/n4842.pdf)"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: SIMD и векторные инструкции",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'SIMD и векторные инструкции' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C++",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c++ на GitHub",
+    "Конференции и митапы по C++"
+  ],
+  "key_takeaways": [
+    "Главная идея: std::simd (C++26), intrinsics (AVX2/SSE/NEON), auto-vectorization — это фундамент для RAII, Move semantics, Perfect forwarding.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "cpp",
+  "lesson_order": 18,
+  "name_en": "Lesson: SIMD и векторные инструкции",
+  "short_description_en": "Learn SIMD и векторные инструкции in C++ with detailed explanations and examples"
+}

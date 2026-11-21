@@ -1,0 +1,387 @@
+# Урок 15: Шаблоны — function/class templates, specialization, constexpr, concepts
+
+## Цели урока
+- Освоить функциональные и классовые шаблоны
+- Понять специализацию (полную и частичную)
+- Использовать `constexpr` и `consteval` для compile-time вычислений
+- Применить Concepts (C++20) для ограничения шаблонных параметров
+- Избежать типичных ошибок: code bloat, ODR violations, substitution failures
+
+---
+
+## Теория
+
+### Function Templates
+
+```cpp
+#include <iostream>
+#include <type_traits>
+
+// Базовый шаблон функции
+template<typename T>
+T max(T a, T b) {
+    return (a > b) ? a : b;
+}
+
+// Явное указание типов
+void funcTemplateDemo() {
+    std::cout << max(3, 5) << '\n';           // T = int
+    std::cout << max(3.14, 2.71) << '\n';     // T = double
+    std::cout << max('a', 'z') << '\n';       // T = char
+    std::cout << max<std::string>("a", "b") << '\n'; // Явное T = string
+}
+
+// Несколько параметров
+template<typename T, typename U>
+auto add(T a, U b) -> decltype(a + b) {       // Trailing return type (C++11)
+    return a + b;
+}
+
+// C++14: auto возвращаемый тип
+template<typename T, typename U>
+auto multiply(T a, U b) {
+    return a * b;
+}
+
+// C++20: abbreviated function template (как generic lambda)
+auto subtract = [](auto a, auto b) { return a - b; }; // Не функция, но похоже
+```
+
+### Class Templates
+
+```cpp
+#include <memory>
+#include <algorithm>
+
+// Простой контейнер
+template<typename T, size_t N>
+class FixedArray {
+    T data_[N];
+public:
+    constexpr FixedArray() = default;
+
+    constexpr T& operator[](size_t i) { return data_[i]; }
+    constexpr const T& operator[](size_t i) const { return data_[i]; }
+    constexpr size_t size() const { return N; }
+
+    // Итераторы для range-based for
+    constexpr T* begin() { return data_; }
+    constexpr const T* begin() const { return data_; }
+    constexpr T* end() { return data_ + N; }
+    constexpr const T* end() const { return data_ + N; }
+};
+
+void classTemplateDemo() {
+    FixedArray<int, 5> arr;
+    for (size_t i = 0; i < arr.size(); ++i) arr[i] = i * 2;
+    for (auto x : arr) std::cout << x << ' '; // 0 2 4 6 8
+}
+```
+
+### Template Specialization
+
+```cpp
+#include <string>
+#include <type_traits>
+
+// Primary template
+template<typename T>
+struct TypeInfo {
+    static constexpr const char* name = "unknown";
+    static constexpr bool is_integral = false;
+};
+
+// Full specialization для int
+template<>
+struct TypeInfo<int> {
+    static constexpr const char* name = "int";
+    static constexpr bool is_integral = true;
+};
+
+// Full specialization для double
+template<>
+struct TypeInfo<double> {
+    static constexpr const char* name = "double";
+    static constexpr bool is_integral = false;
+};
+
+// Partial specialization для указателей
+template<typename T>
+struct TypeInfo<T*> {
+    static constexpr const char* name = "pointer";
+    static constexpr bool is_integral = false;
+};
+
+// Partial specialization для массивов
+template<typename T, size_t N>
+struct TypeInfo<T[N]> {
+    static constexpr const char* name = "array";
+    static constexpr bool is_integral = false;
+};
+
+void specializationDemo() {
+    std::cout << TypeInfo<int>::name << '\n';        // int
+    std::cout << TypeInfo<double>::name << '\n';     // double
+    std::cout << TypeInfo<int*>::name << '\n';       // pointer
+    std::cout << TypeInfo<int[10]>::name << '\n';    // array
+    std::cout << TypeInfo<std::string>::name << '\n'; // unknown (primary)
+}
+```
+
+### Variable Templates (C++14)
+
+```cpp
+#include <type_traits>
+
+// Variable template — удобная обёртка над type traits
+template<typename T>
+constexpr bool is_integral_v = std::is_integral<T>::value;
+
+// Свои variable templates
+template<typename T>
+constexpr size_t type_size_v = sizeof(T);
+
+void variableTemplateDemo() {
+    std::cout << is_integral_v<int> << '\n';      // 1
+    std::cout << is_integral_v<double> << '\n';   // 0
+    std::cout << type_size_v<int[10]> << '\n';    // 40 (на 64-бит)
+}
+```
+
+### constexpr и consteval (C++11/14/20)
+
+```cpp
+#include <array>
+#include <iostream>
+
+// constexpr функция — может вычисляться на этапе компиляции
+constexpr int factorial(int n) {
+    return (n <= 1) ? 1 : n * factorial(n - 1);
+}
+
+// consteval — ГАРАНТИРОВАННО compile-time (C++20)
+consteval int compileTimeOnly(int n) {
+    return n * n;
+}
+
+// constexpr конструктор и методы
+struct Point {
+    int x, y;
+    constexpr Point(int x_, int y_) : x(x_), y(y_) {}
+    constexpr Point operator+(const Point& other) const {
+        return Point{x + other.x, y + other.y};
+    }
+    constexpr int manhattan() const { return (x >= 0 ? x : -x) + (y >= 0 ? y : -y); }
+};
+
+void constexprDemo() {
+    constexpr int f5 = factorial(5);        // Вычисляется на этапе компиляции
+    constexpr Point p1(3, 4);
+    constexpr Point p2 = p1 + Point(1, 2);  // (4, 6)
+    constexpr int dist = p2.manhattan();    // 10
+
+    // consteval — ошибка если не compile-time
+    // int runtime = 5;
+    // compileTimeOnly(runtime); // CE: не constant expression
+
+    std::array<int, factorial(4)> arr;      // Размер массива constexpr
+    static_assert(factorial(5) == 120);
+}
+```
+
+### Concepts (C++20) — ограничения для шаблонов
+
+```cpp
+#include <concepts>
+#include <iterator>
+#include <vector>
+#include <iostream>
+
+// Стандартные concepts
+template<std::integral T>
+T gcd(T a, T b) {
+    while (b != 0) { T t = b; b = a % b; a = t; }
+    return a;
+}
+
+// Комбинирование concepts
+template<typename T>
+concept Numeric = std::integral<T> || std::floating_point<T>;
+
+template<Numeric T>
+T abs_val(T x) {
+    return x < 0 ? -x : x;
+}
+
+// Custom concept
+template<typename T>
+concept Hashable = requires(T a) {
+    { std::hash<T>{}(a) } -> std::convertible_to<size_t>;
+    { a == a } -> std::convertible_to<bool>;
+};
+
+// Concept с вложенными требованиями
+template<typename T>
+concept Container = requires(T c) {
+    typename T::value_type;
+    typename T::iterator;
+    { c.begin() } -> std::same_as<typename T::iterator>;
+    { c.end() } -> std::same_as<typename T::iterator>;
+    { c.size() } -> std::convertible_to<size_t>;
+};
+
+template<Container C>
+void printContainer(const C& c) {
+    for (const auto& x : c) std::cout << x << ' ';
+    std::cout << '\n';
+}
+
+// requires clause (альтернативный синтаксис)
+template<typename T>
+requires std::sortable<T>
+void sortAndPrint(T& container) {
+    std::sort(container.begin(), container.end());
+    for (const auto& x : container) std::cout << x << ' ';
+    std::cout << '\n';
+}
+
+void conceptsDemo() {
+    std::cout << gcd(48, 18) << '\n';           // 6
+    // gcd(3.14, 2.71); // CE: double не integral
+
+    std::cout << abs_val(-42) << '\n';          // 42
+    std::cout << abs_val(-3.14) << '\n';        // 3.14
+
+    std::vector<int> v = {3, 1, 4, 1, 5};
+    printContainer(v);                          // 3 1 4 1 5
+    sortAndPrint(v);                            // 1 1 3 4 5
+}
+```
+
+### SFINAE и `requires` выражения
+
+```cpp
+#include <type_traits>
+#include <utility>
+
+// Старый способ (SFINAE) — до C++20
+template<typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
+T oldWay(T x) { return x * 2; }
+
+// Новый способ (C++20) — requires expression
+template<typename T>
+requires std::is_integral_v<T>
+T newWay(T x) { return x * 2; }
+
+// requires expression в теле функции
+template<typename T>
+auto serialize(const T& obj) {
+    if constexpr (requires { obj.toString(); }) {
+        return obj.toString();
+    } else if constexpr (requires { std::to_string(obj); }) {
+        return std::to_string(obj);
+    } else {
+        return std::string("?");
+    }
+}
+```
+
+### Fold Expressions (C++17) — вариадические шаблоны
+
+```cpp
+#include <iostream>
+
+// Сумма всех аргументов
+template<typename... Args>
+auto sum(Args... args) {
+    return (args + ...); // unary right fold
+}
+
+// Печать с разделителем
+template<typename... Args>
+void printAll(Args... args) {
+    (std::cout << ... << args) << '\n'; // binary left fold
+}
+
+// Логическое И/ИЛИ
+template<typename... Args>
+bool allTrue(Args... args) {
+    return (args && ...);
+}
+template<typename... Args>
+bool anyTrue(Args... args) {
+    return (args || ...);
+}
+
+void foldDemo() {
+    std::cout << sum(1, 2, 3, 4, 5) << '\n';        // 15
+    printAll("a", "b", "c");                        // abc
+    std::cout << allTrue(true, true, false) << '\n'; // 0
+    std::cout << anyTrue(false, false, true) << '\n'; // 1
+}
+```
+
+### Template Template Parameters
+
+```cpp
+#include <vector>
+#include <list>
+#include <deque>
+
+// Template template parameter
+template<template<typename...> class Container, typename T, typename... Args>
+Container<T> makeContainer(Args&&... args) {
+    return Container<T>(std::forward<Args>(args)...);
+}
+
+void templateTemplateDemo() {
+    auto v = makeContainer<std::vector, int>(5, 42);    // vector<int> с 5 элементами 42
+    auto l = makeContainer<std::list, double>(3, 1.5);  // list<double>
+}
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Реализация `Optional<T>` с концептами
+Создайте `MyOptional<T>` с концептом `Movable<T>` (требует move-constructible). Добавьте `value_or(U&& default_value)` с концептом `ConvertibleTo<T, U>`.
+
+### Задание 2: Compile-time парсер
+Напишите `constexpr` функцию `parseInt(const char*)`, которая на этапе компиляции парсит строку в `int`. Используйте `consteval` для гарантии. Обрабатывайте ошибки через `static_assert`.
+
+### Задание 3: Type-erased wrapper (type erasure)
+Создайте класс `AnyDrawable`, хранящий любой тип с методом `draw() const`. Используйте template конструктор + виртуальный интерфейс внутри (как `std::function`). Демонстрируйте с `Circle`, `Rectangle`, лямбдой.
+
+### Задание 4: Concept для Range
+Определите concept `Range<R>` требующий `begin()`, `end()`, итераторы которых удовлетворяют `std::input_iterator`. Напишите `algorithm` работающий с любым `Range`: `find`, `count`, `transform`.
+
+### Задание 5: Variadic template — tuple-like
+Реализуйте `MyTuple<Types...>` с:
+- Хранением через рекурсивное наследование
+- `get<I>()` возвращающим I-й элемент
+- `size()` — количество элементов
+- Конструктором с perfect forwarding
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| Code bloat | Много инстанциаций для разных типов | Используйте type erasure, `void*` базу, или концепты для ограничения |
+| ODR violation | Шаблон в .cpp, не в заголовке | Шаблоны — в заголовках (или explicit instantiation в .cpp) |
+| `typename` пропущен | Зависимое имя типа (`T::type`) | Всегда `typename T::type` в шаблонах |
+| `template` пропущен | Зависимый template метод (`obj.template func<U>()`) | `obj.template func<U>()` |
+| Специализация в другом namespace | Частичная специализация не в namespace шаблона | Специализируйте в том же namespace |
+| Concept не компилируется | `requires` выражение невалидно | Проверяйте через `requires { ... }` синтаксис |
+
+---
+
+## Ресурсы
+- [cppreference: Templates](https://en.cppreference.com/w/cpp/language/templates)
+- [cppreference: Concepts](https://en.cppreference.com/w/cpp/language/constraints)
+- **Книга:** Vandevoorde/Josuttis "C++ Templates: The Complete Guide" (2nd ed.)
+- **Книга:** Meyers "Effective Modern C++", Items 1-11, 41-43
+- **CppCon:** "Concepts in C++20" (Andrew Sutton)
+- **CppCon:** "Template Metaprogramming Made Easy" (Louis Dionne)

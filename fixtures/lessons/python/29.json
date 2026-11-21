@@ -1,0 +1,533 @@
+{
+  "title": "Урок 29: Data Science и ML",
+  "slug": "urok-29-безопасность",
+  "short_description": "SQL injection, XSS, CSRF, secrets, cryptography, bandit, safety",
+  "goals": [
+    "Понимать основы: SQL injection, XSS, CSRF, secrets, cryptography, bandit, safety",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.7: Data Science и ML — NumPy, Pandas, визуализация, scikit-learn, основы DL"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Работать с NumPy массивами и векторизацией",
+        "Анализировать данные с Pandas (DataFrame, GroupBy, Time Series)",
+        "Визуализировать данные (Matplotlib, Seaborn, Plotly)",
+        "Строить ML модели с scikit-learn (pipeline, CV, метрики)",
+        "Понимать основы Deep Learning (PyTorch basics)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. NumPy — фундамент вычислений"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Массивы vs списки"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Векторизация — операции над всем массивом без циклов"
+    },
+    {
+      "type": "text",
+      "content": "arr = np.array([1, 2, 3, 4, 5])\narr * 2           # [2, 4, 6, 8, 10]\narr ** 2          # [1, 4, 9, 16, 25]\narr > 3           # [False, False, False, True, True]"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Ускорение в 10-100x по сравнению с Python циклами"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Создание массивов"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "np.zeros((3, 4))           # нули\nnp.ones((2, 3))            # единицы\nnp.eye(3)                  # единичная матрица\nnp.arange(0, 10, 2)        # [0, 2, 4, 6, 8]\nnp.linspace(0, 1, 5)       # 5 точек от 0 до 1\nnp.random.normal(0, 1, (100, 3))  # нормальное распределение\nnp.random.randint(0, 10, (5, 5))  # целые числа"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Индексация и броадкастинг"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Броадкастинг — автоматическое расширение размерностей"
+    },
+    {
+      "type": "text",
+      "content": "a = np.array([[1], [2], [3]])  # (3, 1)\nb = np.array([10, 20, 30])     # (3,)\na + b  # [[11, 21, 31], [12, 22, 32], [13, 23, 33]]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Линейная алгебра"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "A = np.array([[1, 2], [3, 4]])\nB = np.array([[5, 6], [7, 8]])\n\nA @ B                    # матричное умножение\nnp.dot(A, B)             # то же\nnp.linalg.inv(A)         # обратная матрица\nnp.linalg.det(A)         # определитель\nnp.linalg.eig(A)         # собственные значения/векторы\nnp.linalg.svd(A)         # SVD разложение"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Статистика"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "data = np.random.normal(100, 15, 1000)\ndata.mean(), data.std(), data.var()\nnp.median(data)\nnp.percentile(data, [25, 50, 75])  # квартили\nnp.corrcoef(x, y)         # корреляция"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Pandas — табличные данные"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "DataFrame и Series"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Чтение данных"
+    },
+    {
+      "type": "text",
+      "content": "pd.read_csv('data.csv')\npd.read_parquet('data.parquet')\npd.read_json('data.json')\npd.read_sql('SELECT * FROM users', conn)\npd.read_excel('data.xlsx')\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Индексация"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "df['age']              # Series\ndf[['name', 'age']]    # DataFrame\ndf.loc[0]              # строка по индексу\ndf.iloc[0]             # строка по позиции\ndf[df['age'] > 28]     # фильтрация\ndf.query('age > 28 and city == \"Москва\"')"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GroupBy и агрегация"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Группировка"
+    },
+    {
+      "type": "text",
+      "content": "df.groupby('city')['salary'].mean()\ndf.groupby('city').agg({'salary': ['mean', 'median', 'std'], 'age': 'max'})"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Pivot table"
+    },
+    {
+      "type": "text",
+      "content": "df.pivot_table(values='salary', index='city', columns='age', aggfunc='mean')"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Crosstab"
+    },
+    {
+      "type": "text",
+      "content": "pd.crosstab(df['city'], df['age'] > 30)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Работа с пропусками"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "df.isna().sum()           # количество NaN по колонкам\ndf.dropna()               # удалить строки с NaN\ndf.fillna({'age': df['age'].mean(), 'city': 'Unknown'})\ndf.interpolate()          # интерполяция для временных рядов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Time Series"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "dates = pd.date_range('2024-01-01', periods=100, freq='D')\nts = pd.Series(np.random.randn(100).cumsum(), index=dates)\n\nts.resample('W').mean()   # ресемплинг по неделям\nts.rolling(7).mean()      # скользящее среднее\nts.shift(1)               # лаг\nts.diff()                 # разность"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Объединение данных"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "pd.merge(df1, df2, on='id', how='inner')   # join\npd.concat([df1, df2], axis=0)              # вертикальное объединение\ndf1.join(df2.set_index('id'), on='id')     # join по индексу"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Визуализация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Matplotlib (базовый)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import matplotlib.pyplot as plt\n\nfig, ax = plt.subplots(2, 2, figsize=(10, 8))\nax[0, 0].plot(x, y)\nax[0, 1].scatter(x, y)\nax[1, 0].hist(data, bins=30)\nax[1, 1].boxplot([group1, group2])\nplt.tight_layout()\nplt.savefig('plot.png', dpi=300)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Seaborn (статистические графики)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import seaborn as sns\n\nsns.set_style(\"whitegrid\")\nsns.histplot(data=df, x='salary', hue='city', kde=True)\nsns.boxplot(data=df, x='city', y='salary')\nsns.violinplot(data=df, x='city', y='salary')\nsns.scatterplot(data=df, x='age', y='salary', hue='city')\nsns.heatmap(df.corr(), annot=True, cmap='coolwarm')\nsns.pairplot(df, hue='city')"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Plotly (интерактивные)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import plotly.express as px\n\nfig = px.scatter(df, x='age', y='salary', color='city',\n                 hover_data=['name'], title='Salary vs Age')\nfig.show()  # открывается в браузере\nfig.write_html('plot.html')"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Scikit-learn — классический ML"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pipeline"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Preprocessing"
+    },
+    {
+      "type": "text",
+      "content": "numeric_features = ['age', 'salary']\ncategorical_features = ['city']\n\npreprocessor = ColumnTransformer([\n    ('num', StandardScaler(), numeric_features),\n    ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)\n])"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Pipeline"
+    },
+    {
+      "type": "text",
+      "content": "pipe = Pipeline([\n    ('preprocessor', preprocessor),\n    ('classifier', RandomForestClassifier(n_estimators=100, random_state=42))\n])\n\nX_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y)\npipe.fit(X_train, y_train)\nprint(pipe.score(X_test, y_test))\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cross-validation и метрики"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from sklearn.model_selection import cross_val_score, StratifiedKFold\nfrom sklearn.metrics import classification_report, confusion_matrix, roc_auc_score\n\ncv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)\nscores = cross_val_score(pipe, X, y, cv=cv, scoring='roc_auc')\nprint(f'ROC-AUC: {scores.mean():.3f} ± {scores.std():.3f}')\n\ny_pred = pipe.predict(X_test)\nprint(classification_report(y_test, y_pred))"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Hyperparameter tuning"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from sklearn.model_selection import GridSearchCV, RandomizedSearchCV\nfrom scipy.stats import randint\n\nparam_dist = {\n    'classifier__n_estimators': randint(50, 300),\n    'classifier__max_depth': [None, 10, 20, 30],\n    'classifier__min_samples_split': randint(2, 20),\n}\n\nsearch = RandomizedSearchCV(pipe, param_dist, n_iter=20, cv=3,\n                            scoring='roc_auc', n_jobs=-1, random_state=42)\nsearch.fit(X_train, y_train)\nprint(search.best_params_)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Feature Engineering"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Текст"
+    },
+    {
+      "type": "text",
+      "content": "tfidf = TfidfVectorizer(max_features=1000, ngram_range=(1, 2))\nX_text = tfidf.fit_transform(df['description'])"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "PCA"
+    },
+    {
+      "type": "text",
+      "content": "pca = PCA(n_components=0.95)  # 95% дисперсии\nX_pca = pca.fit_transform(X_scaled)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Feature selection"
+    },
+    {
+      "type": "text",
+      "content": "selector = SelectKBest(mutual_info_classif, k=10)\nX_selected = selector.fit_transform(X, y)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Основы Deep Learning (PyTorch)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Тензоры и автоград"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Тензоры"
+    },
+    {
+      "type": "text",
+      "content": "x = torch.tensor([1., 2., 3.], requires_grad=True)\ny = x ** 2 + 2 * x + 1\ny.sum().backward()\nprint(x.grad)  # градиенты\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Простая нейросеть"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Обучение"
+    },
+    {
+      "type": "text",
+      "content": "for epoch in range(100):\n    model.train()\n    optimizer.zero_grad()\n    outputs = model(X_train_tensor)\n    loss = criterion(outputs, y_train_tensor)\n    loss.backward()\n    optimizer.step()\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "DataLoader"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from torch.utils.data import DataLoader, TensorDataset\n\ndataset = TensorDataset(X_tensor, y_tensor)\nloader = DataLoader(dataset, batch_size=32, shuffle=True)\n\nfor batch_X, batch_y in loader:\n    outputs = model(batch_X)\n    loss = criterion(outputs, batch_y)\n    ..."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Transfer Learning (torchvision)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Заморозка backbone"
+    },
+    {
+      "type": "text",
+      "content": "for param in resnet.parameters():\n    param.requires_grad = False"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Замена последнего слоя"
+    },
+    {
+      "type": "text",
+      "content": "resnet.fc = nn.Linear(resnet.fc.in_features, num_classes)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Только fc обучается"
+    },
+    {
+      "type": "text",
+      "content": "optimizer = optim.Adam(resnet.fc.parameters(), lr=1e-3)\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Экосистема и инструменты"
+    },
+    {
+      "type": "table",
+      "content": "| Задача | Библиотека |\n|--------|------------|\n| NLP | spaCy, transformers (HuggingFace), nltk |\n| CV | OpenCV, albumentations, torchvision |\n| Time Series | prophet, statsmodels, sktime |\n| Graphs | networkx, PyTorch Geometric |\n| AutoML | optuna, hyperopt, auto-sklearn |\n| Experiment Tracking | MLflow, Weights & Biases, ClearML |\n| Model Serving | FastAPI + ONNX, TorchServe, Triton |"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MLflow — трекинг экспериментов"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "UI: mlflow ui"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **EDA**: загрузите датасет (Titanic / Housing / Wine), сделайте полный анализ\n2. **Baseline**: постройте baseline модель, логируйте в MLflow\n3. **Feature Eng**: создайте новые признаки, улучшите метрику\n4. **NN**: реализуйте простую MLP на PyTorch для классификации\n5. **Deploy**: оберните модель в FastAPI, сделайте Docker образ\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| data leakage (тест в train) | Строгое разделение до feature engineering |\n| Масштабирование до split | Scaler.fit на train, transform на test |\n| Небаланс классов игнорируется | class_weight, SMOTE, stratified CV |\n| Метрика accuracy на несбалансированных | F1, ROC-AUC, PR-AUC |\n| Нет baseline | Сначала простая модель (LogReg / RandomForest) |\n| Overfitting без регуляризации | Dropout, weight decay, early stopping |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**NumPy Docs** — https://numpy.org/doc/",
+        "**Pandas Docs** — https://pandas.pydata.org/docs/",
+        "**Scikit-learn User Guide** — https://scikit-learn.org/stable/user_guide.html",
+        "**PyTorch Tutorials** — https://pytorch.org/tutorials/",
+        "**Paper: \"A Few Useful Things to Know about ML\"** — Pedro Domingos",
+        "**Hands-On ML with Scikit-Learn, Keras & TensorFlow** — Aurélien Géron"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Безопасность",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Безопасность' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: SQL injection, XSS, CSRF, secrets, cryptography, bandit, safety — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 29,
+  "name_en": "Lesson: Безопасность",
+  "short_description_en": "Learn Безопасность in Python with detailed explanations and examples"
+}

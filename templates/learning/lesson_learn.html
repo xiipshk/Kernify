@@ -1,0 +1,548 @@
+{% extends 'base.html' %}
+{% load i18n language_filters %}
+{% load badge_filters %}
+
+{% block title %}{{ lesson.name }} - {% trans "Learning" %} - kernify{% endblock %}
+
+{% block extra_head %}
+<link href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/editor/editor.main.css" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-0">
+    <div class="row g-0">
+        <!-- Sidebar: Lesson Navigation -->
+        <aside id="lessonSidebar" class="col-lg-3 col-xl-2 d-none d-lg-block sidebar-mobile" style="min-height: calc(100vh - 56px); position: sticky; top: 56px; max-height: calc(100vh - 56px); overflow-y: auto; padding-right: 1rem; z-index: 1039;">
+            <div class="p-3">
+                <!-- Header -->
+                <div class="d-flex align-items-center gap-2 mb-4">
+                    {% if lesson.topic.program.language.icon %}
+                    <div class="language-icon-text d-flex align-items-center justify-content-center" style="width: 34px; height: 34px; font-size: 1.1rem; border-radius: 8px; background: {{ lesson.topic.program.language.color|default:'#6366f1' }}15; color: {{ lesson.topic.program.language.color|default:'#6366f1' }};">
+                        {{ lesson.topic.program.language.icon }}
+                    </div>
+                    {% else %}
+                    <i class="bi bi-cpu" style="font-size: 1.2rem; color: {{ lesson.topic.program.language.color|default:'#6366f1' }};"></i>
+                    {% endif %}
+                    <div>
+                        <h6 class="mb-0 lh-1" style="font-size: 0.95rem; color: var(--rtk-text);">{{ lesson.topic.program.name }}</h6>
+                        <small class="text-muted d-block" style="font-size: 0.75rem;">{{ lesson.topic.name }}</small>
+                    </div>
+                </div>
+
+                <!-- Lesson list -->
+                <div class="rtk-lesson-nav">
+                    {% for l in topic_lessons %}
+                    <a href="{% url 'learning:lesson_learn' l.slug %}" class="rtk-lesson-item {% if l == lesson %}rtk-lesson-current{% elif l.order < lesson.order %}rtk-lesson-completed{% endif %} d-flex align-items-center gap-2">
+                        <div class="rtk-lesson-icon">
+                            {% if l.lesson_type == 'theory' %}
+                            <i class="bi bi-book"></i>
+                            {% elif l.lesson_type == 'practice' %}
+                            <i class="bi bi-terminal"></i>
+                            {% elif l.lesson_type == 'quiz' %}
+                            <i class="bi bi-question-circle"></i>
+                            {% elif l.lesson_type == 'project' %}
+                            <i class="bi bi-folder2"></i>
+                            {% else %}
+                            <i class="bi bi-play-circle"></i>
+                            {% endif %}
+                        </div>
+                        <div class="rtk-lesson-title">
+                            <span class="rtk-lesson-title-main">{{ l.name|truncatechars:30 }}</span>
+                            {% if l != lesson %}
+                            <span class="rtk-lesson-title-sub">{{ l.get_lesson_type_display }}</span>
+                            {% endif %}
+                        </div>
+                        <span class="lesson-difficulty-stars lesson-difficulty-stars-sm" title="{% trans "Difficulty" %}: {{ l.get_difficulty_display }}">
+                            <span class="stars-filled">{{ l.difficulty_stars_filled }}</span><span class="stars-empty">{{ l.difficulty_stars_empty }}</span>
+                        </span>
+                    </a>
+                    {% endfor %}
+                </div>
+
+                <div class="mt-4 pt-3 border-top">
+                    <div class="d-flex justify-content-between small text-muted mb-2">
+                        <span>{% trans "Progress" %}</span>
+                        <span>{{ lesson.topic.program.lessons_count }} {% trans "lessons" %}</span>
+                    </div>
+                    <div class="progress" style="height: 6px; background: var(--rtk-border-weak); border-radius: 3px;">
+                        <div class="progress-bar" style="width: {{ progress.completion_percentage|default:0 }}%; background: var(--rtk-lang-color, var(--bs-primary)); border-radius: 3px;"></div>
+                    </div>
+                    <div class="text-center mt-2 small" style="color: var(--rtk-text-muted);">
+                        {{ progress.completion_percentage|default:0 }}% {% trans "complete" %}
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="col-lg-9 col-xl-10 d-flex flex-column" style="min-height: calc(100vh - 56px);">
+            <!-- Top Bar -->
+            <header class="lesson-topbar border-bottom pb-3 mb-4" style="background: var(--rtk-bg-page); position: sticky; top: 56px; z-index: 1030;">
+                <div class="d-flex align-items-center gap-3 flex-grow-1">
+                    <button class="btn btn-outline-secondary btn-sm d-lg-none p-2" id="toggleLessonSidebar" aria-label="{% trans "Toggle navigation" %}">
+                        <i class="bi bi-list"></i>
+                    </button>
+                    <nav aria-label="breadcrumb" class="mb-0 d-none d-md-block">
+                        <ol class="breadcrumb bg-transparent mb-0 small">
+                            <li class="breadcrumb-item"><a href="{% url 'learning:index' %}">{% trans "Learning" %}</a></li>
+                            <li class="breadcrumb-item"><a href="{% url 'core:program_detail' lesson.topic.program.slug %}">{{ lesson.topic.program.name }}</a></li>
+                            <li class="breadcrumb-item"><a href="{% url 'core:topic_detail' lesson.topic.slug %}">{{ lesson.topic.name }}</a></li>
+                            <li class="breadcrumb-item active text-truncate" style="max-width: 260px;">{{ lesson.name }}</li>
+                        </ol>
+                    </nav>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="rtk-badge rtk-badge-accent" style="--rtk-lang-color: {{ lesson.topic.program.language.color|default:'#6366f1' }};">
+                        <span class="rtk-badge-dot"></span>
+                        {{ lesson.topic.program.language.name }}
+                    </span>
+                    <span class="badge" style="background: var(--rtk-lang-color, var(--bs-primary))20; color: var(--rtk-lang-color, var(--bs-primary)); padding: 0.5rem 1rem; border-radius: 999px; font-size: 0.875rem; font-weight: 500; border: 1px solid var(--rtk-lang-color, var(--bs-primary))40;">
+                        {{ lesson.get_lesson_type_display }}
+                    </span>
+                    <span class="text-theme-muted small"><i class="bi bi-star text-warning me-1"></i>{{ lesson.xp_reward }} {% trans "XP" %}</span>
+                </div>
+            </header>
+
+            <!-- Lesson Content -->
+            <div class="flex-grow-1 p-4">
+                <div class="row">
+                    <!-- Content Area -->
+                    <div class="col-lg-8">
+                        <!-- Lesson Header Hero -->
+                        <div class="lesson-hero rtk-accent" style="--rtk-lang-color: {{ lesson.topic.program.language.color|default:'#6366f1' }};">
+                            <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                                <span class="badge bg-{{ lesson.difficulty|badge_color }} bg-opacity-10 text-{{ lesson.difficulty|badge_color }} px-3 py-2">{{ lesson.get_difficulty_display }}</span>
+                                <span class="badge bg-{{ lesson.lesson_type|badge_color }} bg-opacity-10 text-{{ lesson.lesson_type|badge_color }} px-3 py-2">{{ lesson.get_lesson_type_display }}</span>
+                                <span class="badge bg-{{ lesson.status|badge_color }} bg-opacity-10 text-{{ lesson.status|badge_color }} px-3 py-2">{{ lesson.get_status_display }}</span>
+                            </div>
+                            <h1 class="h1">{{ lesson.name }}</h1>
+                            {% if lesson.short_description %}
+                            <p class="lesson-lead">{{ lesson.short_description }}</p>
+                            {% endif %}
+                            <div class="lesson-stats">
+                                <div class="lesson-stat">
+                                    <i class="bi bi-star-fill text-warning me-0.5"></i>
+                                    <span class="rtk-stat-value">{{ lesson.xp_reward }}</span> {% trans "XP" %}
+                                </div>
+                                <div class="lesson-stat">
+                                    <i class="bi bi-clock me-0.5"></i>
+                                    {{ lesson.estimated_minutes }} {% trans "min" %}
+                                </div>
+                                <div class="lesson-stat">
+                                    <i class="bi bi-file-earmark-text me-0.5"></i>
+                                    {{ lesson.get_content_blocks|length }} {% trans "blocks" %}
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2 flex-wrap">
+                                {% if user.is_authenticated %}
+                                <form method="post" action="{% url 'learning:bookmark_lesson' lesson.slug %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-outline-secondary" title="{% trans "Bookmark" %}" style="padding: 0.625rem 0.75rem;">
+                                        <i class="bi bi-bookmark{% if lesson in bookmarked_lessons %}-fill text-primary{% else %} text-muted{% endif %} fs-5"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Lesson Content Blocks -->
+                        {% if lesson.get_content_blocks %}
+                        <div class="lesson-content" style="{{ lesson.display_style }}">
+                            {% for block in lesson.get_content_blocks %}
+                            {% if block.type == 'text' %}
+                            <div class="lesson-text">{{ block.content|rich_text }}</div>
+                            {% elif block.type == 'code' %}
+                            <div class="lesson-code rtk-accent" style="--rtk-lang-color: {{ block.language|default:'python'|language_color }};">
+                                <div class="rtk-code-label">
+                                    <span>{{ block.language|default:'python'|language_name }}</span>
+                                    <button class="btn btn-sm btn-outline-secondary rtk-copy-btn" data-code="{{ block.content|escapejs }}" title="{% trans "Copy code" %}">
+                                        <i class="bi bi-clipboard"></i>
+                                    </button>
+                                </div>
+                                <pre><code class="language-{{ block.language|default:'python' }}">{{ block.content }}</code></pre>
+                            </div>
+                            {% elif block.type == 'heading' %}
+                            <h{{ block.level|default:3 }}>{{ block.content|md_inline }}</h{{ block.level|default:3 }}>
+                            {% elif block.type == 'list' %}
+                            {% if block.ordered %}<ol>{% else %}<ul>{% endif %}
+                                {% for item in block.items %}
+                                <li>{{ item|md_inline }}</li>
+                                {% endfor %}
+                            {% if block.ordered %}</ol>{% else %}</ul>{% endif %}
+                            {% elif block.type == 'table' %}
+                            <div class="table-responsive mb-4">
+                                <table class="table table-sm table-bordered align-middle">
+                                    {% if block.headers %}
+                                    <thead>
+                                        <tr>
+                                            {% for header in block.headers %}
+                                            <th scope="col">{{ header|md_inline }}</th>
+                                            {% endfor %}
+                                        </tr>
+                                    </thead>
+                                    {% endif %}
+                                    <tbody>
+                                        {% for row in block.rows %}
+                                        <tr>
+                                            {% for cell in row %}
+                                            <td>{{ cell|md_inline }}</td>
+                                            {% endfor %}
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% elif block.type == 'blockquote' %}
+                            <blockquote class="blockquote border-start border-3 ps-3 mb-4">
+                                {{ block.content|md_inline }}
+                            </blockquote>
+                            {% elif block.type == 'callout' %}
+                            <div class="rtk-callout rtk-callout-{{ block.style|default:'info' }}">
+                                {% if block.title %}
+                                <div class="rtk-callout-title"><i class="bi {% if block.style == 'warning' %}bi-exclamation-triangle{% elif block.style == 'danger' %}bi-exclamation-circle{% elif block.style == 'success' %}bi-check-circle{% else %}bi-info-circle{% endif %}"></i>{{ block.title }}</div>
+                                {% endif %}
+                                <p class="mb-0">{{ block.content|md_inline }}</p>
+                            </div>
+                            {% elif block.type == 'video' %}
+                            <div class="ratio ratio-16x9 mb-5 rounded" style="overflow: hidden; border: 1px solid var(--rtk-border-weak); border-radius: var(--rtk-radius); background: var(--bg-secondary);">
+                                <iframe src="{{ block.url }}" frameborder="0" allowfullscreen style="width: 100%; height: 100%; border: 0;"></iframe>
+                            </div>
+                            {% elif block.type == 'image' %}
+                            {% if block.url %}
+                            <figure class="lesson-figure">
+                                <img src="{{ block.url }}" alt="{{ block.alt|default:'' }}" loading="lazy">
+                                {% if block.caption %}<figcaption>{{ block.caption }}</figcaption>{% endif %}
+                            </figure>
+                            {% endif %}
+                            {% elif block.type == 'divider' %}
+                            <hr class="lesson-divider">
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="text-center py-5">
+                            <div class="rtk-callout rtk-callout-info" style="display: inline-block; max-width: 100%; text-align: left;">
+                                <div class="rtk-callout-title"><i class="bi bi-file-earmark-text"></i>{% trans "Content coming soon" %}</div>
+                                <p class="mb-0">{% trans "Lesson content will be available soon. Check back later for the full lesson text, code examples, and exercises." %}</p>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Practice Section -->
+                        {% if lesson.lesson_type == 'practice' %}
+                        <div class="lesson-section">
+                            <div class="lesson-section-header">
+                                <i class="bi bi-terminal" style="font-size: 1.1rem; color: var(--rtk-lang-color, var(--bs-primary));"></i>
+                                <h6 class="lesson-section-title mb-0">{% trans "Practice Exercise" %}</h6>
+                            </div>
+                            <div class="lesson-section-body">
+                                <div class="rtk-editor-wrap" style="height: 420px;">
+                                    <div id="editor" style="flex: 1;"></div>
+                                </div>
+                                <div class="rtk-editor-actions">
+                                    {% if not code_runner_enabled %}
+                                    <div class="alert alert-secondary py-2 px-3 mb-3 small" role="status">
+                                        <i class="bi bi-info-circle me-1"></i>{% trans "Code execution is currently disabled. You can write code in the editor, but running it is not available yet." %}
+                                    </div>
+                                    {% endif %}
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-primary" id="runBtn" {% if not code_runner_enabled %}disabled title="{% trans "Code execution is currently disabled" %}"{% endif %}><i class="bi bi-play-fill me-1"></i>{% trans "Run Code" %}</button>
+                                        <button class="btn btn-success" id="submitBtn"><i class="bi bi-send me-1"></i>{% trans "Submit Solution" %}</button>
+                                        <button class="btn btn-outline-secondary" id="resetBtn"><i class="bi bi-arrow-counterclockwise me-1"></i>{% trans "Reset" %}</button>
+                                    </div>
+                                    <div id="output" class="mt-3 p-3 rounded" style="background: var(--bg-secondary); color: var(--rtk-text); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; min-height: 80px; display: none; border: 1px solid var(--rtk-border-weak);"></div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Starter Code Reference -->
+                        {% if lesson.starter_code and lesson.lesson_type != 'practice' %}
+                        <div class="lesson-section">
+                            <div class="lesson-section-header">
+                                <i class="bi bi-code" style="font-size: 1.1rem; color: var(--rtk-lang-color, var(--bs-primary));"></i>
+                                <h6 class="lesson-section-title mb-0">{% trans "Reference Code" %}</h6>
+                            </div>
+                            <div class="lesson-section-body">
+                                <div class="lesson-code rtk-accent" style="--rtk-lang-color: {{ lesson.topic.program.language.color|default:'#6366f1' }};">
+                                    <div class="rtk-code-label">
+                                        <span>{{ lesson.topic.program.language.name }}</span>
+                                        <button class="btn btn-sm btn-outline-secondary rtk-copy-btn" data-code="{{ lesson.starter_code|escapejs }}" title="{% trans "Copy code" %}">
+                                            <i class="bi bi-clipboard"></i>
+                                        </button>
+                                    </div>
+                                    <pre><code class="language-{{ lesson.topic.program.language.slug }}">{{ lesson.starter_code }}</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Hints -->
+                        {% if lesson.hints %}
+                        <div class="lesson-section">
+                            <div class="lesson-section-header">
+                                <i class="bi bi-lightbulb" style="font-size: 1.1rem; color: var(--bs-warning);"></i>
+                                <h6 class="lesson-section-title mb-0">{% trans "Hints" %}</h6>
+                            </div>
+                            <div class="lesson-section-body">
+                                <ol class="mb-0 ps-4">
+                                    {% for hint in lesson.hints %}
+                                    <li class="mb-3" style="color: var(--rtk-text-secondary);">{{ hint }}</li>
+                                    {% endfor %}
+                                </ol>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Задачи к уроку: только из пройденного материала -->
+                        {% if lesson_tasks %}
+                        <div class="lesson-section">
+                            <div class="lesson-section-header">
+                                <i class="bi bi-list-check" style="font-size: 1.1rem; color: var(--rtk-lang-color, var(--bs-primary));"></i>
+                                <h6 class="lesson-section-title mb-0">{% trans "Practice for this lesson" %}</h6>
+                            </div>
+                            <div class="lesson-section-body">
+                                <p class="small mb-3" style="color: var(--rtk-text-muted);">
+                                    {% trans "Only tasks you can solve with what you have learned in this lesson and earlier." %}
+                                </p>
+                                <div class="list-group">
+                                    {% for t in lesson_tasks %}
+                                    <a href="{% url 'practice:task_solve' t.slug %}" class="list-group-item list-group-item-action d-flex align-items-center gap-2">
+                                        <span class="badge difficulty-badge bg-{{ t.difficulty_color }} bg-opacity-10 text-{{ t.difficulty_color }}">{{ t.difficulty_stars }}</span>
+                                        <span class="flex-grow-1">{{ t.name }}</span>
+                                        <i class="bi bi-chevron-right" style="opacity: .6;"></i>
+                                    </a>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Navigation -->
+                        <div class="lesson-section">
+                            <div class="lesson-section-body">
+                                <div class="row">
+                                    {% if prev_lesson %}
+                                    <div class="col-md-6">
+                                        <a href="{% url 'learning:lesson_learn' prev_lesson.slug %}" class="rtk-lesson-item d-flex align-items-center gap-2 w-100">
+                                            <i class="bi bi-chevron-left" style="font-size: 0.8rem; opacity: 0.7;"></i>
+                                            <div class="rtk-lesson-title">
+                                                <span class="rtk-lesson-title-sub" style="color: var(--rtk-text-muted);">{% trans "Previous Lesson" %}</span>
+                                                <span class="rtk-lesson-title-main">{{ prev_lesson.name|truncatechars:40 }}</span>
+                                            </div>
+                                        </a>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Next Lesson + Back buttons -->
+                        <div class="lesson-section mt-4">
+                            <div class="lesson-section-body text-center">
+                                {% if next_lesson %}
+                                <form method="post" action="{% url 'learning:lesson_next' lesson.slug %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-primary btn-lg px-5 me-2">
+                                        <i class="bi bi-arrow-right-circle me-1"></i>
+                                        {% trans "Next Lesson" %} <span class="badge bg-theme-dark text-theme-inverse ms-2">{{ lesson.xp_reward }} XP</span>
+                                    </button>
+                                </form>
+                                {% endif %}
+                                <a href="javascript:history.back()" class="btn btn-outline-secondary">
+                                    <i class="bi bi-arrow-left me-1"></i>{% trans "Back" %}
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sidebar: Info & Notes -->
+                    <div class="col-lg-4 d-none d-lg-block">
+                        <div class="sticky-top" style="top: 80px;">
+                            <!-- Lesson Info -->
+                            <div class="rtk-info-panel">
+                                <div class="rtk-panel-header">
+                                    <i class="bi bi-info-circle"></i>{% trans "Lesson Info" %}
+                                </div>
+                                <div class="rtk-panel-body">
+                                    <dl class="row mb-0 small">
+                                        <dt class="col-5 text-theme-secondary">{% trans "Type" %}</dt>
+                                        <dd class="col-7">{{ lesson.get_lesson_type_display }}</dd>
+                                        <dt class="col-5 text-theme-secondary">{% trans "Difficulty" %}</dt>
+                                        <dd class="col-7">
+                                            <span class="lesson-difficulty-stars" title="{% trans "Difficulty" %}: {{ lesson.get_difficulty_display }}">
+                                                <span class="stars-filled">{{ lesson.difficulty_stars_filled }}</span><span class="stars-empty">{{ lesson.difficulty_stars_empty }}</span>
+                                                <small class="ms-1">{{ lesson.get_difficulty_display }}</small>
+                                            </span>
+                                        </dd>
+                                        <dt class="col-5 text-theme-secondary">{% trans "XP Reward" %}</dt>
+                                        <dd class="col-7 fw-bold" style="color: var(--rtk-text);"><i class="bi bi-star-fill text-warning me-1"></i>{{ lesson.xp_reward }}</dd>
+                                        <dt class="col-5 text-theme-secondary">{% trans "Est. Time" %}</dt>
+                                        <dd class="col-7">{{ lesson.estimated_minutes }} {% trans "min" %}</dd>
+                                    </dl>
+                                </div>
+                            </div>
+
+                            <!-- Tags -->
+                            {% if lesson.tags %}
+                            <div class="rtk-info-panel">
+                                <div class="rtk-panel-header">
+                                    <i class="bi bi-tag"></i>{% trans "Tags" %}
+                                </div>
+                                <div class="rtk-panel-body">
+                                    <div class="d-flex flex-wrap gap-1">
+                                        {% for tag in lesson.tags %}
+                                        <span class="badge" style="background: var(--rtk-bg-surface-elev); color: var(--rtk-text-secondary); padding: 0.35rem 0.75rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid var(--rtk-border-weak);">{{ tag }}</span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <!-- Attachments -->
+                            {% if lesson.attachments.exists %}
+                            <div class="rtk-info-panel">
+                                <div class="rtk-panel-header">
+                                    <i class="bi bi-paperclip"></i>{% trans "Attachments" %}
+                                </div>
+                                <div class="rtk-panel-body">
+                                    <div class="list-group list-group-flush">
+                                        {% for attachment in lesson.attachments.all %}
+                                        <a href="{{ attachment.file.url }}" class="list-group-item list-group-item-action px-0 d-flex align-items-center gap-2" target="_blank" style="background: transparent; border: none; color: var(--rtk-text); padding: 0.625rem 0;">
+                                            {% if attachment.attachment_type == 'pdf' %}
+                                            <i class="bi bi-file-earmark-pdf text-danger fs-5"></i>
+                                            {% elif attachment.attachment_type == 'image' %}
+                                            <i class="bi bi-file-earmark-image text-primary fs-5"></i>
+                                            {% elif attachment.attachment_type == 'code' %}
+                                            <i class="bi bi-file-earmark-code text-success fs-5"></i>
+                                            {% else %}
+                                            <i class="bi bi-file-earmark text-secondary fs-5"></i>
+                                            {% endif %}
+                                            <div class="flex-grow-1 small">
+                                                <div class="fw-medium" style="color: var(--rtk-text);">{{ attachment.name }}</div>
+                                                <small class="text-muted">{{ attachment.get_attachment_type_display }}</small>
+                                            </div>
+                                        </a>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <!-- Notes -->
+                            <div class="rtk-info-panel">
+                                <div class="rtk-panel-header">
+                                    <i class="bi bi-pencil-square"></i>{% trans "My Notes" %}
+                                </div>
+                                <div class="rtk-panel-body">
+                                    <textarea class="form-control" rows="6" placeholder="{% trans "Take notes while learning..." %}" id="lessonNotes"></textarea>
+                                    <div class="d-flex justify-content-end gap-2 mt-2">
+                                        <button class="btn btn-outline-secondary btn-sm" id="saveNotesBtn"><i class="bi bi-save me-1"></i>{% trans "Save" %}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const toggleLessonSidebar = document.getElementById('toggleLessonSidebar');
+    const lessonSidebar = document.getElementById('lessonSidebar');
+    if (toggleLessonSidebar && lessonSidebar) {
+        toggleLessonSidebar.addEventListener('click', () => {
+            lessonSidebar.classList.toggle('show');
+            lessonSidebar.classList.toggle('d-none');
+            document.body.classList.toggle('sidebar-open');
+        });
+        document.addEventListener('click', (e) => {
+            if (!lessonSidebar.contains(e.target) && !toggleLessonSidebar.contains(e.target) && lessonSidebar.classList.contains('show')) {
+                lessonSidebar.classList.remove('show');
+                lessonSidebar.classList.add('d-none');
+                document.body.classList.remove('sidebar-open');
+            }
+        });
+    }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.js"></script>
+<script>
+require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' }});
+require(['vs/editor/editor.main'], function() {
+    const editor = monaco.editor.create(document.getElementById('editor'), {
+        value: `{{ lesson.starter_code|escapejs }}`,
+        language: '{{ lesson.topic.program.language.slug }}',
+        theme: '{{ request.COOKIES.rtk_theme|default:'vs-dark' }}',
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 14,
+        lineNumbers: 'on',
+        tabSize: 4,
+    });
+
+    document.getElementById('runBtn').addEventListener('click', async () => {
+        if (!{{ code_runner_enabled|yesno:"true,false" }}) {
+            return;
+        }
+        const code = editor.getValue();
+        const output = document.getElementById('output');
+        output.style.display = 'block';
+        output.textContent = '{% trans "Running…" %}';
+
+        try {
+            const response = await fetch('/api/code/run/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}',
+                },
+                body: JSON.stringify({
+                    code: code,
+                    language: '{{ lesson.topic.program.language.slug }}',
+                })
+            });
+            const data = await response.json();
+            output.textContent = data.output || data.error || '{% trans "Done" %}';
+        } catch (e) {
+            output.textContent = '{% trans "Error" %}: ' + e.message;
+        }
+    });
+
+    document.getElementById('submitBtn').addEventListener('click', async () => {
+        const code = editor.getValue();
+        // TODO: Submit to practice API
+        alert('{% trans "Submit functionality coming soon" %}');
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+        editor.setValue(`{{ lesson.starter_code|escapejs }}`);
+        document.getElementById('output').style.display = 'none';
+    });
+
+    document.getElementById('saveNotesBtn').addEventListener('click', () => {
+        const notes = document.getElementById('lessonNotes').value;
+        localStorage.setItem('lesson_notes_{{ lesson.slug }}', notes);
+        alert('{% trans "Notes saved locally" %}');
+    });
+
+    const savedNotes = localStorage.getItem('lesson_notes_{{ lesson.slug }}');
+    if (savedNotes) {
+        document.getElementById('lessonNotes').value = savedNotes;
+    }
+
+    document.querySelectorAll('.rtk-copy-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            navigator.clipboard.writeText(btn.dataset.code);
+            btn.innerHTML = '<i class="bi bi-clipboard-check text-success"></i>';
+            setTimeout(() => btn.innerHTML = '<i class="bi bi-clipboard"></i>', 2000);
+        });
+    });
+});
+</script>
+{% endblock %}

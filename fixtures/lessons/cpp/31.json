@@ -1,0 +1,832 @@
+{
+  "title": "Урок 31: Security",
+  "slug": "urok-31-build-systems-ninja,-ccache,-sccache,-distributed",
+  "short_description": "Ninja, ccache, sccache, distcc, BuildXL, Bazel basics",
+  "goals": [
+    "Понимать основы: Ninja, ccache, sccache, distcc, BuildXL, Bazel basics",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 31: Security — memory errors, overflow, fuzzing, sanitizers, analyzers"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Понять основные классы уязвимостей памяти в C++",
+        "Освоить Sanitizers (ASan, UBSan, TSan, MSan, LSan)",
+        "Изучить Fuzzing: libFuzzer, AFL++, honggfuzz",
+        "Научиться статическому анализу: Clang Static Analyzer, cppcheck, PVS-Studio",
+        "Разобрать secure coding practices и hardening"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Memory Safety Vulnerabilities"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Buffer Overflow"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Stack buffer overflow\nvoid unsafe_copy(const char* input) {\n    char buf[64];\n    strcpy(buf, input);  // UB если input > 63 chars\n}\n\n// Heap buffer overflow\nvoid unsafe_heap(const char* input) {\n    char* buf = new char[64];\n    strcpy(buf, input);  // UB\n    delete[] buf;\n}\n\n// Off-by-one\nvoid off_by_one(const char* input) {\n    char buf[64];\n    for (int i = 0; i <= 64; ++i)  // <= вместо <\n        buf[i] = input[i];\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Use-After-Free / Double-Free"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void use_after_free() {\n    int* p = new int(42);\n    delete p;\n    *p = 100;  // UAF — UB\n}\n\nvoid double_free() {\n    int* p = new int(42);\n    delete p;\n    delete p;  // Double free — UB\n}\n\nvoid use_after_scope() {\n    int* p;\n    {\n        int x = 42;\n        p = &x;\n    }\n    *p = 100;  // UAF — UB\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Uninitialized Memory"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void uninit_read() {\n    int x;           // uninitialized\n    int y = x + 1;   // UB — читаем uninitialized value\n}\n\nvoid uninit_member() {\n    struct S { int x; };\n    S s;             // s.x uninitialized\n    use(s.x);        // UB\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Type Confusion / Strict Aliasing"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void type_confusion() {\n    float f = 1.0f;\n    int i = *reinterpret_cast<int*>(&f);  // UB — strict aliasing\n}\n\n// Правильно:\nint i = std::bit_cast<int>(f);  // C++20\n// или memcpy\nint i2; memcpy(&i2, &f, sizeof(f));"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Integer Overflow / Wraparound"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "void signed_overflow() {\n    int x = INT_MAX;\n    x += 1;  // UB — signed overflow\n}\n\nvoid size_t_wraparound() {\n    size_t n = SIZE_MAX;\n    n += 1;  // OK — unsigned wraparound defined\n    // Но: allocation может упасть\n    char* buf = new char[n];  // bad_alloc или UB если n слишком велик\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Sanitizers (Dynamic Analysis)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "AddressSanitizer (ASan)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "GCC/Clang"
+    },
+    {
+      "type": "text",
+      "content": "g++ -fsanitize=address -fno-omit-frame-pointer -g -O1 main.cpp -o app\nclang++ -fsanitize=address -fno-omit-frame-pointer -g -O1 main.cpp -o app"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "MSVC"
+    },
+    {
+      "type": "text",
+      "content": "cl /fsanitize=address /Zi main.cpp"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Options"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Heap/stack/global buffer overflow",
+        "Use-after-free / use-after-return",
+        "Double-free / invalid free",
+        "Memory leaks (LSan встроен)",
+        "Stack-use-after-scope"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "ASAN_OPTIONS=detect_stack_use_after_return=1:detect_leaks=1:halt_on_error=1 ./app\n```\n\n**Что находит:**"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "UndefinedBehaviorSanitizer (UBSan)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Конкретные проверки"
+    },
+    {
+      "type": "text",
+      "content": "-fsanitize=signed-integer-overflow\n-fsanitize=alignment\n-fsanitize=bool\n-fsanitize=enum\n-fsanitize=float-cast-overflow\n-fsanitize=shift\n-fsanitize=divide-by-zero\n-fsanitize=null\n-fsanitize=return\n-fsanitize=vptr\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "ThreadSanitizer (TSan)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Data races, deadlocks, thread leaks"
+    },
+    {
+      "type": "text",
+      "content": "TSAN_OPTIONS=halt_on_error=1:report_thread_leaks=1 ./app\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MemorySanitizer (MSan) — uninitialized reads"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Требует пересборку всех зависимостей с MSan!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "LeakSanitizer (LSan)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Встроен в ASan, или отдельно"
+    },
+    {
+      "type": "text",
+      "content": "g++ -fsanitize=leak -g -O1 main.cpp -o app\nLSAN_OPTIONS=suppressions=lsan.supp ./app\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Hardware-assisted: HWASan (ARM64), KASAN (kernel)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "HWASan (AArch64)"
+    },
+    {
+      "type": "text",
+      "content": "clang++ -fsanitize=hwaddress -g -O1 main.cpp -o app\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Fuzzing (Automated Testing)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "libFuzzer (in-process, coverage-guided)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// fuzz_target.cpp\n#include <cstdint>\n#include <cstring>\n\nextern \"C\" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {\n    if (size < 4) return 0;\n\n    // Ваш парсер/обработчик\n    if (data[0] == 'F' && data[1] == 'U' && data[2] == 'Z' && data[3] == 'Z') {\n        // Trigger bug\n        *(volatile int*)0 = 0;  // crash\n    }\n    return 0;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Build"
+    },
+    {
+      "type": "text",
+      "content": "clang++ -fsanitize=fuzzer,address -g -O1 fuzz_target.cpp -o fuzzer"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Run"
+    },
+    {
+      "type": "text",
+      "content": "./fuzzer -max_len=100 -jobs=4 -workers=4 corpus_dir/"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Minimize corpus"
+    },
+    {
+      "type": "text",
+      "content": "./fuzzer -merge=1 new_corpus/ old_corpus/\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "AFL++ (Out-of-process, binary instrumentation)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Instrumentation"
+    },
+    {
+      "type": "text",
+      "content": "AFL_CC=clang AFL_CXX=clang++ ./configure\nmake CC=afl-clang-fast CXX=afl-clang-fast++"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Run"
+    },
+    {
+      "type": "text",
+      "content": "afl-fuzz -i seeds/ -o findings/ -- ./app @@"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "QEMU mode (no source)"
+    },
+    {
+      "type": "text",
+      "content": "afl-fuzz -Q -i seeds/ -o findings/ -- ./binary @@\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Honggfuzz (Feedback-driven)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "honggfuzz -i seeds/ -o output/ -- ./app ___FILE___"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Structure-aware Fuzzing (Protobuf, custom)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// libprotobuf-mutator\n#include \"protobuf_mutator.h\"\n\nDEFINE_PROTO_FUZZER(const MyProto::Message& msg) {\n    process_message(msg);\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Fuzzing Best Practices"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// 1. Fuzz entry point — single function\n// 2. Deterministic — no random, no time, no external state\n// 3. Fast — in-process, no I/O\n// 4. Corpus — seed с валидными входными данными\n// 5. Dictionary — ключевые слова/токены формата"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Dictionary для libFuzzer"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "dict.txt"
+    },
+    {
+      "type": "text",
+      "content": "\"GET \"\n\"POST \"\n\"HTTP/1.1\"\n\"Content-Length:\"\n\n./fuzzer -dict=dict.txt corpus/\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Static Analysis"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Clang Static Analyzer (scan-build)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Whole project"
+    },
+    {
+      "type": "text",
+      "content": "scan-build -o results make"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Or with CMake"
+    },
+    {
+      "type": "text",
+      "content": "cmake -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ..\nscan-build -o results cmake --build ."
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "View results"
+    },
+    {
+      "type": "list",
+      "items": [
+        "core (null deref, divide by zero, etc.)",
+        "unix (API misuse)",
+        "deadcode",
+        "security (taint, buffer overflow)",
+        "optin.performance"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "scan-view results/\n```\n\n**Чекеры:**"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Clang-Tidy (Linting + Checks)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Config .clang-tidy"
+    },
+    {
+      "type": "text",
+      "content": "Checks: >\n  *,\n  -google-*,\n  -llvm-*,\n  -modernize-use-trailing-return-type,\n  -readability-magic-numbers"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Run"
+    },
+    {
+      "type": "text",
+      "content": "clang-tidy -p build main.cpp -fix"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "**Важные проверки для безопасности:**"
+    },
+    {
+      "type": "text",
+      "content": "yaml\nChecks: >\n  bugprone-*,\n  cert-*,\n  cppcoreguidelines-*,\n  performance-*,\n  portability-*,\n  readability-*,\n  security-*\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Cppcheck"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "cppcheck --enable=all --std=c++20 --inconclusive \\\n  --suppress=missingIncludeSystem \\\n  -I include src/"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "PVS-Studio (Commercial)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pvs-studio-analyzer analyze -j8 -o report.log\nplog-converter -a GA:1,2 -t tasklist -o report.tasks report.log"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Coverity / CodeQL (GitHub Advanced Security)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".github/workflows/codeql.yml"
+    },
+    {
+      "type": "text",
+      "content": "uses: github/codeql-action/init@v2\nwith:\n  languages: cpp\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Compiler Hardening Flags"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GCC/Clang"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Stack protection"
+    },
+    {
+      "type": "text",
+      "content": "-fstack-protector-strong    # защита функций с массивами/адресами\n-fstack-clash-protection    # защита от stack clash"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "FORTIFY_SOURCE (glibc)"
+    },
+    {
+      "type": "text",
+      "content": "-D_FORTIFY_SOURCE=2 -O2     # проверки strlen, memcpy, printf и т.д."
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Control Flow Integrity (CFI)"
+    },
+    {
+      "type": "text",
+      "content": "-fsanitize=cfi -fvisibility=hidden -flto\n-fsanitize=cfi-icall        # indirect calls\n-fsanitize=cfi-derived-cast # base-to-derived casts"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "SafeStack (отделяет unsafe stack)"
+    },
+    {
+      "type": "text",
+      "content": "-fsanitize=safe-stack"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Shadow Call Stack (AArch64)"
+    },
+    {
+      "type": "text",
+      "content": "-fsanitize=shadow-call-stack"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "RELRO (Read-only relocations)"
+    },
+    {
+      "type": "text",
+      "content": "-Wl,-z,relro,-z,now"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "PIE (Position Independent Executable)"
+    },
+    {
+      "type": "text",
+      "content": "-fPIE -pie"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Format string protection"
+    },
+    {
+      "type": "text",
+      "content": "-Wformat=2 -Wformat-security\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "MSVC"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "/GS              # Buffer security check (/GS- to disable)\n/sdl             # Security Development Lifecycle (рекомендует)\n/guard:cf        # Control Flow Guard\n/CETCOMPAT       # Intel CET (shadow stacks, IBT)\n/DYNAMICBASE     # ASLR\n/NXCOMPAT        # DEP (NX)\n/HIGHENTROPYVA   # 64-bit ASLR"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Secure Coding Practices"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Safe String/Buffer Handling"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// ПЛОХО\nchar buf[256];\nsprintf(buf, \"%s\", user_input);\nstrcpy(buf, user_input);\nstrcat(buf, more);\n\n// ХОРОШО\nchar buf[256];\nsnprintf(buf, sizeof(buf), \"%s\", user_input);\nstrncpy(buf, user_input, sizeof(buf)-1);\nbuf[sizeof(buf)-1] = '\\0';\n\n// ЛУЧШЕ: C++ strings\nstd::string buf = user_input;\nstd::string buf2 = user_input + more;\n\n// C++23: std::format (type-safe)\nstd::string s = std::format(\"{} {}\", user_input, more);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Bounds Checking"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Вручную\nvoid safe_copy(int* dst, size_t dst_size, const int* src, size_t src_size) {\n    size_t n = std::min(dst_size, src_size);\n    std::copy_n(src, n, dst);\n}\n\n// gsl::span (Guidelines Support Library)\n#include <gsl/span>\nvoid process(gsl::span<int> dst, gsl::span<const int> src) {\n    Expects(dst.size() >= src.size());\n    std::copy(src.begin(), src.end(), dst.begin());\n}\n\n// std::span (C++20)\nvoid process(std::span<int> dst, std::span<const int> src) {\n    if (dst.size() < src.size()) throw std::length_error(\"dst too small\");\n    std::copy(src.begin(), src.end(), dst.begin());\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Integer Safety"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Checked integer arithmetic\n#include <cstdint>\n\nbool safe_add(int a, int b, int& result) {\n    if (b > 0 && a > INT_MAX - b) return false;\n    if (b < 0 && a < INT_MIN - b) return false;\n    result = a + b;\n    return true;\n}\n\n// Или boost::safe_numerics\n#include <boost/safe_numerics/safe_integer.hpp>\nboost::safe_numerics::safe<int> x = INT_MAX;\nx += 1; // throws на overflow"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Resource Management (RAII)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Всегда RAII для ресурсов\nclass FileHandle {\n    int fd_;\npublic:\n    FileHandle(const char* path) : fd_(open(path, O_RDONLY)) {\n        if (fd_ < 0) throw std::system_error(errno, std::generic_category());\n    }\n    ~FileHandle() { if (fd_ >= 0) close(fd_); }\n    FileHandle(const FileHandle&) = delete;\n    FileHandle& operator=(const FileHandle&) = delete;\n    FileHandle(FileHandle&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }\n    int get() const { return fd_; }\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Input Validation"
+    },
+    {
+      "type": "code",
+      "language": "cpp",
+      "content": "// Валидируйте ВСЕ входные данные\nbool validate_and_process(std::string_view input) {\n    // Size limits\n    if (input.size() > MAX_INPUT) return false;\n\n    // Character set validation\n    if (!std::all_of(input.begin(), input.end(), [](char c){\n        return std::isprint(static_cast<unsigned char>(c));\n    })) return false;\n\n    // Structural validation (JSON, XML, etc.)\n    // Используйте правильные парсеры, не regex для сложных форматов\n\n    return process(input);\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Supply Chain Security"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "SBOM (Software Bill of Materials)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "CycloneDX"
+    },
+    {
+      "type": "text",
+      "content": "cyclonedx-cli create -o sbom.json ."
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "SPDX"
+    },
+    {
+      "type": "text",
+      "content": "spdx-sbom-generator -o sbom.spdx.json .\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dependency Scanning"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "OWASP Dependency Check"
+    },
+    {
+      "type": "text",
+      "content": "dependency-check.sh --project \"MyProject\" --scan ."
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "GitHub Dependabot / GitLab Dependency Scanning"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Автоматические PR для уязвимых зависимостей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Reproducible Builds"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Детерминированная сборка"
+    },
+    {
+      "type": "text",
+      "content": "export SOURCE_DATE_EPOCH=1609459200  # фиксированная дата\nexport BUILD_ID=\"\"                   # убрать build ID\ng++ -fdebug-prefix-map=/src=/usr/src -o app main.cpp\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 1: ASan/UBSan Integration"
+    },
+    {
+      "type": "text",
+      "content": "Добавьте в CMake опцию `ENABLE_SANITIZERS`. Соберите проект с ASan+UBSan. Запустите тесты. Найдите и исправьте хотя бы 3 ошибки."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 2: Fuzzing JSON Parser"
+    },
+    {
+      "type": "text",
+      "content": "Возьмите любой JSON парсер (или напишите простой). Напишите libFuzzer target. Найдите баг (crash/hang/OOM). Исправьте."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 3: Static Analysis"
+    },
+    {
+      "type": "text",
+      "content": "Запустите `clang-tidy` с профилем `cert` и `cppcoreguidelines` на своем коде. Исправьте top 10 предупреждений. Настройте CI для автоматического запуска."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 4: Hardening Flags"
+    },
+    {
+      "type": "text",
+      "content": "Соберите проект с полным набором hardening флагов (stack protector, FORTIFY, CFI, RELRO, PIE). Проверьте `checksec --file=app`. Убедитесь, что производительность не деградировала >5%."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 5: Secure Code Review"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Buffer overflows",
+        "Integer overflows",
+        "Use-after-free",
+        "Race conditions (TSan)",
+        "Injection vulnerabilities (format string, command injection)"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Проведите code review кода на предмет:\n\n\n\n\n\nДокументируйте найденные проблемы."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Задание 6: Fuzzing Campaign"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Corpus сбор и минимизация",
+        "Dictionary",
+        "CI integration (nightly runs)",
+        "Crash triage automation"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Настройте непрерывный фаззинг (OSS-Fuzz style) для своего проекта:\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**CERT C++ Coding Standard** — https://wiki.sei.cmu.edu/confluence/display/cplusplus",
+        "**CWE Top 25** — https://cwe.mitre.org/top25/",
+        "**OWASP C++ Security Cheat Sheet**",
+        "**Google Sanitizers Wiki** — https://github.com/google/sanitizers",
+        "**libFuzzer Tutorial** — https://llvm.org/docs/LibFuzzer.html",
+        "**AFL++ Documentation** — https://aflplus.plus/docs/",
+        "**CppCon: \"Fuzzing C++\" (Kostya Serebryany)**",
+        "**CppCon: \"Securing C++\" (Matthew Butler)**",
+        "**SEI CERT C++ Rules** — CON36-CPP, MEM30-CPP, etc."
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Build systems: Ninja, ccache, sccache, distributed",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Build systems: Ninja, ccache, sccache, distributed' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C++",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c++ на GitHub",
+    "Конференции и митапы по C++"
+  ],
+  "key_takeaways": [
+    "Главная идея: Ninja, ccache, sccache, distcc, BuildXL, Bazel basics — это фундамент для RAII, Move semantics, Perfect forwarding.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "cpp",
+  "lesson_order": 31,
+  "name_en": "Lesson: Build systems: Ninja, ccache, sccache, distributed",
+  "short_description_en": "Learn Build systems: Ninja, ccache, sccache, distributed in C++ with detailed explanations and examples"
+}

@@ -1,0 +1,573 @@
+{
+  "title": "Урок 17: Типизация и статический анализ",
+  "slug": "urok-17-контекстные-менеджеры",
+  "short_description": "with, __enter__/__exit__, contextlib, @contextmanager, suppress",
+  "goals": [
+    "Понимать основы: with, __enter__/__exit__, contextlib, @contextmanager, suppress",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 2.6: Типизация и статический анализ — type hints, mypy, generics, protocols"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Писать аннотации типов (type hints)",
+        "Понимать Generics (List[T], Dict[K, V], и т.д.)",
+        "Использовать Union, Optional, Literal, TypedDict",
+        "Работать с Protocol (структурная типизация)",
+        "Настроить и использовать mypy для статической проверки"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Базовые аннотации (Python 3.5+)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Переменные"
+    },
+    {
+      "type": "text",
+      "content": "age: int = 25\nname: str = \"Анна\"\nheight: float = 1.75\nis_student: bool = True"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Функции"
+    },
+    {
+      "type": "text",
+      "content": "def greet(name: str) -> str:\n    return f\"Привет, {name}!\""
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Сложные типы"
+    },
+    {
+      "type": "text",
+      "content": "from typing import List, Dict, Tuple, Set\n\nnumbers: List[int] = [1, 2, 3]\nuser: Dict[str, int] = {\"age\": 25, \"score\": 100}\ncoords: Tuple[float, float] = (55.75, 37.61)\nunique: Set[str] = {\"a\", \"b\", \"c\"}\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Python 3.9+ — встроенные generics (без typing)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Вместо from typing import List, Dict..."
+    },
+    {
+      "type": "text",
+      "content": "numbers: list[int] = [1, 2, 3]\nuser: dict[str, int] = {\"age\": 25}\ncoords: tuple[float, float] = (55.75, 37.61)\nunique: set[str] = {\"a\", \"b\"}"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Callable"
+    },
+    {
+      "type": "text",
+      "content": "from collections.abc import Callable\nhandler: Callable[[str, int], bool] = lambda name, age: age > 18\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Optional, Union, Literal"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Optional — может быть None"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Эквивалентно:"
+    },
+    {
+      "type": "text",
+      "content": "def find_user(id: int) -> str | None:  # Python 3.10+\n    ...\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Union — несколько возможных типов"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Python 3.10+"
+    },
+    {
+      "type": "text",
+      "content": "def process(id: int | str) -> str:\n    return str(id)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Literal — конкретные значения"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from typing import Literal\n\nMode = Literal[\"r\", \"w\", \"a\", \"rb\", \"wb\"]\n\ndef open_file(path: str, mode: Mode = \"r\") -> None:\n    ...\n\nopen_file(\"test.txt\", \"r\")    # OK\nopen_file(\"test.txt\", \"invalid\")  # Ошибка mypy!"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. TypedDict — типизированные словари"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "user3: User = {\"name\": \"Виктор\", \"age\": 30}     # Ошибка: нет id"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Generics — параметризованные типы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "TypeVar — переменная типа"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: type var generic**\n\n**Что делает:** TypeVar для обобщённого программирования\n\n**Зачем нужно:** Пишем код один раз для любых типов, сохраняем типизацию, DRY\n\n**Как работает:** T = TypeVar('T'); def first(items: list[T]) -> T: return items[0]"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from typing import TypeVar, Generic, List\n\nT = TypeVar('T')\n\ndef first(items: List[T]) -> T:\n    return items[0]\n\nprint(first([1, 2, 3]))        # int\nprint(first([\"a\", \"b\", \"c\"]))  # str"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Свой Generic класс"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: type var generic**\n\n**Что делает:** TypeVar для обобщённого программирования\n\n**Зачем нужно:** Пишем код один раз для любых типов, сохраняем типизацию, DRY\n\n**Как работает:** T = TypeVar('T'); def first(items: list[T]) -> T: return items[0]"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from typing import Generic, TypeVar, Optional\n\nT = TypeVar('T')\n\nclass Box(Generic[T]):\n    def __init__(self, value: T):\n        self.value = value\n\n    def get(self) -> T:\n        return self.value\n\n    def set(self, value: T) -> None:\n        self.value = value\n\nint_box: Box[int] = Box(42)\nstr_box: Box[str] = Box(\"hello\")"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ковариантность / контравариантность"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Ковариантный (только чтение) — Sequence, Iterable"
+    },
+    {
+      "type": "text",
+      "content": "T_co = TypeVar('T_co', covariant=True)\n\nclass ReadOnlyBox(Generic[T_co]):\n    def __init__(self, value: T_co):\n        self._value = value\n    def get(self) -> T_co:\n        return self._value"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Контравариантный (только запись) — Callable[[T], ...]"
+    },
+    {
+      "type": "text",
+      "content": "T_contra = TypeVar('T_contra', contravariant=True)\n\nclass Writer(Generic[T_contra]):\n    def write(self, value: T_contra) -> None:\n        ..."
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Инвариантный (и чтение, и запись) — List, Dict"
+    },
+    {
+      "type": "text",
+      "content": "T = TypeVar('T')\nclass MutableBox(Generic[T]):\n    def __init__(self, value: T):\n        self.value = value\n    def get(self) -> T:\n        return self.value\n    def set(self, value: T) -> None:\n        self.value = value\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Protocol — структурная типизация (Python 3.8+)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Duck typing с проверкой типов"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "render(\"строка\")  # Ошибка mypy: нет draw/area"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Protocol с атрибутами"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "class HasName(Protocol):\n    name: str\n\ndef greet(obj: HasName) -> None:\n    print(f\"Привет, {obj.name}\")\n\nclass Person:\n    def __init__(self, name: str):\n        self.name = name\n\nclass Dog:\n    def __init__(self, name: str):\n        self.name = name\n\ngreet(Person(\"Анна\"))  # OK\ngreet(Dog(\"Бобик\"))    # OK"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Callable, Any, Never, NoReturn"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Callable[[arg_types], return_type]"
+    },
+    {
+      "type": "text",
+      "content": "def apply(func: Callable[[int, int], int], a: int, b: int) -> int:\n    return func(a, b)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Any — отключает проверку типов"
+    },
+    {
+      "type": "text",
+      "content": "def legacy_code(data: Any) -> Any:\n    return data.foo().bar()"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "NoReturn — функция никогда не возвращается (выбрасывает/выходит)"
+    },
+    {
+      "type": "text",
+      "content": "def abort(msg: str) -> NoReturn:\n    raise SystemExit(msg)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Never — нисходящий тип (Python 3.11+), для exhaustiveness checking"
+    },
+    {
+      "type": "text",
+      "content": "def handle(value: int | str) -> None:\n    match value:\n        case int(): ...\n        case str(): ...\n        case _:\n            # value здесь имеет тип Never\n            reveal_type(value)  # mypy покажет Never\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. overload — перегрузка функций"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "mypy знает точный возвращаемый тип"
+    },
+    {
+      "type": "text",
+      "content": "result1 = parse(\"42\")      # int\nresult2 = parse(b\"hello\")  # str\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Final, ClassVar, dataclass_transform"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Final — константа (не переопределяется)"
+    },
+    {
+      "type": "text",
+      "content": "MAX_SIZE: Final[int] = 100"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "MAX_SIZE = 200  # Ошибка mypy!"
+    },
+    {
+      "type": "text",
+      "content": "class Config:\n    # ClassVar — атрибут класса, не экземпляра\n    default_timeout: ClassVar[int] = 30\n    timeout: int = 30  # атрибут экземпляра\n\n@dataclass\nclass Settings:\n    debug: bool = False\n    # поля автоматически типизируются\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. mypy — статический анализатор типов"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка и запуск"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Проверка файла"
+    },
+    {
+      "type": "text",
+      "content": "mypy main.py"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Проверка всего проекта"
+    },
+    {
+      "type": "text",
+      "content": "mypy src/"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Строгий режим"
+    },
+    {
+      "type": "text",
+      "content": "mypy --strict main.py\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфигурация (pyproject.toml)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Игнорировать отсутствующие стабы"
+    },
+    {
+      "type": "text",
+      "content": "[mypy-plugins.*]\nignore_missing_imports = true\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Типичные флаги"
+    },
+    {
+      "type": "table",
+      "content": "| Флаг | Описание |\n|------|----------|\n| `--strict` | Включает все строгие проверки |\n| `--disallow-untyped-defs` | Ошибка, если у функции нет аннотаций |\n| `--ignore-missing-imports` | Не ругаться на отсутствующие stubs |\n| `--show-error-codes` | Показывать коды ошибок (например, `[attr-defined]`) |"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инлайн-подавление"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Или комментарием"
+    },
+    {
+      "type": "text",
+      "content": "x = some_untyped_function()  # type: ignore\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. stubs (.pyi) и typeshed"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Создание stub-файла для сторонней библиотеки"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": "mylib/\n├── __init__.py\n└── mylib.pyi"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "mylib.pyi"
+    },
+    {
+      "type": "text",
+      "content": "def connect(host: str, port: int = 5432) -> Connection: ...\nclass Connection:\n    def execute(self, query: str) -> Result: ...\n    def close(self) -> None: ...\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка типов для популярных библиотек"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "или"
+    },
+    {
+      "type": "text",
+      "content": "pip install types-<package_name>\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Продвинутые трюки"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Type narrowing (сужение типа)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: f-string**\n\n**Что делает:** Форматированные строки с интерполяцией {expr}\n\n**Зачем нужно:** Быстрее и читаемее .format() и %, поддерживает любые выражения внутри {}\n\n**Как работает:** f'Привет, {name}! Тебе {age} лет.' вместо 'Привет, ' + name + '! Тебе ' + str(age) + ' лет.'"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def process(value: int | str | None) -> str:\n    if value is None:\n        return \"пусто\"\n    if isinstance(value, int):\n        return f\"число: {value * 2}\"\n    # здесь value уже точно str\n    return f\"строка: {value.upper()}\""
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Assert для сужения"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "def get_length(obj: object) -> int:\n    assert hasattr(obj, \"__len__\")\n    return len(obj)  # mypy знает, что __len__ есть"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "TypedDict с Required/NotRequired (Python 3.11+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from typing import TypedDict, Required, NotRequired\n\nclass Config(TypedDict):\n    host: Required[str]\n    port: NotRequired[int]  # по умолчанию 80\n    debug: NotRequired[bool]"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Типизация API**: создайте TypedDict для JSON-ответов REST API\n2. **Generic репозиторий**: `Repository[T]` с методами `get(id) -> T`, `save(T) -> None`\n3. **Plugin system**: Protocol для плагинов с методами `init()`, `process()`, `cleanup()`\n4. **mypy config**: настройте строгий mypy для проекта, исправьте все ошибки\n5. **Overload для `__getitem__`**: класс с разным возвращаемым типом для int vs slice\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `List[str]()` — создание через конструктор | `list[str]()` или `[]` с аннотацией переменной |\n| `Optional[str]` без `from typing import Optional` | `str \\| None` (3.10+) или импорт |\n| Мутируемый дефолт в аннотации | `field(default_factory=list)` в dataclass |\n| Игнорирование ошибок `type: ignore` без кода | `type: ignore[attr-defined]` — конкретно |\n| Protocol с `@abstractmethod` | Protocol не требует abstractmethod — достаточно сигнатуры |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**Python Docs: typing** — https://docs.python.org/3/library/typing.html",
+        "**mypy docs** — https://mypy.readthedocs.io/",
+        "**PEP 484 — Type Hints** — https://peps.python.org/pep-0484/",
+        "**PEP 544 — Protocols** — https://peps.python.org/pep-0544/",
+        "**PEP 585 — Builtin Generics** — https://peps.python.org/pep-0585/",
+        "**PEP 604 — Union Types (X | Y)** — https://peps.python.org/pep-0604/",
+        "**Awesome Typing** — https://github.com/typeddjango/awesome-typing"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Контекстные менеджеры",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Контекстные менеджеры' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: with, __enter__/__exit__, contextlib, @contextmanager, suppress — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 17,
+  "name_en": "Lesson: Контекстные менеджеры",
+  "short_description_en": "Learn Контекстные менеджеры in Python with detailed explanations and examples"
+}

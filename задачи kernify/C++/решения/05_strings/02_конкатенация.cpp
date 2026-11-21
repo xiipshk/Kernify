@@ -1,0 +1,12 @@
+// Решение: Конкатенация
+// Тема: Строки и текст
+
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    // Решение для Конкатенация
+    return 0;
+}

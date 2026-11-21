@@ -1,0 +1,393 @@
+# Урок 12: Scope, Closures, Hoisting, Execution Context, this
+
+## Цели урока
+- Понимать лексическую область видимости и цепочку областей
+- Разбираться в hoisting (поднятии) переменных и функций
+- Осваивать замыкания (closures) и их практические применения
+- Понимать execution context и call stack
+- Правильно использовать `this` в разных контекстах
+
+---
+
+## 1. Лексическая область видимости (Lexical Scope)
+
+### Блочная область видимости (ES2015+)
+```javascript
+// let, const — блочная область видимости
+if (true) {
+  let blockScoped = "только в блоке";
+  const alsoBlock = "тоже в блоке";
+  var functionScoped = "видно во всей функции";
+}
+
+// console.log(blockScoped); // ReferenceError
+console.log(functionScoped); // "видно во всей функции"
+
+// Циклы: let создаёт новую связь на каждой итерации
+for (let i = 0; i < 3; i++) {
+  setTimeout(() => console.log(i), 100); // 0, 1, 2
+}
+for (var j = 0; j < 3; j++) {
+  setTimeout(() => console.log(j), 100); // 3, 3, 3 (var — общая переменная)
+}
+```
+
+### Цепочка областей видимости (Scope Chain)
+```javascript
+const global = "global";
+
+function outer() {
+  const outerVar = "outer";
+
+  function middle() {
+    const middleVar = "middle";
+
+    function inner() {
+      const innerVar = "inner";
+      console.log(global, outerVar, middleVar, innerVar);
+      // Все доступны — лексическое замыкание
+    }
+    inner();
+  }
+  middle();
+}
+outer();
+```
+
+---
+
+## 2. Hoisting (Поднятие)
+
+### Переменные
+```javascript
+// var — поднимается и инициализируется undefined
+console.log(a); // undefined (не ReferenceError!)
+var a = 5;
+
+// let, const — поднимаются, но в "Temporal Dead Zone" (TDZ)
+console.log(b); // ReferenceError: Cannot access 'b' before initialization
+let b = 10;
+
+console.log(c); // ReferenceError
+const c = 15;
+
+// TDZ заканчивается в месте объявления
+// typeof в TDZ — тоже ошибка для let/const
+// typeof x; // ReferenceError если x — let/const
+```
+
+### Функции
+```javascript
+// Function Declaration — поднимается ВЦЕЛОМ (с телом)
+foo(); // "foo"
+function foo() { console.log("foo"); }
+
+// Function Expression — только переменная поднимается
+bar(); // TypeError: bar is not a function
+var bar = function() { console.log("bar"); };
+
+// Arrow function — как Function Expression
+baz(); // ReferenceError (TDZ)
+const baz = () => console.log("baz");
+```
+
+### Порядок приоритета hoisting
+```javascript
+// 1. Function Declarations
+// 2. var / let / const (объявления)
+// 3. Function Expressions / Arrow functions (как переменные)
+
+function test() {
+  console.log(typeof foo); // "function" (Function Declaration)
+  console.log(typeof bar); // "undefined" (var)
+  console.log(typeof baz); // ReferenceError (let TDZ)
+
+  function foo() {}
+  var bar = function() {};
+  let baz = function() {};
+}
+```
+
+---
+
+## 3. Замыкания (Closures)
+
+### Что такое замыкание
+```javascript
+function outer(x) {
+  // x — свободная переменная
+  function inner(y) {
+    return x + y; // inner "запоминает" x
+  }
+  return inner;
+}
+
+const add5 = outer(5);
+console.log(add5(3)); // 8 — x=5 "замкнуто" внутри add5
+console.log(add5.__proto__); // в консоли видно [[Scopes]] -> Closure (outer) -> x: 5
+```
+
+### Практический паттерн: фабрика функций
+```javascript
+function createCounter() {
+  let count = 0; // приватная переменная
+  return {
+    increment() { return ++count; },
+    decrement() { return --count; },
+    getCount() { return count; }
+  };
+}
+
+const counter1 = createCounter();
+const counter2 = createCounter();
+console.log(counter1.increment()); // 1
+console.log(counter1.increment()); // 2
+console.log(counter2.increment()); // 1 — изолированное состояние!
+```
+
+### ⚠️ Ловушка: замыкание в цикле (классическая)
+```javascript
+// ПРОБЛЕМА: var — одна переменная на всех
+var funcs = [];
+for (var i = 0; i < 3; i++) {
+  funcs.push(function() { return i; });
+}
+console.log(funcs[0]()); // 3 (не 0!)
+
+// РЕШЕНИЕ 1: let — новая связь на итерацию (ES2015)
+let funcs2 = [];
+for (let i = 0; i < 3; i++) {
+  funcs2.push(() => i);
+}
+console.log(funcs2[0]()); // 0 ✓
+
+// РЕШЕНИЕ 2: IIFE (для var)
+var funcs3 = [];
+for (var i = 0; i < 3; i++) {
+  funcs3.push((function(x) { return () => x; })(i));
+}
+console.log(funcs3[0]()); // 0 ✓
+
+// РЕШЕНИЕ 3: bind
+var funcs4 = [];
+for (var i = 0; i < 3; i++) {
+  funcs4.push(function() { return this.i; }.bind({ i }));
+}
+```
+
+### Замыкание и память
+```javascript
+function heavy() {
+  const bigData = new Array(1000000).fill("x");
+  return function() { return bigData.length; };
+}
+// bigData удерживается в памяти, пока живёт возвращённая функция!
+
+// Решение: занулить ссылку, когда не нужно
+let getLength = heavy();
+console.log(getLength());
+getLength = null; // bigData можно собрать GC
+```
+
+---
+
+## 4. Execution Context и Call Stack
+
+### Этапы создания Execution Context
+```javascript
+// 1. Creation Phase (фаза создания):
+//    - Variable Environment (LexicalEnvironment)
+//    - This Binding
+//    - Outer Environment Reference
+
+// 2. Execution Phase (фаза выполнения):
+//    - Присваивание значений, выполнение кода
+
+function a() { b(); }
+function b() { c(); }
+function c() { console.trace(); } // стек: c -> b -> a -> global
+
+a();
+```
+
+### Call Stack (стек вызовов)
+```javascript
+function first() { second(); }
+function second() { third(); }
+function third() { console.log("bottom"); }
+
+first();
+// Stack: global -> first -> second -> third
+// После third: pop third -> pop second -> pop first
+```
+
+### Microtasks vs Macrotasks (предварительно для урока 16)
+```javascript
+console.log("1 sync");
+
+setTimeout(() => console.log("2 macrotask"), 0);
+
+Promise.resolve().then(() => console.log("3 microtask"));
+
+queueMicrotask(() => console.log("4 microtask"));
+
+console.log("5 sync");
+// Вывод: 1, 5, 3, 4, 2
+```
+
+---
+
+## 5. Ключевое слово this
+
+### Правила определения this (в порядке приоритета)
+
+#### 1. New binding (new)
+```javascript
+function User(name) {
+  this.name = name;
+}
+const user = new User("Анна");
+console.log(user.name); // "Анна" — this = новый объект
+```
+
+#### 2. Explicit binding (call, apply, bind)
+```javascript
+function greet(greeting, punctuation) {
+  console.log(`${greeting}, ${this.name}${punctuation}`);
+}
+const user = { name: "Анна" };
+
+greet.call(user, "Привет", "!");        // "Привет, Анна!"
+greet.apply(user, ["Здравствуйте", "."]); // "Здравствуйте, Анна."
+
+const bound = greet.bind(user, "Hi");
+bound("?"); // "Hi, Анна?"
+```
+
+#### 3. Implicit binding (метод объекта)
+```javascript
+const user = {
+  name: "Анна",
+  greet() { console.log(this.name); }
+};
+user.greet(); // "Анна" — this = user
+
+// Потеря контекста при передаче
+const fn = user.greet;
+fn(); // undefined (strict) или window (sloppy) — this потерян!
+```
+
+#### 4. Default binding (глобальный/undefined)
+```javascript
+function foo() { console.log(this); }
+foo(); // window (sloppy) или undefined (strict mode)
+
+// В строгом режиме this = undefined
+"use strict";
+function bar() { console.log(this); }
+bar(); // undefined
+```
+
+#### 5. Arrow functions — лексическое this
+```javascript
+const user = {
+  name: "Анна",
+  // Обычная функция
+  greetRegular() {
+    setTimeout(function() {
+      console.log(this.name); // undefined — this = window/undefined
+    }, 100);
+  },
+  // Arrow — лексическое this
+  greetArrow() {
+    setTimeout(() => {
+      console.log(this.name); // "Анна" — this из внешней области
+    }, 100);
+  }
+};
+
+// Arrow НЕ имеет собственного this, arguments, super, new.target
+const arrow = () => this;
+console.log(arrow() === window); // true (в глобальной области)
+```
+
+### this в классах
+```javascript
+class User {
+  constructor(name) { this.name = name; }
+
+  greet() { console.log(this.name); }
+
+  // Class fields (ES2022) — стрелочная функция = авто-биндинг
+  greetBound = () => console.log(this.name);
+
+  // Static метод — this = класс
+  static create(name) { return new this(name); }
+}
+
+const user = new User("Анна");
+const fn = user.greet;
+fn(); // undefined — потеря контекста!
+user.greetBound(); // "Анна" — работает
+```
+
+---
+
+## Практические задания
+
+1. **Module pattern**: Реализуйте `createStore(initialState)` — возвращает `{ getState, setState, subscribe }` с приватным state и замыканием.
+
+2. **Memoization**: Напишите `memoize(fn)` — кэширует результаты по аргументам (используйте `Map` + замыкание).
+
+3. **Private methods**: Класс с приватными методами через замыкание (не `#private`):
+   ```javascript
+   function createUser(name) {
+     let _password = null;
+     return {
+       setPassword(p) { _password = hash(p); },
+       checkPassword(p) { return _password === hash(p); }
+     };
+   }
+   ```
+
+4. **This binding quiz**: Предскажите вывод:
+   ```javascript
+   const obj = {
+     name: "obj",
+     regular() { console.log(this.name); },
+     arrow: () => console.log(this.name),
+     nested: {
+       name: "nested",
+       regular() { console.log(this.name); }
+     }
+   };
+   const r = obj.regular; r();
+   obj.regular();
+   obj.nested.regular();
+   const a = obj.arrow; a();
+   obj.arrow();
+   ```
+
+5. **Call stack trace**: Напишите функцию, возвращающая текущий стек вызовов без `Error().stack`.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `for (var i=0; i<3; i++) setTimeout(() => console.log(i))` → 3,3,3 | Используйте `let` или IIFE |
+| `const fn = obj.method; fn()` — `this` потерян | `obj.method()` или `fn.call(obj)` или `bind` |
+| Arrow function как метод класса — `this` не работает | Arrow в class field = авто-биндинг, или `bind` в конструкторе |
+| `let x = x` в TDZ | ReferenceError — нельзя читать до инициализации |
+| `function f() { return function() { return this; } }` — this зависит от вызова | Arrow: `() => this` захватывает внешний this |
+
+---
+
+## Полезные ресурсы
+
+- **ECMAScript 2024: Execution Contexts** — https://262.ecma-international.org/14.0/#sec-execution-contexts
+- **MDN: Closures** — https://developer.mozilla.org/en-US/docs/Web/JavaScript/Closures
+- **You Don't Know JS: Scope & Closures** — Kyle Simpson
+- **You Don't Know JS: this & Object Prototypes** — Kyle Simpson, Ch. 1-2
+- **Jake Archibald: Tasks, microtasks, queues and schedules** — https://jakearchibald.com/2015/tasks-microtasks-queues-and-schedules/

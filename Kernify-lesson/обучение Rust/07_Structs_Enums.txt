@@ -1,0 +1,524 @@
+# Урок 7: Структуры и перечисления
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Определять структуры (`struct`) с именованными, кортежными и unit-полями
+- Реализовывать методы и ассоциированные функции через `impl`
+- Использовать перечисления (`enum`) для моделирования вариантов данных
+- Применять pattern matching с `match` и `if let` для enum'ов
+- Понимать `Option<T>` и `Result<T, E>` как стандартные enum'ы
+- Использовать атрибуты `#[derive]` для автоматической реализации трейтов
+
+---
+
+## 1. Структуры (Structs)
+
+### Классические структуры (named fields)
+```rust
+struct User {
+    username: String,
+    email: String,
+    active: bool,
+    sign_in_count: u64,
+}
+
+fn main() {
+    let user = User {
+        username: String::from("rustacean"),
+        email: String::from("rust@example.com"),
+        active: true,
+        sign_in_count: 1,
+    };
+
+    println!("{} ({})", user.username, user.email);
+
+    // Field init shorthand (имена переменных = имена полей)
+    let email = String::from("new@example.com");
+    let user2 = User { email, ..user }; // Struct update syntax
+}
+```
+
+### Кортежные структуры (Tuple Structs)
+```rust
+struct Color(i32, i32, i32);
+struct Point(i32, i32, i32);
+
+fn main() {
+    let black = Color(0, 0, 0);
+    let origin = Point(0, 0, 0);
+    // Color и Point — РАЗНЫЕ типы, несмотря на одинаковые поля
+
+    let Color(r, g, b) = black; // Деструктуризация
+    println!("R={}, G={}, B={}", r, g, b);
+}
+```
+
+### Unit-подобные структуры (Unit-like Structs)
+```rust
+struct AlwaysEqual; // Нет полей — занимает 0 байт
+
+fn main() {
+    let _x = AlwaysEqual;
+    // Полезны для маркеров, trait-объектов, типов-маркеров
+}
+```
+
+---
+
+## 2. Методы и ассоциированные функции
+
+### `impl` блоки
+```rust
+struct Rectangle {
+    width: u32,
+    height: u32,
+}
+
+impl Rectangle {
+    // Метод (&self — заимствование)
+    fn area(&self) -> u32 {
+        self.width * self.height
+    }
+
+    // Метод (&mut self — изменяемое заимствование)
+    fn scale(&mut self, factor: u32) {
+        self.width *= factor;
+        self.height *= factor;
+    }
+
+    // Метод (self — потребляет владение)
+    fn into_square(self) -> Square {
+        Square { side: self.width.max(self.height) }
+    }
+
+    // Ассоциированная функция (нет self) — как конструктор
+    fn square(size: u32) -> Rectangle {
+        Rectangle { width: size, height: size }
+    }
+}
+
+struct Square { side: u32 }
+
+fn main() {
+    let mut rect = Rectangle { width: 10, height: 20 };
+    println!("Area: {}", rect.area()); // 200
+
+    rect.scale(2);
+    println!("Scaled: {}x{}", rect.width, rect.height); // 20x40
+
+    let square = Rectangle::square(5); // Ассоциированная функция
+}
+```
+
+### Множественные `impl` блоки
+```rust
+impl Rectangle {
+    fn perimeter(&self) -> u32 {
+        2 * (self.width + self.height)
+    }
+}
+
+impl Rectangle {
+    fn can_hold(&self, other: &Rectangle) -> bool {
+        self.width > other.width && self.height > other.height
+    }
+}
+```
+
+---
+
+## 3. Перечисления (Enums)
+
+### Базовый синтаксис
+```rust
+enum IpAddrKind {
+    V4,
+    V6,
+}
+
+fn main() {
+    let four = IpAddrKind::V4;
+    let six = IpAddrKind::V6;
+
+    route(four);
+    route(six);
+}
+
+fn route(kind: IpAddrKind) {
+    match kind {
+        IpAddrKind::V4 => println!("IPv4"),
+        IpAddrKind::V6 => println!("IPv6"),
+    }
+}
+```
+
+### Enum с данными (Algebraic Data Types)
+```rust
+enum IpAddr {
+    V4(u8, u8, u8, u8),
+    V6(String),
+}
+
+fn main() {
+    let home = IpAddr::V4(127, 0, 0, 1);
+    let loopback = IpAddr::V6(String::from("::1"));
+
+    print_ip(home);
+    print_ip(loopback);
+}
+
+fn print_ip(ip: IpAddr) {
+    match ip {
+        IpAddr::V4(a, b, c, d) => println!("IPv4: {}.{}.{}.{}", a, b, c, d),
+        IpAddr::V6(s) => println!("IPv6: {}", s),
+    }
+}
+```
+
+### Enum с именованными полями
+```rust
+enum Message {
+    Quit,
+    Move { x: i32, y: i32 },
+    Write(String),
+    ChangeColor(i32, i32, i32),
+}
+
+fn main() {
+    let msg = Message::Move { x: 10, y: 20 };
+    process(msg);
+}
+
+fn process(msg: Message) {
+    match msg {
+        Message::Quit => println!("Quit"),
+        Message::Move { x, y } => println!("Move to ({}, {})", x, y),
+        Message::Write(text) => println!("Write: {}", text),
+        Message::ChangeColor(r, g, b) => println!("Color: {} {} {}", r, g, b),
+    }
+}
+```
+
+---
+
+## 4. Pattern Matching с `match`
+
+### Исчерпываемость (exhaustiveness)
+```rust
+fn describe(x: Option<i32>) -> String {
+    match x {
+        Some(n) if n > 0 => format!("Positive {}", n), // Guard
+        Some(n) if n < 0 => format!("Negative {}", n),
+        Some(0) => "Zero".to_string(),
+        None => "Nothing".to_string(),
+    }
+}
+```
+
+### Связывание (`@`)
+```rust
+match x {
+    Some(n @ 1..=5) => println!("Small: {}", n),
+    Some(n) => println!("Large: {}", n),
+    None => (),
+}
+```
+
+### Множественные паттерны (`|`)
+```rust
+match x {
+    1 | 2 | 3 => println!("One, two, or three"),
+    _ => println!("Other"),
+}
+```
+
+### Игнорирование (`..`)
+```rust
+struct Point { x: i32, y: i32, z: i32 }
+
+match point {
+    Point { x, .. } => println!("x = {}", x), // Игнорируем y, z
+}
+```
+
+---
+
+## 5. `if let` и `while let`
+
+### `if let` — краткий match для одного паттерна
+```rust
+fn main() {
+    let some = Some(5);
+
+    if let Some(x) = some {
+        println!("Got: {}", x);
+    } else {
+        println!("None");
+    }
+
+    // Эквивалент:
+    // match some { Some(x) => ..., None => ... }
+}
+```
+
+### `while let` — циклы по паттерну
+```rust
+fn main() {
+    let mut stack = vec![1, 2, 3];
+
+    while let Some(top) = stack.pop() {
+        println!("Popped: {}", top);
+    }
+}
+```
+
+---
+
+## 6. Стандартные enum'ы: `Option<T>` и `Result<T, E>`
+
+### `Option<T>` — значение или его отсутствие
+```rust
+fn main() {
+    let some = Some(5);
+    let none: Option<i32> = None;
+
+    // Методы Option
+    println!("{:?}", some.is_some());  // true
+    println!("{:?}", none.is_none());  // true
+
+    // unwrap / expect (PANIC если None!)
+    println!("{}", some.unwrap());        // 5
+    // println!("{}", none.unwrap());     // PANIC!
+
+    // Безопасные альтернативы
+    println!("{}", some.unwrap_or(0));       // 5
+    println!("{}", none.unwrap_or(0));       // 0
+    println!("{}", none.unwrap_or_else(|| compute_default()));
+
+    // map / and_then / filter
+    let doubled = some.map(|x| x * 2);       // Some(10)
+    let squared = some.and_then(|x| Some(x * x)); // Some(25)
+}
+
+fn compute_default() -> i32 { 42 }
+```
+
+### `Result<T, E>` — успех или ошибка
+```rust
+use std::fs::File;
+use std::io::{self, Read};
+
+fn read_file(path: &str) -> Result<String, io::Error> {
+    let mut file = File::open(path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    Ok(contents)
+}
+
+fn main() {
+    match read_file("data.txt") {
+        Ok(content) => println!("File: {}", content),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+
+    // Короткие формы
+    let content = read_file("data.txt").unwrap_or_default();
+    let content = read_file("data.txt").expect("File must exist");
+}
+```
+
+### Оператор `?` — распространение ошибки
+```rust
+fn parse_number(s: &str) -> Result<i32, std::num::ParseIntError> {
+    let n = s.parse::<i32>()?; // Возвращает Err если ошибка
+    Ok(n * 2)
+}
+```
+
+---
+
+## 7. Атрибуты `#[derive]`
+
+Автоматическая реализация стандартных трейтов:
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+#[derive(Debug)]
+enum Status {
+    Pending,
+    Running,
+    Done,
+}
+
+fn main() {
+    let p1 = Point { x: 1, y: 2 };
+    let p2 = p1; // Copy работает
+    println!("{:?}", p1); // Debug
+    println!("Equal: {}", p1 == p2); // PartialEq
+
+    let status = Status::Running;
+    println!("{:?}", status);
+}
+```
+
+### Основные derive-трейты
+| Трейт | Назначение |
+|-------|------------|
+| `Debug` | `{:?}` форматирование |
+| `Clone` | `.clone()` — глубокое копирование |
+| `Copy` | неявное копирование (bitwise) |
+| `PartialEq` / `Eq` | `==`, `!=` |
+| `PartialOrd` / `Ord` | `<`, `>`, сортировка |
+| `Hash` | использование в `HashMap`/`HashSet` |
+| `Default` | `Default::default()` |
+
+---
+
+## 8. Практические упражнения
+
+### Упражнение 1: Геометрические фигуры
+```rust
+#[derive(Debug, Clone, Copy)]
+enum Shape {
+    Circle { radius: f64 },
+    Rectangle { width: f64, height: f64 },
+    Triangle { a: f64, b: f64, c: f64 },
+}
+
+impl Shape {
+    fn area(&self) -> f64 {
+        match self {
+            Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
+            Shape::Rectangle { width, height } => width * height,
+            Shape::Triangle { a, b, c } => {
+                let s = (a + b + c) / 2.0;
+                (s * (s - a) * (s - b) * (s - c)).sqrt() // Герон
+            }
+        }
+    }
+}
+
+fn main() {
+    let shapes = vec![
+        Shape::Circle { radius: 5.0 },
+        Shape::Rectangle { width: 3.0, height: 4.0 },
+        Shape::Triangle { a: 3.0, b: 4.0, c: 5.0 },
+    ];
+    for s in shapes {
+        println!("{:?} area = {:.2}", s, s.area());
+    }
+}
+```
+
+### Упражнение 2: Парсинг команд
+```rust
+#[derive(Debug)]
+enum Command {
+    Move { dx: i32, dy: i32 },
+    Attack { target: String },
+    UseItem { item: String },
+    Quit,
+}
+
+fn parse(input: &str) -> Option<Command> {
+    let parts: Vec<_> = input.split_whitespace().collect();
+    match parts.as_slice() {
+        ["move", dx, dy] => Some(Command::Move {
+            dx: dx.parse().ok()?,
+            dy: dy.parse().ok()?
+        }),
+        ["attack", target] => Some(Command::Attack { target: target.to_string() }),
+        ["use", item] => Some(Command::UseItem { item: item.to_string() }),
+        ["quit"] => Some(Command::Quit),
+        _ => None,
+    }
+}
+
+fn main() {
+    let inputs = ["move 10 5", "attack dragon", "use potion", "quit", "invalid"];
+    for input in inputs {
+        match parse(input) {
+            Some(cmd) => println!("{:?}", cmd),
+            None => println!("Unknown: {}", input),
+        }
+    }
+}
+```
+
+### Упражнение 3: Option-цепочки
+```rust
+fn find_user(id: u32) -> Option<String> {
+    if id == 1 { Some("Alice".to_string()) } else { None }
+}
+
+fn get_email(user: &str) -> Option<String> {
+    if user == "Alice" { Some("alice@example.com".to_string()) } else { None }
+}
+
+fn main() {
+    // Цепочка через and_then
+    let email = find_user(1).and_then(|u| get_email(&u));
+    println!("{:?}", email); // Some("alice@example.com")
+
+    // С помощью ? в функции
+    fn get_user_email(id: u32) -> Option<String> {
+        let user = find_user(id)?;
+        get_email(&user)
+    }
+}
+```
+
+---
+
+## 9. Типичные ошибки новичков
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `non-exhaustive patterns` | Не все варианты enum покрыты в match | Добавьте `_ =>` или обработайте все варианты |
+| `move occurs due to use in generator` | Захват self в замыкании | Используйте `move` или ссылайтесь на поля |
+| `expected struct, found enum` | Перепутали struct и enum | Проверьте определение типа |
+| `cannot move out of borrowed content` | Попытка взять владение через `&` | Используйте `match` с `ref`/`ref mut` или клонируйте |
+| `unwrap() on None` / `Err` | Паника в runtime | Используйте `match`, `if let`, `unwrap_or`, `?` |
+
+---
+
+## 10. Сравнение: Struct vs Enum
+
+| Аспект | `struct` | `enum` |
+|--------|----------|--------|
+| Данные | Все поля одновременно | Один вариант в момент времени |
+| Память | Сумма полей | Макс(варианты) + дискриминант |
+| Расширяемость | Новые поля — breaking change | Новые варианты — breaking change |
+| Pattern matching | Деструктуризация полей | Дискриминант + данные варианта |
+| Использование | Единая сущность с полями | Выбор между альтернативами |
+
+---
+
+## 11. Полезные ресурсы
+
+- **The Book — Structs**: https://doc.rust-lang.org/book/ch05-01-defining-structs.html
+- **The Book — Enums**: https://doc.rust-lang.org/book/ch06-01-defining-an-enum.html
+- **The Book — Match**: https://doc.rust-lang.org/book/ch06-02-match.html
+- **Rust by Example — Enums**: https://doc.rust-lang.org/rust-by-example/custom_types/enum.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- `struct` — именованные, кортежные, unit-подобные
+- `impl` — методы (`&self`, `&mut self`, `self`) и ассоциированные функции
+- `enum` — суммарные типы (ADT) с данными в вариантах
+- `match` — исчерпывающий pattern matching с guards, `@`, `|`, `..`
+- `if let` / `while let` — синтаксический сахар для одного паттерна
+- `Option<T>` — отсутствие значения, методы: `map`, `and_then`, `unwrap_or`
+- `Result<T, E>` — обработка ошибок, оператор `?`
+- `#[derive(Debug, Clone, Copy, PartialEq, ...)]` — авто-реализация трейтов
+
+---
+
+**Следующий урок:** Обработка ошибок (`08_Errors.txt`)

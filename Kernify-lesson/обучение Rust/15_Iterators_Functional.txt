@@ -1,0 +1,515 @@
+# Урок 15: Итераторы и функциональный стиль
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Понимать trait `Iterator` и связанные трейты
+- Использовать адаптеры: `map`, `filter`, `flat_map`, `zip`, `enumerate`
+- Работать с `collect`, `fold`, `reduce`, `scan`
+- Создавать собственные итераторы
+- Использовать `Itertools` (внешний крейт)
+- Понимать lazy evaluation и zero-cost abstractions
+- Применять функциональные паттерны: pipeline, composition
+
+---
+
+## 1. Trait `Iterator` — основа
+
+### Определение
+```rust
+pub trait Iterator {
+    type Item;
+    fn next(&mut self) -> Option<Self::Item>;
+
+    // Много default методов-адapters...
+}
+```
+
+### Базовое использование
+```rust
+fn main() {
+    let v = vec![1, 2, 3];
+    let mut iter = v.iter(); // &T
+
+    println!("{:?}", iter.next()); // Some(&1)
+    println!("{:?}", iter.next()); // Some(&2)
+    println!("{:?}", iter.next()); // Some(&3)
+    println!("{:?}", iter.next()); // None
+}
+```
+
+### `into_iter`, `iter`, `iter_mut`
+```rust
+let v = vec![1, 2, 3];
+
+for x in v.iter() { }        // &i32 — заимствование
+for x in v.iter_mut() { }    // &mut i32 — изменяемое заимствование
+for x in v.into_iter() { }   // i32 — потребление (move)
+for x in v { }               // то же что into_iter
+```
+
+---
+
+## 2. Адаптеры (Iterator Adapters) — ленивые преобразования
+
+### `map` — преобразование каждого элемента
+```rust
+let v = vec![1, 2, 3];
+let doubled: Vec<_> = v.iter().map(|x| x * 2).collect();
+// [2, 4, 6]
+```
+
+### `filter` — фильтрация
+```rust
+let evens: Vec<_> = (1..=10).filter(|x| x % 2 == 0).collect();
+// [2, 4, 6, 8, 10]
+```
+
+### `flat_map` — map + flatten
+```rust
+let matrix = vec![vec![1, 2], vec![3, 4]];
+let flat: Vec<_> = matrix.into_iter().flat_map(|v| v).collect();
+// [1, 2, 3, 4]
+```
+
+### `zip` — объединение двух итераторов
+```rust
+let names = vec!["Alice", "Bob"];
+let ages = vec![30, 25];
+for (name, age) in names.iter().zip(ages.iter()) {
+    println!("{} - {}", name, age);
+}
+```
+
+### `enumerate` — добавление индекса
+```rust
+for (i, val) in vec!['a', 'b', 'c'].iter().enumerate() {
+    println!("{}: {}", i, val);
+}
+```
+
+### `take` / `skip` — ограничение
+```rust
+let first_three: Vec<_> = (1..).take(3).collect();     // [1, 2, 3]
+let skipped: Vec<_> = (1..=10).skip(3).take(2).collect(); // [4, 5]
+```
+
+### `chain` — конкатенация
+```rust
+let chained: Vec<_> = (1..=3).chain(10..=12).collect();
+// [1, 2, 3, 10, 11, 12]
+```
+
+### `cycle` — бесконечное повторение
+```rust
+let cycled: Vec<_> = vec![1, 2].into_iter().cycle().take(6).collect();
+// [1, 2, 1, 2, 1, 2]
+```
+
+### `step_by` — шаг
+```rust
+let stepped: Vec<_> = (0..10).step_by(3).collect(); // [0, 3, 6, 9]
+```
+
+---
+
+## 3. Потребители (Consumers) — завершают итерацию
+
+### `collect` — сбор в коллекцию
+```rust
+let v: Vec<_> = (1..=5).collect();           // Vec
+let s: String = "hello".chars().collect();   // String (FromIterator)
+let h: HashMap<_, _> = vec![(1,2), (3,4)].into_iter().collect();
+```
+
+### `fold` / `reduce` — свертка
+```rust
+let sum = (1..=5).fold(0, |acc, x| acc + x);  // 15
+let product = (1..=5).reduce(|acc, x| acc * x); // Some(120)
+
+// fold с начальным значением
+let concatenated = vec!["a", "b", "c"].into_iter()
+    .fold(String::new(), |acc, x| acc + x); // "abc"
+```
+
+### `scan` — fold с сохранением состояния
+```rust
+let running_sum: Vec<_> = (1..=5)
+    .scan(0, |state, x| { *state += x; Some(*state) })
+    .collect();
+// [1, 3, 6, 10, 15]
+```
+
+### `for_each` — побочные эффекты
+```rust
+(1..=3).for_each(|x| println!("{}", x));
+```
+
+### `all` / `any` / `find` / `position`
+```rust
+let v = vec![2, 4, 6, 8];
+v.iter().all(|x| x % 2 == 0);    // true
+v.iter().any(|x| x > 5);         // true
+v.iter().find(|&&x| x > 5);      // Some(&6)
+v.iter().position(|&&x| x > 5);  // Some(2)
+```
+
+### `min` / `max` / `min_by_key` / `max_by_key`
+```rust
+let v = vec![5, 2, 8, 1];
+v.iter().min();                    // Some(&1)
+v.iter().max_by_key(|x| x * 10);   // Some(&8)
+```
+
+---
+
+## 4. Создание собственных итераторов
+
+### Простой итератор
+```rust
+struct Counter {
+    current: u32,
+    max: u32,
+}
+
+impl Counter {
+    fn new(max: u32) -> Self {
+        Counter { current: 0, max }
+    }
+}
+
+impl Iterator for Counter {
+    type Item = u32;
+    fn next(&mut self) -> Option<u32> {
+        if self.current < self.max {
+            self.current += 1;
+            Some(self.current)
+        } else { None }
+    }
+}
+```
+
+### Итератор с состоянием (Фибоначчи)
+```rust
+struct Fibonacci {
+    a: u64,
+    b: u64,
+}
+
+impl Iterator for Fibonacci {
+    type Item = u64;
+    fn next(&mut self) -> Option<u64> {
+        let current = self.a;
+        self.a = self.b;
+        self.b = current + self.b;
+        Some(current)
+    }
+}
+
+fn main() {
+    let fib = Fibonacci { a: 0, b: 1 };
+    for n in fib.take(10) { print!("{} ", n); }
+    // 0 1 1 2 3 5 8 13 21 34
+}
+```
+
+### Lending Iterator (GAT) — возвращает ссылку на себя
+```rust
+#![feature(generic_associated_types)]
+
+trait LendingIterator {
+    type Item<'a>;
+    fn next<'a>(&'a mut self) -> Option<Self::Item<'a>>;
+}
+
+struct Windows<'a, T> {
+    slice: &'a [T],
+    idx: usize,
+}
+
+impl<'a, T> LendingIterator for Windows<'a, T> {
+    type Item<'b> = &'b [T] where 'a: 'b;
+
+    fn next<'b>(&'b mut self) -> Option<Self::Item<'b>> {
+        if self.idx + 2 <= self.slice.len() {
+            let w = &self.slice[self.idx..self.idx+2];
+            self.idx += 1;
+            Some(w)
+        } else { None }
+    }
+}
+```
+
+---
+
+## 5. `Itertools` — расширенные адаптеры
+
+```toml
+[dependencies]
+itertools = "0.12"
+```
+
+```rust
+use itertools::Itertools;
+
+fn main() {
+    // chunked
+    for chunk in (1..=10).chunks(3).into_iter() {
+        println!("{:?}", chunk.collect::<Vec<_>>());
+    }
+    // [1,2,3] [4,5,6] [7,8,9] [10]
+
+    // tuple_windows
+    let sums: Vec<_> = (1..=5).tuple_windows().map(|(a,b)| a+b).collect();
+    // [3, 5, 7, 9]
+
+    // unique
+    let uniq: Vec<_> = vec![1,2,2,3,1].into_iter().unique().collect();
+    // [1, 2, 3]
+
+    // interleave
+    let v: Vec<_> = (1..=3).interleave(10..=12).collect();
+    // [1, 10, 2, 11, 3, 12]
+
+    // partitions
+    let (evens, odds): (Vec<_>, Vec<_>) = (1..=6).partition(|x| x % 2 == 0);
+    // evens=[2,4,6], odds=[1,3,5]
+}
+```
+
+---
+
+## 6. Ленивость и Zero-Cost Abstractions
+
+### Итераторы ленивы
+```rust
+let iter = (1..).map(|x| { println!("map {}", x); x * 2 });
+// Ничего не напечатано!
+
+let _: Vec<_> = iter.take(3).collect();
+// map 1
+// map 2
+// map 3
+```
+
+### Оптимизация компилятором
+```rust
+// Этот код:
+let sum: i32 = (1..=100).map(|x| x * 2).filter(|x| x % 3 == 0).sum();
+
+// Компилируется в такой же машинный код как:
+let mut sum = 0;
+for x in 1..=100 {
+    let y = x * 2;
+    if y % 3 == 0 { sum += y; }
+}
+```
+
+---
+
+## 7. Параллельные итераторы — `rayon`
+
+```toml
+[dependencies]
+rayon = "1.10"
+```
+
+```rust
+use rayon::prelude::*;
+
+fn main() {
+    let sum: i64 = (1..=1_000_000)
+        .into_par_iter()
+        .map(|x| x * x)
+        .sum();
+
+    println!("Sum of squares: {}", sum);
+}
+```
+
+### Адаптеры rayon
+```rust
+// par_iter, par_iter_mut, into_par_iter
+// map, filter, flat_map, fold, reduce, for_each
+// collect, partition, find_any, find_first, any, all
+```
+
+---
+
+## 8. Функциональные паттерны
+
+### Pipeline (конвейер)
+```rust
+fn process_data(input: &str) -> Vec<String> {
+    input
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter(|s| !s.starts_with('#'))
+        .map(|s| s.to_uppercase())
+        .collect()
+}
+```
+
+### Composition (композиция)
+```rust
+fn add_one(x: i32) -> i32 { x + 1 }
+fn double(x: i32) -> i32 { x * 2 }
+fn square(x: i32) -> i32 { x * x }
+
+// Композиция справа налево
+let pipeline = |x| square(double(add_one(x)));
+
+// Или через итераторы
+let result = vec![1, 2, 3]
+    .into_iter()
+    .map(add_one)
+    .map(double)
+    .map(square)
+    .collect::<Vec<_>>();
+```
+
+### Map-Reduce паттерн
+```rust
+let word_counts = text
+    .split_whitespace()
+    .map(|w| w.to_lowercase())
+    .fold(HashMap::new(), |mut map, word| {
+        *map.entry(word).or_insert(0) += 1;
+        map
+    });
+```
+
+---
+
+## 9. Практические упражнения
+
+### Упражнение 1: Custom iterator — Prime numbers
+```rust
+struct Primes {
+    current: u64,
+}
+
+impl Primes {
+    fn new() -> Self { Primes { current: 2 } }
+    fn is_prime(n: u64) -> bool {
+        if n < 2 { return false; }
+        (2..=((n as f64).sqrt() as u64)).all(|i| n % i != 0)
+    }
+}
+
+impl Iterator for Primes {
+    type Item = u64;
+    fn next(&mut self) -> Option<u64> {
+        loop {
+            if Self::is_prime(self.current) {
+                let p = self.current;
+                self.current += 1;
+                return Some(p);
+            }
+            self.current += 1;
+        }
+    }
+}
+
+fn main() {
+    for p in Primes::new().take(10) {
+        print!("{} ", p);
+    }
+    // 2 3 5 7 11 13 17 19 23 29
+}
+```
+
+### Упражнение 2: Group by с itertools
+```rust
+use itertools::Itertools;
+
+fn main() {
+    let data = vec![
+        ("fruit", "apple"), ("fruit", "banana"),
+        ("veg", "carrot"), ("fruit", "cherry"),
+    ];
+
+    for (category, items) in &data.into_iter().group_by(|(c, _)| *c) {
+        println!("{}: {:?}", category, items.map(|(_, v)| v).collect::<Vec<_>>());
+    }
+}
+```
+
+### Упражнение 3: Функциональный валидатор
+```rust
+type Validator<T> = Box<dyn Fn(&T) -> Result<(), String>>;
+
+fn validate_all<T>(value: &T, validators: &[Validator<T>]) -> Result<(), Vec<String>> {
+    let errors: Vec<_> = validators
+        .iter()
+        .filter_map(|v| v(value).err())
+        .collect();
+
+    if errors.is_empty() { Ok(()) } else { Err(errors) }
+}
+
+fn main() {
+    let validators: Vec<Validator<String>> = vec![
+        Box::new(|s| if s.len() >= 3 { Ok(()) } else { Err("too short".into()) }),
+        Box::new(|s| if s.chars().any(|c| c.is_ascii_digit()) { Ok(()) } else { Err("no digit".into()) }),
+    ];
+
+    println!("{:?}", validate_all("ab", &validators));   // Err(["too short", "no digit"])
+    println!("{:?}", validate_all("abc1", &validators)); // Ok(())
+}
+```
+
+---
+
+## 10. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `collect` не знает тип | Не выведен тип коллекции | Укажите тип: `collect::<Vec<_>>()` |
+| `move occurs due to use in generator` | Захват в замыкании | Используйте `move` или измените владение |
+| `Iterator::Item` не определен | Не реализован `next` | Реализуйте `next` или используйте адаптеры |
+| Бесконечный цикл | `cycle` / `repeat` без `take` | Всегда ограничивайте: `.take(n)` |
+| Производительность | Множество `.collect()` | Используйте `.fold()` или один `.collect()` в конце |
+
+---
+
+## 11. Шпаргалка: Iterator Adapters
+
+| Категория | Методы |
+|-----------|--------|
+| **Transform** | `map`, `filter`, `flat_map`, `flatten`, `filter_map` |
+| **Combine** | `zip`, `chain`, `cycle`, `interleave` (itertools) |
+| **Slice** | `take`, `skip`, `step_by`, `peekable` |
+| **Position** | `enumerate`, `inspect` |
+| **Consume** | `collect`, `fold`, `reduce`, `sum`, `product`, `for_each` |
+| **Query** | `all`, `any`, `find`, `position`, `min`, `max` |
+| **Group** | `group_by` (itertools), `chunk_by` |
+
+---
+
+## 12. Полезные ресурсы
+
+- **The Book — Iterators**: https://doc.rust-lang.org/book/ch13-02-iterators.html
+- **std::iter**: https://doc.rust-lang.org/std/iter/
+- **Itertools docs**: https://docs.rs/itertools/
+- **Rayon docs**: https://docs.rs/rayon/
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- `Iterator` trait: `next`, `Item`, default adapters
+- `iter`, `iter_mut`, `into_iter` — три способа итерации
+- Ленивые адаптеры: `map`, `filter`, `flat_map`, `zip`, `enumerate`, `take`, `skip`, `chain`, `cycle`, `step_by`
+- Потребители: `collect`, `fold`, `reduce`, `scan`, `for_each`, `all`, `any`, `find`, `min`, `max`
+- Создание своих итераторов через `impl Iterator`
+- GAT для lending iterators
+- `Itertools` — расширенные адаптеры
+- Zero-cost abstractions — итераторы оптимизируются в циклы
+- `rayon` — параллельные итераторы
+- Функциональные паттерны: pipeline, composition, map-reduce
+
+---
+
+**Следующий урок:** Архитектура приложений (`16_Architecture.txt`)

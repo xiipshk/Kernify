@@ -1,0 +1,440 @@
+# Урок 2.2: Коллекции и алгоритмы — вложенные структуры, comprehensions, сортировка, стек/очередь, хеширование
+
+## Цели урока
+- Работать со вложенными структурами данных
+- Освоить list/dict/set comprehensions
+- Понимать алгоритмы сортировки и key-функции
+- Использовать collections: deque, Counter, defaultdict, namedtuple
+- Знать основы хеширования
+
+---
+
+## 1. Вложенные структуры
+
+```python
+# Матрица (список списков)
+matrix = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9]
+]
+
+# Доступ
+matrix[0][1]   # 2 (строка 0, столбец 1)
+matrix[1][2]   # 6
+
+# Итерация
+for row in matrix:
+    for val in row:
+        print(val, end=" ")
+    print()
+
+# Список словарей (типично для JSON/БД)
+users = [
+    {"name": "Анна", "age": 25, "skills": ["Python", "SQL"]},
+    {"name": "Борис", "age": 30, "skills": ["Java", "Spring"]},
+]
+
+# Доступ
+users[0]["skills"][1]  # "SQL"
+
+# Фильтрация
+pythonistas = [u for u in users if "Python" in u["skills"]]
+```
+
+---
+
+## 2. Comprehensions (генераторы коллекций)
+
+### List comprehension
+```python
+# Базовый
+squares = [x**2 for x in range(10)]
+# [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
+
+# С условием (filter)
+evens = [x for x in range(10) if x % 2 == 0]
+# [0, 2, 4, 6, 8]
+
+# Вложенные
+pairs = [(x, y) for x in range(3) for y in range(3)]
+# [(0,0), (0,1), (0,2), (1,0), ...]
+
+# С выражением
+words = ["hello", "world", "python"]
+lengths = [len(w.upper()) for w in words]
+# [5, 5, 6]
+
+# Walrus operator (Python 3.8+)
+data = [1, 2, 3, 4, 5]
+doubled = [y for x in data if (y := x * 2) > 5]
+# [6, 8, 10]
+```
+
+### Dict comprehension
+```python
+# Ключ: значение
+squares_dict = {x: x**2 for x in range(5)}
+# {0: 0, 1: 1, 2: 4, 3: 9, 4: 16}
+
+# Инвертирование словаря
+original = {"a": 1, "b": 2, "c": 3}
+inverted = {v: k for k, v in original.items()}
+# {1: 'a', 2: 'b', 3: 'c'}
+
+# Группировка
+from collections import defaultdict
+words = ["apple", "bat", "car", "ant", "dog"]
+by_first = defaultdict(list)
+for w in words:
+    by_first[w[0]].append(w)
+# {'a': ['apple', 'ant'], 'b': ['bat'], 'c': ['car'], 'd': ['dog']}
+
+# В comprehension (через setdefault или itertools.groupby)
+by_first = {k: list(g) for k, g in groupby(sorted(words), key=lambda x: x[0])}
+```
+
+### Set comprehension
+```python
+unique_lengths = {len(w) for w in words}
+# {5, 6, 3}
+```
+
+### Generator expression (ленивый)
+```python
+# Не создаёт список в памяти!
+gen = (x**2 for x in range(1000000))
+next(gen)  # 0
+next(gen)  # 1
+
+# sum, max, any, all работают с генераторами
+sum(x**2 for x in range(100))  # 328350
+```
+
+---
+
+## 3. Сортировка
+
+### sorted() vs list.sort()
+```python
+lst = [3, 1, 4, 1, 5]
+
+sorted(lst)        # [1, 1, 3, 4, 5] — НОВЫЙ список
+lst.sort()         # lst изменён на месте, возвращает None
+```
+
+### key-функция — КЛЮЧ к эффективной сортировке
+```python
+words = ["apple", "pie", "banana", "a"]
+
+sorted(words, key=len)           # ['a', 'pie', 'apple', 'banana']
+sorted(words, key=len, reverse=True)  # ['banana', 'apple', 'pie', 'a']
+
+# Сложные объекты
+users = [
+    {"name": "Анна", "age": 25},
+    {"name": "Борис", "age": 20},
+    {"name": "Виктор", "age": 30},
+]
+sorted(users, key=lambda u: u["age"])
+# [{'name': 'Борис', 'age': 20}, {'name': 'Анна', 'age': 25}, ...]
+
+# Несколько ключей (кортеж)
+data = [(3, 2), (1, 4), (1, 2), (3, 1)]
+sorted(data)                    # [(1, 2), (1, 4), (3, 1), (3, 2)]
+# Сортирует по первому, потом по второму элементу
+```
+
+### itemgetter, attrgetter, methodcaller
+```python
+from operator import itemgetter, attrgetter, methodcaller
+
+users = [{"name": "Анна", "age": 25}, {"name": "Борис", "age": 20}]
+sorted(users, key=itemgetter("age"))  # быстрее lambda
+
+class User:
+    def __init__(self, name, age):
+        self.name, self.age = name, age
+
+users_obj = [User("Анна", 25), User("Борис", 20)]
+sorted(users_obj, key=attrgetter("age"))
+```
+
+### Стабильность сортировки
+```python
+# Python sort — STABLE (сохраняет порядок равных элементов)
+data = [("a", 2), ("b", 1), ("c", 2)]
+sorted(data, key=lambda x: x[1])
+# [('b', 1), ('a', 2), ('c', 2)] — 'a' перед 'c' сохранено!
+
+# Многоуровневая сортировка: сортируем от младшего ключа к старшему
+data.sort(key=lambda x: x[0])  # по имени
+data.sort(key=lambda x: x[1])  # по возрасту — имена внутри возраста сохранятся
+```
+
+---
+
+## 4. Модуль collections
+
+### namedtuple — лёгкие неизменяемые записи
+```python
+from collections import namedtuple
+
+Point = namedtuple("Point", ["x", "y"])
+p = Point(1, 2)
+p.x, p.y        # 1, 2
+p[0], p[1]      # 1, 2 (как кортеж)
+x, y = p        # распаковка
+
+# _replace — "изменение" (создаёт новый)
+p2 = p._replace(x=10)  # Point(x=10, y=2)
+
+# _asdict
+p._asdict()     # OrderedDict([('x', 1), ('y', 2)])
+```
+
+### dataclass (современная альтернатива, Python 3.7+)
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float
+    label: str = "point"  # значение по умолчанию
+```
+
+### deque — двусторонняя очередь (O(1) с обеих сторон)
+```python
+from collections import deque
+
+dq = deque([1, 2, 3])
+dq.append(4)       # справа
+dq.appendleft(0)   # слева
+dq.pop()           # 4
+dq.popleft()       # 0
+
+# Очередь (FIFO)
+queue = deque()
+queue.append(1)
+queue.append(2)
+queue.popleft()    # 1
+
+# Стек (LIFO)
+stack = deque()
+stack.append(1)
+stack.append(2)
+stack.pop()        # 2
+
+# Ограниченный размер
+dq = deque(maxlen=3)
+dq.extend([1,2,3,4,5])  # deque([3, 4, 5], maxlen=3)
+```
+
+### Counter — подсчёт элементов
+```python
+from collections import Counter
+
+cnt = Counter("abracadabra")
+# Counter({'a': 5, 'b': 2, 'r': 2, 'c': 1, 'd': 1})
+
+cnt.most_common(2)  # [('a', 5), ('b', 2)]
+cnt["a"]            # 5 (0 если нет)
+cnt["z"]            # 0
+
+# Арифметика
+Counter(a=3, b=1) + Counter(a=1, b=2)  # Counter({'a': 4, 'b': 3})
+Counter(a=3, b=1) - Counter(a=1, b=2)  # Counter({'a': 2}) — неотрицательные!
+```
+
+### defaultdict — словарь с фабрикой значений
+```python
+from collections import defaultdict
+
+# Группировка
+groups = defaultdict(list)
+for word in ["apple", "ant", "bat", "car"]:
+    groups[word[0]].append(word)
+# {'a': ['apple', 'ant'], 'b': ['bat'], 'c': ['car']}
+
+# Счётчик без if
+counts = defaultdict(int)
+for ch in "hello":
+    counts[ch] += 1
+
+# Вложенные
+nested = defaultdict(lambda: defaultdict(int))
+nested["users"]["alice"] += 1
+```
+
+### ChainMap — объединение словарей (поиск по цепочке)
+```python
+from collections import ChainMap
+
+defaults = {"color": "blue", "size": 10}
+user_prefs = {"size": 12}
+env = {"color": "red"}
+
+config = ChainMap(env, user_prefs, defaults)
+config["color"]   # "red" (env)
+config["size"]    # 12 (user_prefs)
+config["font"]    # KeyError (нет в defaults)
+
+# Новый "слой"
+config = config.new_child({"size": 14})  # временное переопределение
+```
+
+---
+
+## 5. Стек и очередь — алгоритмические паттерны
+
+### Стек (LIFO) — список или deque
+```python
+# Проверка скобок
+def brackets_ok(s):
+    stack = []
+    pairs = {")": "(", "]": "[", "}": "{"}
+    for ch in s:
+        if ch in "([{":
+            stack.append(ch)
+        elif ch in ")]}":
+            if not stack or stack.pop() != pairs[ch]:
+                return False
+    return not stack
+
+brackets_ok("([{}])")  # True
+brackets_ok("([)]")    # False
+```
+
+### Очередь (FIFO) — deque
+```python
+from collections import deque
+
+# BFS (поиск в ширину)
+def bfs(graph, start):
+    visited = set()
+    queue = deque([start])
+    while queue:
+        node = queue.popleft()
+        if node not in visited:
+            visited.add(node)
+            queue.extend(graph[node] - visited)
+    return visited
+```
+
+### Priority Queue (heapq) — очередь с приоритетом
+```python
+import heapq
+
+pq = []
+heapq.heappush(pq, (3, "low"))
+heapq.heappush(pq, (1, "high"))
+heapq.heappush(pq, (2, "medium"))
+
+while pq:
+    priority, task = heapq.heappop(pq)
+    print(priority, task)
+# 1 high
+# 2 medium
+# 3 low
+```
+
+---
+
+## 6. Хеширование
+
+### Как работает dict/set
+```python
+# Хэш-таблица: key -> hash(key) -> index -> bucket
+# Коллизии разрешаются open addressing
+
+class MyClass:
+    def __init__(self, value):
+        self.value = value
+
+    def __eq__(self, other):
+        return isinstance(other, MyClass) and self.value == other.value
+
+    def __hash__(self):
+        return hash(self.value)  # должен согласовываться с __eq__!
+
+a = MyClass(1)
+b = MyClass(1)
+d = {a: "first"}
+d[b] = "second"  # перезапишет, так как a == b и hash(a) == hash(b)
+```
+
+### Правила __hash__
+```python
+# 1. Если a == b, то hash(a) == hash(b) (ОБЯЗАТЕЛЬНО!)
+# 2. Неизменяемые объекты — хешируемы по умолчанию
+# 3. Изменяемые — НЕ хешируемы (если не определили __eq__ без __hash__)
+
+# Отключение хеширования
+class Unhashable:
+    __hash__ = None  # TypeError при попытке положить в set/dict
+```
+
+### frozenset — хешируемое множество
+```python
+fs = frozenset([1, 2, 3])
+d = {fs: "value"}  # OK!
+# set([1,2,3]) в dict — TypeError!
+```
+
+---
+
+## 7. itertools — итераторы для алгоритмов
+
+```python
+import itertools
+
+# Бесконечные
+itertools.count(10, 2)     # 10, 12, 14, ...
+itertools.cycle([1,2,3])   # 1,2,3,1,2,3,...
+itertools.repeat(5, 3)     # 5,5,5
+
+# Комбинаторика
+itertools.permutations([1,2,3], 2)  # (1,2),(1,3),(2,1),(2,3),(3,1),(3,2)
+itertools.combinations([1,2,3], 2)  # (1,2),(1,3),(2,3)
+itertools.product([1,2], 'ab')      # (1,'a'),(1,'b'),(2,'a'),(2,'b')
+
+# Фильтрация/группировка
+itertools.filterfalse(lambda x: x%2, range(10))  # чётные
+itertools.takewhile(lambda x: x<5, range(10))    # 0,1,2,3,4
+itertools.groupby(sorted(data), key=func)        # группировка (требует sorted!)
+
+# Аккумуляция
+itertools.accumulate([1,2,3,4], operator.mul)  # 1,2,6,24
+```
+
+---
+
+## Практические задания
+
+1. **Топ-N**: найдите N самых частых слов в тексте (Counter + most_common)
+2. **Группировка anagram**: сгруппируйте слова по отсортированным буквам
+3. **Сортировка по нескольким полям**: список словарей — по возрасту убыв, по имени возр
+4. **Sliding window**: реализуйте скользящее окно размера k над списком (deque)
+5. **Flatten**: разверните вложенный список произвольной глубины (рекурсия/stack)
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `lst.sort()` и ожидание возврата списка | `sorted(lst)` или `lst.sort(); lst` |
+| `lambda` в ключе сортировки для сложных случаев | `itemgetter`, `attrgetter` — быстрее |
+| `groupby` без предварительной сортировки | Данные должны быть отсортированы по ключу! |
+| `defaultdict(list)` с изменяемым дефолтом | `defaultdict(lambda: [])` или `defaultdict(list)` — list создаётся при обращении |
+| Модификация ключа в dict | Ключи должны быть неизменяемыми |
+
+---
+
+## Полезные ресурсы
+- **Python Docs: collections** — https://docs.python.org/3/library/collections.html
+- **Real Python: Sorting** — https://realpython.com/python-sort/
+- **Real Python: Comprehensions** — https://realpython.com/list-comprehension-python/
+- **itertools docs** — https://docs.python.org/3/library/itertools.html
+- **Python Data Model: __hash__** — https://docs.python.org/3/reference/datamodel.html#object.__hash__

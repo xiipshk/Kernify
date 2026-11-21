@@ -1,0 +1,620 @@
+# Урок 13: Advanced Responsive Design — Container Queries Deep Dive, Logical Properties, i18n, User Preferences
+
+## Цели урока
+- Глубоко изучить Container Queries: синтаксис, единицы, именованные контейнеры, вложенность
+- Освоить CSS Logical Properties для полноценной интернационализации (RTL, vertical writing)
+- Понять все User Preference Media Queries: motion, contrast, color-scheme, transparency, reduced-data
+- Научиться писать действительно адаптивные компоненты без viewport media queries
+- Реализовать полную поддержку RTL и вертикального письма
+
+---
+
+## 1. Container Queries — детальное погружение
+
+### Container Types
+```css
+.container {
+  /* Основные типы */
+  container-type: inline-size;    /* Запросы по inline размере (ширина в LTR) */
+  container-type: block-size;     /* Запросы по block размере (высота) */
+  container-type: size;           /* И inline, и block (редко нужно) */
+  container-type: normal;         /* Не контейнер (default) */
+
+  /* Сокращение: container: <name> <type> */
+  container: card / inline-size;
+}
+```
+
+### Container Name — изоляция запросов
+```css
+/* Именованный контейнер */
+.sidebar {
+  container-type: inline-size;
+  container-name: sidebar;
+}
+
+.main {
+  container-type: inline-size;
+  container-name: main;
+}
+
+/* Запрос к конкретному контейнеру */
+@container sidebar (min-width: 300px) {
+  .nav__label { display: block; }
+}
+
+@container main (min-width: 600px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+}
+```
+
+### Container Query Units (cq*) — детально
+```css
+.card {
+  container-type: inline-size;
+
+  /* 1cqw = 1% ширины контейнера */
+  font-size: clamp(1rem, 3cqw, 1.5rem);
+  padding: 2cqw;
+  gap: 1cqw;
+  border-radius: 1cqw;
+
+  /* Все единицы */
+  width: 50cqw;     /* 50% container width */
+  height: 50cqh;    /* 50% container height */
+  width: 50cqi;     /* 50% container inline size */
+  height: 50cqb;    /* 50% container block size */
+  size: 10cqmin;    /* min(cqi, cqb) */
+  size: 10cqmax;    /* max(cqi, cqb) */
+}
+```
+
+### Вложенные контейнеры
+```css
+.page {
+  container-type: inline-size;
+  container-name: page;
+}
+
+.sidebar {
+  container-type: inline-size;
+  container-name: sidebar;
+}
+
+.widget {
+  container-type: inline-size;
+  container-name: widget;
+}
+
+/* Запрос к ближайшему подходящему */
+@container (min-width: 400px) { }  /* Ближайший container-type: inline-size */
+
+/* Явный запрос */
+@container page (min-width: 1200px) { }
+@container sidebar (min-width: 300px) { }
+```
+
+### Style Queries — запросы по стилям (экспериментально)
+```css
+/* Включить флаг: layout.css.style-queries.enabled */
+.card {
+  container-type: inline-size;
+  container-name: card;
+}
+
+/* Запрос по CSS переменной или свойству */
+@container card style(--variant: featured) {
+  .card { border: 2px solid var(--color-primary); }
+}
+
+@container card style(--density: compact) {
+  .card { padding: 0.5rem; gap: 0.5rem; }
+}
+
+/* Использование */
+<article class="card" style="--variant: featured; --density: compact;">
+```
+
+---
+
+## 2. CSS Logical Properties — полный справочник
+
+### Сопоставление физических и логических
+| Физическое | Логическое (LTR) | Логическое (RTL) |
+|------------|------------------|------------------|
+| `width` | `inline-size` | `inline-size` |
+| `height` | `block-size` | `block-size` |
+| `min-width` | `min-inline-size` | `min-inline-size` |
+| `max-width` | `max-inline-size` | `max-inline-size` |
+| `margin-top` | `margin-block-start` | `margin-block-start` |
+| `margin-right` | `margin-inline-end` | `margin-inline-start` |
+| `margin-bottom` | `margin-block-end` | `margin-block-end` |
+| `margin-left` | `margin-inline-start` | `margin-inline-end` |
+| `padding-top` | `padding-block-start` | `padding-block-start` |
+| `padding-right` | `padding-inline-end` | `padding-inline-start` |
+| `padding-bottom` | `padding-block-end` | `padding-block-end` |
+| `padding-left` | `padding-inline-start` | `padding-inline-end` |
+| `border-top` | `border-block-start` | `border-block-start` |
+| `border-right` | `border-inline-end` | `border-inline-start` |
+| `border-bottom` | `border-block-end` | `border-block-end` |
+| `border-left` | `border-inline-start` | `border-inline-end` |
+| `top` | `inset-block-start` | `inset-block-start` |
+| `right` | `inset-inline-end` | `inset-inline-start` |
+| `bottom` | `inset-block-end` | `inset-block-end` |
+| `left` | `inset-inline-start` | `inset-inline-end` |
+| `float: left` | `float: inline-start` | `float: inline-start` |
+| `float: right` | `float: inline-end` | `float: inline-end` |
+| `clear: left` | `clear: inline-start` | `clear: inline-start` |
+| `text-align: left` | `text-align: start` | `text-align: start` |
+| `text-align: right` | `text-align: end` | `text-align: end` |
+
+### Сокращения (shorthands)
+```css
+/* Margin/Padding */
+margin-block: 1rem 2rem;      /* block-start / block-end */
+margin-inline: 1rem 2rem;     /* inline-start / inline-end */
+margin: 1rem 2rem 3rem 4rem;  /* block-start inline-end block-end inline-start */
+
+padding-block: 1rem;
+padding-inline: 1rem;
+
+/* Border */
+border-block: 1px solid red;
+border-inline: 2px dashed blue;
+border-start-start-radius: 8px;   /* top-left в LTR */
+border-start-end-radius: 8px;     /* top-right в LTR */
+border-end-start-radius: 8px;     /* bottom-left в LTR */
+border-end-end-radius: 8px;       /* bottom-right в LTR */
+
+/* Position */
+inset: 0;                       /* top/right/bottom/left = 0 */
+inset-block: 0;                 /* top/bottom = 0 */
+inset-inline: 0;                /* left/right = 0 */
+inset-block-start: 1rem;
+inset-inline-end: 1rem;
+
+/* Sizing */
+inline-size: 100%;
+block-size: auto;
+min-inline-size: 200px;
+max-block-size: 500px;
+
+/* Overflow */
+overflow-block: scroll;
+overflow-inline: hidden;
+```
+
+---
+
+## 3. RTL и вертикальное письмо — полная поддержка
+
+### Включение RTL
+```html
+<!-- В HTML -->
+<html lang="ar" dir="rtl">
+<!-- Или на конкретном элементе -->
+<div dir="rtl">...</div>
+```
+
+```css
+/* CSS логические свойства автоматически переключаются! */
+.card {
+  margin-inline-start: 1rem;  /* margin-left в LTR, margin-right в RTL */
+  padding-inline-end: 1rem;
+  border-inline-start: 3px solid var(--color-primary);
+  border-start-start-radius: 8px;
+  border-end-start-radius: 8px;
+}
+
+/* Для старых браузеров без логических свойств */
+@supports not (margin-inline-start: 1rem) {
+  [dir="rtl"] .card {
+    margin-right: 1rem;
+    margin-left: 0;
+    border-right: 3px solid var(--color-primary);
+    border-left: none;
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+  }
+}
+```
+
+### Writing Modes
+```css
+/* Горизонтальное (default) */
+.horizontal {
+  writing-mode: horizontal-tb;  /* top to bottom */
+  text-orientation: mixed;
+}
+
+/* Вертикальное справа налево (японский, китайский традиционный) */
+.vertical-rl {
+  writing-mode: vertical-rl;    /* right to left */
+  text-orientation: upright;    /* Буквы вертикально */
+}
+
+/* Вертикальное слева направо (монгольский) */
+.vertical-lr {
+  writing-mode: vertical-lr;    /* left to right */
+  text-orientation: upright;
+}
+
+/* Боковое (для заголовков) */
+.sideways {
+  writing-mode: sideways-rl;    /* Текст на lado */
+}
+```
+
+### Логические свойства в writing modes
+```css
+.vertical-text {
+  writing-mode: vertical-rl;
+
+  /* В vertical-rl: */
+  /* inline-size = height */
+  /* block-size = width */
+  /* margin-block-start = margin-right */
+  /* margin-inline-start = margin-top */
+
+  inline-size: 300px;    /* Высота контейнера */
+  block-size: auto;      /* Ширина по контенту */
+  padding-block: 1rem;   /* padding-right/left */
+  padding-inline: 1rem;  /* padding-top/bottom */
+}
+```
+
+### Практический паттерн: универсальный компонент
+```css
+.media {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+
+  /* Работает в LTR, RTL, vertical-rl, vertical-lr */
+  margin-block-end: 1.5rem;
+  padding-block: 1rem;
+  padding-inline: 1rem;
+  border-block-start: 1px solid var(--color-border);
+}
+
+.media__figure {
+  flex-shrink: 0;
+  inline-size: 80px;
+  block-size: 80px;
+  border-radius: 4px;
+}
+
+.media__body {
+  flex: 1;
+  min-inline-size: 0;  /* Позволяет сжиматься */
+}
+```
+
+---
+
+## 4. User Preference Media Queries — полный обзор
+
+### prefers-reduced-motion
+```css
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Отключить parallax, автопроигрывание видео */
+  .parallax { transform: none !important; }
+  video[autoplay] { autoplay: false; }
+}
+
+/* prefers-reduced-motion: no-preference — пользователь не указал предпочтение */
+```
+
+### prefers-contrast
+```css
+@media (prefers-contrast: high) {
+  :root {
+    --color-border: currentColor;  /* Чёткие границы */
+    --shadow: none;                /* Без теней */
+  }
+
+  .btn {
+    border-width: 3px;
+    font-weight: 700;
+  }
+
+  .card {
+    border: 2px solid;
+  }
+}
+
+@media (prefers-contrast: low) {
+  /* Редко используется */
+}
+
+@media (prefers-contrast: no-preference) {
+  /* Default стили */
+}
+```
+
+### prefers-color-scheme
+```css
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-bg: white;
+    --color-text: #1a1a2e;
+    --color-border: #e5e7eb;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0f172a;
+    --color-text: #f1f5f9;
+    --color-border: #334155;
+  }
+
+  /* Инверсия изображений */
+  img:not([src*="logo"]) { filter: brightness(0.8) contrast(1.1); }
+}
+
+@media (prefers-color-scheme: no-preference) {
+  /* Fallback */
+}
+```
+
+### forced-colors (Windows High Contrast Mode)
+```css
+@media (forced-colors: active) {
+  :root {
+    /* Система принудительно задаёт цвета */
+    /* Наши цвета игнорируются! */
+  }
+
+  /* ЧТО ДЕЛАТЬ: */
+
+  /* 1. Не используй background-color для смысла */
+  .status--error {
+    /* background: red НЕ сработает */
+    border: 2px solid;  /* currentColor */
+  }
+
+  /* 2. Используй border, outline, text-decoration */
+  .focused { outline: 3px solid; }
+
+  /* 3. SVG иконки — currentColor или forced-color-adjust */
+  .icon {
+    fill: currentColor;
+    forced-color-adjust: none;  /* Отключить forced colors для этого элемента */
+  }
+
+  /* 4. Псевдоэлементы для декора */
+  .required::after {
+    content: " *";
+    color: CanvasText;  /* Системный цвет текста */
+  }
+
+  /* Системные цвета */
+  :root {
+    --system-text: CanvasText;
+    --system-bg: Canvas;
+    --system-link: LinkText;
+    --system-button: ButtonFace;
+    --system-border: ButtonBorder;
+  }
+}
+```
+
+### prefers-reduced-transparency
+```css
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    backdrop-filter: none;
+    background: var(--color-bg);  /* Непрозрачный fallback */
+    border: 1px solid var(--color-border);
+  }
+
+  .modal-overlay {
+    background: rgba(0, 0, 0, 0.8);  /* Более непрозрачный */
+  }
+}
+```
+
+### prefers-reduced-data (экспериментально)
+```css
+@media (prefers-reduced-data: reduce) {
+  /* Низкое качество изображений */
+  img { content: url('low-res.jpg'); }
+
+  /* Отключить веб-шрифты */
+  @font-face { font-display: optional; }
+
+  /* Упрощенные анимации */
+  .heavy-animation { display: none; }
+}
+```
+
+### inverted-colors (iOS)
+```css
+@media (inverted-colors: inverted) {
+  /* Изображения и видео инвертируются системой */
+  img, video { filter: invert(1); }  /* Двойная инверсия = нормально */
+
+  /* Иконки можно не инвертировать */
+  .icon { filter: invert(1); }
+}
+```
+
+---
+
+## 5. Комбинирование предпочтений
+
+```css
+/* Пользователь хочет тёмную тему И высокий контраст И без анимаций */
+@media (prefers-color-scheme: dark) and (prefers-contrast: high) and (prefers-reduced-motion: reduce) {
+  :root {
+    --color-bg: black;
+    --color-text: white;
+    --color-border: white;
+  }
+
+  * { transition: none !important; animation: none !important; }
+}
+
+/* Логическое ИЛИ через запятую */
+@media (prefers-reduced-motion: reduce), (prefers-reduced-data: reduce) {
+  .heavy-effect { display: none; }
+}
+```
+
+---
+
+## 6. Практическое задание
+
+### Задача 1: Container Query Component Library
+Создай 5 компонентов, работающих ТОЛЬКО через Container Queries:
+1. **Card** — stacked → horizontal → grid с cqw типографикой
+2. **Navigation** — horizontal → vertical → hamburger
+3. **Data Table** — table → cards → priority columns
+4. **Media Object** — vertical → horizontal → split
+5. **Form Field** — label top → label inline → floating label
+
+Все компоненты в одном демо с resize handles для контейнеров.
+
+### Задача 2: RTL-ready Layout
+Построй страницу с полной поддержкой RTL:
+- Header с logo слева (LTR) / справа (RTL)
+- Sidebar справа (LTR) / слева (RTL)
+- Карточки с иконкой inline-start
+- Формы с label inline-start, input inline-end
+- Провери в DevTools: переключение dir=rtl/ltr
+- Добавь fallback для старых браузеров через @supports
+
+### Задача 3: Vertical Writing Mode Demo
+Создай демо для японского/китайского:
+- Вертикальный текст (vertical-rl) с правильными logical properties
+- Ruby аннотации (ruby, rt, rp)
+- Смешанный текст: лат. в вертикальном (text-orientation: sideways)
+- Таблица с vertical-rl заголовками
+- Проверь: logical properties работают корректно
+
+### Задача 4: Accessibility Preferences Demo
+Создай страницу, демонстрирующая все preference queries:
+- Переключатели для эмуляции каждого preference (JS)
+- Живые примеры: анимации, контраст, цветовая схема, forced colors
+- Покажи код, который срабатывает для каждого
+- Добавь проверку: forced-colors: active ломает background-color смысловые цвета
+
+---
+
+## 7. Стратегия: Progressive Enhancement для всех фич
+
+```css
+/* 1. База — работает везде */
+.component {
+  display: block;
+  padding: 1rem;
+  border: 1px solid #ccc;
+}
+
+/* 2. Modern Layout — Flexbox/Grid */
+@supports (display: grid) {
+  .component { display: grid; gap: 1rem; }
+}
+
+/* 3. Logical Properties */
+@supports (margin-inline-start: 1rem) {
+  .component { margin-inline-start: 1rem; }
+}
+
+/* 4. Container Queries */
+@supports (container-type: inline-size) {
+  .component-wrapper { container-type: inline-size; }
+  @container (min-width: 400px) {
+    .component { grid-template-columns: 1fr 2fr; }
+  }
+}
+
+/* 5. User Preferences */
+@media (prefers-reduced-motion: reduce) {
+  .component { transition: none; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .component { background: #1a1a2e; color: #eee; }
+}
+
+@media (forced-colors: active) {
+  .component { border-color: currentColor; background: Canvas; }
+}
+```
+
+---
+
+## 8. Таблица поддержки (2024)
+
+| Фича | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| Container Queries | 105+ | 110+ | 16+ | 105+ |
+| Container Query Units | 105+ | 110+ | 16+ | 105+ |
+| Style Queries | Behind flag | Behind flag | Behind flag | Behind flag |
+| Logical Properties | 87+ | 66+ | 14.1+ | 87+ |
+| Writing Modes | 48+ | 41+ | 11+ | 79+ |
+| prefers-reduced-motion | 74+ | 63+ | 10.1+ | 79+ |
+| prefers-contrast | 96+ | 98+ | 15+ | 96+ |
+| prefers-color-scheme | 76+ | 67+ | 12.1+ | 79+ |
+| forced-colors | 89+ | 97+ | 15+ | 89+ |
+| prefers-reduced-transparency | 118+ | 119+ | 17+ | 118+ |
+
+---
+
+## 9. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| Container Query на body | Не работает | container-type на обёртке компонента |
+| cqw без container-type | Не работает | Обязателен container-type: inline-size |
+| Логические свойства без @supports fallback | Ломается в старых браузерах | @supports not (margin-inline-start: 1rem) |
+| RTL только через [dir="rtl"] селекторы | Дублирование кода | Логические свойства автоматически переключаются |
+| forced-colors игнорируется | background-color не работает в High Contrast | Используй border/outline, forced-color-adjust: none |
+| prefers-reduced-motion только для анимаций | scroll-behavior, autoplay видео тоже | Полный reset анимаций и переходов |
+| Нет тестирования в High Contrast | Невидимые фокусы, смысловые цвета | Тестируй в Windows High Contrast Mode |
+
+---
+
+## 10. Полезные ресурсы
+
+### Спецификации
+- [CSS Container Queries](https://www.w3.org/TR/css-contain-3/)
+- [CSS Logical Properties](https://www.w3.org/TR/css-logical-1/)
+- [CSS Writing Modes](https://www.w3.org/TR/css-writing-modes-4/)
+- [Media Queries Level 5](https://www.w3.org/TR/mediaqueries-5/)
+
+### Статьи
+- [RTL Styling 101](https://rtl-styling.com/) — Ahmad Shadeed
+- [Logical Properties Guide](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Logical_Properties)
+- [Container Queries Guide](https://web.dev/container-queries/)
+- [Forced Colors Explained](https://www.sarasoueidan.com/blog/forced-colors/)
+
+### Инструменты
+- [Firefox DevTools] — RTL симулятор, Container Queries инспектор
+- [Chrome DevTools] — Rendering → Emulate CSS prefers-*
+- [Polypane] — одновременный просмотр LTR/RTL, dark/light, reduced-motion
+
+---
+
+## 11. Ключевые выводы
+
+1. **Container Queries** — настоящая адаптивность компонентов. Используй `container-type: inline-size` + `cqw/cqh` единицы.
+2. **Logical Properties** — пиши сразу логические. Работают в LTR, RTL, vertical-rl, vertical-lr автоматически.
+3. **User Preferences** — не опционально. `prefers-reduced-motion`, `prefers-contrast`, `prefers-color-scheme`, `forced-colors` — база доступности.
+4. **Progressive Enhancement** — слои `@supports` + `@media` + `@container` = работает везде, лучше в современных.
+5. **Testing** — тестируй в High Contrast Mode, с reduced-motion, в RTL, в vertical writing mode.
+
+---
+
+*Следующий урок: 14_Positioning_Layers.txt — Продвинутое позиционирование: Stacking Context детально, z-index архитектура, Anchor Positioning (новый CSS), Popover API*

@@ -1,0 +1,699 @@
+# Урок 18: Тестирование (Testing)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Писать unit-тесты с `#[test]`, `#[should_panic]`
+- Использовать `assert!`, `assert_eq!`, `assert_ne!`, `debug_assert!`
+- Работать с integration tests в `tests/`
+- Писать documentation tests (`doc tests`)
+- Использовать `#[cfg(test)]` и модули `tests`
+- Применять property-based testing с `proptest`
+- Использовать mocking с `mockall`
+- Настраивать тесты в `Cargo.toml`
+- Запускать тесты с `cargo test` и понимать его флаги
+
+---
+
+## 1. Unit Tests (модульные тесты)
+
+### Базовый синтаксис
+```rust
+// src/lib.rs или внутри модуля
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add() {
+        assert_eq!(add(2, 3), 5);
+    }
+
+    #[test]
+    fn test_add_negative() {
+        assert_eq!(add(-1, 1), 0);
+    }
+}
+```
+
+### Макросы проверки
+```rust
+#[test]
+fn assertions() {
+    // assert! — проверка булева выражения
+    assert!(2 + 2 == 4);
+
+    // assert_eq! — равенство (использует Debug + PartialEq)
+    assert_eq!(add(2, 3), 5);
+
+    // assert_ne! — неравенство
+    assert_ne!(add(2, 3), 6);
+
+    // Пользовательское сообщение
+    assert_eq!(add(2, 3), 5, "Addition failed: 2+3 should be 5");
+
+    // debug_assert! — только в debug builds (optimized out в release)
+    debug_assert!(expensive_check());
+}
+```
+
+### Тестирование паник
+```rust
+#[test]
+#[should_panic(expected = "divide by zero")]
+fn test_divide_by_zero() {
+    divide(10, 0);
+}
+
+fn divide(a: i32, b: i32) -> i32 {
+    if b == 0 { panic!("divide by zero"); }
+    a / b
+}
+
+// Тест, который должен паниковать с любым сообщением
+#[test]
+#[should_panic]
+fn test_any_panic() {
+    panic!("something went wrong");
+}
+```
+
+### `Result<T, E>` в тестах (Rust 2018+)
+```rust
+#[test]
+fn test_with_result() -> Result<(), String> {
+    let result = risky_operation()?;
+    assert_eq!(result, 42);
+    Ok(())
+}
+
+fn risky_operation() -> Result<i32, String> {
+    Ok(42)
+}
+```
+
+---
+
+## 2. Организация тестов
+
+### Модуль `tests` внутри кода
+```rust
+// src/lib.rs
+pub struct Calculator;
+
+impl Calculator {
+    pub fn add(&self, a: i32, b: i32) -> i32 { a + b }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add() {
+        let calc = Calculator;
+        assert_eq!(calc.add(1, 2), 3);
+    }
+}
+```
+
+### Вложенные модули тестов
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod add_tests {
+        use super::*;
+
+        #[test]
+        fn positive() { assert_eq!(add(1, 2), 3); }
+        #[test]
+        fn negative() { assert_eq!(add(-1, -2), -3); }
+    }
+
+    mod mul_tests {
+        use super::*;
+
+        #[test]
+        fn basic() { assert_eq!(mul(2, 3), 6); }
+    }
+}
+```
+
+---
+
+## 3. Integration Tests (интеграционные тесты)
+
+### Структура
+```
+project/
+├── Cargo.toml
+├── src/
+│   └── lib.rs
+└── tests/
+    ├── integration_test.rs
+    └── common/
+        └── mod.rs
+```
+
+### Пример интеграционного теста
+```rust
+// tests/integration_test.rs
+use my_crate::Calculator;
+
+#[test]
+fn test_calculator_integration() {
+    let calc = Calculator::new();
+    assert_eq!(calc.add(10, 20), 30);
+    assert_eq!(calc.mul(5, 6), 30);
+}
+
+// Несколько тестов в одном файле
+#[test]
+fn test_feature_a() { /* ... */ }
+
+#[test]
+fn test_feature_b() { /* ... */ }
+```
+
+### Общий код для тестов (`tests/common/mod.rs`)
+```rust
+// tests/common/mod.rs
+pub fn setup_test_db() -> Database {
+    Database::new_test()
+}
+
+pub fn create_test_user() -> User {
+    User { name: "test".into(), id: 1 }
+}
+```
+
+```rust
+// tests/integration_test.rs
+mod common; // Подключает tests/common/mod.rs
+
+use common::{setup_test_db, create_test_user};
+
+#[test]
+fn test_with_common() {
+    let db = setup_test_db();
+    let user = create_test_user();
+    // ...
+}
+```
+
+---
+
+## 4. Documentation Tests (Doc tests)
+
+### Базовые doc-тесты
+```rust
+/// Складывает два числа.
+///
+/// # Examples
+///
+/// ```
+/// let result = my_crate::add(2, 3);
+/// assert_eq!(result, 5);
+/// ```
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+/// # Panics
+/// Паникует если `b == 0`.
+///
+/// ```should_panic
+/// my_crate::divide(10, 0);
+/// ```
+pub fn divide(a: i32, b: i32) -> i32 {
+    if b == 0 { panic!("divide by zero"); }
+    a / b
+}
+```
+
+### Скрытые строки (`#`)
+```rust
+/// ```
+/// # use my_crate::Config;
+/// # let config = Config::default();
+/// let result = config.compute();
+/// assert_eq!(result, 42);
+/// ```
+pub fn compute(&self) -> i32 { 42 }
+```
+
+### Тестирование `Result` в doc-тестах
+```rust
+/// ```
+/// # use std::io;
+/// # fn main() -> io::Result<()> {
+/// let result = my_crate::read_file("test.txt")?;
+/// assert!(result.contains("hello"));
+/// # Ok(())
+/// # }
+/// ```
+pub fn read_file(path: &str) -> std::io::Result<String> { ... }
+```
+
+### `#[doc = include_str!]` для больших примеров
+```rust
+#[doc = include_str!("../examples/advanced_usage.rs")]
+pub fn advanced_function() { ... }
+```
+
+---
+
+## 5. Property-Based Testing (Proptest)
+
+### Установка
+```toml
+# Cargo.toml
+[dev-dependencies]
+proptest = "1.0"
+```
+
+### Базовое использование
+```rust
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn test_add_commutative(a: i32, b: i32) {
+            prop_assert_eq!(add(a, b), add(b, a));
+        }
+
+        #[test]
+        fn test_add_associative(a: i32, b: i32, c: i32) {
+            prop_assert_eq!(add(add(a, b), c), add(a, add(b, c)));
+        }
+
+        #[test]
+        fn test_reverse_twice(v in proptest::collection::vec(0..100, 0..10)) {
+            let mut v1 = v.clone();
+            v1.reverse();
+            v1.reverse();
+            prop_assert_eq!(v, v1);
+        }
+    }
+}
+```
+
+### Стратегии генерации
+```rust
+use proptest::prelude::*;
+
+// Диапазоны
+(0..100)                    // i32 от 0 до 99
+(-100..100)                 // i32 от -100 до 99
+
+// Коллекции
+proptest::collection::vec(0..10, 0..20)  // Vec<i32>, len 0..20
+proptest::collection::hash_set(0..10, 0..10)
+
+// Строки
+"[a-z]*"                    // Regex strategy
+"\\PC*"                     // Any non-control chars
+
+// Option/Result
+proptest::option::of(0..100)
+proptest::result::of(0..100, "-100..-1")
+
+// Комбинаторы
+prop::array::uniform32(0..10)  // [i32; 32]
+prop::tuple((0..10, "abc", true))
+```
+
+### Shrinking (уменьшение counterexample)
+```rust
+proptest! {
+    #[test]
+    fn test_sort_preserves_length(v in prop::collection::vec(0..100, 0..100)) {
+        let mut sorted = v.clone();
+        sorted.sort();
+        prop_assert_eq!(v.len(), sorted.len());
+    }
+}
+// При падении proptest автоматически найдёт минимальный failing case
+```
+
+---
+
+## 6. Mocking с `mockall`
+
+### Установка
+```toml
+# Cargo.toml
+[dev-dependencies]
+mockall = "0.12"
+```
+
+### Автоматический мок для trait
+```rust
+use mockall::automock;
+
+#[automock]
+trait Database {
+    fn get_user(&self, id: u32) -> Option<User>;
+    fn save_user(&self, user: &User) -> Result<(), Error>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::predicate::*;
+
+    #[test]
+    fn test_user_service() {
+        let mut mock_db = MockDatabase::new();
+
+        // Expectation
+        mock_db.expect_get_user()
+            .with(eq(1))
+            .times(1)
+            .returning(|_| Some(User { id: 1, name: "Alice".into() }));
+
+        let service = UserService::new(mock_db);
+        let user = service.get_user(1).unwrap();
+        assert_eq!(user.name, "Alice");
+    }
+}
+```
+
+### Ручной мок
+```rust
+mock! {
+    Database {
+        fn get_user(&self, id: u32) -> Option<User>;
+        fn save_user(&self, user: &User) -> Result<(), Error>;
+    }
+}
+
+impl Database for MockDatabase { /* auto-impl */ }
+```
+
+### Сложные expectations
+```rust
+mock_db.expect_get_user()
+    .withf(|id| *id > 10)           // предикат-функция
+    .times(2..=5)                   // диапазон вызовов
+    .returning(|id| Some(User { id, name: format!("User{}", id) }));
+
+// Последовательность вызовов
+let mut seq = mockall::Sequence::new();
+mock_db.expect_get_user()
+    .once()
+    .in_sequence(&mut seq)
+    .returning(|_| Some(User::default()));
+mock_db.expect_save_user()
+    .once()
+    .in_sequence(&mut seq)
+    .returning(|_| Ok(()));
+```
+
+---
+
+## 7. Конфигурация тестов в `Cargo.toml`
+
+### Отключение тестов для конкретного пакета
+```toml
+# Cargo.toml
+[[test]]
+name = "integration_test"
+harness = false  # Свой main() для тестов
+```
+
+### Отдельные бинарники для тестов
+```toml
+[[test]]
+name = "my_test"
+path = "tests/custom_main.rs"
+```
+
+### Конфигурация `cargo test`
+```toml
+[profile.test]
+debug = true          # Debug symbols
+opt-level = 1         # Оптимизация
+overflow-checks = true
+```
+
+### Фичи для тестов
+```toml
+[features]
+default = []
+test-utils = ["dep:proptest", "dep:mockall"]
+
+# В коде:
+#[cfg(feature = "test-utils")]
+mod property_tests { ... }
+```
+
+---
+
+## 8. Запуск тестов
+
+### Основные команды
+```bash
+# Все тесты
+cargo test
+
+# Только unit-тесты
+cargo test --lib
+
+# Только integration tests
+cargo test --test integration_test
+
+# Только doc tests
+cargo test --doc
+
+# Конкретный тест по имени
+cargo test test_add
+
+# Фильтр по паттерну
+cargo test add
+
+# Запуск с выводом println!
+cargo test -- --nocapture
+
+# Количество потоков
+cargo test -- --test-threads=4
+
+# Продолжить после первого fail
+cargo test -- --no-fail-fast
+
+# Список тестов без запуска
+cargo test -- --list
+```
+
+### Вывод тестов
+```
+running 3 tests
+test tests::add_tests::positive ... ok
+test tests::add_tests::negative ... ok
+test tests::mul_tests::basic ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+---
+
+## 9. Benchmarking (Bencher) — nightly only
+
+```rust
+#![feature(test)]
+extern crate test;
+
+#[cfg(test)]
+mod benches {
+    use super::*;
+    use test::Bencher;
+
+    #[bench]
+    fn bench_add(b: &mut Bencher) {
+        b.iter(|| add(2, 3));
+    }
+
+    #[bench]
+    fn bench_fibonacci(b: &mut Bencher) {
+        b.iter(|| fibonacci(20));
+    }
+}
+```
+```bash
+cargo bench
+```
+
+---
+
+## 10. Практические упражнения
+
+### Упражнение 1: Тестирование калькулятора
+```rust
+// src/calculator.rs
+pub struct Calculator;
+
+impl Calculator {
+    pub fn add(&self, a: f64, b: f64) -> f64 { a + b }
+    pub fn div(&self, a: f64, b: f64) -> Result<f64, String> {
+        if b == 0.0 { Err("Division by zero".into()) }
+        else { Ok(a / b) }
+    }
+}
+
+// src/calculator.rs (продолжение)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add() {
+        let calc = Calculator;
+        assert_eq!(calc.add(1.0, 2.0), 3.0);
+    }
+
+    #[test]
+    fn test_div_ok() {
+        let calc = Calculator;
+        assert_eq!(calc.div(10.0, 2.0).unwrap(), 5.0);
+    }
+
+    #[test]
+    fn test_div_by_zero() {
+        let calc = Calculator;
+        assert!(calc.div(10.0, 0.0).is_err());
+    }
+}
+```
+
+### Упражнение 2: Property-based тест для сортировки
+```rust
+#[cfg(test)]
+mod prop_tests {
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn sort_is_idempotent(v in prop::collection::vec(-100..100, 0..100)) {
+            let mut v1 = v.clone();
+            v1.sort();
+            let mut v2 = v1.clone();
+            v2.sort();
+            prop_assert_eq!(v1, v2);
+        }
+
+        #[test]
+        fn sort_preserves_elements(v in prop::collection::vec(-100..100, 0..100)) {
+            let mut sorted = v.clone();
+            sorted.sort();
+
+            let mut v_count = std::collections::HashMap::new();
+            for &x in &v { *v_count.entry(x).or_insert(0) += 1; }
+            let mut s_count = std::collections::HashMap::new();
+            for &x in &sorted { *s_count.entry(x).or_insert(0) += 1; }
+
+            prop_assert_eq!(v_count, s_count);
+        }
+    }
+}
+```
+
+### Упражнение 3: Mock тест для сервиса
+```rust
+// src/service.rs
+pub trait EmailSender {
+    fn send(&self, to: &str, subject: &str, body: &str) -> Result<(), String>;
+}
+
+pub struct NotificationService<E: EmailSender> {
+    sender: E,
+}
+
+impl<E: EmailSender> NotificationService<E> {
+    pub fn new(sender: E) -> Self { Self { sender } }
+
+    pub fn notify(&self, user: &User, message: &str) -> Result<(), String> {
+        self.sender.send(&user.email, "Notification", message)
+    }
+}
+
+// tests/service_test.rs
+use mockall::automock;
+use my_crate::{EmailSender, NotificationService, User};
+
+#[automock]
+impl EmailSender for MockEmailSender {}
+
+#[test]
+fn test_notification() {
+    let mut mock = MockEmailSender::new();
+    mock.expect_send()
+        .with(eq("test@example.com"), eq("Notification"), eq("Hello"))
+        .returning(|_, _, _| Ok(()));
+
+    let service = NotificationService::new(mock);
+    let user = User { email: "test@example.com".into() };
+    service.notify(&user, "Hello").unwrap();
+}
+```
+
+---
+
+## 11. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `unused import` в `#[cfg(test)]` | Импорт не используется | Уберите или используйте `use super::*;` |
+| `cannot find function` в doc-тесте | Функция не публичная | Добавьте `pub` или используйте полный путь |
+| `test harness panic` | Паника в setup/teardown | Используйте `Result` в тестах |
+| `mockall: trait not object safe` | Trait имеет generic методы | Уберите generics из trait или мокайте конкретный тип |
+| `proptest: test takes too long` | Слишком большие генераторы | Ограничьте размер: `0..100` вместо `0..` |
+
+---
+
+## 12. Шпаргалка: cargo test
+
+| Команда | Описание |
+|---------|----------|
+| `cargo test` | Все тесты |
+| `cargo test --lib` | Только lib tests |
+| `cargo test --test name` | Конкретный integration test |
+| `cargo test --doc` | Только doc tests |
+| `cargo test name` | Фильтр по имени |
+| `cargo test -- --nocapture` | Показать println! |
+| `cargo test -- --test-threads=N` | N потоков |
+| `cargo test -- --list` | Список тестов |
+
+---
+
+## 13. Полезные ресурсы
+
+- **The Book — Testing**: https://doc.rust-lang.org/book/ch11-00-testing.html
+- **cargo test**: https://doc.rust-lang.org/cargo/commands/cargo-test.html
+- **proptest**: https://github.com/AltSysrq/proptest
+- **mockall**: https://github.com/asomers/mockall
+- **criterion** (benchmarks): https://github.com/bheisler/criterion.rs
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- Unit tests: `#[test]`, `#[should_panic]`, `assert!` макросы, `Result` в тестах
+- Организация: `#[cfg(test)]`, вложенные модули
+- Integration tests: `tests/` директория, общий код в `tests/common/`
+- Documentation tests: примеры в `///`, `should_panic`, скрытые строки `#`
+- Property-based testing: `proptest`, стратегии, shrinking
+- Mocking: `mockall` с `#[automock]`, expectations, sequences
+- Конфигурация: `Cargo.toml`, profiles, features
+- Запуск: флаги `cargo test`, параллелизм, фильтрация
+
+---
+
+**Следующий урок:** Файлы, сеть, сериализация (`19_Files_Network_Serialization.txt`)

@@ -1,0 +1,814 @@
+# Урок 27: Новый CSS — nesting, @property, новые функции/цветовые пространства, scroll-driven animations
+
+## Цели урока
+- Освоить вложенность селекторов (CSS Nesting) без препроцессоров
+- Изучить @property для регистрации CSS-переменных с типами и начальными значениями
+- Разобрать новые цветовые функции и пространства (oklch, oklab, lab, lch, color-mix, relative color)
+- Научиться создавать анимации, связанные с прокруткой (scroll-driven animations)
+- Применить новые возможности на практике в современном интерфейсе
+
+---
+
+## 1. CSS Nesting — вложенность селекторов нативно
+
+### Проблема препроцессоров
+Раньше вложенность была только в Sass/Less. Теперь она нативна в CSS (Chrome 112+, Firefox 117+, Safari 16.5+).
+
+### Базовый nesting
+```css
+/* Без nesting — повторяем родительский селектор */
+.card {
+  background: white;
+  border-radius: 1rem;
+}
+.card__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+.card__title:hover {
+  color: oklch(0.62 0.22 264);
+}
+
+/* С nesting — вложенность */
+.card {
+  background: white;
+  border-radius: 1rem;
+
+  &__title {
+    font-size: 1.125rem;
+    font-weight: 600;
+
+    &:hover {
+      color: oklch(0.62 0.22 264);
+    }
+  }
+
+  &:hover {
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.1);
+  }
+}
+```
+
+### Знак & — ссылка на родителя
+```css
+.card {
+  /* & заменяется на родительский селектор */
+
+  &:hover { }           /* .card:hover */
+  .card & { }           /* .card .card (редко) */
+  &__element { }        /* .card__element */
+  &--modifier { }       /* .card--modifier */
+
+  /* Вложенный селектор с другим элементом */
+  & .child { }          /* .card .child */
+
+  /* Союз селекторов */
+  & + & { }             /* .card + .card */
+
+  /* :is() внутри nesting */
+  &:is(.featured, .new) { }
+
+  /* :not() */
+  &:not(.disabled) { }
+}
+```
+
+### Nesting с медиа-запросами
+```css
+.card {
+  padding: 1rem;
+
+  @media (max-width: 768px) {
+    padding: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  @container (min-width: 400px) {
+    padding: 1.5rem;
+  }
+}
+```
+
+### Nesting с псевдоэлементами
+```css
+.card {
+  position: relative;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: oklch(0.62 0.22 264);
+    opacity: 0.1;
+    border-radius: inherit;
+  }
+
+  &::after {
+    content: "New";
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: oklch(0.65 0.22 20);
+    color: white;
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+}
+```
+
+### Ограничения nesting
+- Максимальная глубина вложенности — зависит от браузера, но не увлекайтесь (читаемость)
+- Селекторы внутри & должны быть корректными CSS-селекторами
+- @media, @supports, @container можно вкладывать внутрь {}
+
+### Пример: БЭМ-компонент с nesting
+```css
+.c-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+  min-height: 44px;
+
+  &__label {
+    font-weight: inherit;
+  }
+
+  &__icon {
+    width: 1em;
+    height: 1em;
+    display: block;
+    flex-shrink: 0;
+  }
+
+  &--primary {
+    background: var(--color-primary);
+    color: var(--color-text-inverted);
+
+    &:hover {
+      background: var(--color-primary-hover);
+    }
+
+    &:focus-visible {
+      outline: 3px solid var(--color-primary);
+      outline-offset: 2px;
+    }
+
+    &:active {
+      transform: scale(0.98);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  &--secondary {
+    background: transparent;
+    color: var(--color-primary);
+    border: 1px solid var(--color-primary);
+
+    &:hover {
+      background: var(--color-primary);
+      color: white;
+    }
+  }
+
+  &--sm {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--fs-xs);
+    min-height: 36px;
+  }
+
+  &--lg {
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--fs-base);
+    min-height: 52px;
+  }
+}
+```
+
+---
+
+## 2. @property — регистрация CSS-переменных
+
+### Проблема обычных переменных
+Обычные CSS-переменные (`--var`) — это просто строки. Браузер не знает их типа, не может проверять валидность, не может анимировать плавно.
+
+### @property — регистрация с типом
+```css
+@property --color-primary {
+  syntax: '<color>';      /* Тип значения */
+  inherits: false;        /* Наследуется ли от родителя */
+  initial-value: oklch(0.62 0.22 264);  /* Начальное значение */
+}
+
+@property --font-size {
+  syntax: '<length-percentage>';
+  inherits: true;
+  initial-value: 1rem;
+}
+
+@property --shadow-blur {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 4px;
+}
+
+@property --rotate-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+```
+
+### animation с @property — плавный переход цветов
+```css
+/* Без @property — цвет переключается мгновенно (нельзя анимировать строку) */
+.card {
+  transition: --color-primary 0.5s;  /* Не работает! */
+}
+
+/* С @property — цвет анимируется плавно через цветовое пространство */
+.card {
+  transition: --color-primary 0.5s;
+}
+
+.card:hover {
+  --color-primary: oklch(0.55 0.22 264);
+}
+
+.card {
+  background: var(--color-primary);
+  color: white;
+}
+```
+
+### @property с числами — анимация счетчиков
+```css
+@property --counter {
+  syntax: '<integer>';
+  inherits: false;
+  initial-value: 0;
+}
+
+.counter {
+  --counter: 0;
+  transition: --counter 1s ease;
+}
+
+.counter:hover {
+  --counter: 100;
+}
+
+.counter::after {
+  content: counter(--counter);
+}
+```
+
+### Поддержка @property
+Chrome 113+, Edge 113+. Firefox и Safari частично (на момент 2024). Проверяй caniuse.
+
+---
+
+## 3. Новые цветовые функции и пространства
+
+### OKLCH — perceptually uniform
+```css
+:root {
+  --color-primary: oklch(0.62 0.22 264);   /* L=0.62, C=0.22, H=264deg */
+  --color-success: oklch(0.75 0.18 150);
+  --color-danger: oklch(0.65 0.22 20);
+  --color-warning: oklch(0.80 0.15 60);
+}
+```
+
+### color-mix — смешивание двух цветов
+```css
+.btn {
+  background: var(--color-primary);
+  color: white;
+}
+
+.btn:hover {
+  /* Смешиваем с чёрным на 15% — затемняем */
+  background: color-mix(in oklch, var(--color-primary), black 15%);
+}
+
+.btn--ghost {
+  /* Смешиваем с белым на 90% — очень светлый */
+  background: color-mix(in oklch, var(--color-primary), white 90%);
+  color: var(--color-primary);
+}
+```
+
+### relative color — относительные цвета (Color Level 5)
+```css
+/* Получаем компоненты цвета и модифицируем их */
+.btn {
+  --base: oklch(0.62 0.22 264);
+
+  background: oklch(from var(--base) l c h / 0.8);  /* Изменяем альфа-канал */
+  border: oklch(from var(--base) l calc(c * 0.8) h); /* Уменьшаем насыщенность на 20% */
+  color: oklch(from var(--base) calc(l + 0.2) c h);  /* Увеличиваем светлоту на 0.2 */
+}
+```
+
+### lab и lch — альтернативные цветовые пространства
+```css
+/* LAB — осьовые координаты (Lightness, a, b) */
+.lab-color {
+  color: lab(65% 20 30);
+}
+
+/* LCH — цилиндрическая версия LAB */
+.lch-color {
+  color: lch(65% 30 40);
+}
+```
+
+### hwb — оттенок, белый, чёрный (интуитивный)
+```css
+.hwb-color {
+  color: hwb(200 30% 20%);  /* Оттенок 200°, белого 30%, чёрного 20% */
+}
+```
+
+### lab()/lch() в color-mix
+```css
+.mixed {
+  background: color-mix(in lch, oklch(0.62 0.22 264), white 50%);
+}
+```
+
+### Поддержка цветовых функций
+| Функция | Chrome | Firefox | Safari |
+|---------|--------|---------|--------|
+| oklch/oklab | 111+ | 113+ | 15.4+ |
+| color-mix | 111+ | 113+ | 15.4+ |
+| relative color | 111+ | 120+ | 16.4+ |
+| @property | 113+ | Partial | Partial |
+
+---
+
+## 4. Scroll-driven animations — анимации, связанные с прокруткой
+
+### Проблема JS-скролл-анимаций
+Раньше для анимации при скролле нужен был JavaScript (IntersectionObserver, scroll evento). Теперь — нативно в CSS.
+
+### animation-timeline: scroll() — привязка к прокрутке элемента
+```css
+/* Элемент анимируется при прокрутке своего контейнера */
+.fade-in {
+  animation: fade-in linear;
+  animation-timeline: scroll();
+  animation-range: 0% 100%;  /* С какого по какой процент прокрутки */
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+```
+
+### animation-timeline: view() — привязка к видимости элемента в viewport
+```css
+/* Анимация при входе элемента в область просмотра */
+.reveal {
+  animation: reveal linear;
+  animation-timeline: view();
+  animation-range: entry 0% cover 40%;  /* От входа до 40% видимости */
+}
+
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(30px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+```
+
+### animation-range — диапазон анимации
+```css
+/* Значения animation-range */
+animation-range: 0% 100%;           /* С начала до конца прокрутки */
+animation-range: entry 0% entry 100%; /* От входа в viewport до полного входа */
+animation-range: cover 0% cover 100%; /* От полного покрытия до выхода из viewport */
+animation-range: exit 0% exit 100%;   /* От начала выхода до полного выхода */
+animation-range: 0% cover 50%;        /* С начала до 50% видимости */
+```
+
+### scroll() — отслеживание прокрутки конкретного элемента
+```css
+/* На контейнере нужно задать scroll-timeline-name */
+.scroll-container {
+  scroll-timeline-name: --container-scroll;
+  scroll-timeline-axis: block;  /* inline, block, x, y */
+  overflow: scroll;
+  height: 400px;
+}
+
+/* Элемент анимируется при прокрутке контейнера */
+.progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0%;
+  height: 4px;
+  background: oklch(0.62 0.22 264);
+
+  animation: grow linear;
+  animation-timeline: --container-scroll;
+  animation-range: 0% 100%;
+}
+
+@keyframes grow {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+```
+
+### Пример: прогресс-бар чтения статьи
+```html
+<div class="scroll-progress"></div>
+<article class="article">
+  <h1>Длинная статья</h1>
+  <p>...</p>
+  <!-- Много контента -->
+</article>
+```
+
+```css
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0%;
+  height: 3px;
+  background: oklch(0.62 0.22 264);
+  z-index: 1000;
+
+  animation: progress linear;
+  animation-timeline: scroll();  /* Прокрутка документа */
+  animation-range: 0% 100%;
+}
+
+@keyframes progress {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+
+.article {
+  min-height: 300vh;  /* Длинная страница для демонстрации */
+  padding-top: 60px;
+}
+```
+
+### Пример: parallax при скролле
+```css
+.parallax {
+  animation: parallax linear;
+  animation-timeline: view();
+  animation-range: entry 0% exit 100%;
+}
+
+@keyframes parallax {
+  from { transform: translateY(0); }
+  to { transform: translateY(-100px); }
+}
+```
+
+### Поддержка scroll-driven animations
+Chrome 115+. Для остальных браузеров — JS-фолбэк через IntersectionObserver.
+
+---
+
+## 5. Новые функции — более подробно
+
+### color-mix с разными цветовыми пространствами
+```css
+/* В sRGB */
+color-mix(in srgb, red 50%, blue 50%);
+
+/* В OKLCH — более предсказуемый результат */
+color-mix(in oklch, oklch(0.62 0.22 264), white 30%);
+
+/* В LCH */
+color-mix(in lch, oklch(0.62 0.22 264), black 20%);
+```
+
+### @property с наследованием
+```css
+@property --theme-color {
+  syntax: '<color>';
+  inherits: true;  /* Наследуется дочерними элементами */
+  initial-value: oklch(0.62 0.22 264);
+}
+
+.child-element {
+  /* Наследует --theme-color от родителя */
+  background: var(--theme-color);
+}
+```
+
+### Перехват невалидных значений
+```css
+@property --font-size {
+  syntax: '<length-percentage>';
+  inherits: false;
+  initial-value: 1rem;
+}
+
+/* Если задать невалидное значение, используется initial-value */
+.bad-element {
+  --font-size: "abc";  /* Будет 1rem (initial-value), а не ошибка */
+}
+```
+
+---
+
+## 6. Комплексный пример: современная карточка с nesting, @property, scroll-анимацией
+
+```html
+<article class="modern-card">
+  <div class="modern-card__header">
+    <h3 class="modern-card__title">Заголовок карточки</h3>
+    <span class="modern-card__badge">Новинка</span>
+  </div>
+  <div class="modern-card__body">
+    <p class="modern-card__text">Описание содержимого карточки с использованием новых возможностей CSS.</p>
+  </div>
+  <footer class="modern-card__footer">
+    <button class="modern-card__btn">Подробнее</button>
+  </footer>
+</article>
+```
+
+```css
+@layer components;
+
+@layer components {
+  /* Регистрация переменной с типом */
+  @property --card-accent {
+    syntax: '<color>';
+    inherits: false;
+    initial-value: oklch(0.62 0.22 264);
+  }
+
+  .modern-card {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.5rem;
+    border: 1px solid oklch(0.88 0.006 285);
+    border-radius: 1rem;
+    background: white;
+
+    /* Nesting — вложенность селекторов */
+
+    &__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    &__title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: oklch(0.21 0.006 285);
+      margin: 0;
+
+      &:hover {
+        color: var(--card-accent);
+      }
+    }
+
+    &__badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: color-mix(in oklch, var(--card-accent), white 85%);
+      color: var(--card-accent);
+      white-space: nowrap;
+    }
+
+    &__body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    &__text {
+      font-size: 0.875rem;
+      color: oklch(0.55 0.01 285);
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    &__footer {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: auto;
+    }
+
+    &__btn {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.625rem 1rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      background: var(--card-accent);
+      color: white;
+      transition:
+        --card-accent 0.3s,  /* Анимируемая переменная через @property */
+        transform 0.2s;
+    }
+
+    &__btn:hover {
+      --card-accent: oklch(0.55 0.22 264);  /* Плавный переход через @property */
+    }
+
+    &__btn:focus-visible {
+      outline: 3px solid var(--card-accent);
+      outline-offset: 2px;
+    }
+
+    &__btn:active {
+      transform: scale(0.98);
+    }
+
+    /* @supports — если @property не поддерживается */
+    @supports not (--card-accent: oklch(0 0 0)) {
+      &__btn:hover {
+        background: oklch(0.55 0.22 264);
+      }
+    }
+  }
+
+  /* Scroll-driven animation — при входе в viewport */
+  @supports (animation-timeline: view()) {
+    .modern-card {
+      animation: card-reveal linear;
+      animation-timeline: view();
+      animation-range: entry 10% cover 60%;
+      animation-fill-mode: both;
+      opacity: 0;
+    }
+
+    @keyframes card-reveal {
+      from {
+        opacity: 0;
+        transform: translateY(30px) scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+  }
+
+  /* Fallback для браузеров без scroll-driven animations */
+  @supports not (animation-timeline: view()) {
+    .modern-card {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Respect prefers-reduced-motion */
+  @media (prefers-reduced-motion: reduce) {
+    .modern-card {
+      animation: none;
+      opacity: 1;
+      transform: none;
+    }
+
+    .modern-card__btn {
+      transition: none;
+    }
+  }
+}
+```
+
+---
+
+## 7. Матрица поддержки новых возможностей (2024)
+
+| Фича | Chrome | Firefox | Safari | Edge |
+|------|--------|---------|--------|------|
+| CSS Nesting | 112+ | 117+ | 16.5+ | 112+ |
+| @property | 113+ | Partial | Partial | 113+ |
+| oklch/oklab | 111+ | 113+ | 15.4+ | 111+ |
+| color-mix | 111+ | 113+ | 15.4+ | 111+ |
+| relative color | 111+ | 120+ | 16.4+ | 111+ |
+| Scroll-driven animations | 115+ | Behind flag | Behind flag | 115+ |
+| animation-composition | 112+ | 114+ | 16+ | 112+ |
+| @starting-style | 117+ | Behind flag | Behind flag | 117+ |
+
+---
+
+## 8. Чек-лист (Definition of Done)
+
+| Критерий | Статус |
+|----------|--------|
+| CSS Nesting с `&` для вложенных селекторов | ☐ |
+| @property с `syntax`, `inherits`, `initial-value` | ☐ |
+| Анимация CSS-переменной через @property | ☐ |
+| OKLCH цвета в переменных | ☐ |
+| color-mix для создания вариаций цветов | ☐ |
+| relative color для модификации компонентов цвета | ☐ |
+| Scroll-driven animation (view() или scroll()) | ☐ |
+| animation-range для управления диапазоном | ☐ |
+| Фолбэк для старых браузеров (@supports not) | ☐ |
+| prefers-reduced-motion respected | ☐ |
+
+---
+
+## 9. Практическое задание
+
+### Задача 1: CSS Nesting компонента
+Создай компонент «кнопка» с вложенностью:
+- Базовые стили кнопки
+- `&__label`, `&__icon` для внутренних элементов
+- `&--primary`, `&--secondary`, `&--sm`, `&--lg` модификаторы
+- `&:hover`, `&:focus-visible`, `&:active`, `&:disabled` состояния
+- Проверь, что скомпилированный CSS корректен в DevTools
+
+### Задача 2: @property для анимации цвета
+Создай карточку с цветом, который плавно меняется при ховере:
+- Зарегистрируй `--card-bg` через @property с типом `<color>`
+- Базовый цвет и цвет при ховере
+- Проверь, что переход плавный (не мгновенный)
+- Добавь фолбэк для браузеров без @property
+
+### Задача 3: OKLCH + color-mix палитра
+Создай набор переменных OKLCH:
+- Базовый бренд-цвет
+- Вариации через color-mix: hover (темнее), active (ещё темнее), ghost (с белым), disabled (с белым 80%)
+- Проверь контраст текста на вариантах
+
+### Задача 4: Scroll-driven animation
+Создай элемент, который анимируется при прокрутке:
+- `animation-timeline: view()` для появления при входе в viewport
+- `animation-range: entry 0% cover 50%`
+- Фолбэк через @supports not для старых браузеров
+- Уважение prefers-reduced-motion
+
+### Задача 5: Прогресс-бар скролла
+Создай прогресс-бар чтения в верхней части страницы:
+- `animation-timeline: scroll()` для документа
+- Ширина растет от 0% до 100% при прокрутке
+- Плавный переход
+
+### Задача 6: Комбинированный пример
+Объедини все возможности в одном компоненте:
+- Nesting для структуры
+- @property для анимируемой переменной
+- OKLCH + color-mix для цветов
+- Scroll-driven animation для появления
+- prefers-reduced-motion для отключения
+
+---
+
+## 10. Полезные ресурсы
+
+- [MDN: CSS Nesting](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_nesting)
+- [MDN: @property](https://developer.mozilla.org/en-US/docs/Web/CSS/@property)
+- [MDN: CSS color values — oklch](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value/oklch)
+- [MDN: color-mix()](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value/color-mix)
+- [MDN: Scroll-driven animations](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_scroll-driven_animations)
+- [web.dev: Scroll-driven animations](https://web.dev/learn/css/scroll-driven-animations/)
+- [Can I Use: CSS Nesting](https://caniuse.com/css-nesting)
+- [Can I Use: @property](https://caniuse.com/css-javascript-animation)
+- [Can I Use: Scroll-driven animations](https://caniuse.com/css-scroll-animations)
+
+---
+
+## 11. Ключевые выводы
+
+1. **CSS Nesting** — нативная вложенность без Sass/Less, `&` ссылается на родителя
+2. **@property** — регистрация CSS-переменных с типом, позволяет анимировать переменные плавно
+3. **OKLCH** — perceptually uniform цветовое пространство, предсказуемые вариации
+4. **color-mix / relative color** — создание вариаций цветов без хардкода новых значений
+5. **Scroll-driven animations** — анимации при прокрутке без JavaScript (view(), scroll())
+6. **animation-range** — точное управление тем, в каком диапазоне прокрутки идет анимация
+7. **Фолбэки** — всегда имей альтернативу для старых браузеров через @supports not
+8. **prefers-reduced-motion** — новые анимации тоже должны уважать настройку пользователя
+
+*Следующий урок: 28_Rendering_Performance.txt — Производительность рендеринга: style/layout/paint/compositing, layout thrashing, профилирование анимаций*

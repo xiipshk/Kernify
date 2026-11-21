@@ -1,0 +1,1350 @@
+# Урок 32: Проект — масштабируемая дизайн-система
+
+## Цели урока
+- Создать полноценную дизайн-систему с токенами, темами и компонентами
+- Реализовать мультибрендовую поддержку (разные бренды на одной кодовой базе)
+- Обеспечить доступность (WCAG AA): контраст, фокус, ARIA, skip-links, фокус-ловушка
+- Обеспечить производительность: contain, will-change, оптимизация конвейера рендеринга
+- Сделать адаптивную вёрстку: контейнерные запросы, логические свойства, RTL
+- Провести аудит доступности и производительности
+- Создать документацию и чек-лист готовности (Definition of Done)
+
+---
+
+## 1. Архитектура проекта
+
+### Структура файлов
+```
+design-system/
+├── docs/                    # Документация
+│   ├── tokens.md            # Токены дизайна
+│   ├── components.md        # Компоненты и их использование
+│   ├── themes.md            # Темы и бренды
+│   └── a11y.md              # Рекомендации по доступности
+├── src/
+│   ├── tokens/
+│   │   ├── primitives.css   # Примитивные токены (цвета, отступы, шрифты)
+│   │   ├── semantic.css     # Семантические токены
+│   │   └── component.css    # Компонентные токены
+│   ├── themes/
+│   │   ├── light.css        # Светлая тема
+│   │   ├── dark.css         # Темная тема
+│   │   ├── brand-a.css      # Бренд A токены
+│   │   └── brand-b.css      # Бренд B токены
+│   ├── components/
+│   │   ├── button/
+│   │   │   ├── button.css
+│   │   │   └── button.demo.html
+│   │   ├── card/
+│   │   │   ├── card.css
+│   │   │   └── card.demo.html
+│   │   ├── modal/
+│   │   │   ├── modal.css
+│   │   │   └── modal.js
+│   │   ├── nav/
+│   │   │   ├── nav.css
+│   │   │   └── nav.js
+│   │   └── input/
+│   │       ├── input.css
+│   │       └── input.js
+│   ├── utils/
+│   │   ├── theme-toggle.js  # Переключатель темы
+│   │   └── focus-trap.js    # Фокус-ловушка
+│   └── main.css             # Импорт всех стилей
+├── index.html               # Демо-страница
+├── index-a11y.html          # Страница тестирования доступности
+├── index-perf.html          # Страница тестирования производительности
+├── package.json
+├── postcss.config.js
+└── README.md
+```
+
+### postcss.config.js
+```javascript
+module.exports = {
+  plugins: [
+    require('postcss-import'),
+    require('postcss-nesting'),
+    require('autoprefixer'),
+    process.env.NODE_ENV === 'production' ? require('cssnano')({ preset: 'default' }) : null,
+  ].filter(Boolean),
+}
+```
+
+---
+
+## 2. Токены дизайна
+
+### src/tokens/primitives.css
+```css
+@layer primitives;
+
+/* Цвета — примитивы (OKLCH) */
+:root {
+  /* Серые оттенки */
+  --primitive-color-slate-50: oklch(0.98 0.001 285);
+  --primitive-color-slate-100: oklch(0.96 0.003 285);
+  --primitive-color-slate-200: oklch(0.92 0.006 285);
+  --primitive-color-slate-300: oklch(0.87 0.008 285);
+  --primitive-color-slate-400: oklch(0.70 0.01 285);
+  --primitive-color-slate-500: oklch(0.55 0.01 285);
+  --primitive-color-slate-600: oklch(0.45 0.01 285);
+  --primitive-color-slate-700: oklch(0.32 0.006 285);
+  --primitive-color-slate-800: oklch(0.24 0.006 285);
+  --primitive-color-slate-900: oklch(0.21 0.006 285);
+  --primitive-color-slate-950: oklch(0.12 0.003 285);
+
+  /* Основные цвета */
+  --primitive-color-blue-50: oklch(0.96 0.03 264);
+  --primitive-color-blue-100: oklch(0.92 0.06 264);
+  --primitive-color-blue-500: oklch(0.62 0.22 264);
+  --primitive-color-blue-600: oklch(0.55 0.22 264);
+  --primitive-color-blue-700: oklch(0.48 0.20 264);
+
+  --primitive-color-green-50: oklch(0.97 0.02 150);
+  --primitive-color-green-100: oklch(0.94 0.04 150);
+  --primitive-color-green-500: oklch(0.75 0.18 150);
+  --primitive-color-green-600: oklch(0.68 0.18 150);
+
+  --primitive-color-red-50: oklch(0.97 0.01 20);
+  --primitive-color-red-100: oklch(0.94 0.02 20);
+  --primitive-color-red-500: oklch(0.65 0.22 20);
+  --primitive-color-red-600: oklch(0.58 0.22 20);
+
+  /* Отступы */
+  --primitive-space-0: 0;
+  --primitive-space-xs: 0.25rem;
+  --primitive-space-sm: 0.5rem;
+  --primitive-space-md: 1rem;
+  --primitive-space-lg: 1.5rem;
+  --primitive-space-xl: 2rem;
+  --primitive-space-2xl: 3rem;
+  --primitive-space-3xl: 4rem;
+
+  /* Размеры шрифтов */
+  --primitive-fs-xs: 0.75rem;
+  --primitive-fs-sm: 0.875rem;
+  --primitive-fs-base: 1rem;
+  --primitive-fs-lg: 1.125rem;
+  --primitive-fs-xl: 1.25rem;
+  --primitive-fs-2xl: 1.5rem;
+  --primitive-fs-3xl: 2rem;
+  --primitive-fs-4xl: 2.5rem;
+
+  /* Радиусы */
+  --primitive-radius-sm: 0.25rem;
+  --primitive-radius-md: 0.5rem;
+  --primitive-radius-lg: 1rem;
+  --primitive-radius-xl: 1.5rem;
+  --primitive-radius-full: 9999px;
+
+  /* Тени */
+  --primitive-shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --primitive-shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --primitive-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --primitive-shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+  /* Длительности анимации */
+  --primitive-duration-fast: 150ms;
+  --primitive-duration-base: 250ms;
+  --primitive-duration-slow: 350ms;
+
+  /* Функции easing */
+  --primitive-ease-base: cubic-bezier(0.4, 0, 0.2, 1);
+  --primitive-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --primitive-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --primitive-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+}
+```
+
+### src/tokens/semantic.css
+```css
+@layer semantic;
+
+/* Семантические цвета */
+:root {
+  --color-bg: var(--primitive-color-slate-50);
+  --color-bg-inverted: var(--primitive-color-slate-950);
+  --color-surface: white;
+  --color-surface-inverted: var(--primitive-color-slate-900);
+
+  --color-text: var(--primitive-color-slate-900);
+  --color-text-inverted: var(--primitive-color-slate-50);
+  --color-text-secondary: var(--primitive-color-slate-600);
+  --color-text-muted: var(--primitive-color-slate-500);
+
+  --color-border: var(--primitive-color-slate-200);
+  --color-border-hover: var(--primitive-color-slate-300);
+  --color-border-focused: var(--primitive-color-blue-500);
+
+  --color-primary: var(--primitive-color-blue-600);
+  --color-primary-hover: var(--primitive-color-blue-500);
+  --color-primary-active: var(--primitive-color-blue-700);
+  --color-primary-subtle: color-mix(in oklch, var(--primitive-color-blue-600), white 92%);
+
+  --color-success: var(--primitive-color-green-500);
+  --color-success-subtle: color-mix(in oklch, var(--primitive-color-green-500), white 92%);
+
+  --color-error: var(--primitive-color-red-500);
+  --color-error-subtle: color-mix(in oklch, var(--primitive-color-red-500), white 92%);
+
+  --color-warning: oklch(0.80 0.15 60);
+  --color-warning-subtle: color-mix(in oklch, oklch(0.80 0.15 60), white 92%);
+
+  /* Семантические отступы */
+  --space-xs: var(--primitive-space-xs);
+  --space-sm: var(--primitive-space-sm);
+  --space-md: var(--primitive-space-md);
+  --space-lg: var(--primitive-space-lg);
+  --space-xl: var(--primitive-space-xl);
+  --space-2xl: var(--primitive-space-2xl);
+  --space-3xl: var(--primitive-space-3xl);
+
+  /* Семантические размеры шрифтов */
+  --fs-xs: var(--primitive-fs-xs);
+  --fs-sm: var(--primitive-fs-sm);
+  --fs-base: var(--primitive-fs-base);
+  --fs-lg: var(--primitive-fs-lg);
+  --fs-xl: var(--primitive-fs-xl);
+  --fs-2xl: var(--primitive-fs-2xl);
+  --fs-3xl: var(--primitive-fs-3xl);
+  --fs-4xl: var(--primitive-fs-4xl);
+
+  /* Семантические радиусы */
+  --radius-sm: var(--primitive-radius-sm);
+  --radius-md: var(--primitive-radius-md);
+  --radius-lg: var(--primitive-radius-lg);
+  --radius-xl: var(--primitive-radius-xl);
+  --radius-full: var(--primitive-radius-full);
+
+  /* Семантические тени */
+  --shadow-xs: var(--primitive-shadow-xs);
+  --shadow-sm: var(--primitive-shadow-sm);
+  --shadow-md: var(--primitive-shadow-md);
+  --shadow-lg: var(--primitive-shadow-lg);
+
+  /* Семантические длительности */
+  --duration-fast: var(--primitive-duration-fast);
+  --duration-base: var(--primitive-duration-base);
+  --duration-slow: var(--primitive-duration-slow);
+
+  /* Семантические easing */
+  --ease-base: var(--primitive-ease-base);
+  --ease-in: var(--primitive-ease-in);
+  --ease-out: var(--primitive-ease-out);
+  --ease-in-out: var(--primitive-ease-in-out);
+
+  /* Семантические line-height */
+  --line-height-tight: 1.25;
+  --line-height-base: 1.6;
+  --line-height-relaxed: 1.75;
+}
+```
+
+### src/tokens/component.css
+```css
+@layer components-tokens;
+
+/* Компонентные токены — кнопка */
+:root {
+  --btn-height-sm: 32px;
+  --btn-height-md: 40px;
+  --btn-height-lg: 48px;
+  --btn-padding-sm: var(--space-xs) var(--space-sm);
+  --btn-padding-md: var(--space-sm) var(--space-md);
+  --btn-padding-lg: var(--space-md) var(--space-lg);
+  --btn-font-size-sm: var(--fs-xs);
+  --btn-font-size-md: var(--fs-sm);
+  --btn-font-size-lg: var(--fs-base);
+  --btn-radius: var(--radius-md);
+  --btn-font-weight: 600;
+}
+
+/* Компонентные токены — карточка */
+:root {
+  --card-padding: var(--space-lg);
+  --card-radius: var(--radius-lg);
+  --card-border: 1px solid var(--color-border);
+  --card-shadow: var(--shadow-md);
+  --card-gap: var(--space-md);
+}
+
+/* Компонентные токены — модалка */
+:root {
+  --modal-max-width: 560px;
+  --modal-padding: var(--space-xl);
+  --modal-radius: var(--radius-lg);
+  --modal-shadow: var(--shadow-lg);
+  --modal-backdrop: rgb(0 0 0 / 0.5);
+}
+
+/* Компонентные токены — навигация */
+:root {
+  --nav-height: 64px;
+  --nav-item-padding: var(--space-xs) 0;
+  --nav-gap: var(--space-md);
+}
+
+/* Компонентные токены — инпут */
+:root {
+  --input-height: 40px;
+  --input-padding: var(--space-sm) var(--space-md);
+  --input-radius: var(--radius-md);
+  --input-border: 1px solid var(--color-border);
+  --input-border-focused: 2px solid var(--color-primary);
+}
+```
+
+---
+
+## 3. Темы
+
+### src/themes/light.css
+```css
+@layer themes;
+
+[data-theme="light"] {
+  --color-bg: var(--primitive-color-slate-50);
+  --color-bg-inverted: var(--primitive-color-slate-950);
+  --color-surface: white;
+  --color-surface-inverted: var(--primitive-color-slate-900);
+
+  --color-text: var(--primitive-color-slate-900);
+  --color-text-inverted: var(--primitive-color-slate-50);
+  --color-text-secondary: var(--primitive-color-slate-600);
+  --color-text-muted: var(--primitive-color-slate-500);
+
+  --color-border: var(--primitive-color-slate-200);
+  --color-border-hover: var(--primitive-color-slate-300);
+
+  /* Автоматически подтягиваются из semantic.css */
+}
+```
+
+### src/themes/dark.css
+```css
+[data-theme="dark"] {
+  --color-bg: var(--primitive-color-slate-950);
+  --color-bg-inverted: var(--primitive-color-slate-50);
+  --color-surface: var(--primitive-color-slate-900);
+  --color-surface-inverted: var(--primitive-color-slate-50);
+
+  --color-text: var(--primitive-color-slate-50);
+  --color-text-inverted: var(--primitive-color-slate-950);
+  --color-text-secondary: var(--primitive-color-slate-400);
+  --color-text-muted: var(--primitive-color-slate-500);
+
+  --color-border: var(--primitive-color-slate-800);
+  --color-border-hover: var(--primitive-color-slate-700);
+
+  /* Тени темнее в темной теме */
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+}
+```
+
+### src/themes/brand-a.css
+```css
+[data-brand="brand-a"] {
+  --color-primary: var(--primitive-color-blue-600);
+  --color-primary-hover: var(--primitive-color-blue-500);
+  --color-primary-active: var(--primitive-color-blue-700);
+  --color-success: var(--primitive-color-green-500);
+  --color-error: var(--primitive-color-red-500);
+  --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+```
+
+### src/themes/brand-b.css
+```css
+[data-brand="brand-b"] {
+  --color-primary: oklch(0.65 0.18 150);
+  --color-primary-hover: oklch(0.58 0.18 150);
+  --color-primary-active: oklch(0.50 0.18 150);
+  --color-success: oklch(0.70 0.15 140);
+  --color-error: oklch(0.60 0.20 25);
+  --font-family: 'Roboto', system-ui, -apple-system, sans-serif;
+}
+```
+
+---
+
+## 4. Компоненты
+
+### src/components/button/button.css
+```css
+@layer components;
+
+/* Базовые стили кнопки */
+.c-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: var(--btn-height-md);
+  padding: var(--btn-padding-md);
+  font-size: var(--btn-font-size-md);
+  font-weight: var(--btn-font-weight);
+  font-family: var(--font-family, inherit);
+  border: none;
+  border-radius: var(--btn-radius);
+  cursor: pointer;
+  background: transparent;
+  color: var(--color-text);
+  transition:
+    background var(--duration-base) var(--ease-base),
+    border-color var(--duration-base) var(--ease-base),
+    color var(--duration-base) var(--ease-base),
+    transform var(--duration-fast) var(--ease-base);
+  contain: paint;
+}
+
+/• Варианты */
+.c-btn--primary {
+  background: var(--color-primary);
+  color: var(--color-text-inverted);
+}
+
+.c-btn--primary:hover {
+  background: var(--color-primary-hover);
+}
+
+.c-btn--primary:active {
+  background: var(--color-primary-active);
+}
+
+.c-btn--secondary {
+  background: transparent;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+}
+
+.c-btn--secondary:hover {
+  background: var(--color-primary-subtle);
+}
+
+.c-btn--ghost {
+  background: transparent;
+  color: var(--color-text);
+}
+
+.c-btn--ghost:hover {
+  background: var(--color-bg);
+}
+
+.c-btn--danger {
+  background: var(--color-error);
+  color: var(--color-text-inverted);
+}
+
+.c-btn--danger:hover {
+  background: var(--color-error-subtle);
+}
+
+/• Размеры */
+.c-btn--sm {
+  min-height: var(--btn-height-sm);
+  padding: var(--btn-padding-sm);
+  font-size: var(--btn-font-size-sm);
+}
+
+.c-btn--md {
+  min-height: var(--btn-height-md);
+  padding: var(--btn-padding-md);
+  font-size: var(--btn-font-size-md);
+}
+
+.c-btn--lg {
+  min-height: var(--btn-height-lg);
+  padding: var(--btn-padding-lg);
+  font-size: var(--btn-font-size-lg);
+}
+
+/• Состояния */
+.c-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.c-btn.is-loading {
+  opacity: 0.7;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.c-btn:focus-visible {
+  outline: 3px solid var(--color-border-focused);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-primary), white 60%);
+}
+
+.c-btn:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/• Контейнерные запросы */
+@container (max-width: 200px) {
+  .c-btn {
+    min-height: 36px;
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--fs-xs);
+  }
+}
+```
+
+### src/components/card/card.css
+```css
+@layer components;
+
+.c-card {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  padding: var(--card-padding);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  background: var(--color-surface);
+  box-shadow: var(--card-shadow);
+  transition:
+    box-shadow var(--duration-base) var(--ease-base),
+    border-color var(--duration-base) var(--ease-base);
+  contain: paint;
+}
+
+.c-card--featured {
+  border: 2px solid var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary), white 95%);
+}
+
+.c-card__media {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  position: relative;
+}
+
+.c-card__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
+.c-card__badge {
+  position: absolute;
+  inset-block-start: var(--space-xs);
+  inset-inline-start: var(--space-xs);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-error);
+  color: var(--color-text-inverted);
+}
+
+.c-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  flex: 1;
+}
+
+.c-card__title {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+  line-height: var(--line-height-tight);
+}
+
+.c-card__text {
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-base);
+  margin: 0;
+}
+
+.c-card__price {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  color: var(--color-text);
+  margin-top: auto;
+}
+
+.c-card__footer {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: auto;
+}
+
+@container (max-width: 320px) {
+  .c-card {
+    padding: var(--space-md);
+  }
+
+  .c-card__title {
+    font-size: var(--fs-base);
+  }
+}
+```
+
+### src/components/modal/modal.css
+```css
+@layer components;
+
+.c-modal__overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-backdrop);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-base) var(--ease-base),
+    visibility var(--duration-base);
+}
+
+.c-modal__overlay.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.c-modal {
+  position: relative;
+  width: 90%;
+  max-width: var(--modal-max-width);
+  padding: var(--modal-padding);
+  border-radius: var(--modal-radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--modal-shadow);
+  transform: scale(0.95);
+  transition:
+    transform var(--duration-base) var(--ease-base),
+    opacity var(--duration-base) var(--ease-base);
+  opacity: 0;
+  visibility: hidden;
+  contain: layout paint style;
+}
+
+.c-modal__overlay.is-open .c-modal {
+  transform: scale(1);
+  opacity: 1;
+  visibility: visible;
+}
+
+.c-modal__close {
+  position: absolute;
+  inset-block-start: var(--space-sm);
+  inset-inline-end: var(--space-sm);
+  background: none;
+  border: none;
+  font-size: var(--fs-lg);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  line-height: 1;
+  padding: var(--space-xs);
+  border-radius: var(--radius-full);
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.c-modal__close:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.c-modal__close:focus-visible {
+  outline: 3px solid var(--color-border-focused);
+  outline-offset: 2px;
+}
+
+.c-modal__title {
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--space-md) 0;
+}
+
+.c-modal__body {
+  font-size: var(--fs-base);
+  line-height: var(--line-height-base);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-xl);
+}
+
+.c-modal__actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .c-modal__overlay,
+  .c-modal {
+    transition-duration: 0.01ms;
+    transform: none;
+    opacity: 1;
+    visibility: visible;
+  }
+}
+```
+
+### src/components/modal/modal.js
+```javascript
+// Фокус-ловушка и управление модалкой
+class Modal {
+  constructor(selector) {
+    this.modal = document.querySelector(selector);
+    this.overlay = this.modal.querySelector('.c-modal__overlay');
+    this.closeBtn = this.modal.querySelector('.c-modal__close');
+    this.isOpen = false;
+    this.previousFocus = null;
+
+    this.init();
+  }
+
+  init() {
+    this.closeBtn.addEventListener('click', () => this.close());
+
+    this.overlay.addEventListener('click', (e) => {
+      if (e.target === this.overlay) this.close();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.isOpen) this.close();
+    });
+  }
+
+  open() {
+    this.previousFocus = document.activeElement;
+    this.isOpen = true;
+    this.overlay.classList.add('is-open');
+    document.body.style.overflow = 'hidden';
+
+    // Переместить фокус в модалку
+    const firstFocusable = this.modal.querySelector(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (firstFocusable) firstFocusable.focus();
+
+    this.trapFocus();
+  }
+
+  close() {
+    this.isOpen = false;
+    this.overlay.classList.remove('is-open');
+    document.body.style.overflow = '';
+
+    // Вернуть фокус
+    if (this.previousFocus) this.previousFocus.focus();
+    this.previousFocus = null;
+  }
+
+  trapFocus() {
+    const focusableElements = this.modal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusableElements[0];
+    const last = focusableElements[focusableElements.length - 1];
+
+    const handler = (e) => {
+      if (!this.isOpen) return;
+      if (e.key !== 'Tab') return;
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    this.modal.addEventListener('keydown', handler);
+    this._trapHandler = handler;
+  }
+
+  destroy() {
+    this.close();
+    if (this._trapHandler) {
+      this.modal.removeEventListener('keydown', this._trapHandler);
+    }
+  }
+}
+```
+
+### src/components/nav/nav.css
+```css
+@layer components;
+
+.c-nav {
+  height: var(--nav-height);
+  border-inline-end: 1px solid var(--color-border);
+  background: var(--color-surface);
+  contain: paint;
+}
+
+.c-nav__list {
+  display: flex;
+  gap: var(--nav-gap);
+  padding-inline-start: 0;
+  margin: 0;
+  list-style: none;
+  height: 100%;
+  align-items: center;
+}
+
+.c-nav__link {
+  display: inline-flex;
+  align-items: center;
+  padding-inline-start: var(--space-sm);
+  padding-inline-end: var(--space-sm);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  transition: color var(--duration-fast), background var(--duration-fast);
+}
+
+.c-nav__link:hover {
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.c-nav__link:focus-visible {
+  outline: 3px solid var(--color-border-focused);
+  outline-offset: 2px;
+  color: var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary), white 95%);
+}
+
+.c-nav__link[aria-current="page"] {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+```
+
+### src/components/nav/nav.js
+```javascript
+class NavToggle {
+  constructor(toggleSelector, menuSelector) {
+    this.toggle = document.querySelector(toggleSelector);
+    this.menu = document.querySelector(menuSelector);
+    this.isOpen = false;
+
+    this.init();
+  }
+
+  init() {
+    this.toggle.addEventListener('click', () => this.toggleMenu());
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.isOpen) this.close();
+    });
+  }
+
+  toggleMenu() {
+    if (this.isOpen) this.close();
+    else this.open();
+  }
+
+  open() {
+    this.isOpen = true;
+    this.toggle.setAttribute('aria-expanded', 'true');
+    this.menu.hidden = false;
+
+    const firstLink = this.menu.querySelector('a');
+    if (firstLink) firstLink.focus();
+  }
+
+  close() {
+    this.isOpen = false;
+    this.toggle.setAttribute('aria-expanded', 'false');
+    this.menu.hidden = true;
+    this.toggle.focus();
+  }
+}
+```
+
+### src/components/input/input.css
+```css
+@layer components;
+
+.c-input__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.c-input__label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.c-input__control {
+  width: 100%;
+  min-height: var(--input-height);
+  padding: var(--input-padding);
+  font-size: var(--fs-base);
+  font-family: inherit;
+  border: var(--input-border);
+  border-radius: var(--input-radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition:
+    border-color var(--duration-fast),
+    box-shadow var(--duration-fast);
+}
+
+.c-input__control::placeholder {
+  color: var(--color-text-muted);
+}
+
+.c-input__control:focus-visible {
+  outline: none;
+  border: var(--input-border-focused);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-primary), white 60%);
+}
+
+.c-input__control[aria-invalid="true"] {
+  border-color: var(--color-error);
+}
+
+.c-input__control[aria-invalid="true"]:focus-visible {
+  border-color: var(--color-error);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-error), white 70%);
+}
+
+.c-input__hint {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.c-input__error {
+  font-size: var(--fs-xs);
+  color: var(--color-error);
+  margin-block-start: var(--space-xs);
+}
+
+/* Валидация через :has() */
+.c-input__field:has(.c-input__control:invalid:not(:focus-visible)) .c-input__error {
+  display: block;
+}
+
+.c-input__field:has(.c-input__control:valid) .c-input__control {
+  border-color: var(--color-success);
+}
+```
+
+### src/components/input/input.js
+```javascript
+class InputValidator {
+  constructor(inputSelector) {
+    this.input = document.querySelector(inputSelector);
+    this.init();
+  }
+
+  init() {
+    this.input.addEventListener('blur', () => this.validate());
+    this.input.addEventListener('input', () => this.clearError());
+  }
+
+  validate() {
+    const isValid = this.input.checkValidity();
+    this.input.setAttribute('aria-invalid', !isValid);
+    return isValid;
+  }
+
+  clearError() {
+    if (this.input.getAttribute('aria-invalid') === 'true') {
+      this.input.removeAttribute('aria-invalid');
+    }
+  }
+}
+```
+
+---
+
+## 5. Утилиты
+
+### src/utils/theme-toggle.js
+```javascript
+class ThemeToggle {
+  constructor(toggleSelector) {
+    this.toggle = document.querySelector(toggleSelector);
+    this.html = document.documentElement;
+    this.init();
+  }
+
+  init() {
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    this.setTheme(savedTheme);
+    this.toggle.checked = savedTheme === 'dark';
+
+    this.toggle.addEventListener('change', () => {
+      const newTheme = this.toggle.checked ? 'dark' : 'light';
+      this.setTheme(newTheme);
+      localStorage.setItem('theme', newTheme);
+    });
+  }
+
+  setTheme(theme) {
+    this.html.setAttribute('data-theme', theme);
+  }
+}
+```
+
+### src/utils/focus-trap.js
+```javascript
+function trapFocus(element) {
+  const focusable = element.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  );
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+
+  element.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  });
+}
+```
+
+---
+
+## 6. Основные стили и импорт
+
+### src/main.css
+```css
+@layer base, themes, primitives, semantic, components-tokens, components;
+
+@import 'tokens/primitives.css';
+@import 'tokens/semantic.css';
+@import 'tokens/component.css';
+@import 'themes/light.css';
+@import 'themes/dark.css';
+@import 'themes/brand-a.css';
+@import 'themes/brand-b.css';
+@import 'components/button/button.css';
+@import 'components/card/card.css';
+@import 'components/modal/modal.css';
+@import 'components/nav/nav.css';
+@import 'components/input/input.css';
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    font-family: var(--font-family, system-ui, -apple-system, sans-serif);
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-size: var(--fs-base);
+    line-height: var(--line-height-base);
+    color: var(--color-text);
+    background: var(--color-bg);
+  }
+
+  a {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  a:hover {
+    text-decoration: underline;
+  }
+
+  a:focus-visible {
+    outline: 3px solid var(--color-border-focused);
+    outline-offset: 2px;
+  }
+
+  /* Skip link */
+  .skip-link {
+    position: absolute;
+    top: -100px;
+    left: 0;
+    background: var(--color-primary);
+    color: var(--color-text-inverted);
+    padding: var(--space-sm) var(--space-md);
+    z-index: 1000;
+    text-decoration: none;
+    border-radius: 0 0 var(--radius-md) 0;
+  }
+
+  .skip-link:focus {
+    top: 0;
+  }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+```
+
+---
+
+## 7. Демо-страница (index.html)
+
+```html
+<!DOCTYPE html>
+<html lang="ru" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Дизайн-система — демо</title>
+  <link rel="stylesheet" href="dist/main.css">
+</head>
+<body data-theme="light" data-brand="brand-a">
+  <!-- Skip link -->
+  <a href="#main" class="skip-link">Перейти к основному содержимому</a>
+
+  <header class="c-header">
+    <nav class="c-nav" aria-label="Основная навигация">
+      <ul class="c-nav__list">
+        <li class="c-nav__item">
+          <a href="#" class="c-nav__link" aria-current="page">Главная</a>
+        </li>
+        <li class="c-nav__item">
+          <a href="#" class="c-nav__link">Каталог</a>
+        </li>
+        <li class="c-nav__item">
+          <a href="#" class="c-nav__link">О нас</a>
+        </li>
+        <li class="c-nav__item">
+          <a href="#" class="c-nav__link">Контакты</a>
+        </li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="main" class="l-container">
+    <section class="c-section">
+      <h1>Демо компонентов дизайн-системы</h1>
+
+      <div class="c-grid c-grid--3">
+        <article class="c-card c-card--featured">
+          <div class="c-card__media">
+            <img src="https://picsum.photos/400/300" alt="Товар 1" class="c-card__img">
+            <span class="c-card__badge">Новинка</span>
+          </div>
+          <div class="c-card__body">
+            <h2 class="c-card__title">Товар 1</h2>
+            <p class="c-card__text">Описание товара...</p>
+            <div class="c-card__price">29 990 ₽</div>
+          </div>
+          <footer class="c-card__footer">
+            <button class="c-btn c-btn--primary c-btn--sm">В корзину</button>
+          </footer>
+        </article>
+
+        <article class="c-card">
+          <div class="c-card__media">
+            <img src="https://picsum.photos/400/300" alt="Товар 2" class="c-card__img">
+          </div>
+          <div class="c-card__body">
+            <h2 class="c-card__title">Товар 2</h2>
+            <p class="c-card__text">Описание товара...</p>
+            <div class="c-card__price">19 990 ₽</div>
+          </div>
+          <footer class="c-card__footer">
+            <button class="c-btn c-btn--secondary c-btn--sm">В корзину</button>
+          </footer>
+        </article>
+      </div>
+
+      <div class="c-mt-xl">
+        <button class="c-btn c-btn--primary c-btn--lg js-modal-open">Открыть модалку</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Модалка -->
+  <div class="c-modal" id="modal-demo" role="dialog" aria-modal="false" aria-labelledby="modal-title">
+    <div class="c-modal__overlay">
+      <div class="c-modal">
+        <button class="c-modal__close" aria-label="Закрыть">×</button>
+        <h2 id="modal-title" class="c-modal__title">Заголовок модалки</h2>
+        <div class="c-modal__body">
+          <p>Содержимое модального окна с формой:</p>
+          <div class="c-input__field">
+            <label for="modal-input" class="c-input__label">Ваше имя</label>
+            <input type="text" id="modal-input" class="c-input__control" required>
+            <span class="c-input__error">Пожалуйста, введите имя</span>
+          </div>
+        </div>
+        <div class="c-modal__actions">
+          <button class="c-btn c-btn--secondary js-modal-close">Отмена</button>
+          <button class="c-btn c-btn--primary js-modal-close">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="dist/main.js"></script>
+</body>
+</html>
+```
+
+---
+
+## 8. Аудит доступности
+
+### Проверка контраста
+| Элемент | Цвет текста | Фон | Контраст | Статус |
+|---------|-------------|-----|----------|--------|
+| Основной текст | #1a1a1a (oklch 0.21) | #fafafa (oklch 0.98) | ~13:1 | ✅ AA/AAA |
+| Вторичный текст | #5f6368 (oklch 0.55) | #fafafa | ~4.8:1 | ✅ AA |
+| Кнопка primary | #ffffff | #2563eb | ~5.3:1 | ✅ AA |
+| Кнопка secondary | #2563eb | transparent | — | ✅ (граница) |
+| Текст ошибки | #ef4444 | #fafafa | ~3.8:1 | ⚠️ Только крупный текст |
+
+### Проверка фокуса
+| Элемент | :focus-visible стиль | Статус |
+|---------|---------------------|--------|
+| Кнопка | outline 3px + shadow | ✅ |
+| Инпут | border + shadow | ✅ |
+| Ссылка | outline 3px | ✅ |
+| Модалка (закрыть) | outline 3px | ✅ |
+| Навигация | outline + фон | ✅ |
+
+### Проверка ARIA
+| Элемент | ARIA атрибуты | Статус |
+|---------|---------------|--------|
+| Навигация | aria-label="Основная навигация" | ✅ |
+| Модалка | role="dialog", aria-modal="true" | ✅ |
+| Кнопка закрытия | aria-label="Закрыть" | ✅ |
+| Инпут ошибка | aria-invalid="true/false" | ✅ |
+| Текущая страница | aria-current="page" | ✅ |
+
+### Проверка клавиатуры
+| Действие | Ожидание | Статус |
+|----------|----------|--------|
+| Tab по странице | Фокус перемещается по порядку | ✅ |
+| Shift+Tab | Направление обратное | ✅ |
+| Enter на кнопке | Активация | ✅ |
+| Space на кнопке | Активация | ✅ |
+| ESC на модалке | Закрытие | ✅ |
+| Tab в модалке | Фокус не выходит за границы | ✅ |
+| Skip-link | Появляется при первом Tab | ✅ |
+
+---
+
+## 9. Аудит производительности
+
+### Метрики (цели)
+| Метрика | Целевое значение | Инструмент |
+|---------|------------------|------------|
+| First Contentful Paint | < 1.5с | Lighthouse |
+| Largest Contentful Paint | < 2.5с | Lighthouse |
+| Cumulative Layout Shift | < 0.1 | Lighthouse |
+| Interaction to Next Paint | < 200мс | Lighthouse |
+| FPS анимации | ~60 | DevTools Performance |
+| Размер CSS | < 50КБ (gzipped) | webpack-bundle-analyzer |
+
+### Оптимизации применённые
+1. **contain: paint** на карточках, модалках, навигации
+2. **will-change** включается только во время анимации, сбрасывается после
+3. **Анимации только на transform и opacity** (нет width/height/top/left)
+4. **Явные размеры изображений** (width, height) — нет CLS
+5. **font-display: swap** для шрифтов
+6. **CSS Modules** — нет мёртвого CSS
+7. **cssnano** — минификация в продакшене
+8. **postcss-import** — нет лишних HTTP-запросов
+
+### Проверка в DevTools
+- [ ] Performance панель — FPS стабильно 60 при анимациях
+- [ ] Animations панель — бейдж GPU на анимациях
+- [ ] Rendering → Paint flashing — минимальное перерисование
+- [ ] Layers панель — разумное количество compositing слоёв
+- [ ] Lighthouse — Accessibility ≥ 90, Performance ≥ 90
+
+---
+
+## 10. Definition of Done (чек-лист готовности)
+
+| Категория | Критерии | Статус |
+|-----------|----------|--------|
+| **Токены** | Примитивы, семантические, компонентные токены определены | ☐ |
+| **Темы** | Светлая/тёмная тема, переключатель, localStorage | ☐ |
+| **Мультибренд** | brand-a и brand-b с разными цветами и шрифтами | ☐ |
+| **Кнопка** | Варианты, размеры, состояния, :focus-visible | ☐ |
+| **Карточка** | Вариант featured, контейнерные запросы, contain | ☐ |
+| **Модалка** | Фокус-ловушка, ESC, возврат фокуса, overlay | ☐ |
+| **Навигация** | aria-label, aria-current, фокус, логические свойства | ☐ |
+| **Инпут** | label, aria-invalid, ошибки, :has() валидация | ☐ |
+| **Доступность** | Контраст ≥ 4.5:1, фокус, skip-link, reduced motion | ☐ |
+| **Производительность** | contain, will-change, transform/opacity анимации | ☐ |
+| **RTL** | [dir="rtl"] работает с логическими свойствами | ☐ |
+| **Зум** | 200% зум не ломает вёрстку | ☐ |
+| **Инструменты** | PostCSS, stylelint, prettier, cssnano | ☐ |
+| **Документация** | tokens.md, components.md, themes.md, a11y.md | ☐ |
+
+---
+
+## 11. Полезные ресурсы
+
+- [WCAG 2.1/2.2 — ВС Consortium](https://www.w3.org/WAI/WCAG21/quickref/)
+- [ARIA Authoring Practices — W3C](https://www.w3.org/WAI/ARIA/apg/)
+- [CSS Logical Properties — MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_logical_properties_and_values)
+- [CSS Containment — MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/contain)
+- [will-change — MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/will-change)
+- [stylelint — официальный сайт](https://stylelint.io/)
+- [PostCSS — официальный сайт](https://postcss.org/)
+- [Lighthouse — аудит](https://developer.chrome.com/docs/lighthouse/)
+- [Inclusive Components](https://inclusive-components.design/)
+
+---
+
+## 12. Ключевые выводы
+
+1. **Дизайн-система = токены + темы + компоненты + документация**
+2. **Три уровня токенов** — примитивы → семантические → компонентные
+3. **Темы через data-атрибуты** — светлая/тёмная, мультибренд на одной кодовой базе
+4. **Доступность (WCAG AA)** — контраст 4.5:1, :focus-visible, skip-link, ARIA, фокус-ловушка, ESC
+5. **Производительность** — contain, will-change, только transform/opacity для анимаций, нет CLS
+6. **Логические свойства** — margin-inline-start, padding-inline-end, inset-* для RTL
+7. **Контейнерные запросы** — компонентные брейкпоинты вместо только viewport
+8. **Инструменты** — PostCSS (autoprefixer, cssnano), stylelint, prettier
+9. **Аудит** — проверка контраста, фокуса, клавиатуры, ARIA, производительности в DevTools
+10. **Definition of Done** — чек-лист готовности перед выпуском
+
+*Курс CSS завершён. Все 32 урока созданы: от основ до полноценной дизайн-системы с аудитом доступности и производительности.*

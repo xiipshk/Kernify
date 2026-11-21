@@ -1,0 +1,315 @@
+# Урок 12: Типовая система C# — value/reference types, nullable, boxing/unboxing, struct/record/class, immutability
+
+## Цели урока
+- Понимать разницу между value types и reference types
+- Работать с nullable типами и операторами ?. ??
+- Понимать boxing/unboxing и их влияние на производительность
+- Выбирать между struct, record и class
+- Применять паттерны неизменяемости (immutability)
+
+---
+
+## 1. Value Types vs Reference Types
+
+### Value Types (struct, enum, примитивы)
+```csharp
+// Хранятся в стеке (обычно), копируются по значению
+int a = 42;
+int b = a;        // b — копия a
+b = 100;
+Console.WriteLine(a); // 42 (не изменилось)
+
+struct Point { public int X, Y; }
+var p1 = new Point { X = 1, Y = 2 };
+var p2 = p1;      // полная копия структуры
+p2.X = 99;
+Console.WriteLine(p1.X); // 1
+```
+
+### Reference Types (class, interface, delegate, array, string)
+```csharp
+// Хранятся в куче, переменная — ссылка
+var list1 = new List<int> { 1, 2 };
+var list2 = list1; // list2 ссылается на ТОТ ЖЕ объект
+list2.Add(3);
+Console.WriteLine(list1.Count); // 3 (изменилось!)
+
+// string — reference type, но immutable (ведёт себя как value type)
+string s1 = "hello";
+string s2 = s1;
+s2 = "world"; // создаёт НОВУЮ строку
+Console.WriteLine(s1); // "hello"
+```
+
+### Таблица сравнения
+
+| Характеристика | Value Type | Reference Type |
+|----------------|------------|----------------|
+| Хранение | Стек (обычно) | Куча |
+| Присваивание | Копия данных | Копия ссылки |
+| Null по умолчанию | Нет (кроме nullable) | Да |
+| Наследование | Нет (sealed) | Да |
+| Примеры | int, bool, struct, enum | class, string, array, delegate |
+
+---
+
+## 2. Nullable Types (Nullable Value Types)
+
+### Синтаксис
+```csharp
+// Два эквивалентных способа
+int? age = null;        // синтаксический сахар
+Nullable<int> age2 = null; // полная форма
+
+// Проверка
+if (age.HasValue) { Console.WriteLine(age.Value); }
+if (age is not null) { Console.WriteLine(age.Value); }
+
+// Операторы
+int? x = null;
+int y = x ?? 42;           // null-coalescing: 42
+int z = x.GetValueOrDefault(); // 0 (default(int))
+
+// Null-conditional operator
+Person? person = null;
+Console.WriteLine(person?.Name?.Length); // null, не исключение
+```
+
+### Nullable Reference Types (C# 8+)
+```csharp
+// Включить в .csproj: <Nullable>enable</Nullable>
+
+#nullable enable
+string? nullableString = null;  // может быть null
+string notNullString = "hello"; // не может быть null (предупреждение компилятора)
+
+void PrintLength(string s) => Console.WriteLine(s.Length);
+// PrintLength(nullableString); // Warning: possible null reference
+PrintLength(nullableString!);   // ! — "я знаю, что не null" (null-forgiving)
+#nullable restore
+```
+
+---
+
+## 3. Boxing и Unboxing
+
+### Что происходит
+```csharp
+int value = 42;
+object boxed = value;    // BOXING: int → object (аллокация в куче!)
+int unboxed = (int)boxed; // UNBOXING: object → int (проверка типа + копия)
+
+// С générics — избегаем boxing
+List<int> list = new();  // нет boxing
+list.Add(42);            // напрямую в массиве int[]
+
+// Плохо: boxing в цикле
+object sum = 0;
+for (int i = 0; i < 1000; i++)
+    sum = (int)sum + i;  // boxing/unboxing каждую итерацию!
+
+// Хорошо: используйте примитив или generic
+int sum2 = 0;
+for (int i = 0; i < 1000; i++)
+    sum2 += i;
+```
+
+### Когда происходит boxing
+```csharp
+// 1. Присваивание value type в object/interface
+object o = 42;
+IComparable c = 42;
+
+// 2. Вызов метода object (ToString, GetHashCode, Equals)
+int x = 42;
+Console.WriteLine(x.ToString()); // boxing! (вызывает object.ToString)
+
+// 3. В не-generic коллекциях
+ArrayList list = new();
+list.Add(42); // boxing!
+
+// 4. String interpolation/concat с value types
+Console.WriteLine("Value: " + 42); // boxing!
+Console.WriteLine($"Value: {42}"); // тоже boxing (вызывает ToString)
+```
+
+---
+
+## 4. Struct vs Record vs Class
+
+### Class (Reference Type)
+```csharp
+class Person
+{
+    public string Name { get; set; }
+    public int Age { get; set; }
+
+    // Референс-семантика
+    public override bool Equals(object? obj) =>
+        obj is Person p && p.Name == Name && p.Age == Age;
+}
+```
+
+### Struct (Value Type)
+```csharp
+// C# 10+: record struct
+readonly record struct Point(int X, int Y);
+
+// Традиционный struct
+struct Rectangle
+{
+    public int Width, Height;
+    public readonly int Area => Width * Height; // readonly метод
+
+    // struct не может иметь параметризованный конструктор без параметров (до C# 10)
+    // но может иметь static фабрики
+    public static Rectangle Square(int size) => new() { Width = size, Height = size };
+}
+```
+
+### Record (Reference Type с value-семантикой равенства)
+```csharp
+// Record class (reference type)
+record Person(string Name, int Age);
+
+// Record struct (value type) — C# 10+
+readonly record struct Point(int X, int Y);
+
+// Инициализация с with-выражением (immutability)
+var p1 = new Person("Alice", 30);
+var p2 = p1 with { Age = 31 }; // новый объект, Name скопирован
+
+// Positional records — деконструкция
+var (name, age) = p1;
+```
+
+### Когда что использовать
+
+| Сценарий | Выбор |
+|----------|-------|
+| Данные, передаваемые по значению, малые (< 16 байт) | `struct` / `record struct` |
+| DTO, сущности с идентичностью по данным | `record` / `record struct` |
+| Бизнес-объекты с поведением, изменяемое состояние | `class` |
+| Полиморфизм, наследование | `class` / `record` (record может наследовать record) |
+| Высокая производительность, массивы | `struct` / `record struct` |
+
+---
+
+## 5. Immutability (Неизменяемость)
+
+### Init-only свойства (C# 9+)
+```csharp
+class ImmutablePerson
+{
+    public string Name { get; init; }
+    public int Age { get; init; }
+
+    // Можно задать только в инициализаторе
+    var p = new ImmutablePerson { Name = "Alice", Age = 30 };
+    // p.Age = 31; // Ошибка компиляции!
+}
+
+// With-выражения работают с init-only (C# 10+ для class)
+var p2 = p with { Age = 31 };
+```
+
+### Readonly struct
+```csharp
+readonly struct ImmutablePoint
+{
+    public int X { get; }
+    public int Y { get; }
+
+    public ImmutablePoint(int x, int y) => (X, Y) = (x, y);
+
+    // Все методы неявно readonly
+    public double DistanceFromOrigin() => Math.Sqrt(X * X + Y * Y);
+}
+```
+
+### Record — встроенная неизменяемость
+```csharp
+record User(string Name, string Email)
+{
+    // Можно добавить вычисляемые свойства
+    public string Domain => Email.Split('@')[1];
+
+    // Init-only setter для изменения через with
+    public string? Phone { get; init; }
+}
+
+var u1 = new User("Alice", "alice@example.com");
+var u2 = u1 with { Phone = "+1234567890" }; // новый объект
+```
+
+### Frozen Collections (C# 10+ / .NET 8)
+```csharp
+using System.Collections.Frozen;
+
+// Оптимизированы для чтения, быстрый поиск
+FrozenSet<int> frozen = [1, 2, 3, 4, 5].ToFrozenSet();
+FrozenDictionary<string, int> dict = new Dictionary<string, int>
+{
+    ["a"] = 1, ["b"] = 2
+}.ToFrozenDictionary();
+
+Console.WriteLine(frozen.Contains(3)); // O(1), очень быстро
+```
+
+---
+
+## 6. Ref Struct и Stack-Only Types (C# 7.2+)
+
+```csharp
+// Только стек, не может быть полем класса, в async, в boxed
+ref struct SpanWrapper
+{
+    public Span<int> Span { get; }
+
+    public SpanWrapper(Span<int> span) => Span = span;
+
+    // Нельзя: public List<SpanWrapper> list; // ошибка!
+}
+
+// Span<T> — пример ref struct
+void Process(Span<int> data)
+{
+    // Работа с памятью без аллокаций
+    for (int i = 0; i < data.Length; i++)
+        data[i] *= 2;
+}
+```
+
+---
+
+## Практические задания
+
+1. **Boxing detector**: напишите анализатор (Roslyn analyzer), который находит неявный boxing в коде
+2. **Immutable DTO**: создайте record для API ответа с вложенными объектами, покажите with-выражения
+3. **Performance benchmark**: сравните `List<int>` vs `List<object>` с 1 млн элементов (память, скорость)
+4. **Nullable migration**: возьмите класс с `string Name` и сделайте его nullable-aware с правильными аннотациями
+5. **Struct vs Class**: создайте `struct Point` и `class PointClass`, измерьте память для массива 10 млн точек
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `struct` с большими данными (> 16 байт) | `class` или `record` |
+| `class` для DTO без поведения | `record` / `record struct` |
+| Мутация struct через свойство | `readonly struct` или `with` |
+| Игнорирование nullable warnings | Включите `<Nullable>enable</Nullable>` |
+| `object` вместо generic в коллекциях | `List<T>`, `Dictionary<TKey, TValue>` |
+| Boxing в горячем пути (циклы, hot path) | Примитивы, `Span<T>`, generic |
+
+---
+
+## Полезные ресурсы
+
+- **C# Language Reference: Value Types** — https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/value-types
+- **C# Language Reference: Nullable Types** — https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/nullable-value-types
+- **Records in C#** — https://learn.microsoft.com/dotnet/csharp/whats-new/tutorials/records
+- **Nullable Reference Types** — https://learn.microsoft.com/dotnet/csharp/nullable-references
+- **Performance: Boxing and Unboxing** — https://learn.microsoft.com/dotnet/csharp/programming-guide/types/boxing-and-unboxing
+- **Frozen Collections** — https://learn.microsoft.com/dotnet/api/system.collections.frozen

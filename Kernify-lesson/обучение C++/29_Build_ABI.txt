@@ -1,0 +1,504 @@
+# Урок 29: Build/ABI — large CMake projects, ABI, symbols, modules, cross-compilation
+
+## Цели урока
+- Освоить масштабируемую структуру CMake проектов
+- Понять ABI (Application Binary Interface) и совместимость
+- Изучить symbol visibility, versioning, mangling
+- Научиться работать с C++20 Modules
+- Разобраться в cross-compilation и toolchains
+
+---
+
+## 1. Large CMake Projects Structure
+
+### Modern CMake (Target-based)
+```cmake
+# CMakeLists.txt root
+cmake_minimum_required(VERSION 3.20)
+project(MyProject VERSION 1.0.0 LANGUAGES CXX)
+
+# Policies
+cmake_policy(SET CMP0077 NEW)  # option() honors normal vars
+cmake_policy(SET CMP0091 NEW)  # FindPython3
+cmake_policy(SET CMP0115 NEW)  # file(COPY) preserves timestamps
+
+# Options
+option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+option(BUILD_TESTING "Enable tests" ON)
+option(ENABLE_SANITIZERS "Enable sanitizers" OFF)
+
+# Default build type
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Global compile options
+add_compile_options(
+    $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>
+)
+
+# C++ standard
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Export compile commands для clangd
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Subdirectories
+add_subdirectory(src)
+add_subdirectory(tests)
+add_subdirectory(examples)
+```
+
+### Library Target
+```cmake
+# src/mylib/CMakeLists.txt
+cmake_minimum_required(VERSION 3.20)
+
+add_library(mylib STATIC)  # или SHARED
+target_sources(mylib PRIVATE
+    mylib.cpp
+    detail/impl.cpp
+)
+
+target_include_directories(mylib
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/detail
+)
+
+target_compile_features(mylib PUBLIC cxx_std_20)
+
+# Compile definitions
+target_compile_definitions(mylib
+    PUBLIC MYLIB_EXPORT  # для shared library exports
+    PRIVATE MYLIB_INTERNAL
+)
+
+# Link dependencies
+target_link_libraries(mylib PUBLIC fmt::fmt spdlog::spdlog)
+
+# Versioning для shared libs
+set_target_properties(mylib PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    CXX_VISIBILITY_PRESET hidden  # скрыть символы по умолчанию
+    VISIBILITY_INLINES_HIDDEN ON
+)
+
+# Install
+install(TARGETS mylib
+    EXPORT MyProjectTargets
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+    INCLUDES DESTINATION include
+)
+install(FILES include/mylib.h DESTINATION include)
+install(EXPORT MyProjectTargets
+    FILE MyProjectConfig.cmake
+    NAMESPACE MyProject::
+    DESTINATION lib/cmake/MyProject
+)
+```
+
+### Header-Only Library
+```cmake
+# include/mylib/CMakeLists.txt
+add_library(mylib_header INTERFACE)
+target_sources(mylib_header INTERFACE
+    header_only.hpp
+)
+target_include_directories(mylib_header INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
+```
+
+---
+
+## 2. ABI (Application Binary Interface)
+
+### Что входит в ABI
+```
+- Name mangling схемы (Itanium C++ ABI для GCC/Clang, MSVC ABI)
+- Class layout: поля, vtable, virtual bases, padding
+- Calling convention: parameter passing, return values, stack cleanup
+- Exception handling: unwind tables, personality routines
+- RTTI: type_info layout
+- Template instantiation: exported vs implicit
+- Standard library ABI: libstdc++ vs libc++ vs MSVC STL
+```
+
+### Symbol Visibility
+```cpp
+// GCC/Clang visibility
+#define MYLIB_API __attribute__((visibility("default")))
+#define MYLIB_INTERNAL __attribute__((visibility("hidden")))
+
+// MSVC
+#ifdef _WIN32
+    #ifdef MYLIB_EXPORTS
+        #define MYLIB_API __declspec(dllexport)
+    #else
+        #define MYLIB_API __declspec(dllimport)
+    #endif
+    #define MYLIB_INTERNAL
+#else
+    #define MYLIB_API __attribute__((visibility("default")))
+    #define MYLIB_INTERNAL __attribute__((visibility("hidden")))
+#endif
+
+// Usage
+class MYLIB_API PublicClass { ... };
+class MYLIB_INTERNAL InternalImpl { ... };
+```
+
+### ABI Compatibility Rules
+```cpp
+// BREAKING changes (require SOVERSION bump):
+// - Add/remove virtual functions
+// - Change class size (add/remove non-static data members)
+// - Change base classes
+// - Change function signature (params, return type)
+// - Change enum underlying type
+// - Remove exported symbols
+
+// NON-BREAKING:
+// - Add non-virtual methods
+// - Add static members
+// - Add default parameter values (careful!)
+// - Change function body (implementation)
+// - Add new classes/functions (new symbols)
+```
+
+### Version Scripts (Linux)
+```ld
+// mylib.version
+MYLIB_1.0 {
+    global:
+        PublicClass*;
+        public_function*;
+    local:
+        *;  // hide everything else
+};
+```
+
+```cmake
+set_target_properties(mylib PROPERTIES
+    LINK_FLAGS "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/mylib.version"
+)
+```
+
+---
+
+## 3. C++20 Modules
+
+### Module Interface Unit
+```cpp
+// mylib.ixx (или .cppm)
+export module mylib;
+
+import <vector>;
+import <string>;
+import :internal;  // partition
+
+export namespace mylib {
+
+export class Widget {
+    int value_;
+public:
+    Widget(int v = 0) : value_(v) {}
+    int get() const { return value_; }
+    void set(int v) { value_ = v; }
+};
+
+export std::string format(const Widget& w);
+
+} // namespace mylib
+```
+
+### Module Partition
+```cpp
+// internal.ixx
+export module mylib:internal;
+
+namespace mylib::detail {
+    export int helper(int x) { return x * 2; }
+}
+```
+
+### Module Implementation Unit
+```cpp
+// mylib_impl.cpp
+module mylib;
+
+import <format>;
+
+namespace mylib {
+    std::string format(const Widget& w) {
+        return std::format("Widget({})", w.get());
+    }
+}
+```
+
+### CMake Module Support (3.28+)
+```cmake
+# CMakeLists.txt
+cmake_minimum_required(VERSION 3.28)
+project(MyModules LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Experimental module support
+set(CMAKE_CXX_SCAN_DEPENDENCIES ON)
+
+add_library(mylib SHARED
+    mylib.ixx       # interface
+    internal.ixx    # partition
+    mylib_impl.cpp  # implementation
+)
+
+# target_sources with FILE_SET для модулей
+target_sources(mylib
+    PRIVATE
+        FILE_SET CXX_MODULES
+        FILES mylib.ixx internal.ixx mylib_impl.cpp
+)
+
+# BMI (Built Module Interface) location
+set_target_properties(mylib PROPERTIES
+    CXX_MODULE_DIRS "${CMAKE_BINARY_DIR}/bmi"
+)
+```
+
+### Header Units (Import STL headers)
+```cpp
+// std.ixx — std module (implementation-defined)
+export module std;
+export import <vector>;
+export import <string>;
+export import <memory>;
+export import <algorithm>;
+export import <iostream>;
+```
+
+```cpp
+// usage.cpp
+import std;  // вместо #include <...>
+import mylib;
+
+int main() {
+    std::vector<int> v = {1,2,3};
+    mylib::Widget w(42);
+    std::cout << mylib::format(w) << '\n';
+}
+```
+
+---
+
+## 4. Cross-Compilation
+
+### Toolchain File
+```cmake
+# toolchain-aarch64-linux.cmake
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR aarch64)
+
+set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
+set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
+
+set(CMAKE_SYSROOT /opt/aarch64-linux-gnu/sysroot)
+
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+
+# Для Qt/пересборки зависимостей
+set(QT_HOST_PATH /usr/lib/qt6)
+```
+
+### Building
+```bash
+cmake -B build-arm64 -DCMAKE_TOOLCHAIN_FILE=toolchain-aarch64-linux.cmake .
+cmake --build build-arm64
+```
+
+### Cross-Compiling with vcpkg
+```bash
+vcpkg install --triplet arm64-linux fmt spdlog
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+      -DVCPKG_TARGET_TRIPLET=arm64-linux .
+```
+
+### Canadian Cross (build on A, for B, running on C)
+```cmake
+# Build machine: x86_64-linux
+# Host machine: aarch64-linux (where compiler runs)
+# Target machine: riscv64-baremetal (where code runs)
+
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_CROSSCOMPILING TRUE)
+```
+
+---
+
+## 5. Symbol Management
+
+### Name Mangling
+```cpp
+// Itanium C++ ABI (GCC/Clang)
+// _ZN7MyClass4funcEi -> MyClass::func(int)
+// _ZN3Foo3BarC1Ev -> Foo::Bar::Bar()
+
+// Demangling
+extern "C" char* __cxa_demangle(const char* mangled, char* buf, size_t* n, int* status);
+
+// c++filt utility
+// $ c++filt _ZN7MyClass4funcEi
+// MyClass::func(int)
+```
+
+### Symbol Inspection
+```bash
+# Linux
+nm -C libmylib.so           # list symbols (demangled)
+objdump -T libmylib.so      # dynamic symbols
+readelf -s libmylib.so      # symbol table
+
+# Windows
+dumpbin /EXPORTS mylib.dll
+dumpbin /SYMBOLS mylib.lib
+
+# Check undefined symbols
+nm -u libmylib.so
+```
+
+### Version Symbols (Linux)
+```cpp
+// symbol versioning в коде
+__asm__(".symver old_func,old_func@MYLIB_1.0");
+__asm__(".symver new_func,new_func@MYLIB_2.0");
+
+// или через .map file
+```
+
+---
+
+## 6. Packaging & Distribution
+
+### CPack
+```cmake
+# CPackConfig.cmake
+include(InstallRequiredSystemLibraries)
+
+set(CPACK_PACKAGE_NAME "MyProject")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_VENDOR "MyCompany")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Modern C++ Library")
+
+# DEB
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Me <me@example.com>")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libfmt9, libspdlog1")
+
+# RPM
+set(CPACK_RPM_PACKAGE_LICENSE "MIT")
+
+# NSIS (Windows installer)
+set(CPACK_NSIS_MUI_ICON "icon.ico")
+
+include(CPack)
+```
+
+### Conan v2 Recipe
+```python
+# conanfile.py
+from conan import ConanFile
+from conan.tools.cmake import CMake, cmake_layout
+
+class MyLibConan(ConanFile):
+    name = "mylib"
+    version = "1.0.0"
+    license = "MIT"
+    url = "https://github.com/me/mylib"
+    settings = "os", "compiler", "build_type", "arch"
+    options = {"shared": [True, False], "fPIC": [True, False]}
+    default_options = {"shared": False, "fPIC": True}
+    exports_sources = "src/*", "include/*", "CMakeLists.txt"
+
+    def layout(self):
+        cmake_layout(self)
+
+    def requirements(self):
+        self.requires("fmt/10.2.1")
+        self.requires("spdlog/1.12.0")
+
+    def build(self):
+        cmake = CMake(self)
+        cmake.configure()
+        cmake.build()
+
+    def package(self):
+        cmake = CMake(self)
+        cmake.install()
+
+    def package_info(self):
+        self.cpp_info.libs = ["mylib"]
+        if self.settings.os == "Linux":
+            self.cpp_info.system_libs = ["pthread", "dl"]
+```
+
+---
+
+## Практические задания
+
+### Задание 1: CMake Project Structure
+Создайте проект с структурой:
+```
+project/
+├── CMakeLists.txt
+├── src/
+│   ├── core/ (static lib)
+│   ├── network/ (shared lib, depends on core)
+│   └── cli/ (executable, depends on network)
+├── tests/
+└── third_party/
+```
+Настройте `target_link_libraries` с PUBLIC/PRIVATE/INTERFACE. Добавьте `install()` и `CPack`.
+
+### Задание 2: ABI Breakage Detection
+Напишите скрипт, использующий `abi-dumper` / `abi-compliance-checker` для сравнения двух версий shared library. Найдите breaking changes.
+
+### Задание 3: Symbol Visibility
+Создайте shared library с:
+- Public API (visible)
+- Internal implementation (hidden)
+- Plugin interface (visible, but not in main API)
+Проверьте `nm -D` и `objdump -T`.
+
+### Задание 4: C++20 Modules
+Создайте модуль `math` с partition `math:constants`, `math:algorithms`. Используйте в исполняемом файле. Настройте CMake 3.28+ для модулей.
+
+### Задание 5: Cross-Compilation
+Настройте кросс-компиляцию под ARM64 (aarch64) используя toolchain file. Соберите проект с vcpkg dependencies. Запустите под QEMU user-mode.
+
+### Задание 6: Sanitizers in CI
+Добавьте в CMake опции для AddressSanitizer, UBSan, TSan, MSan. Настройте CI (GitHub Actions) для запуска тестов под санитайзерами.
+
+---
+
+## Полезные ресурсы
+- **Modern CMake** — https://cliutils.gitlab.io/modern-cmake/
+- **CMake Documentation** — https://cmake.org/cmake/help/latest/
+- **Itanium C++ ABI** — https://itanium-cxx-abi.github.io/cxx-abi/
+- **C++ Modules** — https://en.cppreference.com/w/cpp/language/modules
+- **vcpkg** — https://vcpkg.io/
+- **Conan 2.0** — https://docs.conan.io/2/
+- **ABI Compliance Checker** — https://abi-laboratory.pro/
+- **P2300** — std::execution для унифицированного async

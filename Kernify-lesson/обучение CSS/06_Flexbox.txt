@@ -1,0 +1,493 @@
+# Урок 6: Flexbox — Полный гид: оси, выравнивание, wrapping, gap, flex-grow/shrink/basis
+
+## Цели урока
+- Глубоко понять главную и поперечную оси (main/cross axis)
+- Освоить все свойства контейнера и элементов
+- Понять алгоритм распределения свободного места (grow/shrink/basis)
+- Изучить gap, wrapping, order, align-self
+- Научиться решать типовые задачи: навигация, карточки, центрирование, sticky footer
+
+---
+
+## 1. Концепция Flexbox — одномерный layout
+
+```
+FLEX CONTAINER (display: flex)
+│
+├─ MAIN AXIS (главная ось) — direction: row (→) или column (↓)
+│   ├─ main-start → main-end
+│   ├─ justify-content — выравнивание по главной оси
+│   └─ gap — расстояние между элементами
+│
+└─ CROSS AXIS (поперечная ось) — перпендикулярна главной
+    ├─ cross-start → cross-end
+    ├─ align-items / align-content — выравнивание по поперечной
+    └─ align-self — переопределение для отдельного элемента
+```
+
+### Направление осей
+```css
+.flex {
+  display: flex;
+
+  /* Главная ось */
+  flex-direction: row;           /* → (default) */
+  flex-direction: row-reverse;   /* ← */
+  flex-direction: column;        /* ↓ */
+  flex-direction: column-reverse;/* ↑ */
+
+  /* Логические (рекомендуется) */
+  flex-direction: row;           /* inline-start → inline-end */
+  flex-direction: column;        /* block-start → block-end */
+}
+```
+
+---
+
+## 2. Свойства контейнера
+
+### justify-content — главная ось
+```css
+.container {
+  display: flex;
+  justify-content: flex-start;     /* Прижато к старту (default) */
+  justify-content: flex-end;       /* Прижато к концу */
+  justify-content: center;         /* По центру */
+  justify-content: space-between;  /* Равные промежутки, края прижаты */
+  justify-content: space-around;   /* Промежутки вокруг каждого */
+  justify-content: space-evenly;   /* Равные промежутки везде */
+  justify-content: stretch;        /* Растягивает (если нет width) */
+}
+```
+
+### align-items — поперечная ось (однострочный)
+```css
+.container {
+  display: flex;
+  align-items: stretch;      /* Растягивает на всю высоту (default) */
+  align-items: flex-start;   /* Прижато к cross-start */
+  align-items: flex-end;     /* Прижато к cross-end */
+  align-items: center;       /* По центру поперечной оси */
+  align-items: baseline;     /* По базовой линии текста */
+}
+```
+
+### align-content — поперечная ось (многострочный, flex-wrap: wrap)
+```css
+.container {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;     /* Строки к cross-start */
+  align-content: flex-end;       /* Строки к cross-end */
+  align-content: center;         /* Строки по центру */
+  align-content: space-between;  /* Равные промежутки между строками */
+  align-content: space-around;   /* Промежутки вокруг строк */
+  align-content: space-evenly;   /* Равные промежутки везде */
+  align-content: stretch;        /* Строки растянуты (default) */
+}
+```
+
+### flex-wrap — перенос строк
+```css
+.container {
+  flex-wrap: nowrap;      /* Все в одну строку (default), могут вылезать */
+  flex-wrap: wrap;        /* Перенос на следующие строки */
+  flex-wrap: wrap-reverse;/* Перенос в обратном порядке */
+}
+
+/* Комбинация */
+flex-flow: row wrap;      /* flex-direction + flex-wrap */
+```
+
+### gap — расстояния (современный способ)
+```css
+.container {
+  display: flex;
+  gap: 16px;                    /* Во все стороны */
+  gap: 16px 24px;               /* row-gap column-gap */
+  row-gap: 16px;                /* Между строками */
+  column-gap: 24px;             /* Между колонками */
+
+  /* Не влияет на внешние отступы контейнера! */
+}
+```
+
+---
+
+## 3. Свойства элементов (flex items)
+
+### flex-basis — базовый размер до распределения
+```css
+.item {
+  flex-basis: auto;      /* Основан на width/height или контенте (default) */
+  flex-basis: 200px;     /* Фиксированный */
+  flex-basis: 30%;       /* От flex-контейнера */
+  flex-basis: 0;         /* Игнорирует контент, только grow/shrink */
+  flex-basis: content;   /* По контенту (как auto но точнее) */
+}
+```
+
+### flex-grow — как расти при свободном месте
+```css
+.item {
+  flex-grow: 0;   /* Не расти (default) */
+  flex-grow: 1;   /* Брать равную долю свободного места */
+  flex-grow: 2;   /* Брать в 2 раза больше, чем у grow: 1 */
+}
+
+/* Алгоритм:
+   1. Суммируем все flex-basis
+   2. Если сумма < контейнер → свободное место делим пропорционально flex-grow
+   3. Добавляем к flex-basis
+*/
+```
+
+### flex-shrink — как сжиматься при нехватке места
+```css
+.item {
+  flex-shrink: 1;   /* Сжиматься пропорционально (default) */
+  flex-shrink: 0;   /* Не сжиматься — может вылезти за контейнер! */
+  flex-shrink: 2;   /* Сжиматься в 2 раза сильнее */
+}
+
+/* Алгоритм сжатия (с учётом flex-basis):
+   1. Считаем "вес сжатия" = flex-basis × flex-shrink
+   2. Излишек размера делим пропорционально весам
+   3. Вычитаем из flex-basis (но не ниже min-width!)
+*/
+```
+
+### flex — сокращение (РЕКОМЕНДУЕМОЕ)
+```css
+.item {
+  /* flex: grow shrink basis */
+  flex: 1;              /* 1 1 0% — расти/сжиматься равномерно, basis=0 */
+  flex: auto;           /* 1 1 auto — расти/сжиматься, basis=auto */
+  flex: none;           /* 0 0 auto — фиксированный по контенту/width */
+  flex: 2 1 300px;      /* grow=2, shrink=1, basis=300px */
+  flex: 0 0 50%;        /* Фиксированный 50% контейнера */
+}
+```
+
+### align-self — переопределение align-items
+```css
+.item {
+  align-self: auto;         /* Наследует от контейнера (default) */
+  align-self: flex-start;
+  align-self: flex-end;
+  align-self: center;
+  align-self: stretch;
+  align-self: baseline;
+}
+```
+
+### order — визуальный порядок (НЕ меняет DOM!)
+```css
+.item-1 { order: 2; }
+.item-2 { order: 1; }  /* Визуально первым */
+/* Default: 0. Отрицательные работают. */
+/* ВНИМАНИЕ: ломает доступность клавиатуры (Tab order)! */
+```
+
+---
+
+## 4. margin: auto в flex — секретное оружие
+
+```css
+.container {
+  display: flex;
+}
+
+/* Центрирование одного элемента */
+.centered {
+  margin: auto;  /* Во все стороны — центрирует по обеим осям! */
+}
+
+/* Толкание элементов */
+.push-right {
+  margin-left: auto;  /* Толкает себя и всё после вправо */
+}
+
+/* Разделение групп */
+.group-start { /* без margin */ }
+.group-end {
+  margin-inline-start: auto;  /* Толкает группу к концу */
+}
+
+/* Sticky footer паттерн */
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.content {
+  flex: 1;  /* Занимает всё свободное место */
+}
+.footer {
+  /* Прижат к низу автоматически */
+}
+```
+
+---
+
+## 5. Типовые паттерны и решения
+
+### Навигация: лого слева, ссылки справа
+```css
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.nav__links {
+  display: flex;
+  gap: 2rem;
+}
+
+/* На мобильной — гамбургер, на десктопе — ряд */
+@media (max-width: 768px) {
+  .nav__links {
+    position: absolute;
+    top: 100%; left: 0; right: 0;
+    flex-direction: column;
+    background: white;
+    padding: 1rem;
+    display: none;
+  }
+  .nav__links.open { display: flex; }
+}
+```
+
+### Карточки одинаковой высоты
+```css
+.cards {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.card {
+  flex: 1 1 300px;      /* Минимум 300px, растут равномерно */
+  display: flex;
+  flex-direction: column;
+}
+
+.card__content {
+  flex: 1;              /* Занимает всё место, прижимает footer вниз */
+  display: flex;
+  flex-direction: column;
+}
+
+.card__footer {
+  margin-top: auto;     /* Прижат к низу карточки */
+}
+```
+
+### Holy Grail Layout (Header, Sidebar, Main, Footer)
+```css
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.main-area {
+  display: flex;
+  flex: 1;
+}
+
+.sidebar {
+  flex: 0 0 280px;      /* Фиксированная ширина */
+}
+
+.content {
+  flex: 1;              /* Остальное место */
+  min-width: 0;         /* Важно! Чтобы контент не растягивал контейнер */
+}
+
+@media (max-width: 768px) {
+  .main-area { flex-direction: column; }
+  .sidebar { flex: none; width: 100%; }
+}
+```
+
+### Media Object (картинка + текст)
+```css
+.media {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;  /* Верх картинки = верх текста */
+}
+
+.media__figure {
+  flex-shrink: 0;           /* Картинка не сжимается */
+  width: 80px;
+  height: 80px;
+}
+
+.media__body {
+  flex: 1;
+  min-width: 0;             /* Позволяет тексту переноситься */
+}
+```
+
+### Формы: label + input в ряд
+```css
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.form-row label {
+  flex: 0 0 120px;          /* Фиксированная ширина label */
+  text-align: right;
+}
+
+.form-row input {
+  flex: 1;                  /* Остальное место */
+  min-width: 0;
+}
+```
+
+---
+
+## 6. Flexbox и доступность (a11y)
+
+### Проблема order
+```css
+/* order меняет визуальный порядок, НО: */
+/* - Tab order следует за DOM */
+/* - Screen readers читают в DOM порядке */
+/* - Focus indicators могут путать */
+
+/* РЕШЕНИЕ: */
+.item {
+  /* Только если визуальный порядок = смысловой */
+  order: 2;
+}
+/* Лучше менять DOM порядок или использовать grid с размещением по линиям */
+```
+
+### Focus management
+```css
+.item:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+  z-index: 1;  /* Поверх соседей при фокусе */
+}
+```
+
+---
+
+## 7. Flexbox vs Grid — когда что
+
+| Задача | Flexbox | Grid |
+|--------|---------|------|
+| Навигация | ✅ | ❌ |
+| Карточки в ряд с wrap | ✅ | ✅ (auto-fit) |
+| Двумерная сетка | ❌ | ✅ |
+| Перекрывающиеся элементы | ❌ | ✅ |
+| Центрирование | ✅ | ✅ |
+| Распределение пространства | ✅ | ❌ |
+| Именованные области | ❌ | ✅ |
+| Aspect-ratio сетка | ❌ | ✅ |
+
+---
+
+## 8. Практическое задание
+
+### Задача 1: Flexbox Playground
+Создай интерактивную демо-страницу с контролами:
+- flex-direction: row/column/reverse
+- justify-content: все 7 значений
+- align-items: все 5 значений
+- flex-wrap: wrap/nowrap
+- gap: slider 0-48px
+- У 3х элементов: flex-grow, flex-shrink, flex-basis, align-self, order
+- Показывай вычисленные размеры в DevTools стиле
+
+### Задача 2: Responsive Navigation
+Реализуй навигацию:
+- Desktop: logo слева, links по центру, CTA справа
+- Tablet: logo слева, hamburger справа, links скрыты
+- Mobile: logo по центру, hamburger справа
+- Открытое меню: fullscreen overlay, links в колонку
+- Анимация появления меню (transform + opacity)
+- Доступность: ARIA атрибуты, focus trap, ESC закрытие
+
+### Задача 3: Dashboard Layout
+Создай layout:
+- Header (sticky, height 64px)
+- Sidebar (280px, sticky, scrollable)
+- Main (flex: 1, padding 24px)
+- В main: grid карточек статистики (4 колонки → 2 → 1)
+- Footer (прижат к низу, min-height 100vh)
+- Все переходы плавные
+
+### Задача 4: Flex Grow/Shrink Calculator
+Напиши функцию (JS или мысленно) для расчёта итоговых размеров:
+```javascript
+// Вход: containerWidth, items[{basis, grow, shrink, minWidth, maxWidth}]
+// Выход: итоговые width каждого элемента
+
+function calculateFlex(containerWidth, items) {
+  // 1. Сумма basis
+  // 2. Если сумма < containerWidth → распределяем surplus по grow
+  // 3. Если сумма > containerWidth → распределяем deficit по shrink * basis
+  // 4. Применяем min/max constraints
+  // 5. Повторяем пока есть изменения (iterative)
+}
+```
+Проверь на примерах:
+- 3 элемента: basis 100px, grow 1/2/3, container 600px
+- 3 элемента: basis 300px, shrink 1/1/0, container 600px
+
+---
+
+## 9. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| `flex: 1` без понимания | basis=0, контент может исчезнуть | `flex: 1 1 auto` или явный basis |
+| Нет `min-width: 0` на flex:1 | Контент не сжимается, ломает layout | `min-width: 0` или `overflow: hidden` |
+| `justify-content: space-between` на последней строке | Большие дыры при wrap | `space-evenly` или grid с auto-fit |
+| `align-items: center` + `flex-wrap: wrap` | Элементы прыгают при ресайзе | `align-content: flex-start` для wrap |
+| `order` для контента | Ломает Tab навигацию | Избегай, меняй DOM или используй Grid |
+| `gap` на старых браузерах | Не работает в Safari < 14.1 | Fallback: margin + negative margin на контейнере |
+| `height: 100%` на flex ребёнке | Не работает без высоты родителя | `align-items: stretch` (default) или явная высота |
+
+---
+
+## 10. Полезные ресурсы
+
+### Спецификации
+- [CSS Flexible Box Layout Level 1](https://www.w3.org/TR/css-flexbox-1/)
+- [CSS Box Alignment Level 3](https://www.w3.org/TR/css-align-3/)
+
+### Гайды
+- [CSS-Tricks: Complete Guide to Flexbox](https://css-tricks.com/snippets/css/a-guide-to-flexbox/)
+- [MDN: Flexbox](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Flexible_Box_Layout)
+- [Flexbox Froggy](https://flexboxfroggy.com/) — игра для обучения
+
+### Инструменты
+- [Flexbox Playground](https://flexbox.tech/) — интерактивный
+- [Flexbox Patterns](https://flexboxpatterns.com/) — готовые решения
+
+---
+
+## 11. Ключевые выводы
+
+1. **Flexbox = одномерный layout**. Главная ось (justify) и поперечная (align).
+2. **`flex: 1 1 auto` / `flex: 1` / `flex: auto`** — понимай разницу в basis.
+3. **`gap` — лучший способ расстояний**. Не используй margin для gap'ов.
+4. **`margin: auto` в flex** — мощный инструмент для центрирования и толкания.
+5. **`min-width: 0` на flex-ребёнке** — критично для предотвращения переполнения.
+6. **`order` ломает a11y** — используй только для визуальных украшений.
+7. **Flex-wrap + align-content** — для многострочных контейнеров.
+
+---
+
+*Следующий урок: 07_Grid.txt — CSS Grid: треки, линии, области, minmax, auto-fit/fill, subgrid, masonry*

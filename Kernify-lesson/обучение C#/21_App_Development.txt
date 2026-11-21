@@ -1,0 +1,475 @@
+# Урок 21: Разработка приложений — configuration, logging, dependency injection, APIs, ASP.NET Core basics
+
+## Цели урока
+- Настроить конфигурацию (appsettings, environment variables, user secrets)
+- Использовать структурированное логирование (Serilog, built-in)
+- Освоить Dependency Injection (DI) контейнер
+- Создавать REST API на ASP.NET Core Minimal APIs / Controllers
+- Понимать middleware pipeline, routing, model binding, validation
+
+---
+
+## 1. Configuration (Конфигурация)
+
+### Источники конфигурации (порядок приоритета — последний побеждает)
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// По умолчанию загружаются:
+// 1. appsettings.json
+// 2. appsettings.{Environment}.json (Development/Production)
+// 3. User Secrets (Development) — секреты вне репо
+// 4. Environment Variables (переменные окружения)
+// 5. Command Line args
+
+// Кастомные источники
+builder.Configuration
+    .AddJsonFile("custom.json", optional: true, reloadOnChange: true)
+    .AddXmlFile("config.xml", optional: true)
+    .AddInMemoryCollection(new Dictionary<string, string> { ["Key"] = "Value" })
+    .AddCommandLine(args)
+    .AddEnvironmentVariables(prefix: "MYAPP_");
+```
+
+### Strongly-typed Configuration (Options Pattern)
+```csharp
+// appsettings.json
+{
+  "Database": {
+    "ConnectionString": "Server=...",
+    "MaxRetryCount": 3,
+    "CommandTimeout": 30
+  },
+  "ExternalApi": {
+    "BaseUrl": "https://api.example.com",
+    "ApiKey": "secret"
+  }
+}
+
+// Класс настроек
+public class DatabaseOptions
+{
+    public string ConnectionString { get; set; } = "";
+    public int MaxRetryCount { get; set; } = 3;
+    public int CommandTimeout { get; set; } = 30;
+}
+
+// Регистрация
+builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection("Database"));
+builder.Services.AddOptions<DatabaseOptions>()
+    .Bind(builder.Configuration.GetSection("Database"))
+    .ValidateDataAnnotations()
+    .ValidateOnStart(); // fail fast при старте
+
+// Использование через IOptions<T> / IOptionsSnapshot<T> / IOptionsMonitor<T>
+public class MyService
+{
+    private readonly DatabaseOptions _options;
+    public MyService(IOptions<DatabaseOptions> options) => _options = options.Value; // singleton
+    public MyService(IOptionsSnapshot<DatabaseOptions> options) => _options = options.Value; // scoped (reload на запрос)
+    public MyService(IOptionsMonitor<DatabaseOptions> options) => _options = options.CurrentValue; // singleton + OnChange
+}
+```
+
+### User Secrets (Development)
+```bash
+dotnet user-secrets init
+dotnet user-secrets set "Database:ConnectionString" "Server=...;Password=realpassword;"
+# Хранится в %APPDATA%\Microsoft\UserSecrets\<id>\secrets.json
+```
+
+---
+
+## 2. Logging (Логирование)
+
+### Built-in Logging
+```csharp
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+builder.Logging.AddEventLog(); // Windows
+builder.Logging.AddFilter("Microsoft", LogLevel.Warning); // отключить шум
+builder.Logging.AddFilter("System", LogLevel.Warning);
+builder.Logging.AddFilter("MyApp", LogLevel.Debug);
+```
+
+### Serilog — структурированное, богатое (рекомендуется для продакшена)
+```bash
+dotnet add package Serilog.AspNetCore
+dotnet add package Serilog.Sinks.Console
+dotnet add package Serilog.Sinks.File
+dotnet add package Serilog.Sinks.Seq # или Elasticsearch, Datadog
+```
+
+```csharp
+// Program.cs
+using Serilog;
+
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Debug()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.WithProperty("Application", "MyApp")
+    .Enrich.WithThreadId()
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+    .WriteTo.File("logs/app-.txt", rollingInterval: RollingInterval.Day, retainedFileCountLimit: 30)
+    .WriteTo.Seq("http://localhost:5341")
+    .CreateLogger();
+
+builder.Host.UseSerilog(); // заменяет built-in
+
+// Использование
+public class OrderService
+{
+    private readonly ILogger<OrderService> _log;
+    public OrderService(ILogger<OrderService> log) => _log = log;
+
+    public async Task Process(Order order)
+    {
+        using (_log.BeginScope("OrderId={OrderId}", order.Id)) // scope properties
+        {
+            _log.LogInformation("Processing order {OrderId} for {Customer}", order.Id, order.Customer);
+            try { await DoWork(); }
+            catch (Exception ex) { _log.LogError(ex, "Failed to process {OrderId}", order.Id); throw; }
+        }
+    }
+}
+```
+
+### Structured Logging — всегда используйте параметры, не интерполирование!
+```csharp
+// ПЛОХО: string interpolation — не структурированные данные
+_log.LogInformation($"Processing order {order.Id}");
+
+// ХОРОШО: параметры — поиск в Seq/ELK по полям
+_log.LogInformation("Processing order {OrderId} for {Customer}", order.Id, order.Customer);
+```
+
+---
+
+## 3. Dependency Injection (DI)
+
+### Регистрация сервисов (Service Lifetime)
+```csharp
+builder.Services.AddTransient<IEmailSender, EmailSender>();     // новый экземпляр каждый раз
+builder.Services.AddScoped<DbContext, AppDbContext>();          // один на запрос (scope)
+builder.Services.AddSingleton<ICache, MemoryCache>();           // один на всё приложение
+
+// Фабрики
+builder.Services.AddTransient<Func<EmailType, IEmailSender>>(sp => type =>
+{
+    return type switch
+    {
+        EmailType.Marketing => sp.GetRequiredService<MarketingEmailSender>(),
+        EmailType.Transactional => sp.GetRequiredService<TransactionalEmailSender>(),
+        _ => throw new ArgumentOutOfRangeException(nameof(type))
+    };
+});
+
+// Декораторы (Scrutor library)
+builder.Services.Decorate<IRepository<User>, CachingRepository<User>>();
+```
+
+### Внедрение зависимостей
+```csharp
+// Constructor Injection (рекомендуется)
+public class OrderController : ControllerBase
+{
+    private readonly IOrderService _orders;
+    private readonly ILogger<OrderController> _log;
+
+    public OrderController(IOrderService orders, ILogger<OrderController> log)
+    {
+        _orders = orders;
+        _log = log;
+    }
+}
+
+// Method Injection (редко) — [FromServices]
+[HttpGet]
+public async Task<IActionResult> Get([FromServices] IOrderService orders) { ... }
+
+// Property Injection — не рекомендуется (скрытые зависимости)
+```
+
+### IServiceScopeFactory — создание scope вручную
+```csharp
+public class BackgroundWorker : BackgroundService
+{
+    private readonly IServiceScopeFactory _scopeFactory;
+    public BackgroundWorker(IServiceScopeFactory scopeFactory) => _scopeFactory = scopeFactory;
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await ProcessPendingOrders(db);
+            await Task.Delay(TimeSpan.FromMinutes(5), ct);
+        }
+    }
+}
+```
+
+---
+
+## 4. ASP.NET Core — Minimal APIs (современный подход)
+
+### Базовое приложение
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+
+// Endpoints
+app.MapGet("/", () => "Hello World!")
+   .WithName("GetRoot")
+   .WithTags("General");
+
+app.MapGet("/api/users", async (AppDbContext db) =>
+    await db.Users.AsNoTracking().ToListAsync())
+   .WithName("GetUsers")
+   .Produces<List<User>>(StatusCodes.Status200OK);
+
+app.MapGet("/api/users/{id:int}", async (int id, AppDbContext db) =>
+    await db.Users.FindAsync(id) is User user ? Results.Ok(user) : Results.NotFound())
+   .WithName("GetUserById");
+
+app.MapPost("/api/users", async (UserDto dto, AppDbContext db, IValidator<UserDto> validator) =>
+{
+    var validation = await validator.ValidateAsync(dto);
+    if (!validation.IsValid) return Results.ValidationProblem(validation.ToDictionary());
+
+    var user = new User { Name = dto.Name, Email = dto.Email };
+    db.Users.Add(user);
+    await db.SaveChangesAsync();
+    return Results.Created($"/api/users/{user.Id}", user);
+})
+.WithName("CreateUser")
+.Accepts<UserDto>("application/json")
+.Produces<User>(StatusCodes.Status201Created)
+.ProducesValidationProblem();
+
+app.Run();
+```
+
+### Route Groups и Filters
+```csharp
+var api = app.MapGroup("/api").WithTags("API");
+
+var users = api.MapGroup("/users").RequireAuthorization();
+
+users.MapGet("/", GetAllUsers);
+users.MapGet("/{id}", GetUser);
+users.MapPost("/", CreateUser).AddEndpointFilter<ValidationFilter<UserDto>>();
+```
+
+### Endpoint Filters (validation, logging, etc.)
+```csharp
+public class ValidationFilter<T> : IEndpointFilter where T : class
+{
+    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        var validator = context.HttpContext.RequestServices.GetService<IValidator<T>>();
+        if (validator == null) return await next(context);
+
+        var dto = context.GetArgument<T>(0);
+        var result = await validator.ValidateAsync(dto);
+        if (!result.IsValid)
+            return Results.ValidationProblem(result.ToDictionary());
+
+        return await next(context);
+    }
+}
+```
+
+---
+
+## 5. Controllers (классический MVC стиль)
+
+```csharp
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    private readonly IUserService _users;
+    public UsersController(IUserService users) => _users = users;
+
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<UserDto>>> GetAll()
+        => Ok(await _users.GetAllAsync());
+
+    [HttpGet("{id:int}")]
+    public async Task<ActionResult<UserDto>> Get(int id)
+    {
+        var user = await _users.GetByIdAsync(id);
+        return user == null ? NotFound() : Ok(user);
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<UserDto>> Create([FromBody] CreateUserDto dto)
+    {
+        var user = await _users.CreateAsync(dto);
+        return CreatedAtAction(nameof(Get), new { id = user.Id }, user);
+    }
+}
+```
+
+### Model Binding и Validation
+```csharp
+public class CreateUserDto
+{
+    [Required, StringLength(100)]
+    public string Name { get; set; } = "";
+
+    [Required, EmailAddress]
+    public string Email { get; set; } = "";
+
+    [Range(18, 120)]
+    public int Age { get; set; }
+}
+
+// В контроллере: [ApiController] автоматически возвращает 400 при невалидном ModelState
+// Или вручную:
+if (!ModelState.IsValid) return ValidationProblem(ModelState);
+```
+
+---
+
+## 6. Middleware Pipeline
+
+### Порядок middleware (важен!)
+```csharp
+var app = builder.Build();
+
+// 1. Exception handling (самый первый — ловит всё ниже)
+app.UseExceptionHandler("/error"); // или app.UseDeveloperExceptionPage() в Dev
+
+// 2. HSTS / HTTPS
+app.UseHsts();
+app.UseHttpsRedirection();
+
+// 3. Static files
+app.UseStaticFiles();
+
+// 4. Routing
+app.UseRouting();
+
+// 5. CORS (перед Auth)
+app.UseCors("AllowAll");
+
+// 6. Authentication / Authorization
+app.UseAuthentication();
+app.UseAuthorization();
+
+// 7. Custom middleware
+app.UseMiddleware<RequestLoggingMiddleware>();
+
+// 8. Endpoints (последний)
+app.MapControllers();
+app.Run();
+```
+
+### Кастомный Middleware
+```csharp
+public class RequestLoggingMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<RequestLoggingMiddleware> _log;
+
+    public RequestLoggingMiddleware(RequestDelegate next, ILogger<RequestLoggingMiddleware> log)
+    {
+        _next = next;
+        _log = log;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            await _next(context);
+        }
+        finally
+        {
+            sw.Stop();
+            _log.LogInformation("HTTP {Method} {Path} -> {StatusCode} in {Elapsed}ms",
+                context.Request.Method, context.Request.Path, context.Response.StatusCode, sw.ElapsedMilliseconds);
+        }
+    }
+}
+
+// Extension method для удобства
+public static class MiddlewareExtensions
+{
+    public static IApplicationBuilder UseRequestLogging(this IApplicationBuilder app)
+        => app.UseMiddleware<RequestLoggingMiddleware>();
+}
+```
+
+---
+
+## 7. Health Checks
+
+```csharp
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>()
+    .AddUrlGroup(new Uri("https://api.external.com/health"), "external-api")
+    .AddCheck("disk-space", () =>
+    {
+        var free = new DriveInfo("/").AvailableFreeSpace;
+        return free > 1_000_000_000 ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("Low disk");
+    });
+
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+```
+
+---
+
+## 8. Практические задания
+
+1. **Configuration**: настройте приложение с `appsettings.Development.json`, User Secrets, Environment Variables — проверьте приоритеты
+2. **Serilog**: подключите Seq/Elasticsearch, добавьте корреляцию request-id через middleware
+3. **DI**: реализуйте паттерн Strategy с `Func<Type, IService>` фабрикой
+4. **Minimal API**: создайте CRUD для сущности с валидацией (FluentValidation), Swagger, health checks
+5. **Middleware**: напишите middleware для rate limiting (IP-based, sliding window)
+
+---
+
+## 9. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `IOptions<T>` для настроек, которые меняются в рантайме | `IOptionsSnapshot<T>` / `IOptionsMonitor<T>` |
+| Хардкод connection strings в коде | Configuration + User Secrets / Key Vault |
+| `Console.WriteLine` вместо `ILogger` | Структурированное логирование (Serilog) |
+| Singleton сервис с Scoped зависимостью | Правильные lifetimes, или `IServiceScopeFactory` |
+| Middleware в неправильном порядке | Изучите pipeline: Exception → HTTPS → Static → Routing → Auth → Endpoints |
+| Отсутствие валидации входных данных | FluentValidation + Endpoint Filters / ModelState |
+| Блокирующие вызовы в async контроллерах | Только `await`, нет `.Result` / `.Wait()` |
+
+---
+
+## 10. Полезные ресурсы
+
+- **ASP.NET Core Docs** — https://learn.microsoft.com/aspnet/core/
+- **Minimal APIs** — https://learn.microsoft.com/aspnet/core/fundamentals/minimal-apis
+- **Dependency Injection** — https://learn.microsoft.com/aspnet/core/fundamentals/dependency-injection
+- **Serilog** — https://serilog.net/
+- **FluentValidation** — https://docs.fluentvalidation.net/
+- **Configuration** — https://learn.microsoft.com/aspnet/core/fundamentals/configuration
+- **Health Checks** — https://learn.microsoft.com/aspnet/core/host-and-deploy/health-checks

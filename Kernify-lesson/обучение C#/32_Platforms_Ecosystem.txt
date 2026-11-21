@@ -1,0 +1,567 @@
+# Урок 3.10: Platforms/Ecosystem — .NET Versions, Publishing, Containers, Cross-Platform, Dependency Compatibility
+
+## Цели урока
+- Понимать .NET release cadence: LTS, STS, preview, EOL
+- Публикация: self-contained, framework-dependent, trimmed, Native AOT
+- Контейнеризация: multi-stage Dockerfile, distroless, security scanning
+- Cross-platform: Linux, macOS, Windows, ARM64, browser (WASM)
+- Управление зависимостями: Central Package Management, version locking, vulnerability scanning
+
+---
+
+## 1. .NET Release Cadence
+
+### Release Types
+```
+.NET 8 (LTS) ──────────────────────► Nov 2026 EOL
+    │
+    ├── 8.0.0 (Nov 2023)
+    ├── 8.0.1..8.0.x (monthly patches)
+    └── LTS = Long Term Support (3 years)
+
+.NET 9 (STS) ─────────────────────► May 2025 EOL
+    │
+    └── STS = Standard Term Support (18 months)
+
+.NET 10 (Preview) ────────────────►
+```
+
+### Versioning в проектах
+```xml
+<!-- Directory.Build.props (Central Package Management) -->
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- Версии пакетов в одном месте -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.*" Version="8.0.*" />
+    <PackageVersion Include="Serilog" Version="3.1.*" />
+    <PackageVersion Include="FluentValidation" Version="11.9.*" />
+    <PackageVersion Include="MediatR" Version="12.2.*" />
+  </ItemGroup>
+</Project>
+```
+
+### Global.json для pin версии SDK
+```json
+// global.json
+{
+  "sdk": {
+    "version": "8.0.400",
+    "rollForward": "latestFeature",
+    "allowPrerelease": false
+  }
+}
+```
+
+---
+
+## 2. Publishing Strategies
+
+### Framework-Dependent (требует установленного .NET)
+```bash
+# Маленький бинарник, нужна runtime на целевой машине
+dotnet publish -c Release -r linux-x64 --self-contained false
+
+# Output: ~1-5 MB + shared runtime
+```
+
+### Self-Contained (все включено)
+```bash
+# Не требует установленного .NET
+dotnet publish -c Release -r linux-x64 --self-contained true
+
+# Output: ~60-100 MB
+```
+
+### Trimmed Self-Contained
+```xml
+<!-- .csproj -->
+<PropertyGroup>
+  <PublishTrimmed>true</PublishTrimmed>
+  <TrimMode>partial</TrimMode>           <!-- full = агрессивнее -->
+  <SuppressTrimAnalysisWarnings>false</SuppressTrimAnalysisWarnings>
+</PropertyGroup>
+
+<!-- Для библиотек, использующих рефлексию -->
+<ItemGroup>
+  <TrimmerRootAssembly Include="MyLibrary" />
+</ItemGroup>
+```
+
+```bash
+dotnet publish -c Release -r linux-x64 --self-contained true
+# Output: ~20-40 MB (зависит отtrim)
+```
+
+### Native AOT (.NET 8+)
+```xml
+<!-- .csproj -->
+<PropertyGroup>
+  <PublishAot>true</PublishAot>
+  <StripSymbols>true</StripSymbols>
+  <InvariantGlobalization>true</InvariantGlobalization>
+  <IlcGenerateCompleteTypeMetadata>true</IlcGenerateCompleteTypeMetadata>
+</PropertyGroup>
+
+<!-- Для JSON сериализации -->
+<ItemGroup>
+  <PackageReference Include="System.Text.Json" Version="8.0.*" />
+</ItemGroup>
+```
+
+```bash
+dotnet publish -c Release -r linux-x64
+# Output: ~3-10 MB нативный бинарник, мгновенный старт, нет JIT
+```
+
+### ReadyToRun (R2R)
+```xml
+<PropertyGroup>
+  <PublishReadyToRun>true</PublishReadyToRun>
+  <PublishReadyToRunComposite>true</PublishReadyToRunComposite>
+</PropertyGroup>
+```
+
+### Single File
+```bash
+# В один файл (self-contained)
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+
+# ReadyToRun в single file
+dotnet publish -c Release -r linux-x64 -p:PublishReadyToRun=true -p:PublishSingleFile=true
+```
+
+---
+
+## 3. Docker — Multi-stage Builds
+
+### Оптимизированный Dockerfile
+```dockerfile
+# ===== BUILD STAGE =====
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+WORKDIR /src
+
+# Кэш NuGet пакетов
+COPY ["Directory.Build.props", "."]
+COPY ["Directory.Packages.props", "."]
+COPY ["*.sln", "."]
+COPY ["src/*/*.csproj", "src/"]
+RUN for f in src/*/*.csproj; do dotnet restore "$f"; done
+
+# Копируем исходники и билдим
+COPY . .
+RUN dotnet publish "src/WebApi/WebApi.csproj" -c Release -o /app/publish \
+    --self-contained true -r linux-musl-x64 \
+    /p:PublishTrimmed=true /p:TrimMode=partial
+
+# ===== RUNTIME STAGE =====
+FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-alpine AS runtime
+WORKDIR /app
+
+# Non-root user
+RUN addgroup -g 1000 -S appgroup && \
+    adduser -u 1000 -S appuser -G appgroup
+USER appuser
+
+COPY --from=build --chown=appuser:appgroup /app/publish .
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
+ENV DOTNET_GCServer=1
+ENV DOTNET_ThreadPool_UnfairSemaphoreSpinLimit=0
+
+ENTRYPOINT ["./WebApi"]
+```
+
+### Distroless / Scratch для Native AOT
+```dockerfile
+# Build
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish -c Release -r linux-musl-x64 -o /app --self-contained true /p:PublishAot=true
+
+# Runtime — gcr.io/distroless/static (нет shell, нет package manager)
+FROM gcr.io/distroless/static-debian12 AS runtime
+WORKDIR /app
+COPY --from=build /app .
+USER 65532:65532
+EXPOSE 8080
+ENTRYPOINT ["./WebApi"]
+```
+
+### Docker Compose для Development
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    ports: ["8080:8080"]
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__Default=Host=db;Database=app;Username=postgres;Password=postgres
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./src:/src
+      - ~/.nuget/packages:/root/.nuget/packages
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+### Security Scanning
+```bash
+# Trivy — сканирование уязвимостей
+trivy image myapp:latest
+
+# Hadolint — линтинг Dockerfile
+hadolint Dockerfile
+
+# Cosign — подпись образов
+cosign sign --key cosign.key myapp:latest
+```
+
+---
+
+## 4. Cross-Platform Development
+
+### Platform-Specific Code
+```csharp
+// RuntimeInformation
+if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+{
+    // Windows-specific: registry, WMI, named pipes
+}
+else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+{
+    // Linux-specific: systemd, inotify, /proc
+}
+else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+{
+    // macOS-specific: launchd, keychain
+}
+
+// Architecture
+var arch = RuntimeInformation.ProcessArchitecture; // X64, Arm64, Arm, Wasm
+```
+
+### Conditional Compilation
+```csharp
+#if NET8_0_OR_GREATER
+// .NET 8+ APIs
+var timeProvider = TimeProvider.System;
+#else
+// Fallback
+var timeProvider = new LegacyTimeProvider();
+#endif
+
+// Или через TargetFramework
+#if NET8_0
+// Specific to .NET 8
+#elif NET7_0
+// Specific to .NET 7
+#endif
+```
+
+### File Paths Cross-Platform
+```csharp
+// Path.Combine работает везде
+var path = Path.Combine("data", "config.json"); // data/config.json или data\config.json
+
+// Path.GetFullPath нормализует
+var full = Path.GetFullPath(path);
+
+// Для путей в контейнерах — используйте абсолютные Linux пути
+var dataDir = Environment.GetEnvironmentVariable("DATA_DIR") ?? "/app/data";
+```
+
+### Globalization / Invariant Mode
+```xml
+<!-- .csproj для контейнеров без locale -->
+<PropertyGroup>
+  <InvariantGlobalization>true</InvariantGlobalization>
+  <!-- Или в runtimeconfig.json -->
+  <!-- "configProperties": { "System.Globalization.Invariant": true } -->
+</PropertyGroup>
+```
+
+```csharp
+// При InvariantGlobalization:
+CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+// Парсинг дат/чисел только в invariant формате
+DateTime.Parse("2024-01-15", CultureInfo.InvariantCulture);
+```
+
+---
+
+## 5. ARM64 и Apple Silicon
+
+### Building for ARM64
+```bash
+# Linux ARM64 (Raspberry Pi, AWS Graviton, Azure ARM)
+dotnet publish -c Release -r linux-arm64 --self-contained true
+
+# macOS ARM64 (Apple Silicon)
+dotnet publish -c Release -r osx-arm64 --self-contained true
+
+# Windows ARM64
+dotnet publish -c Release -r win-arm64 --self-contained true
+```
+
+### Multi-Arch Docker Images
+```dockerfile
+# Dockerfile с поддержкой multi-arch
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+ARG TARGETARCH
+WORKDIR /src
+COPY . .
+RUN dotnet publish -c Release -r linux-${TARGETARCH} -o /app --self-contained true
+
+FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-alpine
+WORKDIR /app
+COPY --from=build /app .
+ENTRYPOINT ["./WebApi"]
+```
+
+```bash
+# Build multi-arch
+docker buildx create --use
+docker buildx build --platform linux/amd64,linux/arm64 -t myapp:latest --push .
+```
+
+---
+
+## 6. WebAssembly (Blazor WASM)
+
+### Publishing WASM
+```bash
+# Blazor WASM
+dotnet publish -c Release -r wasm
+
+# Native AOT for WASM (.NET 8+)
+dotnet publish -c Release -r wasm /p:PublishAot=true
+```
+
+### WASM Specifics
+```csharp
+// Определение WASM runtime
+if (RuntimeInformation.ProcessArchitecture == Architecture.Wasm)
+{
+    // Нет: threads, SIMD (ограниченно), file system, sockets
+    // Есть: JS interop, IndexedDB, localStorage
+}
+
+// JS Interop
+[JSImport("console.log")]
+public static partial void Log(string message);
+
+[JSExport]
+public static void CallFromJS(string data) { ... }
+```
+
+---
+
+## 7. Dependency Management
+
+### Central Package Management (CPM)
+```xml
+<!-- Directory.Packages.props (в корне решения) -->
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Versions -->
+    <PackageVersion Include="Microsoft.Extensions.*" Version="8.0.0" />
+    <PackageVersion Include="Serilog.AspNetCore" Version="8.0.0" />
+    <PackageVersion Include="FluentValidation" Version="11.9.0" />
+    <PackageVersion Include="MediatR" Version="12.2.0" />
+    <PackageVersion Include="Mapster" Version="7.4.0" />
+    <PackageVersion Include="Scrutor" Version="4.2.2" />
+
+    <!-- Test packages -->
+    <PackageVersion Include="xunit" Version="2.7.0" />
+    <PackageVersion Include="FluentAssertions" Version="6.12.0" />
+    <PackageVersion Include="Moq" Version="4.20.70" />
+    <PackageVersion Include="Testcontainers" Version="3.7.0" />
+  </ItemGroup>
+</Project>
+```
+
+```xml
+<!-- В проекте — без версий -->
+<Project>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+</Project>
+```
+
+### Version Locking и Reproducible Builds
+```xml
+<!-- Directory.Build.props -->
+<PropertyGroup>
+  <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  <Deterministic>true</Deterministic>
+  <PublishRepositoryUrl>true</PublishRepositoryUrl>
+  <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  <IncludeSymbols>true</IncludeSymbols>
+  <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+</PropertyGroup>
+```
+
+### Vulnerability Scanning
+```bash
+# dotnet list package --vulnerable
+dotnet list package --vulnerable --include-transitive
+
+# NuGet Audit в CI
+dotnet nuget audit --level high
+
+# GitHub Dependabot / Renovate для авто-PR
+```
+
+### Private Feeds / Artifacts
+```xml
+<!-- NuGet.config -->
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="MyPrivateFeed" value="https://pkgs.dev.azure.com/org/_packaging/feed/nuget/v3/index.json" />
+  </packageSources>
+  <packageSourceCredentials>
+    <MyPrivateFeed>
+      <add key="Username" value="docker" />
+      <add key="ClearTextPassword" value="%PAT_TOKEN%" />
+    </MyPrivateFeed>
+  </packageSourceCredentials>
+</configuration>
+```
+
+---
+
+## 8. CI/CD Pipeline
+
+### GitHub Actions для .NET
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+          cache: true
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Test
+        run: dotnet test --no-build -c Release --collect:"XPlat Code Coverage"
+
+      - name: Security Audit
+        run: dotnet nuget audit --level high
+
+  docker:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Image
+        run: docker build -t myapp:${{ github.sha }} .
+      - name: Scan
+        run: trivy image myapp:${{ github.sha }}
+      - name: Push
+        if: github.event_name == 'push'
+        run: |
+          echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USER }} --password-stdin
+          docker push myapp:${{ github.sha }}
+```
+
+---
+
+## 9. Практические задания
+
+1. **Multi-Platform Publishing**: Настройте публикацию одного приложения для: linux-x64, linux-arm64, win-x64, osx-arm64, wasm. Сравните размеры и время запуска
+
+2. **Optimized Docker Image**: Постройте Dockerfile < 50MB для ASP.NET Core приложения. Используйте multi-stage, trimmed, distroless. Пройдите Trivy scan с 0 HIGH/CRITICAL
+
+3. **Native AOT Migration**: Перенесите консольное приложение на Native AOT. Решите проблемы с рефлексией, JSON, DI. Измерьте cold start, память, размер бинарника
+
+4. **Dependency Management**: Настройте Central Package Management для решения с 10+ проектами. Добавьте Dependabot/Renovate, настройте авто-PR для minor/patch обновлений
+
+5. **Cross-Platform Library**: Создайте библиотеку с platform-specific кодом (file system, processes, networking). Покройте тестами на Windows, Linux, macOS в CI
+
+---
+
+## 10. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Не используют global.json | Всегда pin SDK версию через global.json |
+| Публикуют без --self-contained для контейнеров | В контейнерах лучше self-contained или Native AOT |
+| Игнорируют trimming warnings | Исправляйте или используют [DynamicallyAccessedMembers] |
+| Не сканируют образы на уязвимости | Trivy/Snyk в CI pipeline |
+| Хардкодят пути с \ | Path.Combine, Environment.SpecialFolder |
+| Забывают про InvariantGlobalization в контейнерах | Включают для уменьшения размера и избежания locale issues |
+
+---
+
+## 11. Полезные ресурсы
+
+- **.NET Release Schedule** — https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core
+- **Publishing .NET Apps** — https://learn.microsoft.com/dotnet/core/deploying/
+- **Native AOT** — https://learn.microsoft.com/dotnet/core/deploying/native-aot
+- **Docker for .NET** — https://learn.microsoft.com/dotnet/core/docker/
+- **Central Package Management** — https://learn.microsoft.com/nuget/consume-packages/central-package-management
+- **Trivy** — https://aquasecurity.github.io/trivy/
+- **Cross-Platform Development** — https://learn.microsoft.com/dotnet/core/porting/
+- **WASM with .NET** — https://learn.microsoft.com/aspnet/core/blazor/wasm

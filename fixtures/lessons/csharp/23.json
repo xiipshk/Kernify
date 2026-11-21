@@ -1,0 +1,426 @@
+{
+  "title": "Урок 23: Advanced Type System",
+  "slug": "urok-23-memory-management-span,-memory,-arraypool,-stackalloc",
+  "short_description": "ref struct, stackalloc, ArrayPool, MemoryPool, zero-copy parsing",
+  "goals": [
+    "Понимать основы: ref struct, stackalloc, ArrayPool, MemoryPool, zero-copy parsing",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 3.1: Advanced Type System — Generic Constraints, Variance, Nullable Reference Types, Pattern Matching, Records"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Освоить generic constraints: where T : class, struct, new(), notnull, unmanaged, default",
+        "Понимать ковариантность (out) и контравариантность (in) в интерфейсах и делегатах",
+        "Работать с Nullable Reference Types (NRT) и аннотациями ? / !",
+        "Применять продвинутый pattern matching: property patterns, tuple patterns, relational patterns",
+        "Использовать records, record structs, with-expressions, positional records"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Generic Constraints — Ограничения обобщений"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовые ограничения (C# 2.0+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Reference type constraint\nclass Repository<T> where T : class { }\n\n// Value type constraint (except nullable)\nstruct Point<T> where T : struct { }\n\n// Parameterless constructor\nclass Factory<T> where T : new() { }\n\n// Базовый класс\nclass Animal { }\nclass Dog : Animal { }\nclass Shelter<T> where T : Animal { }\n\n// Интерфейс\ninterface ISerializable { }\nclass Data<T> where T : ISerializable { }\n\n// Несколько ограничений\nclass Complex<T> where T : class, ISerializable, new() { }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Новые ограничения (C# 7.0+)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// notnull — тип не может быть nullable (C# 8.0)\nclass NotNullExample<T> where T : notnull { }\n\n// unmanaged — unmanaged type (C# 7.3)\nunsafe class UnmanagedExample<T> where T : unmanaged { }\n\n// default — default(T) constraint (C# 9.0)\nclass DefaultExample<T> where T : default { }\n\n// Enum constraint (C# 7.3)\nclass EnumExample<T> where T : Enum { }\n\n// Delegate constraint (C# 7.3)\nclass DelegateExample<T> where T : Delegate { }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Комбинированные примеры"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Generic math (C# 11 / .NET 7)\ninterface INumber<T> where T : INumber<T> { }\n\nT Add<T>(T a, T b) where T : INumber<T> => a + b;\n\n// Минимальные ограничения для математических операций\nT Sum<T>(IEnumerable<T> values) where T : IAdditionOperators<T, T, T>, IAdditiveIdentity<T, T>\n{\n    T sum = T.AdditiveIdentity;\n    foreach (var v in values) sum += v;\n    return sum;\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Variance — Ковариантность и Контравариантность"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ковариантность (out) — \"производный → базовый\""
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// IEnumerable<out T> — можно присвоить IEnumerable<Dog> в IEnumerable<Animal>\nIEnumerable<Dog> dogs = new List<Dog>();\nIEnumerable<Animal> animals = dogs; // OK: out T\n\n// Func<out TResult> — возвращаемый тип\nFunc<Dog> getDog = () => new Dog();\nFunc<Animal> getAnimal = getDog; // OK"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контравариантность (in) — \"базовый → производный\""
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// IComparer<in T> — можно присвоить IComparer<Animal> в IComparer<Dog>\nIComparer<Animal> animalComparer = Comparer<Animal>.Default;\nIComparer<Dog> dogComparer = animalComparer; // OK: in T\n\n// Action<in T> — параметр\nAction<Animal> actOnAnimal = a => Console.WriteLine(a);\nAction<Dog> actOnDog = actOnAnimal; // OK"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Invariant (не ковариантен, не контравариантен)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// IList<T> — invariant (и in, и out)\n// List<Dog> нельзя присвоить в IList<Animal>\n// Потому что IList<T> имеет и Add(T), и T this[int]"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Собственные variant интерфейсы"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Ковариантный интерфейс (только чтение)\ninterface IReadOnlyRepository<out T>\n{\n    T GetById(int id);\n    IEnumerable<T> GetAll();\n}\n\n// Контравариантный интерфейс (только запись)\ninterface IWriteOnlyRepository<in T>\n{\n    void Add(T item);\n    void Remove(T item);\n}\n\n// Invariant (и чтение, и запись)\ninterface IRepository<T> : IReadOnlyRepository<T>, IWriteOnlyRepository<T> { }"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Nullable Reference Types (NRT)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Включение NRT"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// В .csproj:\n<Nullable>enable</Nullable>\n// Или в файле:\n#nullable enable"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Аннотации"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: nullable reference types**\n\n**Что делает:** ? после типа означает допустимость null (C# 8+)\n\n**Зачем нужно:** Статический анализ null-ссылок, предупреждения компилятора, меньше NullReferenceException\n\n**Как работает:** string? name = null; // допустим null; string name = \"Alex\"; // не допустим"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "string? nullableString = null;    // Может быть null\nstring nonNullString = \"hello\";   // Не может быть null (предупреждение если null)\n\nstring? maybeNull = GetString();\nif (maybeNull is not null)\n{\n    Console.WriteLine(maybeNull.Length); // OK: компилятор знает что не null\n}\n\n// Null-forgiving operator (!) — \"я знаю что не null\"\nstring definitelyNotNull = maybeNull!;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Generic и NRT"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// T? — nullable T (и для reference, и для value types)\nvoid Process<T>(T? value) where T : struct { }     // Nullable<T>\nvoid Process<T>(T? value) where T : class { }      // T или null\nvoid Process<T>(T? value) where T : notnull { }    // T (не null!)\n\n// NotNull attribute для возвращаемых значений\n[return: NotNull]\nstring GetNonNull() => \"value\";\n\n// NotNullWhen для условных проверок\nbool TryGetValue(string key, [NotNullWhen(true)] out string? value);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Attributes для NRT"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Diagnostics.CodeAnalysis;\n\nclass Example\n{\n    // Параметр не null когда метод возвращает true\n    bool TryParse(string input, [NotNullWhen(true)] out int? result)\n    {\n        return int.TryParse(input, out var r) && (result = r) >= 0;\n    }\n\n    // Не возвращает null\n    [return: NotNull]\n    string GetRequiredString() => \"required\";\n\n    // Может вернуть null\n    [return: MaybeNull]\n    string? GetOptionalString(bool condition) => condition ? \"value\" : null;\n\n    // Элемент не null после инициализации\n    [MemberNotNull(nameof(_initializedField))]\n    void Initialize() => _initializedField = \"init\";\n\n    string _initializedField = null!; // поле инициализируется позже\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Pattern Matching — Продвинутые паттерны"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Property Patterns (C# 8.0+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "record Person(string Name, int Age, Address Address);\nrecord Address(string City, string Country);\n\nvar person = new Person(\"Анна\", 30, new Address(\"Москва\", \"Россия\"));\n\n// Property pattern\nif (person is { Age: >= 18, Address.Country: \"Россия\" })\n{\n    Console.WriteLine(\"Совершеннолетний житель РФ\");\n}\n\n// В switch expression\nstring category = person switch\n{\n    { Age: < 18 } => \"Ребёнок\",\n    { Age: >= 65 } => \"Пенсионер\",\n    { Address.City: \"Москва\" } => \"Москвич\",\n    _ => \"Взрослый\"\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Tuple Patterns (C# 8.0+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "(int x, int y) point = (3, 4);\n\nstring quadrant = point switch\n{\n    (0, 0) => \"Начало координат\",\n    (> 0, > 0) => \"I четверть\",\n    (< 0, > 0) => \"II четверть\",\n    (< 0, < 0) => \"III четверть\",\n    (> 0, < 0) => \"IV четверть\",\n    (0, _) => \"На оси Y\",\n    (_, 0) => \"На оси X\",\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Relational Patterns (C# 9.0+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "int score = 85;\n\nstring grade = score switch\n{\n    >= 90 => \"A\",\n    >= 80 => \"B\",\n    >= 70 => \"C\",\n    >= 60 => \"D\",\n    _ => \"F\"\n};\n\n// Комбинация с property pattern\nvar result = person switch\n{\n    { Age: >= 18 and <= 65 } => \"Работоспособный\",\n    { Age: < 18 } => \"Несовершеннолетний\",\n    { Age: > 65 } => \"Пенсионер\",\n    _ => \"Неизвестно\"\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "List Patterns (C# 11+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "int[] numbers = [1, 2, 3, 4, 5];\n\nstring description = numbers switch\n{\n    [] => \"Пустой\",\n    [0] => \"Только ноль\",\n    [1, 2, ..] => \"Начинается с 1, 2\",\n    [.., 0] => \"Заканчивается на 0\",\n    [_, _, var rest] => $\"Первые два: {rest.Length} осталось\",\n    _ => \"Другое\"\n};"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Type Patterns с when"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "object obj = \"hello\";\n\nstring result = obj switch\n{\n    string s when s.Length > 5 => $\"Длинная строка: {s}\",\n    string s => $\"Короткая строка: {s}\",\n    int i when i > 0 => $\"Положительное число: {i}\",\n    int i => $\"Число: {i}\",\n    null => \"Null\",\n    _ => \"Неизвестный тип\"\n};"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Records — Reference и Value типы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Record class (reference type)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Positional record\npublic record Person(string FirstName, string LastName, int Age)\n{\n    // Можно добавлять методы, свойства\n    public string FullName => $\"{FirstName} {LastName}\";\n\n    // Валидация в конструкторе\n    public Person\n    {\n        if (Age < 0) throw new ArgumentException(\"Age cannot be negative\");\n    }\n}\n\n// Непозиционный record\npublic record Configuration\n{\n    public string ConnectionString { get; init; } = \"\";\n    public int Timeout { get; init; } = 30;\n}\n\n// With-expression — immutable update\nvar person1 = new Person(\"Иван\", \"Иванов\", 25);\nvar person2 = person1 with { Age = 26 }; // Новый объект\nvar person3 = person1 with { FirstName = \"Пётр\", LastName = \"Петров\" };\n\n// Value equality (по значениям, не по ссылке)\nConsole.WriteLine(person1 == person2); // False (Age отличается)\nConsole.WriteLine(person1.Equals(person2)); // False\n\n// Deconstruction\nvar (first, last, age) = person1;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Record struct (value type, C# 10+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public readonly record struct Point(int X, int Y)\n{\n    public double DistanceFromOrigin => Math.Sqrt(X * X + Y * Y);\n\n    // Можно переопределить Equals/GetHashCode\n}\n\n// With-expression работает так же\nvar p1 = new Point(3, 4);\nvar p2 = p1 with { X = 5 }; // Point { X = 5, Y = 4 }\n\n// Struct records можно сделать readonly\npublic readonly record struct ImmutablePoint(int X, int Y);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Records vs Classes"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: records**\n\n**Что делает:** Неизменяемые ссылочные типы с value-семантикой (C# 9+)\n\n**Зачем нужно:** Value equality, with-expressions, деконструкция, неизменяемость — идеально для DTO\n\n**Как работает:** public record User(string Name, int Age); var u = new User(\"Alex\", 25);"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Class — reference equality\nclass ClassPerson { public string Name { get; set; } }\nvar c1 = new ClassPerson { Name = \"A\" };\nvar c2 = new ClassPerson { Name = \"A\" };\nConsole.WriteLine(c1 == c2); // False (reference equality)\n\n// Record — value equality\nrecord RecordPerson(string Name);\nvar r1 = new RecordPerson(\"A\");\nvar r2 = new RecordPerson(\"A\");\nConsole.WriteLine(r1 == r2); // True (value equality)\n\n// Record struct — value type, value equality\nrecord struct StructPerson(string Name);\nvar s1 = new StructPerson(\"A\");\nvar s2 = new StructPerson(\"A\");\nConsole.WriteLine(s1 == s2); // True"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Records и наследование"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public abstract record Animal(string Name);\npublic record Dog(string Name, string Breed) : Animal(Name);\npublic record Cat(string Name, bool IsIndoor) : Animal(Name);\n\n// Pattern matching с records\nstring Describe(Animal animal) => animal switch\n{\n    Dog { Breed: \"Labrador\" } d => $\"Лабрадор {d.Name}\",\n    Dog d => $\"Собака {d.Name} ({d.Breed})\",\n    Cat c => $\"Кот {c.Name} ({(c.IsIndoor ? \"домашний\" : \"уличный\")})\",\n    _ => \"Неизвестное животное\"\n};"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Generic Repository с constraints**: Реализуйте `IRepository<T>` с ограничениями `where T : class, IEntity, new()` где `IEntity` имеет `Id` и `CreatedAt`\n\n2. **Variant интерфейсы**: Создайте ковариантный `IReadOnlyCollection<out T>` и контравариантный `IComparer<in T>`, продемонстрируйте их использование\n\n3. **NRT Migration**: Возьмите существующий класс с nullable полями, включите `#nullable enable`, исправьте все предупреждения используя `?`, `!`, атрибуты `[NotNull]`, `[MaybeNull]`\n\n4. **Pattern Matching Parser**: Напишите парсер командной строки используя tuple patterns и property patterns для разных типов команд\n\n5. **Immutable DTO с Records**: Создайте иерархию DTO для API (Request/Response) используя records, positional и non-positional, с with-expressions для обновлений\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `where T : class?` | `where T : class` (class уже подразумевает reference type) |\n| Забывают `notnull` для value types в generic | Используйте `where T : notnull` когда нужно гарантировать non-null |\n| Нарушают variance: добавляют `in` в ковариантный интерфейс | `out` только для выходных позиций (return), `in` только для входных (params) |\n| Используют `!` без необходимости | `!` только когда компилятор не может доказать non-null, но вы гарантируете |\n| Records наследуют от class | Records могут наследовать ТОЛЬКО от records |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**C# Language Reference: Generics** — https://learn.microsoft.com/dotnet/csharp/fundamentals/types/generics",
+        "**C# Language Reference: Variance** — https://learn.microsoft.com/dotnet/csharp/programming-guide/concepts/covariance-contravariance",
+        "**Nullable Reference Types** — https://learn.microsoft.com/dotnet/csharp/nullable-references",
+        "**Pattern Matching** — https://learn.microsoft.com/dotnet/csharp/pattern-matching",
+        "**Records** — https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/record",
+        "**Generic Math** — https://learn.microsoft.com/dotnet/standard/generics/math"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Memory Management: Span, Memory, ArrayPool, Stackalloc",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Memory Management: Span, Memory, ArrayPool, Stackalloc' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C#",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c# на GitHub",
+    "Конференции и митапы по C#"
+  ],
+  "key_takeaways": [
+    "Главная идея: ref struct, stackalloc, ArrayPool, MemoryPool, zero-copy parsing — это фундамент для LINQ, Generics, Delegates/Events.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "csharp",
+  "lesson_order": 23,
+  "name_en": "Lesson: Memory Management: Span, Memory, ArrayPool, Stackalloc",
+  "short_description_en": "Learn Memory Management: Span, Memory, ArrayPool, Stackalloc in C# with detailed explanations and examples"
+}

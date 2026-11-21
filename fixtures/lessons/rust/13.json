@@ -1,0 +1,583 @@
+{
+  "title": "Урок 13: Types Advanced",
+  "slug": "urok-13-асинхронность-async-await,-futures",
+  "short_description": "Future, Poll, Pin, Unpin, async fn, .await, executors (Tokio), select!, join!",
+  "goals": [
+    "Понимать основы: Future, Poll, Pin, Unpin, async fn, .await, executors (Tokio), select!, join!",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 13: Продвинутые типы (Advanced Types)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Использовать Newtype pattern для типовобезопасности",
+        "Работать с алиасами типов (`type`)",
+        "Понимать Never type (`!`) и его применение",
+        "Использовать Dynamically Sized Types (DST): `str`, `[T]`, `dyn Trait`",
+        "Работать с `Box<dyn Trait>`, `Rc<dyn Trait>`, `Arc<dyn Trait>`",
+        "Понимать Variance (ковариантность, контрвариантность, инвариантность)",
+        "Использовать PhantomData для marker types",
+        "Работать с Function Pointers и Function Items"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "После изучения этого урока вы сможете:\n\n\n\n\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Newtype Pattern (Обёртки для типовобезопасности)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый пример"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Проблема: easy to mix up\nfn set_age(age: u32) {}\nfn set_id(id: u32) {}\nset_age(42); // Ошибка не поймается\n\n// Решение: Newtype\nstruct UserId(u64);\nstruct Age(u8);\n\nfn set_age(age: Age) {}\nfn set_id(id: UserId) {}\n\nfn main() {\n    let id = UserId(42);\n    let age = Age(30);\n    set_id(id);\n    set_age(age);\n    // set_id(age); // ОШИБКА: mismatched types\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Реализация трейтов для Newtype"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ops::{Add, Deref};\n\nstruct Meters(f64);\n\nimpl Deref for Meters {\n    type Target = f64;\n    fn deref(&self) -> &f64 { &self.0 }\n}\n\nimpl Add for Meters {\n    type Output = Meters;\n    fn add(self, other: Meters) -> Meters {\n        Meters(self.0 + other.0)\n    }\n}\n\nfn main() {\n    let a = Meters(10.0);\n    let b = Meters(5.0);\n    let c = a + b; // Meters(15.0)\n    println!(\"{}\", *c); // Deref -> f64\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Tuple struct vs struct с одним полем"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Tuple — удобно для Deref\nstruct Wrapper(T);\n\n// Named — удобно для документации и расширения\nstruct Wrapper { value: T }"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Type Aliases (Алиасы типов)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "type Kilometers = i64;\ntype Result<T> = std::result::Result<T, MyError>;\n\n// Упрощение сложных типов\ntype BoxedCallback = Box<dyn FnOnce() + Send + 'static>;\ntype Thunk = Box<dyn FnOnce() + Send + 'static>;\n\n// В сигнатурах\nfn takes_long_type(f: Thunk) {}\nfn returns_long_type() -> Thunk { Box::new(|| {}) }"
+    },
+    {
+      "type": "text",
+      "content": "**Важно:** Type aliases — НЕ создают новые типы, просто альтернативные имена!"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "type Meters = u32;\nfn takes_meters(m: Meters) {}\nfn takes_u32(u: u32) {}\n\nfn main() {\n    takes_meters(5);\n    takes_u32(5); // Оба работают — это ОДИН тип!\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Never Type (`!`)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Функции, которые никогда не возвращаются"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn panic_fn() -> ! {\n    panic!(\"Never returns!\");\n}\n\nfn exit_fn() -> ! {\n    std::process::exit(0);\n}\n\nfn infinite_loop() -> ! {\n    loop {}\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование в `match`"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn get_or_default(opt: Option<i32>) -> i32 {\n    match opt {\n        Some(v) => v,\n        None => panic_fn(), // Тип ! совместим с любым\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`!` как тип ошибки (infallible)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::convert::Infallible;\n\nfn never_fails() -> Result<i32, Infallible> {\n    Ok(42)\n}\n\nfn main() {\n    let x: i32 = never_fails().unwrap(); // Гарантированно Ok\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Dynamically Sized Types (DST)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Что такое DST"
+    },
+    {
+      "type": "list",
+      "items": [
+        "`str` — не `&str`, а сам `str` (unsized)",
+        "`[T]` — срез, не `&[T]`",
+        "`dyn Trait` — trait object"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "Типы, размер которых известен только в runtime:"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Работа с DST — только через указатели"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// НЕЛЬЗЯ:\n// let s: str = * \"hello\"; // ошибка: size not known\n// let arr: [i32] = [1,2,3]; // ошибка\n\n// МОЖНО через указатели:\nlet s: &str = \"hello\";\nlet boxed_str: Box<str> = Box::from(\"hello\");\nlet rc_str: std::rc::Rc<str> = std::rc::Rc::from(\"hello\");\n\nlet slice: &[i32] = &[1,2,3];\nlet boxed_slice: Box<[i32]> = Box::new([1,2,3]);\n\nlet trait_obj: &dyn std::fmt::Debug = &42;\nlet boxed_trait: Box<dyn std::fmt::Debug> = Box::new(42);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`Sized` trait bound"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// По умолчанию все generic параметры: T: Sized\nfn generic<T>(t: T) {} // T: Sized подразумевается\n\n// Чтобы разрешить DST:\nfn generic_unsized<T: ?Sized>(t: &T) {}\n// Теперь можно: generic_unsized(\"hello\") — &str"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Кастомные DST (редко)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: smart pointers**\n\n**Что делает:** unique_ptr, shared_ptr, weak_ptr — умные указатели с автоматическим управлением памятью\n\n**Зачем нужно:** Исключают утечки памяти, dangling pointers, double free; владеют объектом\n\n**Как работает:** auto ptr = std::make_unique<Widget>(); // unique_ptr — единственный владелец"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct MyDST {\n    len: usize,\n    data: [u8], // unsized tail\n}\n\n// Использование только через Box/MyDST, Rc<MyDST> и т.д."
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Variance (Вариантность)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ковариантность (Covariance) — `&T`, `Box<T>`, `Vec<T>`"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Если U подтип T, то &U подтип &T\nfn take_ref(s: &str) {}\nlet s: &'static str = \"hello\";\ntake_ref(s); // OK: &'static str -> &str"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Контрвариантность (Contravariance) — `Fn(T)`"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Если U подтип T, то Fn(T) подтип Fn(U)\nfn call_with_static(f: fn(&'static str)) {}\nfn takes_any(s: &str) {}\ncall_with_static(takes_any); // OK: fn(&str) -> fn(&'static str)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Инвариантность (Invariance) — `&mut T`, `Cell<T>`, `RefCell<T>`"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// &mut T инвариантен — НИКАКИХ приведений!\nfn take_mut(s: &mut String) {}\nlet mut s = String::new();\n// take_mut(&mut s as &mut dyn Any); // ОШИБКА!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Таблица вариативности"
+    },
+    {
+      "type": "table",
+      "content": "| Тип | Вариантность по T |\n|-----|-------------------|\n| `&T`, `&mut T` (shared) | Ковариантен |\n| `&mut T` | Инвариантен |\n| `Box<T>`, `Vec<T>`, `Rc<T>`, `Arc<T>` | Ковариантны |\n| `Cell<T>`, `RefCell<T>`, `UnsafeCell<T>` | Инвариантны |\n| `fn(T) -> U` | Контрвариантен по T, ковариантен по U |\n| `*const T` | Ковариантен |\n| `*mut T` | Инвариантен |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. `PhantomData<T>` — маркер владения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Когда нужно"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\n// Структура не хранит T, но должна вести себя так, будто хранит\nstruct MyIter<'a, T> {\n    ptr: *const T,\n    _marker: PhantomData<&'a T>, // Указывает на заимствование &'a T\n}\n\nimpl<'a, T> Iterator for MyIter<'a, T> {\n    type Item = &'a T;\n    fn next(&mut self) -> Option<&'a T> { /* unsafe */ }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основные паттерны"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Владеет T (как Box<T>)\nPhantomData<T>\n\n// Заимствует &T (как &T)\nPhantomData<&T>\n\n// Заимствует &mut T (как &mut T)\nPhantomData<&mut T>\n\n// Send/Sync маркеры\nPhantomData<*const T> // не Send, не Sync\nPhantomData<*mut T>   // не Send, не Sync"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пример: Typed Builder"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: option result**\n\n**Что делает:** Option<T> — значение или ничего, Result<T, E> — успех или ошибка\n\n**Зачем нужно:** Нет null, явная обработка отсутствия значения/ошибки, pattern matching\n\n**Как работает:** fn find(x: i32) -> Option<i32> { if x > 0 { Some(x) } else { None } }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\nstruct Builder<HasName, HasAge> {\n    name: Option<String>,\n    age: Option<u32>,\n    _marker: PhantomData<(HasName, HasAge)>,\n}\n\nstruct Yes;\nstruct No;\n\nimpl Builder<No, No> {\n    fn new() -> Self {\n        Builder { name: None, age: None, _marker: PhantomData }\n    }\n}\n\nimpl<HasAge> Builder<No, HasAge> {\n    fn name(mut self, n: String) -> Builder<Yes, HasAge> {\n        self.name = Some(n);\n        Builder { name: self.name, age: self.age, _marker: PhantomData }\n    }\n}\n\nimpl<HasName> Builder<HasName, No> {\n    fn age(mut self, a: u32) -> Builder<HasName, Yes> {\n        self.age = Some(a);\n        Builder { name: self.name, age: self.age, _marker: PhantomData }\n    }\n}\n\nimpl Builder<Yes, Yes> {\n    fn build(self) -> User {\n        User { name: self.name.unwrap(), age: self.age.unwrap() }\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Function Pointers vs Function Items"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Function Item (уникальный тип для каждой функции)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn add(a: i32, b: i32) -> i32 { a + b }\nfn sub(a: i32, b: i32) -> i32 { a - b }\n\n// Тип add — уникальный zero-sized type\n// Тип sub — другой уникальный тип"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Function Pointer (`fn(Args) -> Ret`)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Приведение function item -> function pointer\nlet op: fn(i32, i32) -> i32 = add; // Коэрция\nlet ops = [add, sub]; // Массив function pointers"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Разница"
+    },
+    {
+      "type": "table",
+      "content": "| Аспект | Function Item | Function Pointer |\n|--------|---------------|------------------|\n| Тип | Уникальный для каждой fn | `fn(Args) -> Ret` |\n| Размер | 0 (ZST) | 1 указатель (8 байт) |\n| Generic | Может быть generic | Не может быть generic |\n| Capture | Не может захватывать | Не может захватывать |\n| Инлайнинг | Всегда | Зависит от оптимизатора |"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Использование в generics"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Принимает function pointer\nfn apply_ptr(f: fn(i32) -> i32, x: i32) -> i32 { f(x) }\n\n// Принимает любой callable (generic)\nfn apply_generic<F>(f: F, x: i32) -> i32\nwhere F: Fn(i32) -> i32\n{ f(x) }\n\nfn main() {\n    apply_ptr(add, 5); // OK\n    apply_generic(add, 5); // OK\n    apply_generic(|x| x * 2, 5); // OK (closure)\n    // apply_ptr(|x| x * 2, 5); // ОШИБКА: closure не fn pointer\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Опасные (unsafe) типы"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`*const T` / `*mut T` — raw pointers"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "let x = 42;\nlet raw_const: *const i32 = &x;\nlet raw_mut: *mut i32 = &mut x;\n\n// Разыменование только в unsafe\nunsafe {\n    println!(\"{}\", *raw_const);\n    *raw_mut = 100;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`NonNull<T>` — ненулевой указатель (оптимизация Option)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ptr::NonNull;\n\nlet ptr = NonNull::new(Box::into_raw(Box::new(42))).unwrap();\n// Option<NonNull<T>> = 1 слово (null pointer optimization)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: Newtype для валидации"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#[derive(Debug, Clone, PartialEq, Eq)]\nstruct Email(String);\n\nimpl Email {\n    fn new(s: String) -> Result<Self, String> {\n        if s.contains('@') && s.contains('.') {\n            Ok(Email(s))\n        } else { Err(\"Invalid email\".into()) }\n    }\n    fn as_str(&self) -> &str { &self.0 }\n}\n\nfn send_email(to: Email) { println!(\"Sending to {}\", to.as_str()); }\n\nfn main() {\n    let email = Email::new(\"test@example.com\".into()).unwrap();\n    send_email(email);\n    // send_email(Email::new(\"invalid\".into()).unwrap()); // Err\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: DST в trait objects"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Draw {\n    fn draw(&self);\n}\n\nstruct Circle { r: f64 }\nstruct Square { s: f64 }\n\nimpl Draw for Circle { fn draw(&self) { println!(\"Circle {}\", self.r); } }\nimpl Draw for Square { fn draw(&self) { println!(\"Square {}\", self.s); } }\n\nfn main() {\n    let shapes: Vec<Box<dyn Draw>> = vec![\n        Box::new(Circle { r: 5.0 }),\n        Box::new(Square { s: 3.0 }),\n    ];\n    for s in shapes { s.draw(); }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: PhantomData для FFI wrapper"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: borrowing**\n\n**Что делает:** Заимствование (&T, &mut T) — временный доступ без передачи владения\n\n**Зачем нужно:** Позволяет читать/менять данные без передачи владения, проверки на этапе компиляции\n\n**Как работает:** fn read(s: &String) { println!(\"{}\", s); } let s = String::from(\"hi\"); read(&s);"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::marker::PhantomData;\n\nstruct Handle<T> {\n    ptr: *mut std::ffi::c_void,\n    _phantom: PhantomData<T>,\n}\n\nimpl<T> Handle<T> {\n    unsafe fn from_raw(ptr: *mut std::ffi::c_void) -> Self {\n        Handle { ptr, _phantom: PhantomData }\n    }\n    fn as_ptr(&self) -> *mut std::ffi::c_void { self.ptr }\n}\n\n// Handle<T> ведёт себя так, будто владеет T"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| `type alias not allowed here` | Алиас в недопустимом месте | Используйте `struct` или переместите alias |\n| `the size for values of type T cannot be known` | DST без указателя | Используйте `Box<T>`, `&T`, `Rc<T>` |\n| `expected fn pointer, found fn item` | Замыкание вместо fn pointer | Используйте generic `F: Fn(...)` или приведите `as fn(...)` |\n| `PhantomData` не влияет на variance | Неправильный маркер | Выберите `PhantomData<T>`, `&T`, `&mut T`, `*const T` правильно |\n| `invariance` ошибка с `&mut` | Попытка covariance для &mut | Измените дизайн: используйте `&T` или `Cell`/`RefCell` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Шпаргалка: Advanced Types"
+    },
+    {
+      "type": "table",
+      "content": "| Конструкция | Назначение | Создаёт новый тип? |\n|-------------|------------|-------------------|\n| `struct Foo(T)` | Newtype | Да |\n| `type Foo = T` | Алиас | Нет |\n| `!` | Never (diverging) | Примитив |\n| `dyn Trait` | Trait object (DST) | Нет (unsized) |\n| `PhantomData<T>` | Marker для variance/drop | Нет (ZST) |\n| `fn(...) -> ...` | Function pointer | Нет (примитив) |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**The Book — Advanced Types**: https://doc.rust-lang.org/book/ch19-04-advanced-types.html",
+        "**Rustonomicon — Variance**: https://doc.rust-lang.org/nomicon/subtyping.html",
+        "**PhantomData**: https://doc.rust-lang.org/std/marker/struct.PhantomData.html",
+        "**DST**: https://doc.rust-lang.org/reference/dynamically-sized-types.html"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Newtype pattern для типовобезопасности и реализации трейтов",
+        "Type aliases — только синтаксический сахар",
+        "Never type `!` для diverging функций и infallible Result",
+        "DST: `str`, `[T]`, `dyn Trait` — работа только через указатели",
+        "`?Sized` bound для generic над DST",
+        "Variance: ковариантность, контрвариантность, инвариантность",
+        "`PhantomData<T>` — маркер для variance, dropck, Send/Sync",
+        "Function items vs function pointers",
+        "Raw pointers и `NonNull<T>`"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "✅ **Что мы изучили:**\n\n\n\n\n\n\n\n\n\n\n---\n\n**Следующий урок:** Дженерики и трейты продвинуто (`14_Generics_Traits.txt`)"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Асинхронность: async/await, Futures",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Асинхронность: async/await, Futures' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Rust",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-rust на GitHub",
+    "Конференции и митапы по Rust"
+  ],
+  "key_takeaways": [
+    "Главная идея: Future, Poll, Pin, Unpin, async fn, .await, executors (Tokio), select!, join! — это фундамент для Ownership, Borrowing, Lifetimes.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "rust",
+  "lesson_order": 13,
+  "name_en": "Lesson: Асинхронность: async/await, Futures",
+  "short_description_en": "Learn Асинхронность: async/await, Futures in Rust with detailed explanations and examples"
+}

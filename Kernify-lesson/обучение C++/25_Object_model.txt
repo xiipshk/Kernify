@@ -1,0 +1,356 @@
+# Урок 25: Object model — layout, alignment, strict aliasing, placement new, object lifetime
+
+## Цели урока
+- Понять memory layout объектов: поля, vptr, base classes, virtual bases
+- Освоить alignment requirements и `alignas`/`alignof`
+- Разобраться в strict aliasing rule и type punning
+- Изучить placement new, manual lifetime management
+- Понять object lifetime rules и `std::launder`
+
+---
+
+## 1. Memory Layout (Структура объекта в памяти)
+
+### Standard Layout ([class.prop])
+```cpp
+struct StandardLayout {
+    int a;
+    double b;
+    char c;
+    // Поля в порядке объявления, без виртуальных функций/базовых классов
+    // Гарантирует совместимость с C и offsetof
+};
+static_assert(std::is_standard_layout_v<StandardLayout>);
+```
+
+### Non-Standard Layout:
+```cpp
+struct Base { int x; };
+struct Derived : Base {
+    virtual void f();  // vptr добавляется
+    int y;
+};
+// Layout: [vptr][Base::x][Derived::y] — порядок implementation-defined
+```
+
+### Virtual Inheritance:
+```cpp
+struct A { int a; };
+struct B : virtual A { int b; };
+struct C : virtual A { int c; };
+struct D : B, C { int d; };
+// Layout D: [B::b][C::c][D::d][A::a] + vbptr(s) для доступа к виртуальной базе A
+```
+
+### Empty Base Optimization (EBO):
+```cpp
+struct Empty {};
+struct WithEmpty : Empty { int x; };
+// sizeof(WithEmpty) == sizeof(int) — пустой базовый класс не занимает место
+static_assert(sizeof(WithEmpty) == sizeof(int));
+```
+
+### `[[no_unique_address]]` (C++20):
+```cpp
+struct [[no_unique_address]] Empty {};
+struct Holder {
+    Empty e1;
+    Empty e2;  // Могут иметь одинаковый адрес
+    int x;
+};
+static_assert(sizeof(Holder) == sizeof(int));
+```
+
+---
+
+## 2. Alignment (Выравнивание)
+
+### Fundamental Alignment:
+```cpp
+alignof(int)        // 4 (обычно)
+alignof(double)     // 8
+alignof(std::max_align_t)  // максимальное фундаментальное (обычно 16 или 8)
+```
+
+### Extended Alignment (Over-aligned types):
+```cpp
+struct alignas(32) CacheLine {
+    char data[64];
+};
+
+alignas(64) int aligned_array[10];  // массив с выравниванием 64 байта
+
+// alignas в new (C++17)
+void* p = ::operator new(sizeof(CacheLine), std::align_val_t(32));
+::operator delete(p, std::align_val_t(32));
+```
+
+### Alignment в контейнерах:
+```cpp
+std::vector<CacheLine, std::allocator<CacheLine>> v;  // аллокатор должен поддерживать alignment
+// C++17: std::allocator использует aligned_alloc для over-aligned types
+```
+
+### `std::assume_aligned` (C++20):
+```cpp
+void process(int* ptr) {
+    auto aligned = std::assume_aligned<32>(ptr);
+    // Компилятор знает, что aligned выровнен на 32 байта
+}
+```
+
+---
+
+## 3. Strict Aliasing Rule
+
+### Правило ([basic.lval]):
+> Объект может быть доступен (read/write) только через:
+> - Его точный тип
+> - cv-квалифицированную версию его типа
+> - char / unsigned char / std::byte (C++17)
+> - Тип, который является base class объекта
+> - Тип, который является member объекта
+
+### Нарушения (UB):
+```cpp
+int x = 42;
+float f = *reinterpret_cast<float*>(&x);  // UB! type punning через pointer cast
+
+union { int i; float f; } u;
+u.i = 42;
+float f = u.f;  // UB до C++20! (active member = i)
+```
+
+### Разрешённый type punning (C++20):
+```cpp
+// Через union — OK в C++20 (active member меняется неявно при чтении неактивного)
+union { int i; float f; } u;
+u.i = 0x3f800000;  // 1.0f в IEEE 754
+float f = u.f;     // OK в C++20
+
+// Лучше: std::bit_cast (C++20)
+#include <bit>
+float f = std::bit_cast<float>(0x3f800000);  // гарантированно безопасно, constexpr
+```
+
+### `std::launder` для pointer aliasing:
+```cpp
+#include <new>
+
+struct A { int x; };
+struct B { int y; };
+
+void foo() {
+    alignas(A) char storage[sizeof(A)];
+    A* a = new (storage) A{42};
+    a->x = 10;
+
+    a->~A();
+    B* b = new (storage) B{20};  // reuse memory
+
+    // a всё ещё указывает на ту память, но объект A мёртв
+    // Для доступа к новому объекту B через старый указатель:
+    B* valid_b = std::launder(reinterpret_cast<B*>(a));
+    // или просто используй b напрямую
+}
+```
+
+### `restrict` / `__restrict` / `[[gnu::always_inline]]`:
+```cpp
+// C++ не имеет restrict, но компиляторы поддерживают как расширение
+void memcpy_noalias(void* __restrict dest, const void* __restrict src, size_t n);
+// Позволяет компилятору предполагать отсутствие aliasing между dest и src
+```
+
+---
+
+## 4. Placement New и Manual Lifetime Management
+
+### Placement New синтаксис:
+```cpp
+#include <new>
+
+char buffer[sizeof(std::string)];
+std::string* s = new (buffer) std::string("hello");  // конструктор в pre-allocated памяти
+
+// Явный вызов деструктора
+s->~std::string();
+
+// Массивы
+char buf[10 * sizeof(int)];
+int* arr = new (buf) int[10]{1,2,3,4,5,6,7,8,9,10};
+// Деструкторы для int тривиальны, но для non-trivial:
+std::string* str_arr = new (buf) std::string[3]{"a", "b", "c"};
+for (int i = 0; i < 3; ++i) str_arr[i].~basic_string();
+```
+
+### `std::construct_at` / `std::destroy_at` (C++20):
+```cpp
+#include <memory>
+
+std::string* s = std::construct_at(reinterpret_cast<std::string*>(buffer), "hello");
+std::destroy_at(s);  // эквивалентно s->~string()
+```
+
+### Object Pool / Arena Allocator:
+```cpp
+template <typename T, size_t PoolSize>
+class ObjectPool {
+    alignas(T) char storage[PoolSize * sizeof(T)];
+    std::array<bool, PoolSize> used{};
+    size_t next_free = 0;
+
+public:
+    template <typename... Args>
+    T* allocate(Args&&... args) {
+        for (size_t i = 0; i < PoolSize; ++i) {
+            size_t idx = (next_free + i) % PoolSize;
+            if (!used[idx]) {
+                used[idx] = true;
+                next_free = (idx + 1) % PoolSize;
+                return std::construct_at(reinterpret_cast<T*>(storage + idx * sizeof(T)),
+                                         std::forward<Args>(args)...);
+            }
+        }
+        return nullptr;  // pool exhausted
+    }
+
+    void deallocate(T* ptr) {
+        size_t idx = (reinterpret_cast<char*>(ptr) - storage) / sizeof(T);
+        if (idx < PoolSize && used[idx]) {
+            std::destroy_at(ptr);
+            used[idx] = false;
+        }
+    }
+};
+```
+
+---
+
+## 5. Object Lifetime (Детально)
+
+### Этапы жизни ([basic.life]):
+```
+1. Storage obtained (malloc, new, automatic, static)
+2. Initialization begins (constructor called)
+3. Lifetime begins (initialization complete)
+4. Object is alive — can be accessed
+5. Destructor called (explicit or implicit)
+6. Lifetime ends
+7. Storage released (free, delete, scope exit)
+```
+
+### Доступ вне lifetime (UB):
+```cpp
+struct S { int x; ~S() { std::cout << "dtor\n"; } };
+
+void test() {
+    S s;           // lifetime begins
+    s.~S();        // lifetime ends
+    s.x = 42;      // UB! access to dead object
+    new (&s) S();  // new lifetime begins in same storage
+    s.x = 99;      // OK, new object
+}
+```
+
+### Lifetime и `const`/`reference`:
+```cpp
+const int& ref = 42;  // временный продлевается до конца scope
+// Но:
+const int& ref2 = *new int(42);  // временный НЕ продлевается! UB при доступе
+```
+
+### `std::start_lifetime_as` (C++23):
+```cpp
+#include <memory>
+
+void* buf = std::malloc(sizeof(int));
+int* p = std::start_lifetime_as<int>(buf);  // начинает lifetime без конструктора
+*p = 42;
+std::cout << *p;
+std::free(buf);
+```
+
+---
+
+## 6. Data Layout Optimization
+
+### Structure Packing:
+```cpp
+// Плохое выравнивание — много padding
+struct Bad {
+    char c;      // 1 byte
+    // 7 bytes padding
+    double d;    // 8 bytes
+    int i;       // 4 bytes
+    // 4 bytes padding
+};  // sizeof = 24
+
+// Хорошее — группируем по размеру
+struct Good {
+    double d;    // 8 bytes
+    int i;       // 4 bytes
+    char c;      // 1 byte
+    // 3 bytes padding
+};  // sizeof = 16
+
+// Принудительное упакование (не рекомендуется для переносимости)
+#pragma pack(push, 1)
+struct Packed {
+    char c;
+    double d;
+    int i;
+};
+#pragma pack(pop)
+```
+
+### `offsetof` и reflection:
+```cpp
+#include <cstddef>
+
+struct S { int a; double b; char c; };
+
+constexpr size_t off_a = offsetof(S, a);  // 0
+constexpr size_t off_b = offsetof(S, b);  // 8 (с padding)
+constexpr size_t off_c = offsetof(S, c);  // 16
+```
+
+---
+
+## Практические задания
+
+### Задание 1: Layout Analysis
+Напишите программу, выводящую layout класса с виртуальными функциями, множественным наследованием и виртуальными базовыми классами. Используйте `/d1reportSingleClassLayout` (MSVC) или `-fdump-lang-class` (GCC).
+
+### Задание 2: Alignment Benchmark
+Сравните производительность доступа к `alignas(64)` массиву vs обычному массиву в цикле. Измерьте cache misses через `perf` или VTune.
+
+### Задание 3: Strict Aliasing
+Найдите UB в коде:
+```cpp
+void process(float* f, int* i) {
+    *i = 0x3f800000;  // 1.0f bits
+    float x = *f;     // UB если f == i (strict aliasing violation)
+}
+```
+Исправьте через `std::bit_cast` или `memcpy`.
+
+### Задание 4: Placement New Vector
+Реализуйте `SmallVector<T, N>` — вектор с small buffer optimization (SBO), использующий placement new для inline storage.
+
+### Задание 5: Object Pool
+Напишите thread-safe object pool с `std::atomic` freelist для высокопроизводительного выделения однотипных объектов.
+
+### Задание 6: Lifetime Sanitizers
+Скомпилируйте код с use-after-free и double-destroy под `-fsanitize=address`. Проанализируйте отчёт.
+
+---
+
+## Полезные ресурсы
+- **C++ Object Model** (Stanley Lippman) — классика
+- **C++ Reference: Object Lifetime** — https://en.cppreference.com/w/cpp/language/lifetime
+- **C++ Reference: Alignment** — https://en.cppreference.com/w/cpp/language/alignas
+- **Strict Aliasing Rule** — https://cellperformance.beyond3d.com/articles/2006/06/strict-aliasing.html
+- **CppCon: "The Object Model" (Arthur O'Dwyer)**
+- **Compiler Explorer** — для просмотра layout и asm
+- **P0593R6** — `std::assume_aligned` proposal

@@ -1,0 +1,675 @@
+{
+  "title": "Урок 24: Advanced Traits",
+  "slug": "urok-24-embedded-rust-no_std,-bare-metal",
+  "short_description": "no_std, panic_handler, alloc, cortex-m, embassy, RTIC, RTOS",
+  "goals": [
+    "Понимать основы: no_std, panic_handler, alloc, cortex-m, embassy, RTIC, RTOS",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 24: Продвинутые трейты (Advanced Traits)"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Использовать Higher-Ranked Trait Bounds (HRTB)",
+        "Работать с Generic Associated Types (GAT)",
+        "Применять Const Generics",
+        "Использовать `impl Trait` в type aliases и return position",
+        "Понимать Specialization (min_specialization)",
+        "Работать с Orphan Rules и newtype pattern",
+        "Использовать Marker Traits (`Send`, `Sync`, `Unpin`, `Freeze`)",
+        "Создавать Sealed Traits",
+        "Применять Trait Objects с `dyn` и их ограничения"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "После изучения этого урока вы сможете:\n\n\n\n\n\n\n\n\n\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Higher-Ranked Trait Bounds (HRTB)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Проблема: время жизни в trait bounds"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Обычный bound: конкретное время жизни\nfn call_with_ref<'a, F>(f: F) where F: Fn(&'a i32) {}\n\n// HRTB: для ЛЮБОГО времени жизни\nfn call_with_any_ref<F>(f: F) where F: for<'a> Fn(&'a i32) {}\n\nfn main() {\n    let x = 5;\n    call_with_any_ref(|r| println!(\"{}\", r)); // Замыкание работает с любым &'a i32\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Синтаксис `for<'a>`"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Эквивалентно:\ntrait Fn<Args> {\n    type Output;\n    fn call(&self, args: Args) -> Self::Output;\n}\n\n// HRTB версия:\nfn takes_hrtb<F>(f: F) where F: for<'a> Fn(&'a i32) -> &'a i32 {}\n\n// Множественные lifetimes\nfn multi_hrtb<F>(f: F) where F: for<'a, 'b> Fn(&'a i32, &'b i32) {}\n\n// В trait bounds\ntrait Processor {\n    fn process<'a>(&self, data: &'a [u8]) -> &'a [u8];\n}\n\n// Требует, чтобы метод работал для любого 'a\nfn use_processor<P: for<'a> Processor>(p: P) {}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Практический пример: коллбэки с лендингом"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Data<'a>(&'a str);\n\nfn with_data<F>(f: F) where F: for<'a> FnOnce(Data<'a>) {\n    let s = String::from(\"hello\");\n    f(Data(&s));\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Generic Associated Types (GAT)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый синтаксис"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Iterator {\n    type Item;\n    fn next(&mut self) -> Option<Self::Item>;\n}\n\n// С GAT — ассоциированный тип с параметрами\ntrait LendingIterator {\n    type Item<'a> where Self: 'a;\n    fn next<'a>(&'a mut self) -> Option<Self::Item<'a>>;\n}\n\n// Пример: итератор, возвращающий ссылки на внутренние данные\nstruct WindowIter<'a, T> {\n    slice: &'a [T],\n    pos: usize,\n}\n\nimpl<'a, T> LendingIterator for WindowIter<'a, T> {\n    type Item<'b> = &'b [T] where 'a: 'b;\n\n    fn next<'b>(&'b mut self) -> Option<Self::Item<'b>> {\n        if self.pos + 2 > self.slice.len() { return None; }\n        let window = &self.slice[self.pos..self.pos+2];\n        self.pos += 1;\n        Some(window)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GAT в стандартной библиотеке (Rust 1.65+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// std::ops::FnOnce с GAT (упрощённо)\ntrait FnOnce<Args> {\n    type Output;\n    fn call_once(self, args: Args) -> Self::Output;\n}\n\n// Async_fn_traits (nightly)\ntrait AsyncFnOnce<Args> {\n    type Output<'a>: Future<Output = Self::Output> where Self: 'a;\n    fn call_once(self, args: Args) -> Self::Output<'_>;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GAT для стриминговых API"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: borrowing**\n\n**Что делает:** Заимствование (&T, &mut T) — временный доступ без передачи владения\n\n**Зачем нужно:** Позволяет читать/менять данные без передачи владения, проверки на этапе компиляции\n\n**Как работает:** fn read(s: &String) { println!(\"{}\", s); } let s = String::from(\"hi\"); read(&s);"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Stream {\n    type Item<'a> where Self: 'a;\n    fn poll_next<'a>(self: Pin<&'a mut Self>, cx: &mut Context) -> Poll<Option<Self::Item<'a>>>;\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Const Generics"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn print_array<const N: usize>(arr: [i32; N]) {\n    println!(\"Length: {}\", N);\n    for x in arr { println!(\"{}\", x); }\n}\n\nfn main() {\n    print_array([1, 2, 3]);        // N = 3\n    print_array([1, 2, 3, 4, 5]);  // N = 5\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Const generics в struct"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct FixedArray<T, const N: usize> {\n    data: [T; N],\n}\n\nimpl<T, const N: usize> FixedArray<T, N> {\n    fn new(default: T) -> Self where T: Copy {\n        FixedArray { data: [default; N] }\n    }\n\n    fn len(&self) -> usize { N }\n\n    fn get(&self, index: usize) -> Option<&T> {\n        self.data.get(index)\n    }\n}\n\nfn main() {\n    let arr: FixedArray<i32, 5> = FixedArray::new(0);\n    println!(\"Len: {}\", arr.len()); // 5 (compile-time!)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Const выражения"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn take_const<const N: usize>() {}\n\nfn main() {\n    const SIZE: usize = 10;\n    take_const::<SIZE>();\n    take_const::<{ 2 + 3 }>();        // выражения\n    take_const::<{ SIZE * 2 }>();     // с константами\n    // take_const::<{ std::mem::size_of::<i32>() }>(); // const fn в const generics (nightly)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Const generic bounds (Rust 1.79+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait ConstBound<const N: usize> {}\n\nfn foo<const N: usize>() where N: ConstBound<N> {}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. `impl Trait` в разных позициях"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Return position (уже знаем)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "fn make_iter() -> impl Iterator<Item = i32> {\n    (0..10).map(|x| x * 2)\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Argument position (sugar for generic)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Эквивалентно:\nfn process(iter: impl Iterator<Item = i32>) {}\n\n// Развёрнуто:\nfn process<I: Iterator<Item = i32>>(iter: I) {}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Type aliases с `impl Trait` (Rust 1.74+)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "type MyIter = impl Iterator<Item = i32>;\n\nfn get_iter() -> MyIter {\n    (0..5).map(|x| x * 2)\n}\n\n// В структурах (nightly: type_ascription)\nstruct Container {\n    iter: impl Iterator<Item = i32>, // Только в nightly!\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`impl Trait` в ассоциированных типах"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: traits**\n\n**Что делает:** Трейты — интерфейсы поведения, можно реализовать для любых типов\n\n**Зачем нужно:** Полиморфизм без наследования, композиция, blanket implementations, marker traits\n\n**Как работает:** trait Draw { fn draw(&self); } impl Draw for Circle { fn draw(&self) { ... } }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Factory {\n    type Product: Debug;\n    fn create(&self) -> Self::Product;\n}\n\nstruct MyFactory;\nimpl Factory for MyFactory {\n    type Product = impl Debug; // Нельзя! impl Trait не в type aliases в traits\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Specialization (min_specialization)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовый пример (nightly)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: traits**\n\n**Что делает:** Трейты — интерфейсы поведения, можно реализовать для любых типов\n\n**Зачем нужно:** Полиморфизм без наследования, композиция, blanket implementations, marker traits\n\n**Как работает:** trait Draw { fn draw(&self); } impl Draw for Circle { fn draw(&self) { ... } }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "#![feature(min_specialization)]\n\ntrait ToStringExt {\n    fn to_string_ext(&self) -> String;\n}\n\n// Default implementation\nimpl<T: Display> ToStringExt for T {\n    default fn to_string_ext(&self) -> String {\n        format!(\"Display: {}\", self)\n    }\n}\n\n// Specialization для String\nimpl ToStringExt for String {\n    fn to_string_ext(&self) -> String {\n        format!(\"String: {}\", self)\n    }\n}\n\n// Specialization для &str\nimpl ToStringExt for &str {\n    fn to_string_ext(&self) -> String {\n        format!(\"Str: {}\", self)\n    }\n}\n\nfn main() {\n    println!(\"{}\", 42.to_string_ext());      // \"Display: 42\"\n    println!(\"{}\", String::from(\"hi\").to_string_ext()); // \"String: hi\"\n    println!(\"{}\", \"hello\".to_string_ext());  // \"Str: hello\"\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Ограничения specialization"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// 1. Тrait должен быть marked как `default` в базовой имплементации\n// 2. Специализация только для более конкретных типов\n// 3. Нельзя специализировать по lifetimes (soundness)\n// 4. `min_specialization` — ограниченная форма"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Orphan Rules и Newtype Pattern"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Orphan Rule (правило сироты)"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// МОЖНО: trait или type определён в текущем крейте\nimpl MyTrait for MyType {}        // OK\nimpl ForeignTrait for MyType {}   // OK\nimpl MyTrait for ForeignType {}   // OK\n\n// НЕЛЬЗЯ: оба foreign\n// impl ForeignTrait for ForeignType {} // ERROR!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Newtype Pattern"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: borrowing**\n\n**Что делает:** Заимствование (&T, &mut T) — временный доступ без передачи владения\n\n**Зачем нужно:** Позволяет читать/менять данные без передачи владения, проверки на этапе компиляции\n\n**Как работает:** fn read(s: &String) { println!(\"{}\", s); } let s = String::from(\"hi\"); read(&s);"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Обёртка для реализации foreign trait для foreign type\nstruct MyVec(Vec<i32>);\n\nimpl Deref for MyVec {\n    type Target = Vec<i32>;\n    fn deref(&self) -> &Self::Target { &self.0 }\n}\n\nimpl DerefMut for MyVec {\n    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }\n}\n\n// Теперь можно реализовать foreign traits\nuse std::fmt::Display;\nimpl Display for MyVec {\n    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {\n        write!(f, \"MyVec({:?})\", self.0)\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Extension Traits"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Расширение foreign types своими методами\ntrait VecExt {\n    fn median(&self) -> Option<f64>;\n}\n\nimpl<T: Copy + Ord> VecExt for Vec<T> {\n    fn median(&self) -> Option<f64> {\n        if self.is_empty() { return None; }\n        let mut sorted = self.clone();\n        sorted.sort();\n        let mid = sorted.len() / 2;\n        if sorted.len() % 2 == 0 {\n            Some((sorted[mid-1] as f64 + sorted[mid] as f64) / 2.0)\n        } else {\n            Some(sorted[mid] as f64)\n        }\n    }\n}\n\nfn main() {\n    let v = vec![3, 1, 4, 1, 5];\n    println!(\"Median: {:?}\", v.median());\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Marker Traits"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стандартные маркеры"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: borrowing**\n\n**Что делает:** Заимствование (&T, &mut T) — временный доступ без передачи владения\n\n**Зачем нужно:** Позволяет читать/менять данные без передачи владения, проверки на этапе компиляции\n\n**Как работает:** fn read(s: &String) { println!(\"{}\", s); } let s = String::from(\"hi\"); read(&s);"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Send — можно передать владение в другой поток\n// Sync — можно делить &T между потоками (&T: Send)\n// Unpin — можно перемещать в памяти (не self-referential)\n// Freeze — immutable (no UnsafeCell inside)\n// Copy — bitwise copy\n// Clone — explicit clone\n// Sized — известный размер (DST не Sized)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Авто-реализация"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Большинство типов: Send + Sync\n// НЕ Send/Sync: Rc, RefCell, *const T, *mut T\n// НЕ Sync: Cell, RefCell, MutexGuard (в некоторых случаях)\n\n// Ручная реализация (unsafe)\nstruct MyPtr<T>(*mut T);\nunsafe impl<T: Send> Send for MyPtr<T> {}\nunsafe impl<T: Sync> Sync for MyPtr<T> {}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Пользовательские маркеры"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Sealed trait pattern\nmod private {\n    pub trait Sealed {}\n}\n\npub trait MyTrait: private::Sealed {\n    fn method(&self);\n}\n\nimpl private::Sealed for MyType {}\nimpl MyTrait for MyType { ... }\n\n// Теперь MyTrait можно имплементировать ТОЛЬКО в этом крейте"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Sealed Traits (запечатанные трейты)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Через модуль"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// lib.rs\nmod sealed {\n    pub trait Sealed {}\n}\n\npub trait PublicTrait: sealed::Sealed {\n    fn public_method(&self);\n}\n\n// В том же крейте — можно имплементировать\nimpl sealed::Sealed for MyStruct {}\nimpl PublicTrait for MyStruct { ... }\n\n// В другом крейте — НЕЛЬЗЯ имплементировать sealed::Sealed\n// Поэтому PublicTrait тоже нельзя имплементировать"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Через `enum` (стабильно)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: traits**\n\n**Что делает:** Трейты — интерфейсы поведения, можно реализовать для любых типов\n\n**Зачем нужно:** Полиморфизм без наследования, композиция, blanket implementations, marker traits\n\n**Как работает:** trait Draw { fn draw(&self); } impl Draw for Circle { fn draw(&self) { ... } }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "pub enum Sealed {}\n\npub trait MyTrait {\n    type Sealed: Sealed;\n    fn method(&self);\n}\n\n// Внешний код не может создать Sealed"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Trait Objects и `dyn`"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Object Safety"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Trait object safe (можно сделать dyn Trait):\ntrait ObjectSafe {\n    fn method(&self) -> i32;\n    fn method_with_default(&self) -> i32 { 42 }\n}\n\n// НЕ object safe:\ntrait NotObjectSafe {\n    fn generic_method<T>(&self, t: T);     // generic method\n    fn returns_self(&self) -> Self;        // returns Self\n    fn static_method() -> i32;             // no &self\n    const CONST: i32;                      // associated const\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "`dyn Trait` с bounds"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: lifetimes**\n\n**Что делает:** Времена жизни ('a) — аннотации, гарантирующие, что ссылки не переживут данные\n\n**Зачем нужно:** Предотвращают висячие ссылки, компилятор проверяет, что ссылки не переживут данные\n\n**Как работает:** fn longest<'a>(x: &'a str, y: &'a str) -> &'a str { if x.len() > y.len() { x } else { y } }"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// dyn Trait + Send + Sync + 'static\nfn takes_send_sync(x: &dyn Debug + Send + Sync) {}\n\n// dyn с lifetime\nfn takes_ref<'a>(x: &'a (dyn Debug + 'a)) {}\n\n// Thin pointer (только для Single trait без auto traits)\nfn thin_ptr(x: &dyn Debug) {}  // fat pointer (data + vtable)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "VTable layout"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// VTable содержит:\n// - drop_in_place (деструктор)\n// - size\n// - align\n// - методы trait'а"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "10. Auto Traits и `auto trait` (nightly)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Авто-трейты"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: pin unpin**\n\n**Что делает:** Pin<P> гарантирует, что значение не перемещается в памяти\n\n**Зачем нужно:** Необходимо для самоссылающихся структур, Future, intrusive collections\n\n**Как работает:** let mut future = Box::pin(async { ... }); let pinned = future.as_mut();"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// Автоматически реализуются для всех типов, удовлетворяющих условиям\n// Send, Sync, Unpin, UnwindSafe, RefUnwindSafe\n\n// Можно отключить через негативную реализацию (nightly)\n#![feature(auto_traits)]\n#![feature(negative_impls)]\n\nstruct NotSend(*mut ());\nimpl !Send for NotSend {} // Явно НЕ Send"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "11. Практические упражнения"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 1: GAT для кэша с лендингом"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: borrowing**\n\n**Что делает:** Заимствование (&T, &mut T) — временный доступ без передачи владения\n\n**Зачем нужно:** Позволяет читать/менять данные без передачи владения, проверки на этапе компиляции\n\n**Как работает:** fn read(s: &String) { println!(\"{}\", s); } let s = String::from(\"hi\"); read(&s);"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "trait Cache {\n    type Entry<'a> where Self: 'a;\n    fn get<'a>(&'a self, key: &str) -> Option<Self::Entry<'a>>;\n    fn insert(&mut self, key: String, value: String);\n}\n\nstruct StringCache {\n    data: HashMap<String, String>,\n}\n\nimpl Cache for StringCache {\n    type Entry<'a> = &'a str;\n\n    fn get<'a>(&'a self, key: &str) -> Option<Self::Entry<'a>> {\n        self.data.get(key).map(|s| s.as_str())\n    }\n\n    fn insert(&mut self, key: String, value: String) {\n        self.data.insert(key, value);\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 2: Const generic матрица"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "use std::ops::{Add, Mul};\n\nstruct Matrix<T, const R: usize, const C: usize> {\n    data: [[T; C]; R],\n}\n\nimpl<T: Copy + Default + Add<Output = T> + Mul<Output = T>, const R: usize, const C: usize, const N: usize>\n    Mul<Matrix<T, C, N>> for Matrix<T, R, C>\n{\n    type Output = Matrix<T, R, N>;\n\n    fn mul(self, rhs: Matrix<T, C, N>) -> Self::Output {\n        let mut result = Matrix { data: [[T::default(); N]; R] };\n        for i in 0..R {\n            for j in 0..N {\n                let mut sum = T::default();\n                for k in 0..C {\n                    sum = sum + self.data[i][k] * rhs.data[k][j];\n                }\n                result.data[i][j] = sum;\n            }\n        }\n        result\n    }\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 3: HRTB для коллбэков с borrowing"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "struct Processor {\n    data: Vec<i32>,\n}\n\nimpl Processor {\n    fn with_data<F>(&self, f: F) where F: for<'a> FnOnce(&'a [i32]) {\n        f(&self.data);\n    }\n}\n\nfn main() {\n    let p = Processor { data: vec![1,2,3] };\n    p.with_data(|slice| {\n        println!(\"Sum: {}\", slice.iter().sum::<i32>());\n    });\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Упражнение 4: Sealed trait для внутреннего API"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "rust",
+      "content": "// internal/mod.rs\nmod sealed {\n    pub trait Sealed {}\n}\n\npub trait InternalApi: sealed::Sealed {\n    fn internal_method(&self);\n}\n\n// internal/impl.rs\nimpl sealed::Sealed for MyStruct {}\nimpl InternalApi for MyStruct { ... }\n\n// public_api.rs\npub use internal::InternalApi; // Реэкспорт, но impl только внутри крейта"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "12. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Причина | Решение |\n|--------|---------|---------|\n| `the trait cannot be made into an object` | Не object safe | Уберите generic методы, Self в return, static методы |\n| `const generics not supported` | Старый Rust | Обновите до 1.51+ |\n| `type parameter must be used` | Неиспользуемый const generic | Используйте в типе или добавьте `_` |\n| `specialization not allowed` | Не nightly или неправильный порядок | Используйте `min_specialization` feature |\n| `orphan rule violated` | Foreign trait для foreign type | Newtype pattern |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "13. Шпаргалка: Advanced Traits"
+    },
+    {
+      "type": "table",
+      "content": "| Фича | Синтаксис | Стабильность |\n|------|-----------|--------------|\n| HRTB | `for<'a> Fn(&'a T)` | Stable |\n| GAT | `type Item<'a> where Self: 'a` | 1.65+ |\n| Const Generics | `const N: usize` | 1.51+ |\n| `impl Trait` in return | `-> impl Trait` | Stable |\n| `impl Trait` in args | `fn(f: impl Trait)` | Stable |\n| `impl Trait` in type alias | `type X = impl Trait` | 1.74+ |\n| Specialization | `default impl` | Nightly |\n| Sealed Traits | `trait T: private::Sealed` | Stable (pattern) |\n| Auto traits | `auto trait` | Nightly |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "14. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**RFC 1901 (HRTB)**: https://rust-lang.github.io/rfcs/1901-hrtb.html",
+        "**RFC 1598 (GAT)**: https://rust-lang.github.io/rfcs/1598-generic_associated_types.html",
+        "**RFC 2000 (Const Generics)**: https://rust-lang.github.io/rfcs/2000-const-generics.html",
+        "**Specialization RFC**: https://rust-lang.github.io/rfcs/1210-specialization.html",
+        "**Rustonomicon — Traits**: https://doc.rust-lang.org/nomicon/traits.html"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Резюме урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**HRTB**: `for<'a> Trait<&'a T>` — bounds для любых lifetimes",
+        "**GAT**: `type Item<'a>` — ассоциированные типы с параметрами (lending iterators)",
+        "**Const Generics**: `const N: usize` — значения на уровне типов",
+        "**impl Trait**: в return position, argument position, type aliases",
+        "**Specialization**: `default impl` + конкретные имплементации (nightly)",
+        "**Orphan Rules**: ограничения на impl, newtype pattern для обхода",
+        "**Marker Traits**: `Send`, `Sync`, `Unpin`, `Freeze` — автоматическая реализация",
+        "**Sealed Traits**: ограничение имплементации только внутри крейта",
+        "**Trait Objects**: object safety, `dyn Trait + Send + 'static`, vtable"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "✅ **Что мы изучили:**\n\n\n\n\n\n\n\n\n\n\n---\n\n**Следующий урок:** Продвинутая система типов (`25_Type_System.txt`)"
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Embedded Rust: no_std, bare metal",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Embedded Rust: no_std, bare metal' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Rust",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-rust на GitHub",
+    "Конференции и митапы по Rust"
+  ],
+  "key_takeaways": [
+    "Главная идея: no_std, panic_handler, alloc, cortex-m, embassy, RTIC, RTOS — это фундамент для Ownership, Borrowing, Lifetimes.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "rust",
+  "lesson_order": 24,
+  "name_en": "Lesson: Embedded Rust: no_std, bare metal",
+  "short_description_en": "Learn Embedded Rust: no_std, bare metal in Rust with detailed explanations and examples"
+}

@@ -1,0 +1,637 @@
+# Урок 19: Файлы, сеть, сериализация (Files, Network, Serialization)
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Работать с файловой системой: чтение, запись, поиск, метаданные
+- Использовать `std::io` трейты: `Read`, `Write`, `Seek`, `BufRead`
+- Работать с сериализацией через `serde` (JSON, TOML, YAML, etc.)
+- Делать HTTP запросы с `reqwest`
+- Использовать асинхронный I/O с `tokio`
+- Работать с путями (`Path`, `PathBuf`) кроссплатформенно
+
+---
+
+## 1. Файловая система (`std::fs`)
+
+### Базовые операции
+```rust
+use std::fs;
+use std::io;
+
+fn main() -> io::Result<()> {
+    // Чтение всего файла в String
+    let content = fs::read_to_string("file.txt")?;
+    println!("{}", content);
+
+    // Чтение в Vec<u8>
+    let bytes = fs::read("file.bin")?;
+
+    // Запись строки
+    fs::write("output.txt", "Hello, World!")?;
+
+    // Запись байтов
+    fs::write("output.bin", &[1, 2, 3, 4])?;
+
+    Ok(())
+}
+```
+
+### Работа с `File` (потоковый I/O)
+```rust
+use std::fs::File;
+use std::io::{Read, Write, Seek, SeekFrom};
+
+fn main() -> io::Result<()> {
+    let mut file = File::open("file.txt")?;
+    let mut buffer = String::new();
+    file.read_to_string(&mut buffer)?;
+    println!("{}", buffer);
+
+    // Запись
+    let mut file = File::create("output.txt")?;
+    file.write_all(b"Hello")?;
+    file.flush()?;
+
+    // Seek
+    let mut file = File::open("file.txt")?;
+    file.seek(SeekFrom::Start(10))?;
+    let mut buf = [0u8; 5];
+    file.read_exact(&mut buf)?;
+
+    Ok(())
+}
+```
+
+### Буферизированный I/O (`BufReader`, `BufWriter`)
+```rust
+use std::fs::File;
+use std::io::{BufReader, BufWriter, BufRead, Write};
+
+fn main() -> io::Result<()> {
+    // Чтение по строкам (эффективно)
+    let file = File::open("large_file.txt")?;
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        println!("{}", line?);
+    }
+
+    // Буферизированная запись
+    let file = File::create("output.txt")?;
+    let mut writer = BufWriter::new(file);
+    for i in 0..1000 {
+        writeln!(writer, "Line {}", i)?;
+    }
+    writer.flush()?; // Важно!
+
+    Ok(())
+}
+```
+
+### Манипуляции с файлами/директориями
+```rust
+use std::fs;
+use std::path::Path;
+
+fn main() -> io::Result<()> {
+    // Создание директории
+    fs::create_dir("new_dir")?;
+    fs::create_dir_all("a/b/c")?; // Рекурсивно
+
+    // Метаданные
+    let meta = fs::metadata("file.txt")?;
+    println!("Size: {}, Is file: {}, Is dir: {}, Modified: {:?}",
+        meta.len(), meta.is_file(), meta.is_dir(), meta.modified()?);
+
+    // Копирование, перемещение, удаление
+    fs::copy("src.txt", "dst.txt")?;
+    fs::rename("old_name.txt", "new_name.txt")?;
+    fs::remove_file("file.txt")?;
+    fs::remove_dir("empty_dir")?;
+    fs::remove_dir_all("dir_with_content")?;
+
+    // Чтение директории
+    for entry in fs::read_dir(".")? {
+        let entry = entry?;
+        println!("{:?}", entry.path());
+    }
+
+    Ok(())
+}
+```
+
+### `Path` и `PathBuf` — кроссплатформенные пути
+```rust
+use std::path::{Path, PathBuf};
+
+fn main() {
+    let path = Path::new("/home/user/file.txt");
+
+    // Компоненты
+    println!("File name: {:?}", path.file_name());        // Some("file.txt")
+    println!("Extension: {:?}", path.extension());        // Some("txt")
+    println!("Parent: {:?}", path.parent());              // Some("/home/user")
+    println!("Components: {:?}", path.components().collect::<Vec<_>>());
+
+    // Построение путей
+    let mut buf = PathBuf::from("/home");
+    buf.push("user");
+    buf.push("file.txt");
+    buf.set_extension("rs");
+    println!("{:?}", buf); // "/home/user/file.rs"
+
+    // Нормализация
+    let path = Path::new("/home/user/../user/./file.txt");
+    println!("{:?}", path.canonicalize().unwrap()); // "/home/user/file.txt"
+}
+```
+
+---
+
+## 2. Трейты `std::io`
+
+### `Read` — чтение байтов
+```rust
+use std::io::Read;
+
+fn read_all<R: Read>(mut reader: R) -> io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+// read_exact — читает ровно N байт или ошибка
+fn read_exact_example(mut reader: impl Read) -> io::Result<[u8; 4]> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    Ok(buf)
+}
+```
+
+### `Write` — запись байтов
+```rust
+use std::io::Write;
+
+fn write_all<W: Write>(mut writer: W, data: &[u8]) -> io::Result<()> {
+    writer.write_all(data)?;
+    writer.flush()?;
+    Ok(())
+}
+```
+
+### `Seek` — позиционирование
+```rust
+use std::io::{Seek, SeekFrom};
+
+fn seek_example(mut file: impl Seek) -> io::Result<u64> {
+    file.seek(SeekFrom::Start(100))?;      // От начала
+    file.seek(SeekFrom::End(-50))?;        // От конца
+    file.seek(SeekFrom::Current(10))?;     // От текущей позиции
+    file.stream_position()                 // Текущая позиция
+}
+```
+
+### `BufRead` — буферизированное чтение
+```rust
+use std::io::BufRead;
+
+fn read_lines<R: BufRead>(reader: R) -> io::Result<Vec<String>> {
+    reader.lines().collect()
+}
+```
+
+---
+
+## 3. Сериализация с `serde`
+
+### Установка
+```toml
+# Cargo.toml
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+```
+
+### Базовые derive макросы
+```rust
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct User {
+    id: u64,
+    name: String,
+    email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phone: Option<String>,
+    #[serde(default)]
+    active: bool,
+    #[serde(rename = "created_at")]
+    created: DateTime<Utc>,
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let user = User {
+        id: 1,
+        name: "Alice".into(),
+        email: "alice@example.com".into(),
+        phone: Some("+1234567890".into()),
+        active: true,
+        created: Utc::now(),
+    };
+
+    // В JSON
+    let json = serde_json::to_string_pretty(&user)?;
+    println!("{}", json);
+
+    // Из JSON
+    let user: User = serde_json::from_str(&json)?;
+    println!("{:?}", user);
+
+    Ok(())
+}
+```
+
+### Атрибуты `serde`
+```rust
+#[derive(Serialize, Deserialize)]
+struct Example {
+    // Пропуск при сериализации
+    #[serde(skip)]
+    secret: String,
+
+    // Пропуск если None/пусто/дефолт
+    #[serde(skip_serializing_if = "Option::is_none")]
+    optional: Option<String>,
+
+    #[serde(default)]
+    with_default: String,
+
+    // Переименование поля
+    #[serde(rename = "camelCase")]
+    snake_case: String,
+
+    // Плоское вложение
+    #[serde(flatten)]
+    metadata: HashMap<String, String>,
+
+    // Кастомная сериализация
+    #[serde(serialize_with = "serialize_ts")]
+    #[serde(deserialize_with = "deserialize_ts")]
+    timestamp: DateTime<Utc>,
+}
+```
+
+### Перечисления (enums)
+```rust
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+enum Event {
+    Login { user_id: u64 },
+    Logout { user_id: u64, session_time: u64 },
+    Purchase { item_id: u64, amount: f64 },
+}
+// JSON: {"type": "Login", "data": {"user_id": 1}}
+```
+
+### Форматы
+```rust
+// JSON
+let json = serde_json::to_string(&data)?;
+let data: MyType = serde_json::from_str(&json)?;
+
+// TOML
+let toml = toml::to_string(&data)?;
+let data: MyType = toml::from_str(&toml)?;
+
+// YAML
+let yaml = serde_yaml::to_string(&data)?;
+let data: MyType = serde_yaml::from_str(&yaml)?;
+
+// CBOR, MessagePack, Bincode и др.
+```
+
+### Streaming (потоковая) сериализация
+```rust
+use serde_json::Serializer;
+use std::fs::File;
+
+fn write_json_stream<T: Serialize>(data: &T, path: &str) -> io::Result<()> {
+    let file = File::create(path)?;
+    let mut serializer = Serializer::new(file);
+    data.serialize(&mut serializer)?;
+    Ok(())
+}
+
+// Десериализация потоком
+use serde_json::Deserializer;
+
+fn read_json_stream<T: DeserializeOwned>(path: &str) -> io::Result<Vec<T>> {
+    let file = File::open(path)?;
+    let stream = Deserializer::from_reader(file).into_iter::<T>();
+    stream.collect()
+}
+```
+
+---
+
+## 4. HTTP клиент (`reqwest`)
+
+### Установка
+```toml
+[dependencies]
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+tokio = { version = "1", features = ["full"] } # для async
+```
+
+### Блокирующий API
+```rust
+use reqwest::blocking::Client;
+use serde::Deserialize;
+
+#[derive(Deserialize, Debug)]
+struct User {
+    id: u64,
+    login: String,
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+
+    // GET
+    let user: User = client
+        .get("https://api.github.com/users/octocat")
+        .header("User-Agent", "my-app")
+        .send()?
+        .json()?;
+    println!("{:?}", user);
+
+    // POST с JSON
+    let new_user = User { id: 0, login: "test".into() };
+    let resp = client
+        .post("https://api.example.com/users")
+        .json(&new_user)
+        .send()?;
+    println!("Status: {}", resp.status());
+
+    Ok(())
+}
+```
+
+### Асинхронный API (с `tokio`)
+```rust
+use reqwest::Client;
+use serde::Deserialize;
+
+#[derive(Deserialize, Debug)]
+struct User { id: u64, login: String }
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+
+    // Параллельные запросы
+    let futures = vec![
+        client.get("https://api.github.com/users/octocat"),
+        client.get("https://api.github.com/users/rust-lang"),
+    ];
+
+    let responses = futures::future::join_all(futures).await;
+    for resp in responses {
+        let user: User = resp?.json().await?;
+        println!("{:?}", user);
+    }
+
+    Ok(())
+}
+```
+
+### Обработка ошибок
+```rust
+match client.get(url).send() {
+    Ok(resp) if resp.status().is_success() => {
+        let data = resp.json().await?;
+    }
+    Ok(resp) => {
+        eprintln!("HTTP Error: {}", resp.status());
+    }
+    Err(e) if e.is_timeout() => { /* timeout */ }
+    Err(e) if e.is_connect() => { /* connection error */ }
+    Err(e) => { /* other */ }
+}
+```
+
+---
+
+## 5. Асинхронный I/O с `tokio`
+
+### Асинхронные файлы (`tokio::fs`)
+```rust
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    // Асинхронное чтение
+    let content = fs::read_to_string("file.txt").await?;
+
+    // Асинхронная запись
+    fs::write("output.txt", "Hello async!").await?;
+
+    // Потоковый
+    let mut file = fs::File::open("file.txt").await?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).await?;
+
+    Ok(())
+}
+```
+
+### Асинхронные каналы (`tokio::sync::mpsc`)
+```rust
+use tokio::sync::mpsc;
+
+#[tokio::main]
+async fn main() {
+    let (tx, mut rx) = mpsc::channel::<String>(32);
+
+    tokio::spawn(async move {
+        tx.send("Hello from task".to_string()).await.unwrap();
+    });
+
+    if let Some(msg) = rx.recv().await {
+        println!("Received: {}", msg);
+    }
+}
+```
+
+---
+
+## 6. Практические упражнения
+
+### Упражнение 1: Конфиг с TOML
+```rust
+// config.toml
+# [server]
+# host = "127.0.0.1"
+# port = 8080
+#
+# [database]
+# url = "postgres://user:pass@localhost/db"
+
+use serde::Deserialize;
+use std::fs;
+
+#[derive(Deserialize)]
+struct Config {
+    server: ServerConfig,
+    database: DatabaseConfig,
+}
+
+#[derive(Deserialize)]
+struct ServerConfig {
+    host: String,
+    port: u16,
+}
+
+#[derive(Deserialize)]
+struct DatabaseConfig {
+    url: String,
+}
+
+fn load_config(path: &str) -> Result<Config, Box<dyn std::error::Error>> {
+    let content = fs::read_to_string(path)?;
+    let config: Config = toml::from_str(&content)?;
+    Ok(config)
+}
+```
+
+### Упражнение 2: HTTP клиент с ретраями
+```rust
+use reqwest::Client;
+use std::time::Duration;
+
+async fn fetch_with_retry(client: &Client, url: &str, max_retries: u32) -> Result<String, reqwest::Error> {
+    let mut last_err = None;
+    for attempt in 0..=max_retries {
+        match client.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                return resp.text().await;
+            }
+            Ok(resp) => last_err = Some(resp.error_for_status().unwrap_err()),
+            Err(e) => last_err = Some(e),
+        }
+        if attempt < max_retries {
+            tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(attempt))).await;
+        }
+    }
+    Err(last_err.unwrap())
+}
+```
+
+### Упражнение 3: Логгер в файл с ротацией
+```rust
+use std::fs::{OpenOptions, File};
+use std::io::{Write, BufWriter};
+use std::path::Path;
+use chrono::Local;
+
+struct FileLogger {
+    writer: BufWriter<File>,
+    max_size: u64,
+    path: PathBuf,
+}
+
+impl FileLogger {
+    fn new(path: PathBuf, max_size: u64) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
+        Ok(Self { writer: BufWriter::new(file), max_size, path })
+    }
+
+    fn log(&mut self, level: &str, msg: &str) -> io::Result<()> {
+        let line = format!("{} [{}] {}\n", Local::now().format("%Y-%m-%d %H:%M:%S"), level, msg);
+        self.writer.write_all(line.as_bytes())?;
+        self.writer.flush()?;
+
+        // Ротация
+        if self.writer.get_ref().metadata()?.len() > self.max_size {
+            self.rotate()?;
+        }
+        Ok(())
+    }
+
+    fn rotate(&mut self) -> io::Result<()> {
+        self.writer.flush()?;
+        let backup = self.path.with_extension("log.1");
+        std::fs::rename(&self.path, &backup)?;
+        let file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        self.writer = BufWriter::new(file);
+        Ok(())
+    }
+}
+```
+
+---
+
+## 7. Типичные ошибки
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `Os { code: 2, kind: NotFound }` | Файл не существует | Проверяйте `Path::exists()` или используйте `create_new` |
+| `Os { code: 13, kind: PermissionDenied }` | Нет прав | Запустите с нужными правами, проверьте путь |
+| `serde: missing field` | JSON не содержит обязательного поля | Добавьте `#[serde(default)]` или `Option` |
+| `reqwest: timeout` | Сервер не отвечает | Настройте `.timeout(Duration::from_secs(30))` |
+| `tokio: blocking call in async` | Синхронный I/O в async контексте | Используйте `tokio::fs` или `spawn_blocking` |
+
+---
+
+## 8. Шпаргалка: Полезные импорты
+
+```rust
+// Файлы
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write, Seek, SeekFrom, BufReader, BufWriter, BufRead, Lines};
+use std::path::{Path, PathBuf};
+
+// Сериализация
+use serde::{Serialize, Deserialize};
+use serde_json; // to_string, from_str, to_vec, from_slice
+use toml; // to_string, from_str
+
+// HTTP
+use reqwest::{Client, blocking::Client as BlockingClient};
+
+// Async
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncBufReadExt};
+```
+
+---
+
+## 9. Полезные ресурсы
+
+- **std::fs**: https://doc.rust-lang.org/std/fs/
+- **std::io**: https://doc.rust-lang.org/std/io/
+- **std::path**: https://doc.rust-lang.org/std/path/
+- **serde**: https://serde.rs/
+- **reqwest**: https://docs.rs/reqwest/
+- **tokio**: https://tokio.rs/
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- `std::fs`: чтение/запись файлов, метаданные, манипуляции директориями
+- `std::io` трейты: `Read`, `Write`, `Seek`, `BufRead` + буферизация
+- `Path` / `PathBuf` для кроссплатформенных путей
+- `serde` + `serde_json`/`toml`/`yaml`: derive, атрибуты, enums, streaming
+- `reqwest`: блокирующий и async HTTP клиент
+- `tokio::fs` и async I/O примитивы
+
+---
+
+**Следующий урок:** Async Rust (`20_Async_Rust.txt`)

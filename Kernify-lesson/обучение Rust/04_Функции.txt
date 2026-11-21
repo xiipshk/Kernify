@@ -1,0 +1,385 @@
+# Урок 4: Функции
+
+## Цели урока
+После изучения этого урока вы сможете:
+- Объявлять и вызывать функции с параметрами
+- Использовать возвращаемые значения (явные и неявные)
+- Понимать разницу между statement и expression
+- Работать с функциями как значениями (function pointers)
+- Применять замыкания (closures) — базовое введение
+- Использовать атрибуты функций (`#[inline]`, `#[cfg]` и др.)
+
+---
+
+## 1. Объявление и вызов функций
+
+### Базовый синтаксис
+```rust
+fn main() {
+    greet("Rust");
+}
+
+fn greet(name: &str) {
+    println!("Привет, {}!", name);
+}
+```
+
+### Параметры с типами (обязательны!)
+```rust
+fn add(a: i32, b: i32) -> i32 {
+    a + b // Неявный возврат (expression без ;)
+}
+
+fn main() {
+    let sum = add(5, 3);
+    println!("5 + 3 = {}", sum);
+}
+```
+
+---
+
+## 2. Statement vs Expression
+
+### Statement (инструкция) — не возвращает значение
+```rust
+fn main() {
+    let x = 5;        // statement
+    let y = {         // block — это expression!
+        let z = 10;
+        z + 1         // без ; — возвращается как значение блока
+    };
+    println!("y = {}", y); // 11
+}
+```
+
+### Expression (выражение) — возвращает значение
+```rust
+fn main() {
+    let x = 5;
+    let y = if x > 0 { 1 } else { -1 }; // if — expression
+    let z = loop { break 42; };         // loop с break value — expression
+}
+```
+
+### Функции: неявный возврат (последнее выражение)
+```rust
+fn square(x: i32) -> i32 {
+    x * x // Нет ; — это expression, возвращается автоматически
+}
+
+fn square_explicit(x: i32) -> i32 {
+    return x * x; // Явный return (нужен для раннего выхода)
+}
+```
+
+---
+
+## 3. Функции, не возвращающие значение (`()`)
+
+```rust
+fn print_sum(a: i32, b: i32) {
+    println!("Сумма: {}", a + b);
+    // Неявно возвращает () — unit type
+}
+
+fn explicit_unit() -> () {
+    return (); // Можно писать явно
+}
+```
+
+---
+
+## 4. Функции как значения (Function Pointers)
+
+### Тип функции: `fn(аргументы) -> возврат`
+```rust
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+fn sub(a: i32, b: i32) -> i32 {
+    a - b
+}
+
+fn apply(op: fn(i32, i32) -> i32, a: i32, b: i32) -> i32 {
+    op(a, b)
+}
+
+fn main() {
+    let result = apply(add, 10, 5);
+    println!("10 + 5 = {}", result); // 15
+
+    let ops = [add, sub];
+    for op in ops {
+        println!("{}", op(3, 2));
+    }
+}
+```
+
+---
+
+## 5. Замыкания (Closures) — введение
+
+Анонимные функции, захватывающие окружение:
+```rust
+fn main() {
+    let x = 5;
+    let add_x = |y| x + y; // Захват x по ссылке
+    println!("5 + 3 = {}", add_x(3)); // 8
+}
+```
+
+### Полный синтаксис замыканий
+```rust
+fn main() {
+    // С типами
+    let add: fn(i32, i32) -> i32 = |a, b| a + b;
+
+    // Move-замыкание (перебирает владение)
+    let data = vec![1, 2, 3];
+    let print_data = move || println!("{:?}", data);
+    print_data();
+    // data больше недоступен здесь!
+}
+```
+
+### Типажи замыканий: `Fn`, `FnMut`, `FnOnce`
+| Типаж | Описание |
+|-------|----------|
+| `Fn` | Неизменяемое заимствование (`&self`) — можно вызывать много раз |
+| `FnMut` | Изменяемое заимствование (`&mut self`) — может мутировать захват |
+| `FnOnce` | Забирает владение (`self`) — можно вызвать только один раз |
+
+```rust
+fn call_twice<F>(mut f: F) where F: FnMut() {
+    f();
+    f();
+}
+
+fn main() {
+    let mut count = 0;
+    let mut inc = || count += 1; // FnMut
+    call_twice(&mut inc);
+    println!("count = {}", count); // 2
+}
+```
+
+---
+
+## 6. Дивергирующие функции (`!` — never type)
+
+Функции, которые **никогда не возвращают** управление:
+```rust
+fn panic_fn() -> ! {
+    panic!("Это функция никогда не вернёт управление!");
+}
+
+fn loop_forever() -> ! {
+    loop {}
+}
+
+fn exit_program() -> ! {
+    std::process::exit(0);
+}
+```
+
+Использование в `match`:
+```rust
+fn get_or_panic(opt: Option<i32>) -> i32 {
+    match opt {
+        Some(v) => v,
+        None => panic!("No value!"), // panic! имеет тип !
+    }
+}
+```
+
+---
+
+## 7. Атрибуты функций
+
+### `#[inline]` — подсказка компилятору
+```rust
+#[inline]        // Предлагает инлайнинг
+fn small() { 42 }
+
+#[inline(always)] // Сильно рекомендует
+fn always_inline() { 42 }
+
+#[inline(never)]  // Запрещает инлайнинг
+fn never_inline() { 42 }
+```
+
+### `#[cfg(...)]` — условная компиляция
+```rust
+#[cfg(target_os = "windows")]
+fn platform_specific() {
+    println!("Windows!");
+}
+
+#[cfg(not(target_os = "windows"))]
+fn platform_specific() {
+    println!("Not Windows!");
+}
+```
+
+### `#[deprecated]` — устаревшая функция
+```rust
+#[deprecated(since = "1.2.0", note = "Используйте new_fn()")]
+fn old_fn() {}
+```
+
+### `#[must_use]` — предупреждение если результат игнорирован
+```rust
+#[must_use]
+fn important_result() -> i32 {
+    42
+}
+```
+
+---
+
+## 8. Рекурсия и хвостовые вызовы
+
+```rust
+fn factorial(n: u64) -> u64 {
+    match n {
+        0 => 1,
+        _ => n * factorial(n - 1),
+    }
+}
+
+// Хвостовая рекурсия (не оптимизируется автоматически в Rust)
+fn factorial_tail(n: u64, acc: u64) -> u64 {
+    match n {
+        0 => acc,
+        _ => factorial_tail(n - 1, n * acc),
+    }
+}
+```
+
+---
+
+## 9. Практические упражнения
+
+### Упражнение 1: Калькулятор с функциями
+```rust
+fn add(a: f64, b: f64) -> f64 { a + b }
+fn sub(a: f64, b: f64) -> f64 { a - b }
+fn mul(a: f64, b: f64) -> f64 { a * b }
+fn div(a: f64, b: f64) -> Option<f64> {
+    if b == 0.0 { None } else { Some(a / b) }
+}
+
+fn main() {
+    let ops: [(&str, fn(f64, f64) -> Option<f64>); 4] = [
+        ("+", |a, b| Some(add(a, b))),
+        ("-", |a, b| Some(sub(a, b))),
+        ("*", |a, b| Some(mul(a, b))),
+        ("/", div),
+    ];
+
+    for (sym, op) in ops {
+        if let Some(r) = op(10.0, 5.0) {
+            println!("10 {} 5 = {}", sym, r);
+        }
+    }
+}
+```
+
+### Упражнение 2: Замыкания и итераторы
+```rust
+fn main() {
+    let numbers = vec![1, 2, 3, 4, 5];
+
+    // map с замыканием
+    let doubled: Vec<_> = numbers.iter().map(|x| x * 2).collect();
+    println!("Doubled: {:?}", doubled);
+
+    // filter с замыканием
+    let evens: Vec<_> = numbers.iter().filter(|x| *x % 2 == 0).collect();
+    println!("Evens: {:?}", evens);
+}
+```
+
+### Упражнение 3: Функция высшего порядка
+```rust
+fn apply_n_times<F>(mut f: F, n: usize, x: i32) -> i32
+where F: FnMut(i32) -> i32
+{
+    let mut result = x;
+    for _ in 0..n {
+        result = f(result);
+    }
+    result
+}
+
+fn main() {
+    let double = |x| x * 2;
+    println!("2 * 2^3 = {}", apply_n_times(double, 3, 2)); // 16
+}
+```
+
+### Упражнение 4: Дивергирующая функция
+```rust
+fn unreachable_code() -> ! {
+    panic!("Unreachable!");
+}
+
+fn divide(a: i32, b: i32) -> i32 {
+    if b == 0 {
+        unreachable_code(); // Тип ! подходит под любой возвращаемый тип
+    }
+    a / b
+}
+```
+
+---
+
+## 10. Типичные ошибки новичков
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `missing return type` | Нет `-> Type` | Добавьте аннотацию возвращаемого типа |
+| `expected fn pointer, found closure` | Замыкание не совместимо с `fn` | Используйте generics: `impl Fn(...)` или `F: Fn(...)` |
+| `cannot capture variable` | Переменная мутируется/перемещается | Используйте `move` или измените способ захвата |
+| `type mismatch` в замыкании | Несовпадение сигнатуры | Проверьте типы аргументов и возвращаемого значения |
+| `recursion limit reached` | Слишком глубокая рекурсия | Используйте итеративный подход или увеличьте стек |
+
+---
+
+## 11. Сравнение: функции vs замыкания
+
+| Аспект | `fn` | Замыкание (`\| \|`) |
+|--------|------|---------------------|
+| Имя | Есть | Анонимное |
+| Захват окружения | Нет | Да (`Fn`/`FnMut`/`FnOnce`) |
+| Тип | `fn(Args) -> Ret` | Уникальный анонимный тип |
+| Использование в generics | `fn(T) -> U` | `impl Fn(T) -> U` |
+| Коэрция в fn pointer | Автоматически | Только если не захватывает окружение |
+
+---
+
+## 12. Полезные ресурсы
+
+- **The Book — Functions**: https://doc.rust-lang.org/book/ch03-03-how-functions-work.html
+- **The Book — Closures**: https://doc.rust-lang.org/book/ch13-01-closures.html
+- **Rust by Example — Functions**: https://doc.rust-lang.org/rust-by-example/fn.html
+- **Function Pointers**: https://doc.rust-lang.org/reference/types/function-pointer.html
+
+---
+
+## Резюме урока
+
+✅ **Что мы изучили:**
+- `fn name(params) -> Ret { body }` — объявление функций
+- Последнее выражение без `;` — неявный возврат
+- `()` — unit type для функций без возврата
+- Function pointers: `fn(T) -> U` — как типы значений
+- Замыкания: `|args| expr` с захватом окружения
+- Типажи `Fn`, `FnMut`, `FnOnce` — категории замыканий
+- `!` — never type для дивергирующих функций
+- Атрибуты: `#[inline]`, `#[cfg]`, `#[deprecated]`, `#[must_use]`
+
+---
+
+**Следующий урок:** Владение, заимствование и ссылки (`05_Ownership_References.txt`)

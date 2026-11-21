@@ -1,0 +1,388 @@
+# Урок 18: Внутреннее устройство .NET — CLR, IL, JIT, managed memory, GC, assemblies
+
+## Цели урока
+- Понимать архитектуру CLR и процесс выполнения кода
+- Читать и понимать IL (Intermediate Language)
+- Знать, как работает JIT компиляция и tiered compilation
+- Понимать управляемую память: стек, куча, GC, поколения
+- Работать со сборками (assemblies), версионированием и загрузкой
+
+---
+
+## 1. Архитектура CLR (Common Language Runtime)
+
+### Компоненты CLR
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        CLR                                   │
+├─────────────┬─────────────┬─────────────┬───────────────────┤
+│  Class      │   JIT       │   GC        │  Security         │
+│  Loader     │  Compiler   │  (Memory)   │  (CAS, obsolete)  │
+├─────────────┼─────────────┼─────────────┼───────────────────┤
+│  Thread     │  Exception  │  Interop    │  Debug/Profiling  │
+│  Pool       │  Handling   │  (P/Invoke) │  APIs             │
+└─────────────┴─────────────┴─────────────┴───────────────────┘
+```
+
+### Процесс выполнения
+```
+C# Source (.cs)
+    │
+    ▼
+Roslyn Compiler (csc.exe / dotnet build)
+    │
+    ▼
+IL Assembly (.dll/.exe)  ──►  Metadata + IL код
+    │
+    ▼
+CLR Loads Assembly
+    │
+    ▼
+JIT Compiler (Method по методу при первом вызове)
+    │
+    ▼
+Native Machine Code (x64, ARM64, etc.)
+    │
+    ▼
+Execution на CPU
+```
+
+---
+
+## 2. IL (Intermediate Language / CIL / MSIL)
+
+### Основы IL
+```cil
+// Пример: int Add(int a, int b) => a + b;
+.method public hidebysig static int32 Add(int32 a, int32 b) cil managed
+{
+    .maxstack 2           // максимальный размер стека вычислений
+    ldarg.0               // загрузить аргумент 0 (a) на стек
+    ldarg.1               // загрузить аргумент 1 (b) на стек
+    add                   // извлечь два значения, сложить, положить результат
+    ret                   // вернуть значение с вершины стека
+}
+```
+
+### Stack-based VM
+- IL — стековый язык (нет регистров, всё через стек вычислений)
+- Инструкции: `ldarg`, `ldloc`, `stloc`, `ldc`, `add`, `call`, `br`, `ret`
+
+### Чтение IL
+```bash
+# dotnet-ildasm (global tool)
+dotnet tool install -g ildasm
+ildasm MyAssembly.dll
+
+# Или в Visual Studio: Developer Command Prompt → ildasm
+# Онлайн: https://sharplab.io/ (C# → IL → AST → JIT asm)
+```
+
+### Частые IL инструкции
+| Категория | Инструкции |
+|-----------|------------|
+| Загрузка констант | `ldc.i4.0`..`ldc.i4.8`, `ldc.i4.s`, `ldc.r4`, `ldc.r8` |
+| Аргументы/локальные | `ldarg.0`..`3`, `ldarg.s`, `ldloc.0`..`3`, `stloc` |
+| Арифметика | `add`, `sub`, `mul`, `div`, `rem`, `neg` |
+| Логика/сравнение | `ceq`, `cgt`, `clt`, `and`, `or`, `xor`, `not` |
+| Ветвление | `br`, `brtrue`, `brfalse`, `beq`, `bgt`, `ble`, `switch` |
+| Вызовы | `call` (static/non-virtual), `callvirt` (virtual/interface), `newobj` |
+| Возврат | `ret` |
+| Исключения | `throw`, `rethrow`, `leave`, `endfinally` |
+
+---
+
+## 3. JIT Компиляция (Just-In-Time)
+
+### Уровни компиляции (Tiered Compilation, .NET Core 3.0+)
+```
+Tier 0 (Quick JIT)
+├── Быстрая компиляция, без оптимизаций
+├── Собирает профилирующие данные (PGO)
+└── Используется для "холодных" методов
+
+Tier 1 (Optimized JIT)
+├── Полная оптимизация на основе профиля
+├── Инлайнинг, loop unrolling, devirtualization
+└── Компилируется асинхронно в фоне
+
+ReadyToRun (R2R / AOT)
+├── Предварительно скомпилированный в native код
+├── В .dll: секция .text с нативным кодом
+└── Используется сразу, JIT только для патчей
+```
+
+### Контроль JIT
+```csharp
+// Атрибуты для управления компиляцией
+[MethodImpl(MethodImplOptions.AggressiveInlining)]
+public int Add(int a, int b) => a + b;
+
+[MethodImpl(MethodImplOptions.NoInlining)]
+public void NoInline() { }
+
+[MethodImpl(MethodImplOptions.AggressiveOptimization)]
+public void HotPath() { }
+
+// Отключение tiered compilation для метода
+[MethodImpl(MethodImplOptions.NoOptimization)]
+public void Debuggable() { }
+
+// Runtime helpers
+RuntimeHelpers.PrepareMethod(method.Handle); // принудительный JIT
+RuntimeHelpers.RunClassConstructor(type.TypeHandle); // .cctor
+```
+
+### Tiered Compilation настройка
+```xml
+<!-- .csproj или runtimeconfig.json -->
+<PropertyGroup>
+  <TieredCompilation>true</TieredCompilation>
+  <TieredCompilationQuickJit>true</TieredCompilationQuickJit>
+  <TieredCompilationQuickJitForLoops>true</TieredCompilationQuickJitForLoops>
+</PropertyGroup>
+```
+
+---
+
+## 4. Управляемая память: Стек и Куча
+
+### Стек (Stack) — Value Types, ссылки, кадры вызовов
+```csharp
+void Method()
+{
+    int a = 42;           // на стеке (4 байта)
+    long b = 100L;        // на стеке (8 байт)
+    MyStruct s = new();   // на стеке (размер структуры)
+    MyClass c = new();    // ССЫЛКА на стеке (8 байт x64), ОБЪЕКТ в куче
+    // c указывает на объект в куче
+}
+```
+
+### Куча (Managed Heap) — Reference Types
+```
+┌────────────────────────────────────────────────────────────┐
+│                    Managed Heap                             │
+├──────────────────┬──────────────────┬──────────────────────┤
+│   Gen 0          │   Gen 1          │   Gen 2              │
+│   (молодые)      │   (пережившие)   │   (долгоживущие)     │
+│   ~256 KB        │   ~2 MB          │   остальное          │
+├──────────────────┼──────────────────┼──────────────────────┤
+│   Large Object   │   Pinned Objects │   Free Space         │
+│   Heap (LOH)     │   (fixed/stack)  │                      │
+│   (>85 KB)       │                  │                      │
+└──────────────────┴──────────────────┴──────────────────────┘
+```
+
+### Выделение памяти — очень быстро (bump pointer)
+```csharp
+// new MyClass() — просто сдвиг указателя на куче!
+// Никакого поиска свободного блока (в отличие от malloc)
+// Thread-local allocation contexts (TLAB) — каждый поток свой указатель
+```
+
+---
+
+## 5. Garbage Collector (GC)
+
+### Режимы GC
+```xml
+<!-- .csproj -->
+<PropertyGroup>
+  <!-- Workstation GC (default) — для клиентских приложений -->
+  <ServerGarbageCollection>false</ServerGarbageCollection>
+  <!-- Concurrent GC — фоновая сборка, меньше пауз -->
+  <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+</PropertyGroup>
+
+<!-- Server GC — для серверных приложений (ASP.NET Core) -->
+<!-- Несколько куч (по одной на логический процессор), параллельная сборка -->
+```
+
+### Поколения (Generations)
+```csharp
+// Gen 0: новые объекты (короткоживущие) — собирается часто, быстро
+// Gen 1: пережившие Gen 0 — буфер
+// Gen 2: долгоживущие — собирается редко, Full GC
+
+// LOH (Large Object Heap): объекты > 85 KB
+// Не компактируется (по умолчанию), собирается только при Gen 2
+// .NET 5+: GCSettings.LargeObjectHeapCompactionMode = CompactOnce
+```
+
+### Алгоритм Mark-and-Compact
+```
+1. MARK: обход графа ссылок от Roots (стек, статики, handles, CPU регистры)
+         помечаем достижимые объекты
+
+2. COMPACT: сдвиг достижимых объектов в начало кучи (устраняет фрагментацию)
+            обновление ссылок
+
+3. SWEEP: память после последнего достижимого = свободная
+```
+
+### GC Roots (корни)
+- Локальные переменные на стеке (включая async state machines)
+- Статические поля
+- GC Handles (`GCHandle.Alloc`, `WeakReference`)
+- CPU регистры (JIT enregistered переменные)
+- Финализаторы в очереди (finalization queue)
+
+### Finalization (Финализаторы) — УСТАРЕВШЕЕ, избегайте
+```csharp
+// ПЛОХО: непредсказуемое время, dodatkowy GC цикл, нет гарантии вызова
+~MyClass() { Cleanup(); } // Finalizer
+
+// ХОРОШО: IDisposable + SafeHandle для нативных ресурсов
+public class Resource : IDisposable
+{
+    private SafeFileHandle _handle;
+    public void Dispose() => _handle?.Dispose();
+}
+```
+
+### IDisposable Pattern
+```csharp
+public sealed class DisposableResource : IDisposable
+{
+    private bool _disposed;
+
+    public void Dispose() => Dispose(true);
+
+    private void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing)
+        {
+            // Освобождение managed ресурсов
+            _managedResource?.Dispose();
+        }
+        // Освобождение unmanaged ресурсов
+        _nativeHandle?.Dispose();
+        _disposed = true;
+    }
+}
+```
+
+---
+
+## 6. Assemblies (Сборки)
+
+### Структура Assembly
+```
+MyAssembly.dll
+├── Manifest (метаданные сборки)
+│   ├── Имя, версия, культура, публичный ключ (strong name)
+│   ├── Список файлов в сборке
+│   └── Зависимости (assembly references)
+├── Type Metadata (таблицы типов, методов, полей, свойств)
+├── IL Code (тела методов)
+├── Resources (встроенные ресурсы)
+└── (опционально) Native Code (R2R / NativeAOT)
+```
+
+### Версионирование
+```csharp
+// AssemblyVersion — для биндинга (strong name), менять редко
+// AssemblyFileVersion — для файла, может меняться каждый билд
+// AssemblyInformationalVersion — для NuGet, display (SemVer)
+
+[assembly: AssemblyVersion("2.0.0.0")]        // runtime binding
+[assembly: AssemblyFileVersion("2.0.123.456")] // file info
+[assembly: AssemblyInformationalVersion("2.0.0-beta.1+abc123")] // NuGet
+```
+
+### Strong Name (подпись)
+```bash
+# Создание ключа
+sn -k mykey.snk
+
+# Подпись при сборке
+<PropertyGroup>
+  <SignAssembly>true</SignAssembly>
+  <AssemblyOriginatorKeyFile>mykey.snk</AssemblyOriginatorKeyFile>
+</PropertyGroup>
+
+# Проверка
+sn -v MyAssembly.dll
+```
+
+### Загрузка сборок (Assembly Load Context)
+```csharp
+// Default ALC — основной контекст (Application Base)
+// AssemblyLoadContext — изоляция плагинов (нет AppDomain unload в .NET Core)
+
+var alc = new AssemblyLoadContext("PluginContext", isCollectible: true);
+var asm = alc.LoadFromAssemblyPath(@"plugins\MyPlugin.dll");
+var type = asm.GetType("MyPlugin.Processor");
+var instance = Activator.CreateInstance(type);
+
+// Выгрузка — ТОЛЬКО если isCollectible=true и нет ссылок
+alc.Unload(); // асинхронно, GC должен собрать сборку
+```
+
+---
+
+## 7. Диагностика и инструменты
+
+### dotnet-counters / dotnet-trace / dotnet-dump
+```bash
+# Метрики в реальном времени
+dotnet-counters monitor --process-id <pid> System.Runtime
+
+# Трассировка (ETW / PerfView)
+dotnet-trace collect --process-id <pid> --providers Microsoft-Windows-DotNETRuntime
+
+# Дамп памяти
+dotnet-dump collect --process-id <pid>
+dotnet-dump analyze <dump-file>
+```
+
+### GC Performance Counters
+```csharp
+// В коде
+GC.CollectionCount(0);        // Gen 0 collections
+GC.GetTotalMemory(false);     // текущая выделенная память
+GC.GetGCMemoryInfo();         // детальная инфа (.NET 5+)
+```
+
+### PerfView / WPA (Windows Performance Analyzer)
+- Анализ GC пауз, JIT времени, аллокаций
+- `dotnet-trace` → `.nettrace` → открыть в PerfView
+
+---
+
+## 8. Практические задания
+
+1. **IL Analysis**: напишите простой метод, скомпилируйте, посмотрите IL в ILDasm/SharpLab
+2. **GC Stress**: создайте нагрузку с аллокациями, понаблюдайте за поколениями через `dotnet-counters`
+3. **Tiered JIT**: измерьте время первого вызова vs последующих для горячего метода
+4. **Assembly Loading**: реализуйте плагинную систему с `AssemblyLoadContext` и выгрузкой
+5. **Memory Leak Hunt**: используйте `dotnet-dump` + `dotnet-gcdump` для поиска утечки
+
+---
+
+## 9. Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| Финализаторы вместо `IDisposable` | `IDisposable` + `SafeHandle` |
+| Большие объекты в LOH без пулинга | `ArrayPool<T>`, `MemoryPool<T>` |
+| `GC.Collect()` в продакшене | Доверяйте GC, вызывайте только в тестах |
+| Забывают `Dispose()` | `using` / `await using` везде |
+| Strong name без нужды | Используйте только для GAC/legacy |
+| Большие структуры (>16 байт) по значению | `class` / `record` или `ref struct` |
+| Пиннинг (`fixed`, `GCHandle`) без нужды | Блокирует компактку GC |
+
+---
+
+## 10. Полезные ресурсы
+
+- **CLR Overview** — https://learn.microsoft.com/dotnet/standard/clr
+- **GC Fundamentals** — https://learn.microsoft.com/dotnet/standard/garbage-collection/fundamentals
+- **Tiered Compilation** — https://learn.microsoft.com/dotnet/core/runtime-config/compilation#tiered-compilation
+- **Assembly Loading** — https://learn.microsoft.com/dotnet/standard/assembly/load-context
+- **ReadyToRun** — https://learn.microsoft.com/dotnet/core/deploying/ready-to-run
+- **NativeAOT** — https://learn.microsoft.com/dotnet/core/deploying/native-aot
+- **Book: "Pro .NET Memory Management" by Konrad Kokosa**
+- **Book: "CLR via C#" by Jeffrey Richter** (classic, но основа актуальна)

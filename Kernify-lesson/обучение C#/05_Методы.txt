@@ -1,0 +1,296 @@
+# Урок 5: Методы
+
+**Целевая версия:** C# 12 / .NET 8
+
+---
+
+## 1. Объявление и вызов метода
+
+```csharp
+// Метод без параметров, без возврата (void)
+void Greet()
+{
+    Console.WriteLine("Привет!");
+}
+
+Greet();  // вызов
+```
+
+---
+
+## 2. Параметры и возвращаемое значение
+
+```csharp
+// Параметры + возврат
+int Add(int a, int b)
+{
+    return a + b;
+}
+
+int result = Add(3, 5);  // 8
+Console.WriteLine(Add(10, 20));  // 30
+```
+
+---
+
+## 3. Передача параметров: по значению / по ссылке
+
+### По значению (по умолчанию для значимых типов)
+```csharp
+void Modify(int x)
+{
+    x = 20;  // меняет копию
+}
+
+int a = 10;
+Modify(a);
+Console.WriteLine(a);  // 10 — не изменилось
+```
+
+### ref — по ссылке (обязательно инициализировать до вызова)
+```csharp
+void ModifyRef(ref int x)
+{
+    x = 20;
+}
+
+int b = 10;
+ModifyRef(ref b);
+Console.WriteLine(b);  // 20 — изменилось!
+```
+
+### out — по ссылке (для выходных параметров, не требует инициализации)
+```csharp
+bool TryParseInt(string s, out int result)
+{
+    return int.TryParse(s, out result);
+}
+
+if (TryParseInt("42", out int value))
+{
+    Console.WriteLine(value);  // 42
+}
+```
+
+### in — по ссылке только для чтения (C# 7.2+)
+```csharp
+void ReadOnly(in int x)
+{
+    // x = 5; // Ошибка компиляции!
+    Console.WriteLine(x);
+}
+```
+
+---
+
+## 4. Перегрузка методов (Overloading)
+
+```csharp
+void Print(int n)        => Console.WriteLine($"int: {n}");
+void Print(string s)     => Console.WriteLine($"string: {s}");
+void Print(double d, int precision = 2)
+    => Console.WriteLine($"double: {d:F{precision}}");
+
+Print(42);
+Print("hello");
+Print(3.14159);
+Print(3.14159, 4);
+```
+
+**Правила:** Разная сигнатура = разное количество/типы параметров. Тип возврата НЕ учитывается.
+
+---
+
+## 5. Опциональные параметры и именованные аргументы
+
+```csharp
+void Connect(string host, int port = 80, bool ssl = false)
+{
+    Console.WriteLine($"{host}:{port} SSL={ssl}");
+}
+
+Connect("localhost");           // порт=80, ssl=false
+Connect("api.com", 443);        // ssl=false
+Connect("api.com", 443, true);  // все явно
+Connect(port: 8080, host: "test");  // именованные аргументы
+```
+
+---
+
+## 6. Параметры-массивы (params)
+
+```csharp
+// params — должен быть ПОСЛЕДНИМ параметром
+int Sum(params int[] numbers)
+{
+    int sum = 0;
+    foreach (var n in numbers) sum += n;
+    return sum;
+}
+
+Sum(1, 2, 3);           // 6
+Sum(1, 2, 3, 4, 5);     // 15
+int[] arr = { 10, 20 };
+Sum(arr);               // 30 (передача массива)
+
+// C# 13+: params Span<T> / ReadOnlySpan<T> (нет аллокации массива)
+int SumSpan(params ReadOnlySpan<int> numbers) { ... }
+```
+
+---
+
+## 7. Локальные функции (C# 7+)
+
+```csharp
+int Factorial(int n)
+{
+    // Локальная функция — видна только внутри Factorial
+    int Fact(int x) => x <= 1 ? 1 : x * Fact(x - 1);
+
+    if (n < 0) throw new ArgumentException();
+    return Fact(n);
+}
+```
+
+---
+
+## 8. Expression-bodied members (C# 6+)
+
+```csharp
+// Для простых методов/свойств
+int Square(int x) => x * x;
+void Log(string msg) => Console.WriteLine($"[LOG] {msg}");
+
+// С блоком (C# 7+)
+int Max(int a, int b) => a > b ? a : b;
+```
+
+---
+
+## 9. Область видимости переменных
+
+```csharp
+void ScopeDemo()
+{
+    int a = 1;  // видна во всем методе
+
+    if (true)
+    {
+        int b = 2;  // видна только в этом блоке
+        a = b;      // OK
+    }
+    // b здесь не видна
+
+    for (int i = 0; i < 3; i++) { }
+    // i не видна здесь
+}
+```
+
+---
+
+## 10. Рекурсия
+
+```csharp
+// Факториал
+long Factorial(int n)
+{
+    if (n <= 1) return 1;
+    return n * Factorial(n - 1);
+}
+
+// Фибоначчи (неэффективно без мемоизации)
+long Fib(int n) => n <= 1 ? n : Fib(n - 1) + Fib(n - 2);
+
+// Перебор директорий
+void PrintFiles(string path, string indent = "")
+{
+    foreach (var file in Directory.GetFiles(path))
+        Console.WriteLine($"{indent}{Path.GetFileName(file)}");
+
+    foreach (var dir in Directory.GetDirectories(path))
+        PrintFiles(dir, indent + "  ");
+}
+```
+
+---
+
+## 11. Методы расширения (Extension Methods) — предварительно
+
+```csharp
+// В статическом классе
+public static class StringExtensions
+{
+    // this перед первым параметром
+    public static bool IsNullOrEmpty(this string? s)
+        => string.IsNullOrEmpty(s);
+
+    public static string ToTitleCase(this string s)
+        => CultureInfo.CurrentCulture.TextInfo.ToTitleCase(s);
+}
+
+// Использование как метод экземпляра
+string? test = null;
+test.IsNullOrEmpty();  // true
+"hello world".ToTitleCase();  // "Hello World"
+```
+
+---
+
+## 12. ref возвраты и ref локальные переменные (C# 7+)
+
+```csharp
+int[] numbers = { 1, 2, 3, 4, 5 };
+
+ref int FindFirstEven(int[] arr)
+{
+    for (int i = 0; i < arr.Length; i++)
+        if (arr[i] % 2 == 0)
+            return ref arr[i];  // возврат по ссылке
+    throw new InvalidOperationException();
+}
+
+ref int even = ref FindFirstEven(numbers);
+even = 100;  // меняет элемент в массиве!
+Console.WriteLine(numbers[1]);  // 100
+```
+
+---
+
+## 13. Атрибуты методов (превью)
+
+```csharp
+[Obsolete("Используйте NewMethod()")]
+void OldMethod() { }
+
+[Conditional("DEBUG")]
+void DebugLog(string msg) { }  // вызов удаляется в Release
+```
+
+---
+
+## 14. Домашнее задание
+
+1. Напишите метод `int MaxOfThree(int a, int b, int c)` — максимум из трёх чисел
+2. Метод `bool IsPrime(int n)` — проверка простоты
+3. Метод `void Swap(ref int a, ref int b)` — обмен значениями
+4. Метод `int[] CreateArray(int size, int min, int max)` — массив случайных чисел
+5. Перегруженный `Print(params object[] args)` — вывод через пробел
+6. Рекурсивный `int GCD(int a, int b)` — НОД (алгоритм Евклида)
+7. Метод с `out`: `bool TryDivide(int a, int b, out int result)` — деление с проверкой на 0
+
+---
+
+## 15. Краткая шпаргалка
+
+```
+void Name() { }                    // без возврата
+T Name() { return val; }           // с возвратом
+ref/out/in — передача по ссылке
+params — переменное число аргументов
+optional: void M(int x = 1) { }
+named: M(x: 5)
+overload: же имя, разная сигнатура
+local func: внутри метода
+=> expression body
+extension: static class + this
+```

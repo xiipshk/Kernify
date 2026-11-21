@@ -1,0 +1,487 @@
+# Урок 11: Архитектура каскада CSS — Specificity, Cascade Layers, :is/:where/:not/:has, Custom Properties
+
+## Цели урока
+- Глубоко понять механизм каскада и специфичности селекторов
+- Освоить Cascade Layers (@layer) для управления приоритетами
+- Изучить современные псевдоклассы :is(), :where(), :not(), :has()
+- Понять мощь CSS Custom Properties (переменных) и их наследование
+
+---
+
+## 1. Специфичность (Specificity) — математика каскада
+
+### Как считается специфичность
+Специфичность — это 4-значное число (a, b, c, d):
+- **a** — инлайн стили (style="")
+- **b** — ID селекторы (#id)
+- **c** — классы, атрибуты, псевдоклассы (.class, [attr], :hover)
+- **d** — элементы и псевдоэлементы (div, ::before)
+
+```css
+/* Специфичность: 0,0,0,1 */
+div { color: red; }
+
+/* Специфичность: 0,0,1,0 */
+.my-class { color: blue; }
+
+/* Специфичность: 0,1,0,0 */
+#my-id { color: green; }
+
+/* Специфичность: 1,0,0,0 */
+<div style="color: purple;"> <!-- инлайн стиль */
+```
+
+### Важные правила
+1. **Чем больше специфичность, тем выше приоритет**
+2. **При равной специфичности побеждает последний в коде**
+3. **!important ломает каскад** — используй только в крайних случаях
+
+```css
+/* Плохо:arms race специфичности */
+body main article section div p span { color: red; }
+#content .article .text .highlight { color: blue; }
+
+/* Хорошо: низкая специфичность, понятная архитектура */
+.text { color: red; }
+.text--highlight { color: blue; }
+```
+
+---
+
+## 2. Cascade Layers (@layer) — контроль приоритетов
+
+### Базовый синтаксис
+```css
+/* Определение слоёв (порядок важен!) */
+@layer reset, base, components, utilities;
+
+/* Или с явным упорядочиванием */
+@layer reset {
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+}
+
+@layer base {
+  body { font-family: system-ui; line-height: 1.5; }
+}
+
+@layer components {
+  .button { padding: 0.5rem 1rem; border-radius: 4px; }
+}
+
+@layer utilities {
+  .sr-only { position: absolute; width: 1px; height: 1px; }
+}
+```
+
+### Приоритет слоёв
+```css
+@layer framework, theme, app;
+
+/* Внутри слоя — обычная специфичность */
+@layer app {
+  .header { background: blue; }  /* Побеждает theme.header */
+}
+
+@layer theme {
+  .header { background: red; }
+}
+
+/* Неименованные стили (без @layer) имеют наивысший приоритет */
+.header { background: green; }  /* Побеждает всё выше */
+```
+
+### Импорт с слоями
+```css
+@import url('normalize.css') layer(reset);
+@import url('theme.css') layer(theme);
+```
+
+### Вложенные слои
+```css
+@layer components {
+  @layer card {
+    .card { padding: 1rem; }
+    .card__title { font-size: 1.25rem; }
+  }
+
+  @layer button {
+    .btn { padding: 0.5rem 1rem; }
+  }
+}
+```
+
+### Анонимные слои
+```css
+@layer {
+  /* Этот слой не имеет имени, но ниже именованных */
+  .fallback { color: gray; }
+}
+```
+
+---
+
+## 3. Современные псевдоклассы-селекторы
+
+### :is() — «любой из» (берёт максимальную специфичность)
+```css
+/* Вместо: */
+header h1, main h1, footer h1,
+header h2, main h2, footer h2 {
+  color: var(--heading-color);
+}
+
+/* Пишем: */
+:is(header, main, footer) :is(h1, h2, h3) {
+  color: var(--heading-color);
+}
+
+/* Специфичность :is() = максимальная специфичность из аргументов */
+:is(#id, .class, div) { }  /* Специфичность = 1,0,0 (как #id) */
+
+/* :is() не прощает невалидные селекторы */
+:is(:valid, :invalid) { }  /* Работает */
+:is(.class, :fake-pseudo) { }  /* Игнорируется целиком! */
+```
+
+### :where() — «любой из» (специфичность = 0)
+```css
+/* Специфичность всегда 0,0,0,0 */
+:where(header, main, footer) h1 {
+  color: var(--heading-color);
+}
+
+/* Идеально для сбросов и библиотек */
+:where(table) {
+  border-collapse: collapse;
+}
+
+/* Позволяет легко переопределить */
+:where(.reset) { margin: 0; }
+.my-component { margin: 1rem; }  /* Легко побеждает */
+```
+
+### :not() — отрицание (современный синтаксис с списком)
+```css
+/* Старый синтаксис (1 аргумент) */
+:not(.disabled) { opacity: 1; }
+
+/* Новый синтаксис (список селекторов) */
+:not(.disabled, .loading, [aria-hidden]) {
+  opacity: 1;
+}
+
+/* Специфичность = максимальная из аргументов */
+:not(#id, .class) { }  /* Специфичность 1,0,0 */
+
+/* Комбинации */
+button:not(:disabled):not([aria-busy="true"]) { }
+.card:not(:has(img)) { }  /* Карточки без изображений */
+```
+
+### :has() — родительский селектор (революция 2023!)
+```css
+/* Родитель, имеющий потомка */
+.card:has(img) {
+  display: grid;
+  grid-template-columns: auto 1fr;
+}
+
+/* Родитель с конкретным потомком */
+.form:has(input:invalid) .submit-btn {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Соседние элементы */
+h2:has(+ p) { margin-bottom: 0; }
+
+/* Комбинации с :not() */
+.section:not(:has(h2)) { padding-top: 0; }
+
+/* Количественные запросы (quantity queries) */
+ul:has(> li:nth-child(5)) {
+  /* Список с 5+ элементами */
+  columns: 2;
+}
+
+/* Формы: показывать ошибку только если поле заполнено */
+.field:has(input:not(:placeholder-shown):invalid) .error {
+  display: block;
+}
+```
+
+### Поддержка :has() (2024)
+- ✅ Chrome 105+, Firefox 121+, Safari 15.4+, Edge 105+
+- ⚠️ Не работает в старых браузерах — используй progressive enhancement
+
+---
+
+## 4. CSS Custom Properties (переменные) — продвинутый уровень
+
+### Базовый синтаксис и наследование
+```css
+:root {
+  --color-primary: #2563eb;
+  --color-secondary: #64748b;
+  --spacing-unit: 8px;
+  --font-size-base: 1rem;
+  --radius: 4px;
+}
+
+.component {
+  /* Использование с fallback */
+  background: var(--color-primary, blue);
+  padding: calc(var(--spacing-unit) * 2);
+  border-radius: var(--radius);
+}
+```
+
+### Наследование и переопределение
+```css
+:root {
+  --theme-color: blue;
+}
+
+.card {
+  --theme-color: red;  /* Локальное переопределение */
+  background: var(--theme-color);  /* red */
+}
+
+.card__title {
+  color: var(--theme-color);  /* Наследует red от .card */
+}
+
+.card--dark {
+  --theme-color: #1e293b;
+}
+```
+
+### Вычисленные значения (calc с переменными)
+```css
+:root {
+  --base-size: 16px;
+  --scale-ratio: 1.25;
+}
+
+.step-0 { font-size: var(--base-size); }
+.step-1 { font-size: calc(var(--base-size) * var(--scale-ratio)); }
+.step-2 { font-size: calc(var(--base-size) * var(--scale-ratio) * var(--scale-ratio)); }
+
+/* Fluid typography с clamp */
+:root {
+  --font-size-min: 1rem;
+  --font-size-max: 2rem;
+  --viewport-width: 100vw;
+}
+
+h1 {
+  font-size: clamp(
+    var(--font-size-min),
+    2vw + 0.5rem,
+    var(--font-size-max)
+  );
+}
+```
+
+### CSS переменные в медиа-запросах (не работает напрямую!)
+```css
+/* ❌ НЕ РАБОТАЕТ */
+@media (min-width: var(--breakpoint-md)) { }
+
+/* ✅ РАБОТАЕТ — через контейнерные запросы или JS */
+@media (min-width: 768px) { }
+
+/* Но можно использовать в container queries */
+@container (min-width: var(--container-breakpoint)) { }
+```
+
+### JavaScript API
+```javascript
+// Чтение
+const styles = getComputedStyle(document.documentElement);
+const primary = styles.getPropertyValue('--color-primary').trim();
+
+// Запись
+document.documentElement.style.setProperty('--color-primary', '#dc2626');
+
+// Удаление
+document.documentElement.style.removeProperty('--color-primary');
+
+// Проверка поддержки
+if (CSS.supports('color', 'var(--fake)')) { }
+```
+
+### Паттерны проектирования с переменными
+
+#### Design Tokens система
+```css
+:root {
+  /* Primitive tokens (примитивы) */
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-500: #3b82f6;
+  --color-blue-900: #1e3a5f;
+
+  /* Semantic tokens (семантические) */
+  --color-primary: var(--color-blue-500);
+  --color-primary-hover: var(--color-blue-600);
+  --color-background: var(--color-white);
+  --color-text: var(--color-slate-900);
+
+  /* Component tokens */
+  --button-padding-x: 1rem;
+  --button-padding-y: 0.5rem;
+  --button-radius: var(--radius-md);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: var(--color-slate-900);
+    --color-text: var(--color-slate-50);
+    --color-primary: var(--color-blue-400);
+  }
+}
+```
+
+#### Темизация через data-атрибуты
+```css
+:root {
+  --bg: white;
+  --text: black;
+}
+
+[data-theme="dark"] {
+  --bg: #1a1a2e;
+  --text: #eee;
+}
+
+[data-theme="high-contrast"] {
+  --bg: black;
+  --text: yellow;
+}
+
+/* HTML: <html data-theme="dark"> */
+```
+
+#### Адаптивные переменные
+```css
+:root {
+  --container-max: 1200px;
+  --gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --container-max: 100%;
+    --gap: 0.5rem;
+  }
+}
+
+.container {
+  max-width: var(--container-max);
+  gap: var(--gap);
+}
+```
+
+---
+
+## 5. Практическое задание
+
+### Задача 1: Система дизайн-токенов
+Создай полную систему токенов для компонента «Карточка товара»:
+```css
+/* Требования:
+1. Primitive tokens для цветов (5 оттенков каждого)
+2. Semantic tokens: primary, secondary, danger, success
+3. Component tokens для карточки: padding, gap, radius, shadow
+4. Поддержка dark mode через @media
+5. Поддержка high-contrast через [data-theme]
+*/
+```
+
+### Задача 2: Cascade Layers архитектура
+Рефакторь существующий CSS, используя слои:
+```css
+/* Слои в порядке приоритета:
+1. reset — normalize.css
+2. tokens — design tokens
+3. base — element styles
+4. layout — grid/flex containers
+5. components — UI components
+6. utilities — helper classes
+7. overrides — page-specific fixes
+*/
+```
+
+### Задача 3: :has() селекторы для форм
+Реализуй валидацию формы только на CSS:
+- Показывать ошибку когда поле заполнено И невалидно
+- Блокировать кнопку отправки если есть невалидные поля
+- Подсвечивать label когда input в фокусе или заполнен
+- Скрывать placeholder при фокусе
+
+### Задача 4: Специфичность аудит
+Дан CSS:
+```css
+#app .sidebar .nav .item.active a span { color: red; }
+.nav-link { color: blue; }
+```
+1. Посчитай специфичность каждого
+2. Перепиши с низкой специфичностью
+3. Используй :where() для сбросов
+
+---
+
+## 6. Таблица частых ошибок
+
+| Ошибка | Проблема | Решение |
+|--------|----------|---------|
+| `#id .class element` | Слишком высокая специфичность | Используй классы: `.component__element` |
+| `!important` везде | Невозможно переопределить | Cascade Layers, правильная архитектура |
+| `:is(.class, #id)` | Специфичность = ID | Используй `:where()` для утилит |
+| Переменные в @media | Не работают | Container queries или JS |
+| `:has()` без fallback | Нет поддержки в старых браузерах | `@supports selector(:has(*))` |
+| Наследование переменных | Неожиданные значения | Явно задавай на :root и компонентах |
+| Смешивание слоёв | Путаница в приоритетах | Чёткий порядок @layer в начале файла |
+
+---
+
+## 7. Полезные ресурсы
+
+### Спецификации
+- [CSS Cascading and Inheritance Level 4](https://www.w3.org/TR/css-cascade-4/)
+- [CSS Cascade Layers](https://www.w3.org/TR/css-cascade-5/#layering)
+- [Selectors Level 4](https://www.w3.org/TR/selectors-4/)
+
+### Статьи и гайды
+- [MDN: Cascade and inheritance](https://developer.mozilla.org/en-US/docs/Web/CSS/Cascade)
+- [CSS-Tricks: Cascade Layers](https://css-tricks.com/css-cascade-layers/)
+- [Una Kravets: The Future of CSS](https://una.im/css-future/)
+- [Stephanie Eckles: Modern CSS](https://moderncss.dev/)
+
+### Инструменты
+- [Specificity Calculator](https://specificity.keegan.st/)
+- [CSS Specificity Visualizer](https://codepen.io/tigt/pen/mdXeYZ)
+- [Cascade Layers Demo](https://codepen.io/miraneb/pen/xxGvZvq)
+
+### Can I Use
+- [Cascade Layers](https://caniuse.com/css-cascade-layers)
+- [:has()](https://caniuse.com/css-has)
+- [:is() / :where()](https://caniuse.com/css-matches-pseudo)
+- [Custom Properties](https://caniuse.com/css-variables)
+
+---
+
+## 8. Ключевые выводы
+
+1. **Специфичность — не враг, а инструмент**. Держи её низкой, используй классы БЭМ.
+2. **Cascade Layers** — лучший способ организовать CSS в больших проектах без !important.
+3. **:where()** — для сбросов и библиотек (специфичность 0).
+4. **:is()** — для группировки селекторов с сохранением специфичности.
+5. **:has()** — меняет игру: родительские селекторы, quantity queries, формулярная логика.
+6. **Custom Properties** — не просто переменные, а механизм наследования и динамических значений.
+7. **Design Tokens** — системный подход к темизации через семантические переменные.
+
+---
+
+*Следующий урок: 12_Advanced_Flex_Grid.txt — сложные раскладки, minmax, auto-fit/fill, вложенные гриды, grid areas*

@@ -1,0 +1,194 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{% trans "Compiler" %} - kernify{% endblock %}
+
+{% block extra_head %}
+<link href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/editor/editor.main.css" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-0">
+    <!-- Top Bar -->
+    <header class="bg-theme-dark border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <h5 class="mb-0"><i class="bi bi-code-square me-2"></i>{% trans "Compiler" %}</h5>
+            <span class="badge text-bg-secondary small">{{ selected_language_name }}</span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <label for="languageSelect" class="form-label mb-0 small text-theme-muted">{% trans "Language" %}</label>
+            <select id="languageSelect" class="form-select form-select-sm" style="width: auto;">
+                {% for lang in languages %}
+                <option value="{{ lang.slug }}" data-runnable="{{ lang.runnable|yesno:'true,false' }}" {% if lang.slug == selected_language %}selected{% endif %}>{{ lang.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </header>
+
+    <!-- Editor + Output -->
+    <div class="d-flex flex-column" style="height: calc(100vh - 56px - 66px); min-height: 520px;">
+        <!-- Tabs -->
+        <div class="bg-theme-dark border-bottom px-3 py-2 d-flex gap-1 flex-shrink-0" role="tablist">
+            <button class="btn btn-sm btn-outline-light active" data-tab="editor" type="button">{% trans "Code" %}</button>
+            <button class="btn btn-sm btn-outline-light" data-tab="output" type="button">{% trans "Output" %}</button>
+        </div>
+
+        <!-- Editor: flex-grow so it fills the remaining space, with an explicit height for Monaco -->
+        <div class="flex-grow-1 d-flex flex-column overflow-hidden" style="min-height: 0;" role="tabpanel">
+            <div id="editor" style="flex: 1 1 auto; min-height: 0;"></div>
+        </div>
+
+        <!-- Output (hidden by default) -->
+        <div id="outputPanel" class="d-none flex-grow-1 overflow-auto bg-theme-dark p-3" role="tabpanel" style="min-height: 0;">
+            <pre id="outputContent" class="mb-0 text-theme" style="font-family: monospace; font-size: 0.875rem;"></pre>
+        </div>
+
+        <!-- Bottom Bar -->
+        <footer class="bg-theme-dark border-top px-4 py-3 flex-shrink-0">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary" id="runBtn"><i class="bi bi-play-fill me-1"></i>{% trans "Run" %} (Ctrl+Enter)</button>
+                    <button class="btn btn-outline-secondary" id="resetBtn" type="button"><i class="bi bi-arrow-counterclockwise me-1"></i>{% trans "Reset" %}</button>
+                </div>
+                <small class="text-theme-muted" id="savedHint"><i class="bi bi-check2 me-1"></i>{% trans "Code is saved in this browser" %}</small>
+                <small class="text-warning d-none" id="notRunnableHint"><i class="bi bi-exclamation-triangle me-1"></i>{% trans "This language cannot be executed" %}</small>
+            </div>
+        </footer>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ languages|json_script:"compiler-languages" }}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.js"></script>
+<script>
+(function () {
+    const LANGUAGES = JSON.parse(document.getElementById('compiler-languages').textContent);
+    const STORAGE_PREFIX = 'kernify_compiler_code_';
+    const languageSelect = document.getElementById('languageSelect');
+    const runBtn = document.getElementById('runBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const outputContent = document.getElementById('outputContent');
+    const notRunnableHint = document.getElementById('notRunnableHint');
+    const RUN_ENABLED = {{ code_runner_enabled|yesno:"true,false" }};
+
+    function currentLanguageRunnable() {
+        const opt = languageSelect.options[languageSelect.selectedIndex];
+        return opt.dataset.runnable !== 'false';
+    }
+
+    function updateRunAvailability() {
+        const runnable = RUN_ENABLED && currentLanguageRunnable();
+        runBtn.disabled = !runnable;
+        notRunnableHint.classList.toggle('d-none', runnable || !RUN_ENABLED);
+    }
+
+    function starters() {
+        const map = {};
+        LANGUAGES.forEach(function (lang) { map[lang.slug] = lang.starter_code; });
+        return map;
+    }
+
+    function loadCode(slug) {
+        return localStorage.getItem(STORAGE_PREFIX + slug) || starters()[slug] || '';
+    }
+
+    require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' }});
+    require(['vs/editor/editor.main'], function () {
+        const initialLanguage = languageSelect.value;
+        const editorContainer = document.getElementById('editor');
+        const editor = monaco.editor.create(editorContainer, {
+            value: loadCode(initialLanguage),
+            language: initialLanguage,
+            theme: document.documentElement.getAttribute('data-theme') === 'dark' ||
+                   document.body.classList.contains('theme-dark') ? 'vs-dark' : 'vs',
+            automaticLayout: true,
+            minimap: { enabled: false },
+            fontSize: 14,
+            lineNumbers: 'on',
+            tabSize: 4,
+            wordWrap: 'on',
+        });
+
+        // Persist code per language in the browser
+        let saveTimer = null;
+        editor.onDidChangeModelContent(function () {
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(function () {
+                localStorage.setItem(STORAGE_PREFIX + languageSelect.value, editor.getValue());
+            }, 300);
+        });
+
+        // Tab switching
+        document.querySelectorAll('[data-tab]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                document.querySelectorAll('[data-tab]').forEach(function (b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                document.getElementById('editor').style.display = btn.dataset.tab === 'editor' ? 'block' : 'none';
+                document.getElementById('outputPanel').classList.toggle('d-none', btn.dataset.tab !== 'output');
+            });
+        });
+
+        languageSelect.addEventListener('change', function () {
+            localStorage.setItem(STORAGE_PREFIX + editor.__language, editor.getValue());
+            const slug = languageSelect.value;
+            editor.__language = slug;
+            monaco.editor.setModelLanguage(editor.getModel(), slug);
+            editor.setValue(loadCode(slug));
+            updateRunAvailability();
+        });
+        editor.__language = initialLanguage;
+        updateRunAvailability();
+
+        resetBtn.addEventListener('click', function () {
+            editor.setValue(starters()[languageSelect.value] || '');
+        });
+
+        async function runCode() {
+            const runBtnEl = document.getElementById('runBtn');
+            runBtnEl.disabled = true;
+            const originalLabel = runBtnEl.innerHTML;
+            runBtnEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>{% trans "Running…" %}';
+            // Switch to Output tab
+            document.querySelectorAll('[data-tab]').forEach(function (b) { b.classList.remove('active'); });
+            const outputTab = document.querySelector('[data-tab="output"]');
+            outputTab.classList.add('active');
+            document.getElementById('editor').style.display = 'none';
+            document.getElementById('outputPanel').classList.remove('d-none');
+            outputContent.textContent = '{% trans "Running…" %}';
+
+            try {
+                const response = await fetch('/api/code/run/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}',
+                    },
+                    body: JSON.stringify({ code: editor.getValue(), language: languageSelect.value }),
+                });
+                const data = await response.json();
+                if (data.output !== undefined && data.output !== '') {
+                    outputContent.textContent = data.output;
+                } else if (data.error) {
+                    outputContent.textContent = '{% trans "Error" %}: ' + data.error;
+                } else {
+                    outputContent.textContent = '{% trans "Done" %}';
+                }
+            } catch (e) {
+                outputContent.textContent = '{% trans "Error" %}: ' + e.message;
+            } finally {
+                runBtnEl.disabled = false;
+                runBtnEl.innerHTML = originalLabel;
+            }
+        }
+
+        runBtn.addEventListener('click', runCode);
+        editor.onKeyDown(function (e) {
+            if (e.ctrlKey && e.keyCode === 13) {
+                runCode();
+            }
+        });
+    });
+})();
+</script>
+{% endblock %}

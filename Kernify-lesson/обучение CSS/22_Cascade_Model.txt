@@ -1,0 +1,514 @@
+# Урок 22: Модель каскада — источники/приоритеты, слои, специфичность, наследование, сокращения, @scope
+
+## Цели урока
+- Понять модель каскада CSS: источники стилей и их приоритет
+- Изучить специфичность — как вычисляется вес селектора
+- Разобрать наследование — какие свойства наследуются, какие нет
+- Освоить каскадные слои (@layer) и @scope для управления приоритетом
+- Научиться использовать сокращения (shorthand) и корректно сбрасывать стили
+
+---
+
+## 1. Модель каскада — откуда берутся стили
+
+Каскад (C — в CSS) определяет, какое правило применяется, когда несколько селекторов нацелены на один элемент.
+
+### Источники стилей (от низкого к высокому приоритету)
+
+| Приоритет | Источник | Описание |
+|-----------|----------|----------|
+| 1 (низкий) | User Agent | Встроенные стили браузера (например, `display: block` для `div`) |
+| 2 | User | Пользовательские стили браузера (расширения, пользовательский CSS) |
+| 3 | Author | Авторские стили сайта (твои CSS-файлы) |
+| 4 | Author `!important` | Твои стили с `!important` |
+| 5 | User `!important` | Пользовательские стили с `!important` |
+| 6 (высокий) | User Agent `!important` | Встроенные браузерные `!important` |
+
+Внутри одного источника приоритет определяется:
+1. Порядком объявления (позже = выше)
+2. Специфичностью селектора
+3. Каскадными слоями (@layer)
+
+### Пример каскада
+```css
+/* User Agent: button { padding: 1px 6px; } */
+/* User:   button { background: #f0f0f0; } */
+/* Author: button { background: blue; color: white; padding: 0.5rem 1rem; } */
+/* Итог:   background: blue; color: white; padding: 0.5rem 1rem; */
+```
+
+### Порядок объявления в одном источнике
+```css
+.btn { color: red; }   /* строка 10 */
+.btn { color: blue; }  /* строка 20 — выигрывает, так как позже */
+```
+
+---
+
+## 2. Специфичность — вес селектора
+
+Специфичность считается как набор из четырёх чисел (A, B, C, D), сравниваемых слева направо.
+
+### Компоненты специфичности
+
+| Компонент | Селекторы | Вес |
+|-----------|-----------|-----|
+| A | ID селекторы (`#header`) | (1,0,0,0) каждый |
+| B | Классы, атрибуты, псевдоклассы (`.btn`, `[type="text"]`, `:hover`, `:not()`) | (0,1,0,0) каждый |
+| C | Элементы/теги, псевдоэлементы (`div`, `::before`, `p`) | (0,0,1,0) каждый |
+| D | Универсальный (`*`), комбинаторы (` `, `>`, `+`, `~`) | (0,0,0,1) — не влияет |
+
+### Примеры вычисления
+
+```css
+/* (0,1,0,0) — один класс */
+.btn { color: red; }
+
+/* (0,2,0,0) — два класса */
+.btn.primary { color: blue; } /* выигрывает у .btn */
+
+/* (0,0,1,0) — один тег */
+div { color: green; }
+
+/* (0,1,1,0) — класс + тег */
+.btn div { color: orange; } /* выигрывает у .btn */
+
+/* (1,0,0,0) — ID */
+#header { color: purple; } /* выигрывает у любого количества классов */
+
+/* (1,1,0,0) — ID + класс */
+#header .btn { color: pink; } /* выигрывает у #header */
+
+/* (0,0,0,1) — универсальный */
+* { margin: 0; } /* ниже любого селектора */
+
+/* (0,1,0,1) — класс + универсальный (комбинатор не считается отдельно в современном подходе) */
+*.btn { } /* как .btn */
+```
+
+### :not(), :is(), :where() — особенности
+
+```css
+/* :not() — считается специфичность самого селектора внутри, плюс сам :not() как класс (0,1,0,0) */
+.btn:not(.disabled) { color: red; }  /* (0,2,0,0) */
+
+/* :is() — specificity = максимум из селекторов внутри (как один класс) */
+:is(.btn, .card) { color: blue; } /* (0,1,0,0) */
+
+/* :where() — specificity = (0,0,0,0) — всегда ниже любого селектора */
+:where(.btn, .card) { color: green; } /* проигрывает любому */
+```
+
+### Практическое правило
+Держи специфичность низкой (максимум 0,2,0,0), чтобы легко переопределять стили. Избегай ID в стилях.
+
+---
+
+## 3. Наследование
+
+Некоторые свойства автоматически наследуются от родителя к потомку, другие — нет.
+
+### Наследуемые свойства (по умолчанию)
+- `color`, `font-family`, `font-size`, `font-weight`, `font-style`, `line-height`
+- `text-align`, `text-indent`, `text-transform`, `letter-spacing`, `word-spacing`
+- `visibility`, `cursor`, `list-style`
+- `quotes`, `orphans`, `widows`
+
+```css
+body {
+  font-family: system-ui;
+  color: #1f2937;
+  line-height: 1.6;
+}
+/* Все потомки наследуют font-family, color, line-height */
+```
+
+### НЕ наследуемые свойства
+- `margin`, `padding`, `border`, `outline`
+- `width`, `height`, `min-width`, `max-height`
+- `display`, `position`, `flex`, `grid`
+- `background`, `box-shadow`, `opacity`, `transform`
+
+### Принудительное наследование / сброс
+```css
+.child {
+  color: inherit;      /* явно наследовать цвет */
+  border: inherit;     /* наследовать границу (если наследуется) */
+  margin: initial;     /* сбросить к начальному значению */
+  padding: unset;      /* inherit если наследуется, иначе initial */
+  background: revert;  /* сбросить к user-agent стилям */
+  font-size: revert-layer; /* сбросить к значению из предыдущего каскадного слоя */
+  all: initial;        /* сбросить ВСЕ свойства к initial */
+  all: inherit;        /* унаследовать ВСЕ свойства */
+  all: unset;          /* inherited или initial в зависимости от свойства */
+  all: revert;         /* сбросить к user-agent */
+}
+```
+
+### all — сброс всех свойств сразу
+```css
+.reset-button {
+  all: initial;           /* все свойства в initial */
+  /* потом заново задаём нужные */
+  padding: 0.5rem 1rem;
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+```
+
+---
+
+## 4. Каскадные слои (@layer)
+
+### Зачем нужны слои
+Слои позволяют управлять приоритетом стилей независимо от специфичности селектора. Стили в более позднем слое выигрывают у ранних.
+
+### Объявление порядка слоёв
+```css
+@layer reset, tokens, base, layout, components, utilities, overrides;
+/* reset — самый низкий приоритет, overrides — самый высокий */
+```
+
+### Использование слоёв
+```css
+@layer reset {
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+}
+
+@layer base {
+  body { font-family: system-ui; color: var(--color-text); }
+}
+
+@layer components {
+  .btn { background: blue; color: white; }
+}
+
+@layer utilities {
+  .text-center { text-align: center !important; }
+}
+
+@layer overrides {
+  .homepage .hero { background: red; }
+}
+```
+
+### Вложенные слои
+```css
+@layer components {
+  @layer buttons {
+    .btn { background: blue; }
+  }
+
+  @layer cards {
+    .card { border: 1px solid #ccc; }
+  }
+}
+```
+
+### Специфичность внутри и между слоями
+```css
+@layer base, components;
+
+@layer base {
+  .btn { color: red; }     /* (0,1,0,0) в слое base */
+}
+
+@layer components {
+  .btn { color: blue; }    /* (0,1,0,0) в слое components — выигрывает, так как слой позднее */
+}
+```
+
+Даже если в `base` селектор более специфичный, слой `components` выиграет из-за порядка слоёв.
+
+### !important и слои
+```css
+@layer base {
+  .btn { color: red !important; }
+}
+
+@layer components {
+  .btn { color: blue !important; } /* выигрывает из-за слоя */
+}
+```
+
+---
+
+## 5. @scope — область действия селекторов
+
+### Проблема, которую решает @scope
+Селекторы могут «утекать» за пределы компонента. @scope ограничивает область, в которой селектор применяется.
+
+### Синтаксис
+```css
+@scope (верхняя_граница) to (нижняя_граница) {
+  селектор { свойство: значение; }
+}
+```
+
+### Пример
+```css
+/* Стили применяются только к элементам внутри .card, но не ниже .card__body */
+@scope (.card) to (.card__body) {
+  h2 {
+    color: oklch(0.21 0.006 285);
+    margin-bottom: 0.5rem;
+  }
+
+  p {
+    color: oklch(0.55 0.01 285);
+  }
+}
+```
+
+```html
+<div class="card">
+  <h2>Заголовок — стили применятся</h2>
+  <p>Текст — стили применятся</p>
+
+  <div class="card__body">
+    <h2>Заголовок — стили НЕ применятся (нижняя граница)</h2>
+    <p>Текст — стили НЕ применятся</p>
+  </div>
+
+  <section class="related">
+    <h2>Заголовок — стили применятся (вне card__body, но внутри card)</h2>
+  </section>
+</div>
+
+<div class="unrelated">
+  <h2>Заголовок — стили НЕ применятся (вне card)</h2>
+</div>
+```
+
+### Scope без нижней границы
+```css
+@scope (.card) {
+  /* Применяется ко всем потомкам .card */
+  h2 { color: red; }
+}
+```
+
+### Spezificity в @scope
+Селекторы внутри @scope получают бонус к специфичности в зависимости от близости к границы scope (ближе к верхней границе = выше приоритет).
+
+### Поддержка @scope
+Chrome 118+, Firefox 127+, Safari 17.4+. Для старых браузеров используй обёртку в класс компонента (БЭМ).
+
+---
+
+## 6. Сокращения (shorthand) и сброс стилей
+
+### CSS Shorthand — сокращенная запись
+
+#### margin / padding
+```css
+/* Четыре значения: top, right, bottom, left */
+margin: 1rem 2rem 1.5rem 1rem;
+
+/* Три значения: top, horizontal, bottom */
+margin: 1rem 2rem 1.5rem;
+
+/* Два значения: vertical, horizontal */
+margin: 1rem 2rem;
+
+/* Одно значение: все стороны */
+margin: 1rem;
+```
+
+#### border
+```css
+border: 1px solid #e5e7eb;
+/* border-width border-style border-color */
+```
+
+#### font
+```css
+font: italic small-caps 700 1.2rem/1.6 system-ui;
+/* style variant weight size/line-height family */
+```
+
+#### background
+```css
+background: #2563eb url('bg.png') no-repeat center/cover fixed;
+/* color image repeat position size attachment origin clip */
+```
+
+#### list-style
+```css
+list-style: disc inside url('marker.png');
+/* type position image */
+```
+
+### Антипаттерн shorthand
+```css
+/* Плохо: border shorthand сбрасывает border-image */
+.card {
+  border-image: url('frame.png') 30 round;
+  border: 1px solid #000;  /* border-image сбрасывается в initial! */
+}
+
+/* Хорошо: задавай border-image после border, или используй долгое описание */
+.card {
+  border: 1px solid #000;
+  border-image: url('frame.png') 30 round;
+}
+```
+
+### Сброс конкретных свойств
+```css
+.initial {
+  display: initial;   /* значение по умолчанию для свойства (inline для span, block для div) */
+  color: initial;     /* depends on property */
+}
+
+.inherit {
+  color: inherit;     /* значение от родителя */
+}
+
+.unset {
+  margin: unset;      /* inherit если наследуется, initial если нет */
+}
+
+.revert {
+  background: revert; /* сбросить к user-agent стилям браузера */
+}
+
+.revert-layer {
+  font-size: revert-layer; /* сбросить к предыдущему каскадному слою */
+}
+```
+
+---
+
+## 7. Комплексный пример: приоритеты в действии
+
+```html
+<div class="card featured">
+  <h2 class="card__title">Заголовок</h2>
+  <p class="card__text">Описание</p>
+</div>
+```
+
+```css
+/* Пользовательские стили (browser extension) */
+/* .card__title { color: green; }  hypothetical user style */
+
+/* Авторские стили — слой base */
+@layer base {
+  .card__title {
+    color: oklch(0.21 0.006 285);
+    font-size: 1.125rem;
+  }
+}
+
+/* Авторские стили — слой components */
+@layer components {
+  .card__title {
+    color: oklch(0.62 0.22 264);  /* выигрывает из-за слоя components, несмотря на одинаковую специфичность */
+  }
+
+  .featured .card__title {
+    color: oklch(0.65 0.22 20);   /* (0,2,0,0) — выигрывает по специфичности внутри слоя */
+  }
+}
+
+/* Сброс для конкретного случая */
+.card__title--reset {
+  all: initial;
+  color: inherit;
+}
+```
+
+### Итоговое применение (для `.featured .card__title`):
+1. Источник: Author (твои стили) — приоритет 3
+2. Слой: components — приоритет выше base
+3. Специфичность: (0,2,0,0) для `.featured .card__title` против (0,1,0,0) для `.card__title`
+4. Результат: `color: oklch(0.65 0.22 20)` (красный от featured)
+
+---
+
+## 8. Таблица приоритетов (справочник)
+
+| Уровень | Пример | Победитель если конфликтует с |
+|---------|--------|-------------------------------|
+| 1 | User Agent `div { color: black; }` | Проигрывает всему |
+| 2 | User стили браузера | Проигрывает Author |
+| 3 | Author `.btn { color: blue; }` | Проигрывает Author !important |
+| 4 | Author `!important` `.btn { color: red !important; }` | Проигрывает User !important |
+| 5 | User `!important` | Проигрывает User Agent !important |
+| 6 | User Agent `!important` | Высший приоритет |
+
+Внутри одного уровня:
+1. Позже в коде = выше
+2. Выше специфичность = выше
+3. Позже слой @layer = выше
+
+---
+
+## 9. Чек-лист понимания каскада
+
+| Вопрос | Ответ |
+|--------|-------|
+| Что wins: класс или ID? | ID (1,0,0,0)勝ど classe (0,1,0,0) |
+| Что wins: два одинаковых класса, но разные слои? | Поздний слой |
+| Что wins:later в коде или выше специфичность? | Сначала специфичность, потом порядок (в одном слое) |
+| Наследуется ли margin? | Нет |
+| Наследуется ли color? | Да |
+| Что делает `all: initial`? | Сбрасывает все свойства к initial |
+| Что делает `revert`? | Сбрасывает к user-agent стилям |
+| Когда @scope полезен? | Когда нужно ограничить действие селектора границей компонента |
+
+---
+
+## 10. Практическое задание
+
+### Задача 1: Специфичность в действии
+Создай HTML с элементом, к которому применяются 5 разных селекторов с разной специфичностью. Предскажи, какой цвет победит, проверь в DevTools (Computed).
+
+Селекторы:
+1. `*` (универсальный)
+2. `.title` (класс)
+3. `h2.card__title` (тег + класс)
+4. `#main .card__title` (ID + класс)
+5. `.card__title { color: red !important; }`
+
+### Задача 2: Наследование
+Создай `.card` с `color` и `font-family`. Добавь внутрь `.card__title` с własnym `font-size`, но без `color` — проверь, что цвет наследуется. Добавь `.card__price` с `margin` — проверь, что margin НЕ наследуется.
+
+### Задача 3: Каскадные слои
+Создай два слоя `@layer base, components`. В base задай `.btn { color: red; }`, в components — `.btn { color: blue; }`. Проверь, что синий gewinnt. Затем добавь `!important` в base — проверь, что красный всё равно проигрывает синему без !important в components (из-за слоя), но с !important в components синий выиграет.
+
+### Задача 4: @scope
+Создай `.card` с заголовками h2 внутри и вне `.card__body`. Используй @scope, чтобы стили h2 применялись только внутри `.card`, но не внутри `.card__body`.
+
+### Задача 5: Shorthand и сброс
+Практикуй shorthand для margin, padding, border, font, background. Используй `all: initial` для сброса стиля кнопки, затем задай только нужные свойства.
+
+---
+
+## 11. Полезные ресурсы
+
+- [MDN: Cascade and inheritance](https://developer.mozilla.org/en-US/docs/Learn/CSS/Building_blocks/Cascade_and_inheritance)
+- [MDN: Specificity](https://developer.mozilla.org/en-US/docs/Web/CSS/Specificity)
+- [MDN: Cascade layers](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_cascade_layers)
+- [MDN: @scope](https://developer.mozilla.org/en-US/docs/Web/CSS/@scope)
+- [CSS Specificity Calculator](https://specificity.keegan.st/)
+- [W3C: CSS Cascade Level 5](https://www.w3.org/TR/css-cascade-5/)
+
+---
+
+## 12. Ключевые выводы
+
+1. **Каскад** определяет приоритет: источники (User Agent < User < Author), потом слои, специфичность, порядок
+2. **Специфичность** — набор (A,B,C,D), ID > классы/атрибуты > теги > универсальный
+3. **Наследование** — цвет и шрифт наследуются, отступы и границы — нет
+4. **@layer** — управление приоритетом без `!important` и избыточной специфичности
+5. **@scope** — ограничивает область действия селектора границами компонента
+6. **Shorthand** — краткая запись, но осторожно со сбросом вложенных свойств (border-image)
+7. **all: initial/inherit/unset/revert** — полные сбросы свойств при необходимости
+8. **Держи специфичность низкой** — не используй ID для стилей, избегай вложенности селекторов
+
+*Следующий урок: 23_Advanced_Layout.txt — Продвинутая вёрстка: grid track sizing, subgrid, flex sizing, intrinsic sizing, containing blocks*

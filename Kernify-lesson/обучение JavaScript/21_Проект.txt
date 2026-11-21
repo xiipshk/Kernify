@@ -1,0 +1,645 @@
+# Урок 21: Проект среднего уровня — «Task Manager» (Full-Stack Like)
+
+## 🎯 Цели проекта
+- Закрепить темы уроков 11-20 на практике
+- Построить SPA с роутингом, состоянием, API-слоем
+- Применить: модули, классы, асинхронность, паттерны, тесты, линтинг
+- Получить production-ready архитектуру для портфолио
+
+---
+
+## Требования
+
+**Функционал:**
+1. **Авторизация**: Регистрация, вход, JWT в HttpOnly cookie, защищённые роуты
+2. **Проекты**: CRUD, переключение между проектами
+3. **Задачи**: CRUD, статусы (Backlog/Todo/In Progress/Done), приоритеты, дедлайны
+4. **Drag & Drop**: Перемещение задач между колонками (Kanban)
+5. **Фильтры/Поиск**: По статусу, приоритету, тексту, тегам
+6. **Real-time** (опционально): WebSocket уведомления об изменениях
+7. **Офлайн**: Service Worker, IndexedDB кэш, синхронизация при онлайне
+
+**Технологический стек:**
+- **Билд**: Vite + TypeScript
+- **Роутинг**: Собственный роутер (History API) или wouter
+- **Состояние**: Собственный стор (EventEmitter + Proxy) или Zustand
+- **API**: Fetch wrapper с interceptors, retry, токены
+- **Стили**: CSS Modules / PostCSS / Tailwind (на выбор)
+- **Тесты**: Vitest + Testing Library + MSW (Mock Service Worker)
+- **Линт**: ESLint + Prettier + Husky
+- **CI**: GitHub Actions (lint, test, build, e2e)
+
+---
+
+## Архитектура (Feature-Sliced Design упрощённо)
+
+```
+src/
+├── app/                    # Инициализация, провайдеры, роутинг
+│   ├── providers/          # AuthProvider, QueryProvider
+│   ├── routes/             # Конфигурация роутов
+│   └── styles/             # Глобальные стили, reset, variables
+│
+├── pages/                  # Страницы (компоновка виджетов)
+│   ├── LoginPage/
+│   ├── RegisterPage/
+│   ├── DashboardPage/
+│   ├── ProjectPage/
+│   └── SettingsPage/
+│
+├── widgets/                # Крупные самостоятельные блоки
+│   ├── KanbanBoard/        # Доска с колонками
+│   ├── ProjectSidebar/     # Список проектов
+│   ├── TaskModal/          # Модалка создания/редактирования
+│   └── Header/             # Верхняя панель с пользователем
+│
+├── features/               # Бизнес-фичи (действия пользователя)
+│   ├── auth/               # login, register, logout, refresh
+│   ├── projects/           # CRUD проектов
+│   ├── tasks/              # CRUD задач, DnD, фильтры
+│   └── notifications/      # Toast, real-time updates
+│
+├── entities/               # Бизнес-сущности
+│   ├── User/
+│   ├── Project/
+│   └── Task/
+│
+├── shared/                 # Переиспользуемое ядро
+│   ├── api/                # fetch wrapper, endpoints, types
+│   ├── router/             # Роутер, хуки навигации
+│   ├── store/              # Базовый стор, хуки
+│   ├── ui/                 # Примитивы: Button, Input, Modal, Select, ...
+│   ├── utils/              # Helpers: date, validation, classnames
+│   ├── hooks/              # Кастомные хуки
+│   └── types/              # Глобальные типы
+│
+└── main.ts                 # Точка входа
+```
+
+---
+
+## Ключевые реализации
+
+### 1. API Client (shared/api/client.ts)
+
+```typescript
+type RequestOptions = RequestInit & {
+  params?: Record<string, string>;
+  skipAuth?: boolean;
+  retry?: number;
+};
+
+class ApiClient {
+  private baseUrl: string;
+  private refreshPromise: Promise<string> | null = null;
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl;
+  }
+
+  private async getAccessToken(): Promise<string | null> {
+    // Токен в памяти или из cookie (HttpOnly — читать нельзя, но отправляется автоматически)
+    return getCookie('access_token');
+  }
+
+  private async refreshToken(): Promise<string> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = (async () => {
+        const res = await fetch(`${this.baseUrl}/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include'
+        });
+        if (!res.ok) throw new Error('Refresh failed');
+        const { accessToken } = await res.json();
+        return accessToken;
+      })().finally(() => { this.refreshPromise = null; });
+    }
+    return this.refreshPromise;
+  }
+
+  async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+    const { params, skipAuth, retry = 1, headers, ...init } = options;
+
+    const url = new URL(endpoint, this.baseUrl);
+    if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+
+    const requestHeaders: HeadersInit = {
+      'Content-Type': 'application/json',
+      ...headers
+    };
+
+    if (!skipAuth) {
+      const token = await this.getAccessToken();
+      if (token) (requestHeaders as Record<string, string>)['Authorization'] = `Bearer ${token}`;
+    }
+
+    const makeRequest = async (attempt: number): Promise<Response> => {
+      const res = await fetch(url, { ...init, headers: requestHeaders, credentials: 'include' });
+
+      if (res.status === 401 && !skipAuth && attempt < retry) {
+        await this.refreshToken();
+        return makeRequest(attempt + 1);
+      }
+      return res;
+    };
+
+    const response = await makeRequest(0);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Unknown error' }));
+      throw new ApiError(response.status, error.message, error);
+    }
+
+    if (response.status === 204) return null as T;
+    return response.json();
+  }
+
+  get<T>(endpoint: string, opts?: RequestOptions) { return this.request<T>(endpoint, { ...opts, method: 'GET' }); }
+  post<T>(endpoint: string, body: unknown, opts?: RequestOptions) { return this.request<T>(endpoint, { ...opts, method: 'POST', body: JSON.stringify(body) }); }
+  patch<T>(endpoint: string, body: unknown, opts?: RequestOptions) { return this.request<T>(endpoint, { ...opts, method: 'PATCH', body: JSON.stringify(body) }); }
+  delete<T>(endpoint: string, opts?: RequestOptions) { return this.request<T>(endpoint, { ...opts, method: 'DELETE' }); }
+}
+
+export const api = new ApiClient(import.meta.env.VITE_API_URL || '/api');
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public data?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+```
+
+### 2. Store (shared/store/index.ts)
+
+```typescript
+type Listener<T> = (state: T) => void;
+
+export function createStore<T extends object>(initialState: T) {
+  let state = initialState;
+  const listeners = new Set<Listener<T>>();
+
+  // Proxy для отслеживания мутаций
+  const proxy = new Proxy(state, {
+    set(target, prop, value) {
+      target[prop as keyof T] = value;
+      listeners.forEach(fn => fn(state));
+      return true;
+    }
+  });
+
+  return {
+    getState: () => state,
+    setState: (partial: Partial<T> | ((s: T) => Partial<T>)) => {
+      const next = typeof partial === 'function' ? partial(state) : partial;
+      state = { ...state, ...next };
+      listeners.forEach(fn => fn(state));
+    },
+    subscribe: (fn: Listener<T>) => {
+      listeners.add(fn);
+      fn(state);
+      return () => listeners.delete(fn);
+    },
+    // Для React/Vue интеграции
+    useStore: (selector?: (s: T) => any) => {
+      // Реализация через useSyncExternalStore (React 18+)
+    }
+  };
+}
+
+// Использование
+interface AuthState {
+  user: User | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+}
+
+export const authStore = createStore<AuthState>({
+  user: null,
+  isAuthenticated: false,
+  isLoading: true
+});
+```
+
+### 3. Роутер (shared/router/index.ts)
+
+```typescript
+type RouteHandler = (params: Record<string, string>) => Promise<void> | void;
+
+interface Route {
+  path: string;
+  handler: RouteHandler;
+  guards?: Array<() => boolean | Promise<boolean>>;
+}
+
+export class Router {
+  private routes: Route[] = [];
+  private currentParams: Record<string, string> = {};
+
+  addRoute(path: string, handler: RouteHandler, guards?: Route['guards']) {
+    this.routes.push({ path, handler, guards });
+  }
+
+  private match(pathname: string): { route: Route; params: Record<string, string> } | null {
+    for (const route of this.routes) {
+      const regex = this.pathToRegex(route.path);
+      const match = pathname.match(regex);
+      if (match) {
+        const params: Record<string, string> = {};
+        match.groups && Object.entries(match.groups).forEach(([k, v]) => params[k] = v!);
+        return { route, params };
+      }
+    }
+    return null;
+  }
+
+  private pathToRegex(path: string): RegExp {
+    const escaped = path
+      .replace(/\//g, '\\/')
+      .replace(/:(\w+)/g, '(?<$1>[^/]+)');
+    return new RegExp(`^${escaped}$`);
+  }
+
+  async navigate(path: string, replace = false) {
+    const match = this.match(path);
+    if (!match) return this.navigate('/404');
+
+    const { route, params } = match;
+
+    // Guards
+    for (const guard of route.guards || []) {
+      if (!(await guard())) return this.navigate('/login');
+    }
+
+    this.currentParams = params;
+    replace ? history.replaceState(null, '', path) : history.pushState(null, '', path);
+    await route.handler(params);
+  }
+
+  start() {
+    window.addEventListener('popstate', () => this.navigate(location.pathname, true));
+    this.navigate(location.pathname, true);
+  }
+}
+
+// Глобальный экземпляр
+export const router = new Router();
+
+// Хелперы для навигации
+export const navigate = (path: string) => router.navigate(path);
+export const useParams = () => router.currentParams;
+```
+
+### 4. Drag & Drop (features/tasks/dnd.ts)
+
+```typescript
+// Нативный HTML5 DnD для Kanban
+export function setupKanbanDnD(
+  columns: HTMLElement[],
+  onMove: (taskId: string, fromColumn: string, toColumn: string, index: number) => void
+) {
+  let draggedTask: HTMLElement | null = null;
+  let sourceColumn: string | null = null;
+
+  columns.forEach(column => {
+    const columnId = column.dataset.columnId!;
+
+    column.addEventListener('dragstart', (e) => {
+      const task = (e.target as HTMLElement).closest('[data-task-id]') as HTMLElement;
+      if (!task) return;
+
+      draggedTask = task;
+      sourceColumn = columnId;
+      task.classList.add('dragging');
+      e.dataTransfer!.effectAllowed = 'move';
+    });
+
+    column.addEventListener('dragend', () => {
+      if (draggedTask) draggedTask.classList.remove('dragging');
+      draggedTask = null;
+      sourceColumn = null;
+    });
+
+    column.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = 'move';
+
+      const afterElement = getDragAfterElement(column, e.clientY);
+      const dragging = document.querySelector('.dragging');
+      if (afterElement) {
+        column.insertBefore(dragging!, afterElement);
+      } else {
+        column.appendChild(dragging!);
+      }
+    });
+
+    column.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!draggedTask || !sourceColumn) return;
+
+      const taskId = draggedTask.dataset.taskId!;
+      const targetColumn = columnId;
+      const tasks = [...column.querySelectorAll('[data-task-id]')];
+      const index = tasks.indexOf(draggedTask);
+
+      if (sourceColumn !== targetColumn || index !== -1) {
+        onMove(taskId, sourceColumn, targetColumn, index);
+      }
+    });
+  });
+}
+
+function getDragAfterElement(container: HTMLElement, y: number): Element | null {
+  const draggableElements = [...container.querySelectorAll('[data-task-id]:not(.dragging)')];
+  return draggableElements.reduce((closest, child) => {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) {
+      return { offset, element: child };
+    }
+    return closest;
+  }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+}
+```
+
+### 5. Офлайн поддержка (shared/offline/index.ts)
+
+```typescript
+// Service Worker регистрация
+export async function registerSW() {
+  if ('serviceWorker' in navigator) {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    console.log('SW registered', reg.scope);
+  }
+}
+
+// IndexedDB кэш для офлайн-режима
+import { openDB } from 'idb';
+
+const DB_NAME = 'task-manager-offline';
+const STORE_TASKS = 'tasks';
+const STORE_MUTATIONS = 'mutations';
+
+export const offlineDB = await openDB(DB_NAME, 1, {
+  upgrade(db) {
+    db.createObjectStore(STORE_TASKS, { keyPath: 'id' });
+    db.createObjectStore(STORE_MUTATIONS, { keyPath: 'id', autoIncrement: true });
+  }
+});
+
+// Сохранение задачи в кэш
+export async function cacheTask(task: Task) {
+  await offlineDB.put(STORE_TASKS, task);
+}
+
+// Очередь мутаций для синхронизации
+export async function queueMutation(mutation: { type: 'create'|'update'|'delete'; payload: any }) {
+  await offlineDB.add(STORE_MUTATIONS, { ...mutation, timestamp: Date.now() });
+}
+
+// Синхронизация при возврате онлайн
+export async function syncWhenOnline(api: ApiClient) {
+  const mutations = await offlineDB.getAll(STORE_MUTATIONS);
+  for (const m of mutations) {
+    try {
+      switch (m.type) {
+        case 'create': await api.post('/tasks', m.payload); break;
+        case 'update': await api.patch(`/tasks/${m.payload.id}`, m.payload); break;
+        case 'delete': await api.delete(`/tasks/${m.payload.id}`); break;
+      }
+      await offlineDB.delete(STORE_MUTATIONS, m.id);
+    } catch (e) {
+      console.error('Sync failed', e);
+      break; // Остановимся, попробуем позже
+    }
+  }
+}
+
+// Слушатель онлайн/офлайн
+window.addEventListener('online', () => syncWhenOnline(api));
+```
+
+---
+
+## Тестирование (примеры)
+
+### Unit тест store
+```typescript
+// shared/store/__tests__/authStore.test.ts
+import { describe, it, expect, vi } from 'vitest';
+import { createStore } from '../index';
+
+describe('createStore', () => {
+  it('notifies subscribers on change', () => {
+    const store = createStore({ count: 0 });
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+
+    store.setState({ count: 1 });
+    expect(listener).toHaveBeenCalledWith({ count: 1 });
+
+    unsubscribe();
+    store.setState({ count: 2 });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+```
+
+### Интеграционный тест API (MSW)
+```typescript
+// features/tasks/__tests__/tasks.test.ts
+import { http, HttpResponse } from 'msw';
+import { setupServer } from 'msw/node';
+import { api } from '@/shared/api/client';
+
+const server = setupServer(
+  http.get('/api/tasks', () => HttpResponse.json([
+    { id: '1', title: 'Task 1', status: 'todo' }
+  ])),
+  http.post('/api/tasks', async ({ request }) => {
+    const body = await request.json();
+    return HttpResponse.json({ id: '2', ...body }, { status: 201 });
+  })
+);
+
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+it('fetches tasks', async () => {
+  const tasks = await api.get<Task[]>('/tasks');
+  expect(tasks).toHaveLength(1);
+});
+
+it('creates task', async () => {
+  const task = await api.post<Task>('/tasks', { title: 'New', status: 'backlog' });
+  expect(task.id).toBe('2');
+});
+```
+
+### E2E тест (Playwright)
+```typescript
+// e2e/kanban.spec.ts
+import { test, expect } from '@playwright/test';
+
+test('drag task between columns', async ({ page }) => {
+  await page.goto('/project/1');
+  await page.waitForSelector('[data-column-id="todo"]');
+
+  const task = page.locator('[data-task-id="1"]').first();
+  const targetColumn = page.locator('[data-column-id="in-progress"]');
+
+  await task.dragTo(targetColumn);
+
+  await expect(page.locator('[data-column-id="in-progress"] [data-task-id="1"]')).toBeVisible();
+});
+```
+
+---
+
+## CI/CD Pipeline (.github/workflows/ci.yml)
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test -- --run --coverage
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - run: npx serve -s dist -l 3000 &
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  deploy-preview:
+    runs-on: ubuntu-latest
+    needs: [build, e2e]
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Deploy to Netlify/Vercel preview
+        run: npx netlify deploy --dir=dist --message="PR #${{ github.event.number }}" || npx vercel --token=${{ secrets.VERCEL_TOKEN }}
+```
+
+---
+
+## Практические задания для углубления
+
+1. **Real-time**: Добавьте WebSocket (Socket.io / native WS) для синхронизации досок между пользователями
+2. **Optimistic UI**: Обновляйте UI мгновенно, откатывайте при ошибке API
+3. **Undo/Redo**: История действий для задач (Command pattern)
+4. **Keyboard shortcuts**: Vim-like навигация, быстрые действия
+5. **PWA**: Manifest, Service Worker, установка, пуш-уведомления
+6. **Internationalization (i18n)**: react-i18next / lingui
+7. **Storybook**: Документирование UI компонентов
+8. **Performance**: Виртуализация списков задач (1000+), код-сплиттинг по фичам
+
+---
+
+## Типичные ошибки в проекте
+
+| Ошибка | Решение |
+|--------|---------|
+| Бизнес-логика в компонентах | Выносите в features/entities, компоненты — только UI |
+| Проп-дриллинг (проброс через 5 уровней) | Context / Store / композиция |
+| Дублирование типов API и фронтенда | Генерация типов из OpenAPI (openapi-typescript) |
+| Нет обработки ошибок API | Глобальный Error Boundary + toast уведомления |
+| Тесты ломаются при рефакторинге | Тестируйте поведение, не реализацию |
+| Офлайн не работает | Проверяйте Service Worker в DevTools → Application |
+
+---
+
+## Контрольные вопросы
+
+1. Зачем разделять features, entities, widgets, shared?
+2. Как работает оптимистичное обновление UI?
+3. В чём разница между MSW и мокированием fetch в тестах?
+4. Зачем нужен `credentials: 'include'` в fetch?
+5. Как реализовать бесконечную прокрутку задач?
+6. Что такое Feature-Sliced Design и зачем он нужен?
+
+---
+
+## Что дальше?
+
+- **Урок 22**: TypeScript Deep Dive
+- **Урок 23**: Advanced React Patterns / Vue Composition API
+- **Урок 24**: Node.js Backend для этого проекта
+- **Урок 25**: Modules & Metaprogramming
+- **Урок 26+**: Advanced уровень
+
+Поздравляю! Вы построили полноценное SPA приложение с современной архитектурой! 🚀

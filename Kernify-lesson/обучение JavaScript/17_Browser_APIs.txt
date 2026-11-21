@@ -1,0 +1,711 @@
+# Урок 17: Browser APIs — DOM, Events, Fetch, Storage, URL/History, Forms
+
+## Цели урока
+- Мастерски работать с DOM: селекторы, навигация, манипуляция, шаблоны
+- Понимать систему событий: фазы, делегирование, кастомные события
+- Использовать Fetch API для HTTP запросов с обработкой ошибок
+- Работать с локальным хранилищем: localStorage, sessionStorage, IndexedDB
+- Управлять URL и историей браузера: History API, URLSearchParams
+- Обрабатывать формы: FormData, валидация, отправка
+
+---
+
+## 1. DOM — Document Object Model
+
+### Селекторы и навигация
+```javascript
+// Современные селекторы
+const el = document.querySelector("#app");           // первый подходящий
+const els = document.querySelectorAll(".item");      // NodeList (не массив!)
+const byId = document.getElementById("app");         // быстрее для ID
+const byClass = document.getElementsByClassName("item"); // HTMLCollection (живой)
+const byTag = document.getElementsByTagName("div");  // HTMLCollection
+
+// Навигация
+el.parentElement;        // родитель
+el.children;             // дочерние элементы (HTMLCollection)
+el.firstElementChild;    // первый дочерний элемент
+el.lastElementChild;     // последний дочерний элемент
+el.previousElementSibling;
+el.nextElementSibling;
+el.closest(".container"); // ближайший родитель по селектору
+```
+
+### Манипуляция элементами
+```javascript
+// Создание
+const div = document.createElement("div");
+const text = document.createTextNode("Текст");
+const fragment = document.createDocumentFragment(); // для батча
+
+// Атрибуты
+el.setAttribute("data-id", "42");
+el.getAttribute("data-id");
+el.removeAttribute("data-id");
+el.hasAttribute("data-id");
+
+// data-* атрибуты
+el.dataset.id;           // "42"
+el.dataset.userName;     // camelCase -> kebab-case
+
+// Классы
+el.classList.add("active", "visible");
+el.classList.remove("hidden");
+el.classList.toggle("open");
+el.classList.contains("active"); // boolean
+
+// Стили
+el.style.color = "red";
+el.style.cssText = "color: red; font-size: 14px";
+getComputedStyle(el).color; // реальные вычисленные стили
+
+// Вставка
+parent.append(child1, child2, "text");      // в конец (поддерживает строки)
+parent.prepend(child);                       // в начало
+parent.before(el);                           // перед родителем
+parent.after(el);                            // после родителя
+el.replaceWith(newEl);                       // замена
+el.remove();                                 // удаление
+```
+
+### Template и клонирование
+```html
+<template id="card-template">
+  <article class="card">
+    <h2></h2>
+    <p></p>
+  </article>
+</template>
+```
+
+```javascript
+const template = document.querySelector("#card-template");
+const clone = template.content.cloneNode(true); // true = deep clone
+clone.querySelector("h2").textContent = "Заголовок";
+clone.querySelector("p").textContent = "Описание";
+document.body.append(clone);
+```
+
+### Опасные методы (избегайте)
+```javascript
+// ❌ innerHTML — XSS уязвимость!
+el.innerHTML = `<img src=x onerror=alert(1)>`;
+
+// ✅ Безопасно
+el.textContent = "Текст"; // экранирует HTML
+// или создавайте элементы через createElement
+```
+
+---
+
+## 2. Events — Система событий
+
+### Фазы события
+```
+CAPTURING PHASE (вниз) → TARGET PHASE → BUBBLING PHASE (вверх)
+window → document → html → body → ... → target → ... → body → html → document → window
+```
+
+```javascript
+// addEventListener(type, listener, options)
+element.addEventListener("click", handler, {
+  capture: false,      // true = фаза перехвата (вверх)
+  once: false,         // true = удалить после первого вызова
+  passive: false,      // true = никогда не вызовет preventDefault()
+  signal: abortSignal  // AbortSignal для удаления
+});
+
+// Удаление
+element.removeEventListener("click", handler, { capture: false });
+```
+
+### Объект события
+```javascript
+element.addEventListener("click", (event) => {
+  event.type;           // "click"
+  event.target;         // элемент, на котором сработало событие
+  event.currentTarget;  // элемент, на котором висит слушатель (=== this)
+  event.eventPhase;     // 1=capturing, 2=target, 3=bubbling
+  event.bubbles;        // true/false
+  event.cancelable;     // true/false
+  event.preventDefault(); // отмена действия по умолчанию
+  event.stopPropagation(); // остановка всплытия
+  event.stopImmediatePropagation(); // остановка + другие слушатели на этом элементе
+  event.isTrusted;      // true = пользовательское действие, false = dispatchEvent
+});
+```
+
+### Делегирование событий
+```javascript
+// Вместо 100 слушателей на <li> — один на <ul>
+ul.addEventListener("click", (e) => {
+  const li = e.target.closest("li");
+  if (!li || !ul.contains(li)) return; // клик не в li или не наш ul
+
+  const id = li.dataset.id;
+  console.log("Clicked item:", id);
+});
+```
+
+### Кастомные события
+```javascript
+// Создание и диспатч
+const event = new CustomEvent("user-login", {
+  detail: { userId: 42, role: "admin" },
+  bubbles: true,
+  cancelable: true
+});
+document.dispatchEvent(event);
+
+// Слушание
+document.addEventListener("user-login", (e) => {
+  console.log(e.detail.userId); // 42
+});
+```
+
+### Полезные события
+```javascript
+// DOM готов (до загрузки картинок/стилей)
+document.addEventListener("DOMContentLoaded", () => {});
+
+// Полная загрузка
+window.addEventListener("load", () => {});
+
+// Изменение размера (debounce!)
+window.addEventListener("resize", debounce(() => {}, 150));
+
+// Скролл (passive для производительности)
+window.addEventListener("scroll", () => {}, { passive: true });
+
+// Клавиатура
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) submit();
+});
+
+// Фокус
+input.addEventListener("focusin", () => {});  // пузырится
+input.addEventListener("focus", () => {});    // не пузырится
+
+// Видимость страницы
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) pauseVideo();
+  else playVideo();
+});
+
+// Онлайн/офлайн
+window.addEventListener("online", () => {});
+window.addEventListener("offline", () => {});
+
+// Хранилище в другом окне
+window.addEventListener("storage", (e) => {
+  console.log(e.key, e.oldValue, e.newValue, e.storageArea);
+});
+```
+
+---
+
+## 3. Fetch API — HTTP запросы
+
+### Базовое использование
+```javascript
+// GET
+const response = await fetch("/api/users");
+if (!response.ok) throw new Error(`HTTP ${response.status}`);
+const users = await response.json();
+
+// POST с JSON
+const response = await fetch("/api/users", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  },
+  body: JSON.stringify({ name: "Анна", email: "anna@example.com" })
+});
+
+// FormData (multipart/form-data)
+const formData = new FormData();
+formData.append("name", "Анна");
+formData.append("avatar", fileInput.files[0]);
+const response = await fetch("/api/upload", {
+  method: "POST",
+  body: formData // Content-Type ставится автоматически с boundary
+});
+```
+
+### Работа с ответом
+```javascript
+const response = await fetch("/api/data");
+
+// Статус
+response.ok;        // true если 200-299
+response.status;    // 200, 404, 500...
+response.statusText; // "OK", "Not Found"
+
+// Заголовки
+response.headers.get("Content-Type");
+response.headers.has("ETag");
+for (const [key, value] of response.headers) {}
+
+// Тело (только ОДИН раз!)
+const text = await response.text();
+const json = await response.json();
+const blob = await response.blob();
+const arrayBuffer = await response.arrayBuffer();
+const formData = await response.formData();
+
+// Клонирование для повторного чтения
+const clone = response.clone();
+const json = await clone.json();
+```
+
+### Обработка ошибок
+```javascript
+async function fetchWithErrorHandling(url, options = {}) {
+  try {
+    const response = await fetch(url, options);
+
+    if (!response.ok) {
+      // HTTP ошибки (4xx, 5xx) не выбрасывают исключение!
+      const error = new Error(`HTTP ${response.status}: ${response.statusText}`);
+      error.status = response.status;
+      error.response = response;
+      throw error;
+    }
+
+    return await response.json();
+  } catch (err) {
+    if (err.name === "TypeError" && err.message.includes("fetch")) {
+      // Сетевая ошибка (нет интернета, CORS, DNS)
+      throw new NetworkError("Нет соединения с сервером");
+    }
+    throw err; // пробрасываем дальше
+  }
+}
+```
+
+### Таймаут и отмена
+```javascript
+// AbortController (встроенный таймаут)
+const controller = new AbortController();
+const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+try {
+  const response = await fetch("/api/slow", { signal: controller.signal });
+  clearTimeout(timeoutId);
+} catch (err) {
+  if (err.name === "AbortError") console.log("Таймаут!");
+}
+
+// AbortSignal.timeout (ES2023)
+const response = await fetch("/api/data", {
+  signal: AbortSignal.timeout(5000)
+});
+```
+
+### Параллельные и последовательные запросы
+```javascript
+// Параллельно — быстро
+const [users, posts, comments] = await Promise.all([
+  fetch("/api/users").then(r => r.json()),
+  fetch("/api/posts").then(r => r.json()),
+  fetch("/api/comments").then(r => r.json())
+]);
+
+// Последовательно — когда нужен результат предыдущего
+const user = await fetch(`/api/users/${id}`).then(r => r.json());
+const posts = await fetch(`/api/users/${id}/posts`).then(r => r.json());
+
+// Promise.allSettled — не падает если один упал
+const results = await Promise.allSettled(urls.map(u => fetch(u)));
+```
+
+---
+
+## 4. Storage — Хранилище в браузере
+
+### localStorage / sessionStorage
+```javascript
+// localStorage — постоянное, sessionStorage — до закрытия вкладки
+const storage = localStorage; // или sessionStorage
+
+storage.setItem("key", "value");
+storage.getItem("key");        // "value" или null
+storage.removeItem("key");
+storage.clear();               // всё
+storage.key(0);                // имя ключа по индексу
+storage.length;                // количество ключей
+
+// Только строки! Для объектов — JSON
+const user = { name: "Анна", age: 25 };
+localStorage.setItem("user", JSON.stringify(user));
+const parsed = JSON.parse(localStorage.getItem("user") || "null");
+```
+
+### IndexedDB — полноценная БД
+```javascript
+// Открытие БД
+const request = indexedDB.open("MyDB", 1);
+
+request.onupgradeneeded = (e) => {
+  const db = e.target.result;
+  if (!db.objectStoreNames.contains("users")) {
+    const store = db.createObjectStore("users", { keyPath: "id", autoIncrement: true });
+    store.createIndex("email", "email", { unique: true });
+  }
+};
+
+request.onsuccess = (e) => {
+  const db = e.target.result;
+  // Работа с БД...
+};
+
+// Запись
+const tx = db.transaction("users", "readwrite");
+const store = tx.objectStore("users");
+store.add({ name: "Анна", email: "anna@example.com" });
+tx.oncomplete = () => console.log("Готово");
+
+// Чтение
+const tx = db.transaction("users", "readonly");
+const store = tx.objectStore("users");
+const request = store.get(1);
+request.onsuccess = () => console.log(request.result);
+
+// Индексы
+const index = store.index("email");
+index.get("anna@example.com").onsuccess = (e) => console.log(e.target.result);
+
+// Курсоры для перебора
+store.openCursor().onsuccess = (e) => {
+  const cursor = e.target.result;
+  if (cursor) {
+    console.log(cursor.value);
+    cursor.continue();
+  }
+};
+```
+
+### idb — удобная обёртка (рекомендуется)
+```bash
+npm install idb
+```
+
+```javascript
+import { openDB } from "idb";
+
+const db = await openDB("MyDB", 1, {
+  upgrade(db) {
+    db.createObjectStore("users", { keyPath: "id" });
+  }
+});
+
+// Простые операции
+await db.add("users", { id: 1, name: "Анна" });
+const user = await db.get("users", 1);
+await db.put("users", { id: 1, name: "Анна", age: 26 });
+await db.delete("users", 1);
+const all = await db.getAll("users");
+const byEmail = await db.getAllFromIndex("users", "email", "anna@example.com");
+
+// Транзакции
+const tx = db.transaction("users", "readwrite");
+tx.store.add({ id: 2, name: "Борис" });
+await tx.done;
+```
+
+### Cookies (через document.cookie)
+```javascript
+// Установка
+document.cookie = "session=abc123; max-age=3600; path=/; Secure; SameSite=Lax";
+
+// Чтение (парсинг вручную)
+const cookies = Object.fromEntries(
+  document.cookie.split("; ").map(c => c.split("=").map(decodeURIComponent))
+);
+
+// HttpOnly cookies — недоступны из JS (безопасность!)
+```
+
+---
+
+## 5. URL и History API
+
+### URL и URLSearchParams
+```javascript
+// Парсинг URL
+const url = new URL("https://example.com/path?name=Анна&age=25#section");
+url.href;           // полный URL
+url.origin;         // "https://example.com"
+url.protocol;       // "https:"
+url.host;           // "example.com"
+url.hostname;       // "example.com"
+url.port;           // ""
+url.pathname;       // "/path"
+url.search;         // "?name=Анна&age=25"
+url.hash;           // "#section"
+url.username;       // ""
+url.password;       // ""
+
+// SearchParams
+url.searchParams.get("name");        // "Анна"
+url.searchParams.getAll("tag");      // ["js", "ts"]
+url.searchParams.has("age");         // true
+url.searchParams.set("age", "26");
+url.searchParams.append("tag", "react");
+url.searchParams.delete("name");
+url.searchParams.toString();         // "age=26&tag=js&tag=react&tag=react"
+[...url.searchParams];               // [["age", "26"], ["tag", "js"], ...]
+
+// Относительные URL
+const relative = new URL("/api/users", "https://example.com");
+// https://example.com/api/users
+```
+
+### History API — SPA навигация
+```javascript
+// Добавление записи (меняет URL без перезагрузки)
+history.pushState({ page: "profile", userId: 42 }, "", "/profile/42");
+
+// Замена текущей записи
+history.replaceState({ page: "settings" }, "", "/settings");
+
+// Навигация
+history.back();      // назад
+history.forward();   // вперёд
+history.go(-2);      // на 2 назад
+history.length;      // количество записей
+history.state;       // состояние текущей записи
+
+// Событие popstate — назад/вперёд браузера
+window.addEventListener("popstate", (e) => {
+  console.log(e.state); // { page: "profile", userId: 42 }
+  renderPage(e.state);
+});
+
+// scrollRestoration
+history.scrollRestoration = "manual"; // "auto" по умолчанию
+```
+
+### Паттерн SPA роутера
+```javascript
+function router() {
+  const routes = {
+    "/": () => renderHome(),
+    "/profile/:id": (params) => renderProfile(params.id),
+    "/settings": () => renderSettings()
+  };
+
+  function match(path) {
+    for (const [pattern, handler] of Object.entries(routes)) {
+      const regex = patternToRegex(pattern);
+      const match = path.match(regex);
+      if (match) return { handler, params: match.groups };
+    }
+    return null;
+  }
+
+  function navigate(path) {
+    history.pushState({}, "", path);
+    const match = match(path);
+    if (match) match.handler(match.params);
+  }
+
+  window.addEventListener("popstate", () => {
+    const match = match(location.pathname);
+    if (match) match.handler(match.params);
+  });
+
+  return { navigate };
+}
+
+const { navigate } = router();
+navigate("/profile/42");
+```
+
+---
+
+## 6. Forms — Работа с формами
+
+### FormData
+```html
+<form id="login-form">
+  <input name="email" type="email" required>
+  <input name="password" type="password" required>
+  <input name="avatar" type="file">
+  <button type="submit">Войти</button>
+</form>
+```
+
+```javascript
+const form = document.querySelector("#login-form");
+
+// FormData из формы
+const formData = new FormData(form);
+
+// Итерация
+for (const [name, value] of formData) {
+  console.log(name, value); // value может быть File
+}
+
+// Получение значений
+formData.get("email");           // первое значение
+formData.getAll("tags");         // все значения для name="tags[]"
+formData.has("email");           // boolean
+formData.set("email", "new@x.y"); // замена
+formData.append("tags", "js");   // добавление
+formData.delete("tags");
+
+// Файлы
+const file = formData.get("avatar"); // File объект
+file.name;        // "photo.jpg"
+file.type;        // "image/jpeg"
+file.size;        // байты
+file.lastModified; // timestamp
+const text = await file.text();    // как текст
+const arrayBuffer = await file.arrayBuffer();
+const stream = file.stream();      // ReadableStream
+```
+
+### Валидация (HTML5 + JS)
+```html
+<input name="email" type="email" required pattern="[^@]+@[^@]+\.[^@]+" title="Неверный email">
+<input name="age" type="number" min="18" max="100" required>
+<textarea name="bio" maxlength="500" required></textarea>
+```
+
+```javascript
+const form = document.querySelector("form");
+const email = form.elements.email;
+
+// Встроенная валидация
+email.validity.valid;           // boolean
+email.validity.valueMissing;    // required не заполнено
+email.validity.typeMismatch;    // type="email" но не email
+email.validity.patternMismatch; // не проходит pattern
+email.validity.tooLong;         // превышен maxlength
+email.validity.rangeUnderflow;  // меньше min
+email.validity.rangeOverflow;   // больше max
+
+email.validationMessage;        // текст ошибки браузера
+email.checkValidity();          // true/false, показывает UI ошибку
+email.reportValidity();         // true/false, фокусирует и показывает UI
+
+// Кастомная валидация
+email.setCustomValidity("");    // сброс
+if (customCheck(email.value)) {
+  email.setCustomValidity("Этот email уже занят");
+}
+email.reportValidity();
+
+// Отключение браузерной валидации
+form.noValidate = true; // или <form novalidate>
+
+// События
+form.addEventListener("submit", (e) => {
+  if (!form.checkValidity()) {
+    e.preventDefault(); // не отправлять
+    // показываем свои ошибки
+  }
+});
+
+// Событие invalid (на элементе, не пузырится!)
+email.addEventListener("invalid", (e) => {
+  e.preventDefault(); // отменяем браузерный UI
+  showCustomError(email, email.validationMessage);
+});
+```
+
+### Отправка формы
+```javascript
+// Обычный submit (перезагрузка страницы)
+<form action="/api/login" method="POST">...</form>
+
+// AJAX отправка
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const formData = new FormData(form);
+  const submitBtn = form.querySelector('[type="submit"]');
+  submitBtn.disabled = true;
+
+  try {
+    const response = await fetch(form.action, {
+      method: form.method,
+      body: formData
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      showSuccess(data.message);
+    } else {
+      const error = await response.json();
+      showErrors(error.fields); // { email: "Неверный формат" }
+    }
+  } catch (err) {
+    showError("Сетевая ошибка");
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+
+// Прогресс загрузки файлов
+const xhr = new XMLHttpRequest(); // fetch не даёт progress!
+xhr.upload.addEventListener("progress", (e) => {
+  if (e.lengthComputable) {
+    const percent = (e.loaded / e.total) * 100;
+    progressBar.value = percent;
+  }
+});
+xhr.open("POST", "/api/upload");
+xhr.send(formData);
+```
+
+---
+
+## Практические задания
+
+1. **DOM Builder**: Напишите функцию `h(tag, props, ...children)` — гиперскрипт для создания элементов (как в React, но нативный). Поддержка: `h("div", { class: "card", onclick: fn }, "Текст", h("span", {}, "Вложено"))`.
+
+2. **Event Delegation Todo**: Реализуйте список задач с делегированием: клик по чекбоксу — toggle, клик по кнопке удаления — remove, клик по тексту — edit inline. Один слушатель на `<ul>`.
+
+3. **Fetch Wrapper**: Создайте `api` объект с методами `get`, `post`, `put`, `delete`, автоматически добавляющими `Authorization` заголовок, обрабатывающие 401 (redirect to login), 422 (validation errors), таймауты, retry.
+
+4. **LocalStorage Sync**: Напишите хук/функцию `useLocalStorage(key, initialValue)` — возвращает `[value, setValue]`, синхронизирует между вкладками через `storage` event, поддерживает ленивую инициализацию.
+
+5. **IndexedDB Cache**: Реализуйте `CacheStorage` обёртку: `cache.set(key, value, ttlMs)`, `cache.get(key)` (возвращает null если протухло), автоматическая очистка старых записей при превышении квоты.
+
+6. **Form Validator**: Создайте класс `FormValidator(form, rules)` где `rules = { email: [required, email], password: [required, minLength(8)] }`. Показывает ошибки под полями, блокирует submit, поддерживает асинхронные правила (проверка уникальности email на сервере).
+
+7. **Mini Router**: Напишите `createRouter(routes)` с поддержкой параметров (`/user/:id`), query (`?tab=posts`), 404, middleware (auth guard), и `router.navigate("/user/42")`.
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `el.innerHTML = userInput` — XSS | `el.textContent = userInput` или создавайте элементы через `createElement` |
+| `querySelectorAll` возвращает массив | Это `NodeList` — используйте `[...els]` или `Array.from(els)` для методов массива |
+| `addEventListener` без удаления — утечка памяти | Используйте `{ once: true }` или `AbortController` / `removeEventListener` в cleanup |
+| `fetch` не бросает на 404/500 | Всегда проверяйте `response.ok` или `status` |
+| `await response.json()` дважды | Тело можно прочитать один раз — используйте `response.clone()` |
+| `localStorage` для больших данных (лимит ~5MB) | Используйте `IndexedDB` для больших объёмов |
+| `document.cookie` читает HttpOnly куки | HttpOnly куки недоступны из JS — это защита от XSS |
+| `history.pushState` не вызывает `popstate` | `popstate` срабатывает только на действия пользователя (back/forward) |
+| `form.submit()` не вызывает событие `submit` | Используйте `form.requestSubmit()` для триггера валидации и события |
+| `FormData` не отправляет пустые файлы | `<input type="file" required>` — браузер сам заблокирует отправку |
+
+---
+
+## Полезные ресурсы
+
+- **MDN: DOM** — https://developer.mozilla.org/en-US/docs/Web/API/Document_Object_Model
+- **MDN: Event reference** — https://developer.mozilla.org/en-US/docs/Web/Events
+- **MDN: Fetch API** — https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API
+- **MDN: IndexedDB** — https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API
+- **MDN: History API** — https://developer.mozilla.org/en-US/docs/Web/API/History_API
+- **MDN: FormData** — https://developer.mozilla.org/en-US/docs/Web/API/FormData
+- **Jake Archibald: In The Loop (events)** — https://jakearchibald.com/2015/tasks-microtasks-queues-and-schedules/
+- **Web.dev: Storage for the web** — https://web.dev/storage-for-the-web/
+- **HTML Living Standard: Forms** — https://html.spec.whatwg.org/multipage/forms.html

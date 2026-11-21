@@ -1,0 +1,458 @@
+{
+  "title": "Урок 31: Security и Reliability",
+  "slug": "urok-31-развeртывание-и-ci-cd",
+  "short_description": "Docker, poetry/uv lock, GitHub Actions, pre-commit, ruff, mypy",
+  "goals": [
+    "Понимать основы: Docker, poetry/uv lock, GitHub Actions, pre-commit, ruff, mypy",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 31: Security & Reliability — валидация, секреты, безопасная десериализация, уязвимости зависимостей, логирование"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Валидировать входящие данные (Pydantic, схемы)",
+        "Безопасно управлять секретами (ключи, токены, пароли)",
+        "Избегать небезопасной десериализации (pickle, yaml, eval)",
+        "Сканировать зависимости на уязвимости (pip-audit, safety, dependabot)",
+        "Настроить структурированное логирование и аудит"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. Валидация входящих данных"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pydantic v2 — стандарт де-факто"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Использование"
+    },
+    {
+      "type": "text",
+      "content": "data = {\"email\": \"test@example.com\", \"username\": \"john_doe\", \"password\": \"SecureP@ss123\"}\nuser = UserCreate(**data)  # ValidationError при невалидных данных\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Валидация на уровне API (FastAPI)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: async await**\n\n**Что делает:** async fn возвращает Future, .await приостанавливает до готовности\n\n**Зачем нужно:** Неблокирующий I/O, тысячи задач в одном потоке, композиция через .await\n\n**Как работает:** async fn fetch() -> Result<Data> { let resp = reqwest::get(url).await?; resp.json().await }"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "from fastapi import FastAPI, HTTPException, status\nfrom pydantic import ValidationError\n\napp = FastAPI()\n\n@app.post(\"/users\", status_code=status.HTTP_201_CREATED)\nasync def create_user(user_data: UserCreate):\n    try:\n        user = UserCreate(**user_data.model_dump())\n    except ValidationError as e:\n        raise HTTPException(status_code=422, detail=e.errors())\n    return await user_service.create(user)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Управление секретами"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "❌ НИКОГДА не храните секреты в коде"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "ПЛОХО"
+    },
+    {
+      "type": "text",
+      "content": "API_KEY = \"sk-1234567890abcdef\"\nDATABASE_URL = \"postgres://user:pass@localhost/db\"\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "✅ Переменные окружения + .env (только для разработки)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".env (НЕ коммитить в git!)"
+    },
+    {
+      "type": "text",
+      "content": "DATABASE_URL=postgres://user:pass@localhost/db\nAPI_KEY=sk-1234567890abcdef\nSECRET_KEY=your-secret-key-here"
+    },
+    {
+      "type": "code",
+      "language": "text",
+      "content": ""
+    },
+    {
+      "type": "text",
+      "content": "python"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "config.py"
+    },
+    {
+      "type": "text",
+      "content": "from pydantic_settings import BaseSettings, SettingsConfigDict\nfrom typing import Optional\n\nclass Settings(BaseSettings):\n    model_config = SettingsConfigDict(\n        env_file=\".env\",\n        env_file_encoding=\"utf-8\",\n        case_sensitive=False,\n        extra=\"ignore\"\n    )\n\n    database_url: str\n    api_key: str\n    secret_key: str\n    debug: bool = False\n    log_level: str = \"INFO\"\n\nsettings = Settings()  # читает из env/.env\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Продакшн: Secret Managers"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "AWS Secrets Manager"
+    },
+    {
+      "type": "text",
+      "content": "import boto3\nimport json\n\ndef get_secret(secret_name: str) -> dict:\n    client = boto3.client(\"secretsmanager\")\n    response = client.get_secret_value(SecretId=secret_name)\n    return json.loads(response[\"SecretString\"])"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "HashiCorp Vault"
+    },
+    {
+      "type": "text",
+      "content": "import hvac\nclient = hvac.Client(url=\"https://vault.example.com\", token=\"...\")\nsecret = client.secrets.kv.v2.read_secret_version(path=\"myapp/config\")"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Azure Key Vault / GCP Secret Manager — аналогично"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Генерация секретов"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Криптографически стойкие случайные строки"
+    },
+    {
+      "type": "text",
+      "content": "api_key = secrets.token_urlsafe(32)  # 43 chars, URL-safe\npassword = \"\".join(secrets.choice(string.ascii_letters + string.digits + \"!@#$%\") for _ in range(16))\ntoken = secrets.token_hex(32)  # 64 hex chars\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. Безопасная десериализация"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "❌ ОПАСНЫЕ паттерны (RCE уязвимости)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "НИКОГДА не делайте так с непроверенными данными!"
+    },
+    {
+      "type": "text",
+      "content": "import pickle\npickle.loads(untrusted_data)  # RCE!\n\nimport yaml\nyaml.load(untrusted_data)  # RCE через !!python/object\n\neval(untrusted_input)  # RCE\nexec(untrusted_input)  # RCE\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "✅ Безопасные альтернативы"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "JSON — безопасен (нет исполнения кода)"
+    },
+    {
+      "type": "text",
+      "content": "import json\ndata = json.loads(trusted_json_string)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "YAML — только SafeLoader"
+    },
+    {
+      "type": "text",
+      "content": "import yaml\ndata = yaml.safe_load(trusted_yaml_string)  # не unsafe_load!"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "TOML — безопасен"
+    },
+    {
+      "type": "text",
+      "content": "import tomllib  # Python 3.11+\ndata = tomllib.loads(trusted_toml_string)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "MessagePack / CBOR — бинарные, безопасные"
+    },
+    {
+      "type": "text",
+      "content": "import msgpack\ndata = msgpack.unpackb(trusted_bytes, raw=False)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Если НУЖНО pickle (только доверенные данные!)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: modules cpp20**\n\n**Что делает:** Система модулей вместо заголовочных файлов (import/export)\n\n**Зачем нужно:** Быстрее компиляция, нет ODR нарушений, инкапсуляция, нет макросов\n\n**Как работает:** export module math; export int add(int a, int b); // math.cppm"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import pickle\nimport hmac\nimport hashlib\n\nSECRET_KEY = b\"your-secret-key\"\n\ndef safe_dumps(obj: object) -> bytes:\n    data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)\n    signature = hmac.new(SECRET_KEY, data, hashlib.sha256).digest()\n    return signature + data\n\ndef safe_loads(signed_data: bytes) -> object:\n    signature, data = signed_data[:32], signed_data[32:]\n    expected = hmac.new(SECRET_KEY, data, hashlib.sha256).digest()\n    if not hmac.compare_digest(signature, expected):\n        raise ValueError(\"Invalid signature\")\n    return pickle.loads(data)"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. Сканирование уязвимостей зависимостей"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "pip-audit (официальный PyPA)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install pip-audit\npip-audit                    # проверка текущего окружения\npip-audit -r requirements.txt  # проверка файла\npip-audit --format=json      # для CI"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Safety (коммерческий, более полная БД)"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install safety\nsafety check                 # проверка окружения\nsafety check -r requirements.txt"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "GitHub Dependabot (автоматически)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": ".github/dependabot.yml"
+    },
+    {
+      "type": "text",
+      "content": "version: 2\nupdates:\n  - package-ecosystem: \"pip\"\n    directory: \"/\"\n    schedule:\n      interval: \"weekly\"\n      day: \"monday\"\n    open-pull-requests-limit: 10\n    labels: [\"dependencies\", \"security\"]\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "В CI (GitHub Actions)"
+    },
+    {
+      "type": "code",
+      "language": "yaml",
+      "content": "- name: Run pip-audit\n  run: |\n    pip install pip-audit\n    pip-audit --format=json --output=audit.json || true\n\n- name: Upload audit results\n  uses: actions/upload-artifact@v4\n  with:\n    name: dependency-audit\n    path: audit.json"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "deptry — поиск проблем с зависимостями"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "pip install deptry\ndeptry .  # находит: неиспользуемые, отсутствующие в pyproject.toml, неиспользуемые в коде"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Структурированное логирование и аудит"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "structlog — structured logging"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Использование"
+    },
+    {
+      "type": "text",
+      "content": "logger.info(\"user_login\", user_id=123, ip=\"192.168.1.1\", method=\"oauth\")\nlogger.error(\"payment_failed\", order_id=456, error=\"insufficient_funds\", amount=100.50)"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Контекст (автоматически добавляется ко всем логам в рамках запроса)"
+    },
+    {
+      "type": "text",
+      "content": "structlog.contextvars.bind_contextvars(request_id=\"req-abc-123\", user_id=123)\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Стандартный logging + JSON formatter"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: list comprehension**\n\n**Что делает:** Создание списков через выражение в квадратных скобках\n\n**Зачем нужно:** Быстрее цикла for, читаемее map/filter, питоничный стиль\n\n**Как работает:** [x*2 for x in range(10) if x%2==0] вместо цикла с append"
+    },
+    {
+      "type": "code",
+      "language": "python",
+      "content": "import logging\nimport json\nfrom datetime import datetime\n\nclass JSONFormatter(logging.Formatter):\n    def format(self, record):\n        log_obj = {\n            \"timestamp\": datetime.utcnow().isoformat() + \"Z\",\n            \"level\": record.levelname,\n            \"logger\": record.name,\n            \"message\": record.getMessage(),\n            \"module\": record.module,\n            \"function\": record.funcName,\n            \"line\": record.lineno,\n        }\n        if record.exc_info:\n            log_obj[\"exception\"] = self.formatException(record.exc_info)\n        # Дополнительные поля из extra\n        for key, value in record.__dict__.items():\n            if key not in [\"name\", \"msg\", \"args\", \"created\", \"filename\", \"funcName\",\n                          \"levelname\", \"levelno\", \"lineno\", \"module\", \"msecs\",\n                          \"message\", \"name\", \"pathname\", \"process\", \"processName\",\n                          \"relativeCreated\", \"thread\", \"threadName\", \"exc_info\", \"exc_text\", \"stack_info\"]:\n                log_obj[key] = value\n        return json.dumps(log_obj, ensure_ascii=False)\n\nhandler = logging.StreamHandler()\nhandler.setFormatter(JSONFormatter())\nroot_logger = logging.getLogger()\nroot_logger.addHandler(handler)\nroot_logger.setLevel(logging.INFO)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Аудит безопасных событий"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Использование"
+    },
+    {
+      "type": "text",
+      "content": "log_audit(AuditEvent(\n    event_type=AuditEventType.LOGIN_FAILED,\n    user_id=123,\n    ip=\"192.168.1.1\",\n    details={\"reason\": \"invalid_password\", \"attempts\": 3}\n))\n```\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Основные принципы безопасности (OWASP Top 10 для Python)"
+    },
+    {
+      "type": "table",
+      "content": "| Уязвимость | Защита в Python |\n|------------|-----------------|\n| **Injection (SQL, Command)** | Параметризованные запросы (SQLAlchemy ORM, `cursor.execute(\"...\", params)`), `shlex.quote()` |\n| **Broken Auth** | bcrypt/argon2 для паролей, JWT с коротким TTL, MFA |\n| **Sensitive Data Exposure** | Шифрование в покое (AES-GCM), TLS 1.3, секреты не в логах |\n| **XXE** | `defusedxml` вместо `xml.etree`, отключить внешние сущности |\n| **Broken Access Control** | RBAC/ABAC, проверка прав на каждом эндпоинте |\n| **Security Misconfiguration** | `debug=False` в проде, security headers (CSP, HSTS) |\n| **XSS** | Jinja2 autoescape, CSP, sanitize HTML (bleach) |\n| **Insecure Deserialization** | Только JSON/msgpack, избегать pickle/yaml.load |\n| **Vulnerable Components** | `pip-audit`, Dependabot, `pip install --upgrade` |\n| **Insufficient Logging** | Structured logs, корреляция request_id, алерты на аномалии |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **Валидация**: Создайте Pydantic-модели для регистрации пользователя с комплексной валидацией пароля\n2. **Секреты**: Настройте `pydantic-settings` + `.env.example` (без реальных значений)\n3. **Десериализация**: Напишите функцию безопасной загрузки конфига из YAML/JSON/TOML\n4. **Сканирование**: Добавьте `pip-audit` в CI, настройте Dependabot\n5. **Логирование**: Настройте structlog с JSON выводом, добавьте audit-логи для критических действий\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `SECRET_KEY` в репозитории | Только в secret manager / env vars |\n| `pickle.load()` из сети/файлов пользователей | JSON / msgpack / safe yaml |\n| `yaml.load()` без `Loader=yaml.SafeLoader` | `yaml.safe_load()` |\n| Логирование паролей/токенов | Фильтруйте чувствительные поля в formatter |\n| Отсутствие rate limiting | `slowapi` / nginx rate limit на авторизацию |\n| `debug=True` в продакшене | Всегда `False`, отдельные settings для prod |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**OWASP Top 10** — https://owasp.org/www-project-top-ten/",
+        "**OWASP Python Security** — https://owasp.org/www-project-python-security/",
+        "**Pydantic docs** — https://docs.pydantic.dev/",
+        "**structlog docs** — https://www.structlog.org/",
+        "**pip-audit** — https://pypi.org/project/pip-audit/",
+        "**Bandit (static security analysis)** — https://bandit.readthedocs.io/",
+        "**CWE/SANS Top 25** — https://cwe.mitre.org/top25/"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Развёртывание и CI/CD",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Развёртывание и CI/CD' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация Python",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-python на GitHub",
+    "Конференции и митапы по Python"
+  ],
+  "key_takeaways": [
+    "Главная идея: Docker, poetry/uv lock, GitHub Actions, pre-commit, ruff, mypy — это фундамент для GIL, Reference Counting, Декораторы.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "python",
+  "lesson_order": 31,
+  "name_en": "Lesson: Развёртывание и CI/CD",
+  "short_description_en": "Learn Развёртывание и CI/CD in Python with detailed explanations and examples"
+}

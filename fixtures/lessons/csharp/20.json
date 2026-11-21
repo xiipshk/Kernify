@@ -1,0 +1,447 @@
+{
+  "title": "Урок 20: Data Access",
+  "slug": "urok-20-тестирование-xunit,-moq,-fluentassertions,-testcontainers",
+  "short_description": "Unit/Integration, Mock, WebApplicationFactory, Testcontainers, coverlet",
+  "goals": [
+    "Понимать основы: Unit/Integration, Mock, WebApplicationFactory, Testcontainers, coverlet",
+    "Уметь применять на практике с примерами",
+    "Распознавать и избегать частые ошибки",
+    "Знать, где найти документацию и углубиться"
+  ],
+  "content_blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Урок 20: Работа с данными — JSON, файлы/потоки, SQL basics, database access, ORM introduction"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "Цели урока"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Сериализация/десериализация JSON (System.Text.Json, Newtonsoft.Json)",
+        "Работа с файлами, потоками (Stream, FileStream, MemoryStream, Pipe)",
+        "Основы SQL: запросы, индексы, транзакции",
+        "ADO.NET: низкоуровневый доступ к БД",
+        "Entity Framework Core: ORM, LINQ, миграции, производительность"
+      ],
+      "ordered": false
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "1. JSON Serialization"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "System.Text.Json (встроенный, высокопроизводительный)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: records**\n\n**Что делает:** Неизменяемые ссылочные типы с value-семантикой (C# 9+)\n\n**Зачем нужно:** Value equality, with-expressions, деконструкция, неизменяемость — идеально для DTO\n\n**Как работает:** public record User(string Name, int Age); var u = new User(\"Alex\", 25);"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Text.Json;\nusing System.Text.Json.Serialization;\n\npublic record User(int Id, string Name, string Email, DateTime CreatedAt);\n\n// Сериализация\nvar user = new User(1, \"Alice\", \"alice@example.com\", DateTime.UtcNow);\nstring json = JsonSerializer.Serialize(user);\n// {\"Id\":1,\"Name\":\"Alice\",\"Email\":\"alice@example.com\",\"CreatedAt\":\"2024-01-15T10:30:00Z\"}\n\n// Десериализация\nvar user2 = JsonSerializer.Deserialize<User>(json)!;\n\n// Настройки\nvar options = new JsonSerializerOptions\n{\n    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,  // camelCase\n    WriteIndented = true,                                // красивый вывод\n    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,\n    Converters = { new JsonStringEnumConverter() },      // enum как строки\n    ReferenceHandler = ReferenceHandler.IgnoreCycles     //.circular refs\n};\n\nstring json2 = JsonSerializer.Serialize(user, options);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Newtonsoft.Json (Json.NET) — больше фич"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: serde**\n\n**Что делает:** Фреймворк сериализации/десериализации (derive-макросы)\n\n**Зачем нужно:** Декларативный, быстрый, поддерживает JSON/TOML/YAML/bincode, zero-copy\n\n**Как работает:** [derive(Serialize, Deserialize)] struct User { name: String, age: u32 }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using Newtonsoft.Json;\n\nvar settings = new JsonSerializerSettings\n{\n    NullValueHandling = NullValueHandling.Ignore,\n    ReferenceLoopHandling = ReferenceLoopHandling.Ignore,\n    ContractResolver = new CamelCasePropertyNamesContractResolver(),\n    Converters = { new StringEnumConverter() }\n};\n\nstring json = JsonConvert.SerializeObject(user, settings);\nvar user2 = JsonConvert.DeserializeObject<User>(json);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Source Generation (AOT-friendly, .NET 6+)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: serde**\n\n**Что делает:** Фреймворк сериализации/десериализации (derive-макросы)\n\n**Зачем нужно:** Декларативный, быстрый, поддерживает JSON/TOML/YAML/bincode, zero-copy\n\n**Как работает:** [derive(Serialize, Deserialize)] struct User { name: String, age: u32 }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Компилятор генерирует сериализатор — без рефлексии, быстрее, меньше бинарь\n[JsonSerializable(typeof(User))]\n[JsonSerializable(typeof(List<User>))]\n[JsonSourceGenerationOptions(\n    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,\n    WriteIndented = true,\n    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]\npublic partial class AppJsonContext : JsonSerializerContext { }\n\n// Использование\nvar json = JsonSerializer.Serialize(user, AppJsonContext.Default.User);\nvar user2 = JsonSerializer.Deserialize(json, AppJsonContext.Default.User);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Полиморфизм и Type Discriminators"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: records**\n\n**Что делает:** Неизменяемые ссылочные типы с value-семантикой (C# 9+)\n\n**Зачем нужно:** Value equality, with-expressions, деконструкция, неизменяемость — идеально для DTO\n\n**Как работает:** public record User(string Name, int Age); var u = new User(\"Alex\", 25);"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "[JsonPolymorphic(TypeDiscriminatorPropertyName = \"$type\")]\n[JsonDerivedType(typeof(AdminUser), \"admin\")]\n[JsonDerivedType(typeof(RegularUser), \"regular\")]\npublic abstract record UserBase(string Name);\n\npublic record AdminUser(string Name, string[] Permissions) : UserBase(Name);\npublic record RegularUser(string Name, string Email) : UserBase(Name);"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "2. Файлы и Потоки (Streams)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "File I/O — высокоуровневый"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: spread operator**\n\n**Что делает:** Распаковка массива/объекта в новый (...arr, ...obj)\n\n**Зачем нужно:** Создаёт копии, объединяет массивы/объекты, передаёт аргументы в функции\n\n**Как работает:** const copy = [...arr]; const merged = [...a, ...b]; const updated = {...obj, newProp: 1}"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Текст\nawait File.WriteAllTextAsync(\"file.txt\", \"Hello\");\nstring text = await File.ReadAllTextAsync(\"file.txt\");\nstring[] lines = await File.ReadAllLinesAsync(\"file.txt\");\n\n// Бинарные\nawait File.WriteAllBytesAsync(\"data.bin\", new byte[] { 1, 2, 3 });\nbyte[] data = await File.ReadAllBytesAsync(\"data.bin\");\n\n// Проверка\nif (File.Exists(\"file.txt\")) { /* ... */ }\nFileInfo info = new FileInfo(\"file.txt\");\nvar size = info.Length;\nvar created = info.CreationTimeUtc;"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Streams — низкоуровневый, потоковый"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// FileStream — чтение/запись файлов\nusing var fs = new FileStream(\"large.dat\", FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096);\nvar buffer = new byte[8192];\nint bytesRead;\nwhile ((bytesRead = await fs.ReadAsync(buffer)) > 0)\n{\n    Process(buffer.AsSpan(0, bytesRead));\n}\n\n// MemoryStream — в памяти\nusing var ms = new MemoryStream();\nawait ms.WriteAsync(data);\nbyte[] array = ms.ToArray();\n\n// StreamReader/Writer — текст поверх Stream\nusing var reader = new StreamReader(fs, Encoding.UTF8);\nstring line;\nwhile ((line = await reader.ReadLineAsync()) != null) { }\n\n// Stream.CopyTo — эффективное копирование\nawait sourceStream.CopyToAsync(destStream, bufferSize: 81920);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Pipeline / Pipes (межпроцессное взаимодействие)"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Anonymous pipe (родитель-ребёнок)\nusing var pipeServer = new AnonymousPipeServerStream(PipeDirection.Out);\nusing var pipeClient = new AnonymousPipeClientStream(PipeDirection.In, pipeServer.ClientSafePipeHandle);\n\n// Named pipe (любые процессы на машине)\nusing var namedServer = new NamedPipeServerStream(\"mypipe\", PipeDirection.InOut);\nawait namedServer.WaitForConnectionAsync();"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "FileSystemWatcher — мониторинг изменений"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using var watcher = new FileSystemWatcher(@\"C:\\Data\")\n{\n    Filter = \"*.json\",\n    NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,\n    EnableRaisingEvents = true\n};\n\nwatcher.Created += (s, e) => Console.WriteLine($\"Created: {e.FullPath}\");\nwatcher.Changed += (s, e) => Console.WriteLine($\"Changed: {e.FullPath}\");\nwatcher.Deleted += (s, e) => Console.WriteLine($\"Deleted: {e.FullPath}\");\nwatcher.Renamed += (s, e) => Console.WriteLine($\"Renamed: {e.OldFullPath} -> {e.FullPath}\");"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "3. SQL Basics (вкратце, для контекста)"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основные запросы"
+    },
+    {
+      "type": "code",
+      "language": "sql",
+      "content": "-- SELECT с фильтрацией, сортировкой, пагинацией\nSELECT u.Id, u.Name, u.Email, COUNT(o.Id) AS OrderCount\nFROM Users u\nLEFT JOIN Orders o ON u.Id = o.UserId\nWHERE u.IsActive = 1 AND u.CreatedAt > '2024-01-01'\nGROUP BY u.Id, u.Name, u.Email\nHAVING COUNT(o.Id) > 0\nORDER BY u.Name\nOFFSET 0 ROWS FETCH NEXT 20 ROWS ONLY;\n\n-- INSERT / UPDATE / DELETE\nINSERT INTO Users (Name, Email, CreatedAt) VALUES ('Bob', 'bob@test.com', GETUTCDATE());\nUPDATE Users SET Email = 'new@test.com' WHERE Id = 1;\nDELETE FROM Users WHERE Id = 1 AND IsActive = 0;\n\n-- Транзакции\nBEGIN TRANSACTION;\nUPDATE Accounts SET Balance -= 100 WHERE Id = 1;\nUPDATE Accounts SET Balance += 100 WHERE Id = 2;\nCOMMIT; -- или ROLLBACK при ошибке\n\n-- Индексы\nCREATE INDEX IX_Users_Email ON Users(Email);\nCREATE INDEX IX_Orders_UserId_CreatedAt ON Orders(UserId, CreatedAt DESC);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Параметризованные запросы (защита от SQL Injection)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// НИКОГДА не конкатенируйте строки!\n// ПЛОХО: $\"SELECT * FROM Users WHERE Name = '{name}'\"\n// ХОРОШО:\nconst string sql = \"SELECT * FROM Users WHERE Name = @Name\";\nusing var cmd = new SqlCommand(sql, conn);\ncmd.Parameters.AddWithValue(\"@Name\", name);"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "4. ADO.NET — низкоуровневый доступ"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Базовое использование"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: let const**\n\n**Что делает:** Объявляет переменные с блочной областью видимости\n\n**Зачем нужно:** const для констант (не меняются), let для переменных (меняются). var устарел — у него функцияльная область видимости, что вызывает баги\n\n**Как работает:** const по умолчанию, let только если нужно переприсваивать. const с объектами позволяет менять свойства, но не саму ссылку"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using System.Data;\nusing System.Data.SqlClient; // или Microsoft.Data.SqlClient\n\nconst string connStr = \"Server=.;Database=MyDb;Trusted_Connection=true;TrustServerCertificate=true;\";\n\nawait using var conn = new SqlConnection(connStr);\nawait conn.OpenAsync();\n\nconst string sql = \"SELECT Id, Name, Email FROM Users WHERE IsActive = 1\";\nawait using var cmd = new SqlCommand(sql, conn);\n\nawait using var reader = await cmd.ExecuteReaderAsync();\nwhile (await reader.ReadAsync())\n{\n    int id = reader.GetInt32(0);\n    string name = reader.GetString(1);\n    string email = reader.IsDBNull(2) ? \"\" : reader.GetString(2);\n    Console.WriteLine($\"{id}: {name} <{email}>\");\n}\n\n// Параметры\nawait using var insertCmd = new SqlCommand(\"INSERT INTO Users (Name, Email) VALUES (@Name, @Email)\", conn);\ninsertCmd.Parameters.Add(\"@Name\", SqlDbType.NVarChar, 100).Value = \"Alice\";\ninsertCmd.Parameters.Add(\"@Email\", SqlDbType.NVarChar, 200).Value = \"alice@test.com\";\nawait insertCmd.ExecuteNonQueryAsync();\n\n// Транзакция\nawait using var tx = await conn.BeginTransactionAsync();\ntry\n{\n    await new SqlCommand(\"UPDATE ...\", conn, (SqlTransaction)tx).ExecuteNonQueryAsync();\n    await new SqlCommand(\"UPDATE ...\", conn, (SqlTransaction)tx).ExecuteNonQueryAsync();\n    await tx.CommitAsync();\n}\ncatch { await tx.RollbackAsync(); throw; }"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Dapper — микро-ORM (популярный, быстрый)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using Dapper;\n\nawait using var conn = new SqlConnection(connStr);\n\n// Query (чтение)\nvar users = await conn.QueryAsync<User>(\"SELECT * FROM Users WHERE IsActive = 1\");\nvar user = await conn.QueryFirstOrDefaultAsync<User>(\"SELECT * FROM Users WHERE Id = @Id\", new { Id = 1 });\n\n// Execute (запись)\nawait conn.ExecuteAsync(\"INSERT INTO Users (Name, Email) VALUES (@Name, @Email)\", new { Name = \"Bob\", Email = \"bob@test.com\" });\n\n// Multi-mapping (JOIN)\nvar sql = @\"\n    SELECT u.*, o.*\n    FROM Users u\n    LEFT JOIN Orders o ON u.Id = o.UserId\n    WHERE u.Id = @Id\";\nvar dict = new Dictionary<int, User>();\nawait conn.QueryAsync<User, Order, User>(sql, (u, o) =>\n{\n    if (!dict.TryGetValue(u.Id, out var user)) dict[u.Id] = user = u;\n    if (o != null) user.Orders.Add(o);\n    return user;\n}, new { Id = 1 }, splitOn: \"Id\");"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "5. Entity Framework Core — ORM"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Установка"
+    },
+    {
+      "type": "code",
+      "language": "bash",
+      "content": "dotnet add package Microsoft.EntityFrameworkCore\ndotnet add package Microsoft.EntityFrameworkCore.SqlServer  # или PostgreSQL, SQLite, etc.\ndotnet add package Microsoft.EntityFrameworkCore.Tools       # для миграций"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "DbContext и Entities"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "public class AppDbContext : DbContext\n{\n    public DbSet<User> Users => Set<User>();\n    public DbSet<Order> Orders => Set<Order>();\n\n    protected override void OnConfiguring(DbContextOptionsBuilder options)\n        => options.UseSqlServer(\"Server=.;Database=MyDb;Trusted_Connection=true;TrustServerCertificate=true;\")\n                  .EnableSensitiveDataLogging()        // только для dev\n                  .LogTo(Console.WriteLine, LogLevel.Information);\n\n    protected override void OnModelCreating(ModelBuilder model)\n    {\n        // Fluent API конфигурация\n        model.Entity<User>(e =>\n        {\n            e.HasKey(u => u.Id);\n            e.Property(u => u.Email).HasMaxLength(200).IsRequired();\n            e.HasIndex(u => u.Email).IsUnique();\n            e.HasMany(u => u.Orders).WithOne(o => o.User).HasForeignKey(o => o.UserId);\n        });\n    }\n}\n\npublic class User\n{\n    public int Id { get; set; }\n    public string Name { get; set; } = \"\";\n    public string Email { get; set; } = \"\";\n    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;\n    public List<Order> Orders { get; set; } = new();\n}\n\npublic class Order\n{\n    public int Id { get; set; }\n    public int UserId { get; set; }\n    public User User { get; set; } = null!;\n    public decimal Total { get; set; }\n    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;\n}"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Основные операции"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "using var ctx = new AppDbContext();\n\n// CREATE\nvar user = new User { Name = \"Alice\", Email = \"alice@test.com\" };\nctx.Users.Add(user);\nawait ctx.SaveChangesAsync(); // user.Id заполнен\n\n// READ\nvar user = await ctx.Users.FindAsync(1); // по PK (кэш)\nvar user = await ctx.Users.FirstOrDefaultAsync(u => u.Email == \"alice@test.com\");\nvar users = await ctx.Users.Where(u => u.IsActive).ToListAsync();\n\n// С включением связанных (Eager Loading)\nvar userWithOrders = await ctx.Users\n    .Include(u => u.Orders)\n    .FirstAsync(u => u.Id == 1);\n\n// UPDATE\nuser.Name = \"Alice Updated\";\nawait ctx.SaveChangesAsync();\n\n// DELETE\nctx.Users.Remove(user);\nawait ctx.SaveChangesAsync();\n\n// Raw SQL (для сложных запросов)\nvar users = await ctx.Users.FromSqlRaw(\"SELECT * FROM Users WHERE Name LIKE {0}\", \"%Ali%\").ToListAsync();\nawait ctx.Database.ExecuteSqlRawAsync(\"UPDATE Users SET LastLogin = GETDATE() WHERE Id = {0}\", 1);"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Change Tracking (отслеживание изменений)"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// По умолчанию: Tracking (прячет изменения для SaveChanges)\nvar user = await ctx.Users.FindAsync(1);\nuser.Name = \"New Name\"; // EF отследит это\nawait ctx.SaveChangesAsync();\n\n// NoTracking — для read-only (быстрее, меньше памяти)\nvar users = await ctx.Users.AsNoTracking().ToListAsync();\n\n// Identity Resolution: EF возвращает ОДИН экземпляр на контекст для одной сущности\nvar u1 = await ctx.Users.FindAsync(1);\nvar u2 = await ctx.Users.FirstAsync(x => x.Id == 1);\nAssert.Same(u1, u2); // true!"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Миграции"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Создание миграции"
+    },
+    {
+      "type": "text",
+      "content": "dotnet ef migrations add InitialCreate"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Применение к БД"
+    },
+    {
+      "type": "text",
+      "content": "dotnet ef database update"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "Откат"
+    },
+    {
+      "type": "text",
+      "content": "dotnet ef database update PreviousMigrationName"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "SQL скрипт для продакшена"
+    },
+    {
+      "type": "text",
+      "content": "dotnet ef migrations script -o migration.sql\n```"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "Конфигурация производительности"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "// Split Query (для Include — раздельные запросы вместо JOIN)\nvar users = await ctx.Users\n    .Include(u => u.Orders)\n    .AsSplitQuery()\n    .ToListAsync();\n\n// Batching (SQL Server) — батчинг INSERT/UPDATE\noptions.UseSqlServer(connStr, o => o.MaxBatchSize(100));\n\n// Compiled Queries — кэширование плана запроса\nprivate static readonly Func<AppDbContext, int, Task<User?>> GetUserById =\n    EF.CompileAsyncQuery((AppDbContext ctx, int id) => ctx.Users.FirstOrDefault(u => u.Id == id));\n\n// Использование\nvar user = await GetUserById(ctx, 1);\n\n// Interceptors — логирование, аудит, мягкое удаление\npublic class SoftDeleteInterceptor : SaveChangesInterceptor\n{\n    public override ValueTask<InterceptionResult<int>> SavingChangesAsync(\n        DbContextEventData eventData, InterceptionResult<int> result, CancellationToken ct = default)\n    {\n        foreach (var entry in eventData.Context!.ChangeTracker.Entries<ISoftDelete>())\n        {\n            if (entry.State == EntityState.Deleted)\n            {\n                entry.State = EntityState.Modified;\n                entry.Entity.IsDeleted = true;\n                entry.Entity.DeletedAt = DateTime.UtcNow;\n            }\n        }\n        return base.SavingChangesAsync(eventData, result, ct);\n    }\n}"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "6. Connection Resilience & Retry"
+    },
+    {
+      "type": "text",
+      "content": "> 💡 **Пример: arrow function**\n\n**Что делает:** Краткий синтаксис создания функций (ES6+)\n\n**Зачем нужно:** Короче запись, не создаёт свой this (наследует от внешней области), удобно для колбэков\n\n**Как работает:** (a, b) => a + b эквивалентно function(a, b) { return a + b; }"
+    },
+    {
+      "type": "code",
+      "language": "csharp",
+      "content": "options.UseSqlServer(connStr, sqlOptions =>\n{\n    sqlOptions.EnableRetryOnFailure(\n        maxRetryCount: 3,\n        maxRetryDelay: TimeSpan.FromSeconds(5),\n        errorNumbersToAdd: null); // стандартные transient ошибки SQL Server\n});"
+    },
+    {
+      "type": "text",
+      "content": "---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "7. Практические задания"
+    },
+    {
+      "type": "text",
+      "content": "1. **JSON Config**: создайте конфигурационную систему с горячей перезагрузкой (FileSystemWatcher + System.Text.Json)\n2. **Stream Processing**: напишите парсер больших CSV/JSONL файлов через `StreamReader` + `yield return` (не загружая в память)\n3. **Dapper vs EF Core**: бенчмарк простых CRUD операций\n4. **EF Core Performance**: найдите N+1 проблему в коде, исправьте через `Include` / `AsSplitQuery` / проекцию\n5. **Migration Strategy**: реализуйте версионирование БД с обратной совместимостью (Expand/Contract pattern)\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "8. Типичные ошибки"
+    },
+    {
+      "type": "table",
+      "content": "| Ошибка | Правильно |\n|--------|-----------|\n| `JsonSerializer` без кэширования options | Статический `JsonSerializerOptions` или `JsonSerializerContext` |\n| `File.ReadAllText` для больших файлов | `StreamReader` / `File.OpenRead` + streaming |\n| Конкатенация SQL строк | Параметризованные запросы / EF Core LINQ |\n| N+1 запросы в EF Core | `Include`, `AsSplitQuery`, проекция в DTO |\n| `SaveChanges` в цикле | Батчинг / `ExecuteSqlRaw` / Dapper для bulk |\n| Отсутствие индексов на FK / WHERE колонках | Анализ планов запросов, создание индексов |\n| `AddAsync` для каждого элемента | `AddRange` / `BulkInsert` (EFCore.BulkExtensions) |\n| Tracking для read-only отчётов | `AsNoTracking()` |\n\n---"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "9. Полезные ресурсы"
+    },
+    {
+      "type": "list",
+      "items": [
+        "**System.Text.Json** — https://learn.microsoft.com/dotnet/standard/serialization/system-text-json",
+        "**EF Core Docs** — https://learn.microsoft.com/ef/core/",
+        "**Dapper** — https://github.com/DapperLib/Dapper",
+        "**EFCore.BulkExtensions** — https://github.com/borisdj/EFCore.BulkExtensions",
+        "**SQL Server Performance** — https://learn.microsoft.com/sql/relational-databases/performance/performance-monitoring-and-tuning",
+        "**Book: \"Entity Framework Core in Action\" by Jon P Smith**"
+      ],
+      "ordered": false
+    }
+  ],
+  "practice_tasks": [
+    "Создайте простой пример, используя изученную тему: Тестирование: xUnit, Moq, FluentAssertions, Testcontainers",
+    "Измените пример из урока — добавьте свою логику и обработайте ошибки",
+    "Найдите и исправьте ошибку в похожем коде (придумайте баг и почините)",
+    "Объясните другу (или резиновой уточке) как работает 'Тестирование: xUnit, Moq, FluentAssertions, Testcontainers' своими словами",
+    "Напишите мини-утилиту, решающую реальную задачу с использованием этой темы"
+  ],
+  "common_errors": [
+    {
+      "mistake": "Непонимание основной концепции",
+      "correct": "Перечитайте урок, поэкспериментируйте в REPL/Playground"
+    },
+    {
+      "mistake": "Копипаст без понимания",
+      "correct": "Пишите сами, разбирайте каждую строку, меняйте параметры"
+    },
+    {
+      "mistake": "Игнорирование best practices",
+      "correct": "Следуйте стилю, линтерам, паттернам языка"
+    },
+    {
+      "mistake": "Игнорирование обработки ошибок",
+      "correct": "Всегда используйте try/catch/Result/Option/проверки"
+    },
+    {
+      "mistake": "Преждевременная оптимизация",
+      "correct": "Сделайте правильно и читаемо, потом профилируйте, потом оптимизируйте"
+    }
+  ],
+  "resources": [
+    "Официальная документация C#",
+    "Официальный Playground / REPL",
+    "MDN Web Docs / cppreference / cppreference.ru / docs.microsoft.com / doc.rust-lang.org",
+    "Awesome-c# на GitHub",
+    "Конференции и митапы по C#"
+  ],
+  "key_takeaways": [
+    "Главная идея: Unit/Integration, Mock, WebApplicationFactory, Testcontainers, coverlet — это фундамент для LINQ, Generics, Delegates/Events.",
+    "Понимание > запоминание. Разбирайте каждую строку кода.",
+    "Ошибки — это нормально. Важно уметь их читать и исправлять.",
+    "Официальная документация — ваш лучший друг. Всегда актуальна.",
+    "Практика даёт навык. Напишите 3 своих примера после урока."
+  ],
+  "estimated_minutes": 30,
+  "language_slug": "csharp",
+  "lesson_order": 20,
+  "name_en": "Lesson: Тестирование: xUnit, Moq, FluentAssertions, Testcontainers",
+  "short_description_en": "Learn Тестирование: xUnit, Moq, FluentAssertions, Testcontainers in C# with detailed explanations and examples"
+}

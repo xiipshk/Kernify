@@ -1,0 +1,418 @@
+# Урок 31: Security & Reliability — валидация, секреты, безопасная десериализация, уязвимости зависимостей, логирование
+
+## Цели урока
+- Валидировать входящие данные (Pydantic, схемы)
+- Безопасно управлять секретами (ключи, токены, пароли)
+- Избегать небезопасной десериализации (pickle, yaml, eval)
+- Сканировать зависимости на уязвимости (pip-audit, safety, dependabot)
+- Настроить структурированное логирование и аудит
+
+---
+
+## 1. Валидация входящих данных
+
+### Pydantic v2 — стандарт де-факто
+```python
+from pydantic import BaseModel, Field, EmailStr, HttpUrl, field_validator, model_validator
+from typing import Optional
+from datetime import datetime
+from enum import Enum
+
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    USER = "user"
+    GUEST = "guest"
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    username: str = Field(min_length=3, max_length=20, pattern=r"^[a-zA-Z0-9_]+$")
+    password: str = Field(min_length=12, max_length=128)
+    full_name: Optional[str] = Field(default=None, max_length=100)
+    role: UserRole = UserRole.USER
+    birth_date: Optional[datetime] = None
+
+    @field_validator("password")
+    @classmethod
+    def password_complexity(cls, v: str) -> str:
+        if not any(c.isupper() for c in v):
+            raise ValueError("Пароль должен содержать заглавную букву")
+        if not any(c.islower() for c in v):
+            raise ValueError("Пароль должен содержать строчную букву")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Пароль должен содержать цифру")
+        if not any(c in "!@#$%^&*" for c in v):
+            raise ValueError("Пароль должен содержать спецсимвол")
+        return v
+
+    @model_validator(mode="after")
+    def check_adult(self) -> "UserCreate":
+        if self.birth_date and self.role == UserRole.ADMIN:
+            age = (datetime.now() - self.birth_date).days // 365
+            if age < 18:
+                raise ValueError("Админ должен быть старше 18 лет")
+        return self
+
+# Использование
+data = {"email": "test@example.com", "username": "john_doe", "password": "SecureP@ss123"}
+user = UserCreate(**data)  # ValidationError при невалидных данных
+```
+
+### Валидация на уровне API (FastAPI)
+```python
+from fastapi import FastAPI, HTTPException, status
+from pydantic import ValidationError
+
+app = FastAPI()
+
+@app.post("/users", status_code=status.HTTP_201_CREATED)
+async def create_user(user_data: UserCreate):
+    try:
+        user = UserCreate(**user_data.model_dump())
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
+    return await user_service.create(user)
+```
+
+---
+
+## 2. Управление секретами
+
+### ❌ НИКОГДА не храните секреты в коде
+```python
+# ПЛОХО
+API_KEY = "sk-1234567890abcdef"
+DATABASE_URL = "postgres://user:pass@localhost/db"
+```
+
+### ✅ Переменные окружения + .env (только для разработки)
+```bash
+# .env (НЕ коммитить в git!)
+DATABASE_URL=postgres://user:pass@localhost/db
+API_KEY=sk-1234567890abcdef
+SECRET_KEY=your-secret-key-here
+```
+
+```python
+# config.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
+
+    database_url: str
+    api_key: str
+    secret_key: str
+    debug: bool = False
+    log_level: str = "INFO"
+
+settings = Settings()  # читает из env/.env
+```
+
+### Продакшн: Secret Managers
+```python
+# AWS Secrets Manager
+import boto3
+import json
+
+def get_secret(secret_name: str) -> dict:
+    client = boto3.client("secretsmanager")
+    response = client.get_secret_value(SecretId=secret_name)
+    return json.loads(response["SecretString"])
+
+# HashiCorp Vault
+import hvac
+client = hvac.Client(url="https://vault.example.com", token="...")
+secret = client.secrets.kv.v2.read_secret_version(path="myapp/config")
+
+# Azure Key Vault / GCP Secret Manager — аналогично
+```
+
+### Генерация секретов
+```python
+import secrets
+import string
+
+# Криптографически стойкие случайные строки
+api_key = secrets.token_urlsafe(32)  # 43 chars, URL-safe
+password = "".join(secrets.choice(string.ascii_letters + string.digits + "!@#$%") for _ in range(16))
+token = secrets.token_hex(32)  # 64 hex chars
+```
+
+---
+
+## 3. Безопасная десериализация
+
+### ❌ ОПАСНЫЕ паттерны (RCE уязвимости)
+```python
+# НИКОГДА не делайте так с непроверенными данными!
+import pickle
+pickle.loads(untrusted_data)  # RCE!
+
+import yaml
+yaml.load(untrusted_data)  # RCE через !!python/object
+
+eval(untrusted_input)  # RCE
+exec(untrusted_input)  # RCE
+```
+
+### ✅ Безопасные альтернативы
+```python
+# JSON — безопасен (нет исполнения кода)
+import json
+data = json.loads(trusted_json_string)
+
+# YAML — только SafeLoader
+import yaml
+data = yaml.safe_load(trusted_yaml_string)  # не unsafe_load!
+
+# TOML — безопасен
+import tomllib  # Python 3.11+
+data = tomllib.loads(trusted_toml_string)
+
+# MessagePack / CBOR — бинарные, безопасные
+import msgpack
+data = msgpack.unpackb(trusted_bytes, raw=False)
+```
+
+### Если НУЖНО pickle (только доверенные данные!)
+```python
+import pickle
+import hmac
+import hashlib
+
+SECRET_KEY = b"your-secret-key"
+
+def safe_dumps(obj: object) -> bytes:
+    data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+    signature = hmac.new(SECRET_KEY, data, hashlib.sha256).digest()
+    return signature + data
+
+def safe_loads(signed_data: bytes) -> object:
+    signature, data = signed_data[:32], signed_data[32:]
+    expected = hmac.new(SECRET_KEY, data, hashlib.sha256).digest()
+    if not hmac.compare_digest(signature, expected):
+        raise ValueError("Invalid signature")
+    return pickle.loads(data)
+```
+
+---
+
+## 4. Сканирование уязвимостей зависимостей
+
+### pip-audit (официальный PyPA)
+```bash
+pip install pip-audit
+pip-audit                    # проверка текущего окружения
+pip-audit -r requirements.txt  # проверка файла
+pip-audit --format=json      # для CI
+```
+
+### Safety (коммерческий, более полная БД)
+```bash
+pip install safety
+safety check                 # проверка окружения
+safety check -r requirements.txt
+```
+
+### GitHub Dependabot (автоматически)
+```yaml
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "security"]
+```
+
+### В CI (GitHub Actions)
+```yaml
+- name: Run pip-audit
+  run: |
+    pip install pip-audit
+    pip-audit --format=json --output=audit.json || true
+
+- name: Upload audit results
+  uses: actions/upload-artifact@v4
+  with:
+    name: dependency-audit
+    path: audit.json
+```
+
+### deptry — поиск проблем с зависимостями
+```bash
+pip install deptry
+deptry .  # находит: неиспользуемые, отсутствующие в pyproject.toml, неиспользуемые в коде
+```
+
+---
+
+## 5. Структурированное логирование и аудит
+
+### structlog — structured logging
+```python
+import structlog
+import logging
+import sys
+
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.StackInfoRenderer(),
+        structlog.dev.set_exc_info,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()  # для продакшн
+        # structlog.dev.ConsoleRenderer()  # для разработки
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+    cache_logger_on_first_use=True,
+)
+
+logger = structlog.get_logger()
+
+# Использование
+logger.info("user_login", user_id=123, ip="192.168.1.1", method="oauth")
+logger.error("payment_failed", order_id=456, error="insufficient_funds", amount=100.50)
+
+# Контекст (автоматически добавляется ко всем логам в рамках запроса)
+structlog.contextvars.bind_contextvars(request_id="req-abc-123", user_id=123)
+```
+
+### Стандартный logging + JSON formatter
+```python
+import logging
+import json
+from datetime import datetime
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_obj = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        if record.exc_info:
+            log_obj["exception"] = self.formatException(record.exc_info)
+        # Дополнительные поля из extra
+        for key, value in record.__dict__.items():
+            if key not in ["name", "msg", "args", "created", "filename", "funcName",
+                          "levelname", "levelno", "lineno", "module", "msecs",
+                          "message", "name", "pathname", "process", "processName",
+                          "relativeCreated", "thread", "threadName", "exc_info", "exc_text", "stack_info"]:
+                log_obj[key] = value
+        return json.dumps(log_obj, ensure_ascii=False)
+
+handler = logging.StreamHandler()
+handler.setFormatter(JSONFormatter())
+root_logger = logging.getLogger()
+root_logger.addHandler(handler)
+root_logger.setLevel(logging.INFO)
+```
+
+### Аудит безопасных событий
+```python
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from enum import Enum
+import structlog
+
+class AuditEventType(str, Enum):
+    LOGIN_SUCCESS = "login_success"
+    LOGIN_FAILED = "login_failed"
+    PASSWORD_CHANGED = "password_changed"
+    PERMISSION_GRANTED = "permission_granted"
+    DATA_EXPORTED = "data_exported"
+    ADMIN_ACTION = "admin_action"
+
+@dataclass
+class AuditEvent:
+    event_type: AuditEventType
+    user_id: int
+    timestamp: str = None
+    ip: str = None
+    details: dict = None
+
+    def __post_init__(self):
+        self.timestamp = self.timestamp or datetime.utcnow().isoformat() + "Z"
+
+audit_logger = structlog.get_logger("audit")
+
+def log_audit(event: AuditEvent):
+    audit_logger.info("audit_event", **asdict(event))
+
+# Использование
+log_audit(AuditEvent(
+    event_type=AuditEventType.LOGIN_FAILED,
+    user_id=123,
+    ip="192.168.1.1",
+    details={"reason": "invalid_password", "attempts": 3}
+))
+```
+
+---
+
+## 6. Основные принципы безопасности (OWASP Top 10 для Python)
+
+| Уязвимость | Защита в Python |
+|------------|-----------------|
+| **Injection (SQL, Command)** | Параметризованные запросы (SQLAlchemy ORM, `cursor.execute("...", params)`), `shlex.quote()` |
+| **Broken Auth** | bcrypt/argon2 для паролей, JWT с коротким TTL, MFA |
+| **Sensitive Data Exposure** | Шифрование в покое (AES-GCM), TLS 1.3, секреты не в логах |
+| **XXE** | `defusedxml` вместо `xml.etree`, отключить внешние сущности |
+| **Broken Access Control** | RBAC/ABAC, проверка прав на каждом эндпоинте |
+| **Security Misconfiguration** | `debug=False` в проде, security headers (CSP, HSTS) |
+| **XSS** | Jinja2 autoescape, CSP, sanitize HTML (bleach) |
+| **Insecure Deserialization** | Только JSON/msgpack, избегать pickle/yaml.load |
+| **Vulnerable Components** | `pip-audit`, Dependabot, `pip install --upgrade` |
+| **Insufficient Logging** | Structured logs, корреляция request_id, алерты на аномалии |
+
+---
+
+## Практические задания
+
+1. **Валидация**: Создайте Pydantic-модели для регистрации пользователя с комплексной валидацией пароля
+2. **Секреты**: Настройте `pydantic-settings` + `.env.example` (без реальных значений)
+3. **Десериализация**: Напишите функцию безопасной загрузки конфига из YAML/JSON/TOML
+4. **Сканирование**: Добавьте `pip-audit` в CI, настройте Dependabot
+5. **Логирование**: Настройте structlog с JSON выводом, добавьте audit-логи для критических действий
+
+---
+
+## Типичные ошибки
+
+| Ошибка | Правильно |
+|--------|-----------|
+| `SECRET_KEY` в репозитории | Только в secret manager / env vars |
+| `pickle.load()` из сети/файлов пользователей | JSON / msgpack / safe yaml |
+| `yaml.load()` без `Loader=yaml.SafeLoader` | `yaml.safe_load()` |
+| Логирование паролей/токенов | Фильтруйте чувствительные поля в formatter |
+| Отсутствие rate limiting | `slowapi` / nginx rate limit на авторизацию |
+| `debug=True` в продакшене | Всегда `False`, отдельные settings для prod |
+
+---
+
+## Полезные ресурсы
+
+- **OWASP Top 10** — https://owasp.org/www-project-top-ten/
+- **OWASP Python Security** — https://owasp.org/www-project-python-security/
+- **Pydantic docs** — https://docs.pydantic.dev/
+- **structlog docs** — https://www.structlog.org/
+- **pip-audit** — https://pypi.org/project/pip-audit/
+- **Bandit (static security analysis)** — https://bandit.readthedocs.io/
+- **CWE/SANS Top 25** — https://cwe.mitre.org/top25/
