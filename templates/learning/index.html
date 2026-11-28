@@ -41,13 +41,7 @@
                             {% if progress.current_program %}
                             <div class="card-body">
                                 <div class="d-flex align-items-center mb-3">
-                                    {% if progress.language.icon %}
-                                    <div class="language-icon-text d-flex align-items-center justify-content-center me-3" style="width: 48px; height: 48px; font-size: 1.5rem; border-radius: 50%; background: {{ progress.language.color|default:'#6366f1' }}20;">{{ progress.language.icon }}</div>
-                                    {% else %}
-                                    <div class="bg-primary bg-opacity-10 rounded-circle d-flex align-items-center justify-content-center me-3" style="width: 48px; height: 48px;">
-                                        <i class="bi bi-cpu text-primary fs-4"></i>
-                                    </div>
-                                    {% endif %}
+                                    {% include 'includes/language_icon.html' with language=progress.language size=48 extra_class='me-3' %}
                                     <div>
                                         <h6 class="mb-0">{{ progress.current_program.name }}</h6>
                                         <small class="text-muted">{{ progress.language.name }}</small>
@@ -73,11 +67,54 @@
 
             <!-- Available Courses by Language -->
             <h4 class="mb-3"><i class="bi bi-grid me-2"></i>{% trans "All Courses" %}</h4>
-            {% regroup available_programs by language as language_groups %}
-            {% for group in language_groups %}
-            <h5 class="mt-4 mb-3 text-primary">{{ group.grouper.name }}</h5>
-            <div class="row g-3">
-                {% for program in group.list %}
+            {% for language_block in language_sections %}
+            <div class="d-flex flex-wrap justify-content-between align-items-center mt-4 mb-3 gap-2">
+                <h5 class="mb-0 text-primary d-flex align-items-center gap-2">
+                    {% include 'includes/language_icon.html' with language=language_block.language size=32 radius=8 %}
+                    {{ language_block.language.name }}
+                </h5>
+                <ul class="nav nav-pills nav-sm gap-2" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active py-1 px-3" id="lang-{{ language_block.language.slug }}-test-tab" data-bs-toggle="tab" data-bs-target="#lang-{{ language_block.language.slug }}-test" type="button" role="tab" aria-controls="lang-{{ language_block.language.slug }}-test" aria-selected="true">
+                            <i class="bi bi-clipboard-check me-1"></i>{% trans "Test" %}
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link py-1 px-3" id="lang-{{ language_block.language.slug }}-courses-tab" data-bs-toggle="tab" data-bs-target="#lang-{{ language_block.language.slug }}-courses" type="button" role="tab" aria-controls="lang-{{ language_block.language.slug }}-courses" aria-selected="false">
+                            <i class="bi bi-book me-1"></i>{% trans "Courses" %} <span class="badge bg-secondary bg-opacity-25 ms-1">{{ language_block.programs|length }}</span>
+                        </button>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="tab-content">
+                <div class="tab-pane fade show active" id="lang-{{ language_block.language.slug }}-test" role="tabpanel" aria-labelledby="lang-{{ language_block.language.slug }}-test-tab">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body p-4 d-flex flex-column flex-lg-row align-items-lg-center gap-3">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1"><i class="bi bi-clipboard-check me-1"></i>{% trans "Knowledge Test" %}: {{ language_block.language.name }}</h6>
+                                {% if language_block.assessment_result %}
+                                <p class="text-muted small mb-1">
+                                    {% trans "Last test" %}: <strong>{{ language_block.assessment_result.score }}%</strong> —
+                                    <span class="text-success">{{ language_block.assessment_result.strong_topics|length }} {% trans "known" %}</span>,
+                                    <span class="text-danger">{{ language_block.assessment_result.wrong_topics|length }} {% trans "to review" %}</span>
+                                </p>
+                                {% else %}
+                                <p class="text-muted small mb-0">
+                                    {% trans "Answer 20 questions and find out what you know and what to review." %}
+                                </p>
+                                {% endif %}
+                            </div>
+                            <a href="{% url 'practice:language_assessment' language_block.language.slug %}" class="btn btn-primary">
+                                <i class="bi bi-play-fill me-1"></i>{% if language_block.assessment_result %}{% trans "Take the test again" %}{% else %}{% trans "Start Test" %}{% endif %}
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-pane fade" id="lang-{{ language_block.language.slug }}-courses" role="tabpanel" aria-labelledby="lang-{{ language_block.language.slug }}-courses-tab">
+                    <div class="row g-3">
+                {% for program in language_block.programs %}
                 <div class="col-md-6 col-lg-4">
                     <a href="{% url 'core:program_detail' program.slug %}" class="text-decoration-none">
                         <div class="card border-0 shadow-sm h-100 transition-hover">
@@ -100,6 +137,11 @@
                     </a>
                 </div>
                 {% endfor %}
+                    </div>
+                    {% if not language_block.programs %}
+                    <p class="text-muted small mt-2 mb-0">{% trans "No courses available yet" %}</p>
+                    {% endif %}
+                </div>
             </div>
             {% empty %}
             <div class="text-center py-5">

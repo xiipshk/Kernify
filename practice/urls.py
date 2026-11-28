@@ -1,11 +1,19 @@
 """URL configuration for practice app."""
 from django.urls import path
 
-from practice import views
+from practice import assessment_views, course_assessment_views, views
 
 app_name = 'practice'
 
 urlpatterns = [
+    # Тест-диагностика по языку (вкладка «Тест»)
+    path('assessment/<slug:slug>/', assessment_views.LanguageAssessmentView.as_view(), name='language_assessment'),
+    path('assessment/<slug:slug>/results/<int:pk>/', assessment_views.AssessmentResultDetailView.as_view(), name='assessment_result'),
+
+    # Тест после курса (CourseProgram)
+    path('course-test/<slug:slug>/', course_assessment_views.CourseTestView.as_view(), name='course_test'),
+    path('course-test/<slug:slug>/results/<int:pk>/', course_assessment_views.CourseTestResultDetailView.as_view(), name='course_test_result'),
+
     # Practice index
     path('', views.PracticeIndexView.as_view(), name='index'),
 
@@ -23,6 +31,9 @@ urlpatterns = [
 
     # Task submit (AJAX/API)
     path('api/tasks/<slug:slug>/submit/', views.TaskSubmitAPIView.as_view(), name='task_submit_api'),
+
+    # AI help while solving a task
+    path('api/tasks/<slug:slug>/ai-help/', views.TaskAIHelpAPIView.as_view(), name='task_ai_help_api'),
 
     # Task results
     path('sessions/<int:pk>/', views.SessionResultView.as_view(), name='session_result'),

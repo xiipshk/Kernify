@@ -101,6 +101,14 @@ class ProgrammingLanguage(PublishedSoftDeleteTimeStampedModel, OrderedModel):
     icon = models.CharField(_('icon'), max_length=50, blank=True, help_text=_('Icon class or emoji'))
     color = models.CharField(_('color'), max_length=7, blank=True, help_text=_('Hex color code'))
     logo = models.ImageField(_('logo'), upload_to='languages/', null=True, blank=True)
+    logo_invert_on_dark = models.BooleanField(
+        _('invert logo on dark theme'),
+        default=False,
+        help_text=_(
+            'Для монохромных логотипов (например, Rust): на тёмной теме '
+            'логотип показывается белым, иначе он сливается с фоном.'
+        ),
+    )
 
     # Version tracking
     version = models.CharField(_('version'), max_length=20, default='1.0')

@@ -60,7 +60,7 @@ class ProgrammingLanguageAdmin(admin.ModelAdmin):
     readonly_fields = ('created_at', 'updated_at', 'programs_count', 'topics_count', 'lessons_count')
 
     fieldsets = (
-        (None, {'fields': ('name', 'slug', 'description', 'icon', 'color', 'logo', 'order')}),
+        (None, {'fields': ('name', 'slug', 'description', 'icon', 'color', 'logo', 'logo_invert_on_dark', 'order')}),
         (_('Status'), {'fields': ('status', 'version')}),
         (_('Statistics'), {'fields': ('programs_count', 'topics_count', 'lessons_count')}),
         (_('Timestamps'), {'fields': ('created_at', 'updated_at')}),

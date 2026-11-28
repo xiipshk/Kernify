@@ -10,7 +10,8 @@ import re
 from pathlib import Path
 
 from django.conf import settings
-from django.test import SimpleTestCase
+from django.template.loader import render_to_string
+from django.test import SimpleTestCase, TestCase
 
 CSS_PATH = Path(settings.BASE_DIR) / 'static' / 'css' / 'style.css'
 
@@ -132,3 +133,49 @@ class DifficultyStarsTests(SimpleTestCase):
         self.assertIn('.lesson-difficulty-stars .stars-filled', css)
         self.assertIn('.theme-dark .lesson-difficulty-stars .stars-filled', css)
         self.assertRegex(css, r'\.lesson-difficulty-stars\s+\.stars-filled\s*\{[^}]*color:\s*#ff')
+
+
+class LanguageLogoContrastTests(SimpleTestCase):
+    """Монохромные логотипы (Rust) не должны сливаться с тёмным фоном."""
+
+    def setUp(self):
+        self.css = CSS_PATH.read_text(encoding='utf-8')
+
+    def test_monochrome_logo_inverted_on_dark_theme(self):
+        self.assertRegex(
+            self.css,
+            r'\.theme-dark\s+\.language-logo--invert\s*\{[^}]*filter:\s*brightness\(0\)\s+invert\(1\)',
+        )
+
+    def test_monochrome_logo_inverted_for_auto_dark(self):
+        self.assertRegex(
+            self.css,
+            r'prefers-color-scheme:\s*dark[\s\S]*?\.theme-auto\s+\.language-logo--invert\s*\{[^}]*filter:\s*brightness\(0\)\s+invert\(1\)',
+        )
+
+
+class LanguageLogoRenderTests(TestCase):
+    """Иконка языка добавляет класс инверсии только для монохромных логотипов."""
+
+    def test_rust_logo_is_marked_monochrome(self):
+        from learning.models import ProgrammingLanguage
+
+        language = ProgrammingLanguage.objects.create(
+            name='Rust', slug='rust', icon='🦀', order=1,
+            logo='languages/rust.png', logo_invert_on_dark=True,
+            status=ProgrammingLanguage.PublishStatus.PUBLISHED,
+        )
+        html = render_to_string('includes/language_icon.html', {'language': language})
+        self.assertIn('language-logo--invert', html)
+
+    def test_colored_logo_is_not_inverted(self):
+        from learning.models import ProgrammingLanguage
+
+        language = ProgrammingLanguage.objects.create(
+            name='Python', slug='python', order=2,
+            logo='languages/python.png', logo_invert_on_dark=False,
+            status=ProgrammingLanguage.PublishStatus.PUBLISHED,
+        )
+        html = render_to_string('includes/language_icon.html', {'language': language})
+        self.assertIn('language-logo', html)
+        self.assertNotIn('language-logo--invert', html)

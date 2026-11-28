@@ -1,9 +1,14 @@
 """Admin configuration for practice app."""
 from django.contrib import admin
+from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django_json_widget.widgets import JSONEditorWidget
 
 from practice.models import (
+    AssessmentQuestion,
+    AssessmentResult,
+    CourseTestQuestion,
+    CourseTestResult,
     PracticeSession,
     PracticeTask,
 )
@@ -60,4 +65,113 @@ class PracticeSessionAdmin(admin.ModelAdmin):
         (_('Results'), {'fields': ('test_results', 'ai_feedback')}),
         (_('Progress'), {'fields': ('hints_used', 'attempts', 'time_spent', 'xp_earned')}),
         (_('Timestamps'), {'fields': ('completed_at', 'created_at', 'updated_at')}),
+    )
+
+
+# --- Тест-диагностика по языку ---
+
+@admin.register(AssessmentQuestion)
+class AssessmentQuestionAdmin(admin.ModelAdmin):
+    """Admin for AssessmentQuestion."""
+
+    list_display = ('question_preview', 'language', 'topic_label', 'topic', 'difficulty', 'skill_level', 'order', 'status')
+    list_filter = ('language', 'skill_level', 'difficulty', 'status')
+    search_fields = ('question', 'topic_label', 'topic__name')
+    raw_id_fields = ('topic',)
+    ordering = ('language', 'order')
+    readonly_fields = ('created_at', 'updated_at', 'published_at')
+    formfield_overrides = {
+        models.JSONField: {
+            'widget': JSONEditorWidget(mode='tree', height='240px', width='100%')
+        },
+    }
+
+    fieldsets = (
+        (None, {'fields': ('language', 'topic', 'topic_label', 'order', 'status')}),
+        (_('Question'), {'fields': ('question', 'question_en')}),
+        (_('Options'), {
+            'fields': ('options',),
+            'description': _('JSON: [{"text": "...", "text_en": "...", "correct": true}, ...]. '
+                             'Ровно один вариант должен иметь "correct": true.'),
+        }),
+        (_('Explanation'), {'fields': ('explanation', 'explanation_en')}),
+        (_('Difficulty'), {'fields': ('difficulty', 'skill_level')}),
+        (_('Timestamps'), {'fields': ('created_at', 'updated_at', 'published_at')}),
+    )
+
+    @admin.display(description=_('question'))
+    def question_preview(self, obj):
+        return obj.question[:80]
+
+    def get_prepopulated_fields(self, request, obj=None):
+        return {}
+
+
+# --- Тест после курса ---
+
+@admin.register(CourseTestQuestion)
+class CourseTestQuestionAdmin(admin.ModelAdmin):
+    """Admin for end-of-course test questions."""
+
+    list_display = (
+        'question_preview', 'program', 'question_type', 'topic_label', 'topic',
+        'difficulty', 'skill_level', 'order', 'status',
+    )
+    list_filter = ('program', 'question_type', 'skill_level', 'difficulty', 'status')
+    search_fields = ('question', 'topic_label', 'topic__name', 'program__name')
+    raw_id_fields = ('topic',)
+    ordering = ('program', 'order')
+    readonly_fields = ('created_at', 'updated_at', 'published_at')
+    formfield_overrides = {
+        models.JSONField: {
+            'widget': JSONEditorWidget(mode='tree', height='240px', width='100%')
+        },
+    }
+
+    fieldsets = (
+        (None, {'fields': ('program', 'topic', 'topic_label', 'question_type', 'order', 'status')}),
+        (_('Question'), {'fields': ('question', 'question_en')}),
+        (_('Code output task'), {
+            'fields': ('code_snippet', 'code_snippet_en'),
+            'description': _('Shown above the answer field for code-output tasks.'),
+        }),
+        (_('Options'), {
+            'fields': ('options',),
+            'description': _(
+                'JSON for choice questions: [{"text": "...", "text_en": "...", "correct": true}, ...]. '
+                'For multiple choice, multiple options may have "correct": true.'
+            ),
+        }),
+        (_('Accepted answers'), {
+            'fields': ('correct_answers',),
+            'description': _(
+                'JSON array of accepted answers for short-answer and code-output tasks, '
+                'e.g. ["42", "42.0"].'
+            ),
+        }),
+        (_('Explanation'), {'fields': ('explanation', 'explanation_en')}),
+        (_('Difficulty'), {'fields': ('difficulty', 'skill_level')}),
+        (_('Timestamps'), {'fields': ('created_at', 'updated_at', 'published_at')}),
+    )
+
+    @admin.display(description=_('question'))
+    def question_preview(self, obj):
+        return obj.question[:80]
+
+
+@admin.register(CourseTestResult)
+class CourseTestResultAdmin(admin.ModelAdmin):
+    """Admin for saved end-of-course test results."""
+
+    list_display = (
+        'user', 'program', 'score', 'level', 'correct_answers',
+        'total_questions', 'created_at',
+    )
+    list_filter = ('program', 'level', 'created_at')
+    search_fields = ('user__email', 'program__name')
+    raw_id_fields = ('user', 'program')
+    ordering = ('-created_at',)
+    readonly_fields = (
+        'user', 'program', 'total_questions', 'correct_answers', 'score',
+        'level', 'topic_breakdown', 'answers', 'created_at',
     )

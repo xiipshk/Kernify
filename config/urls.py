@@ -46,6 +46,7 @@ urlpatterns = [
     path('health/', health_check, name='health'),
     # API — без языкового префикса (вызывается из JS как /api/...)
     path('api/', include('runner.urls')),
+    path('api/ai/', include('ai.api_urls')),
 ]
 
 # Add i18n patterns - these contain LocalePrefixPattern which LocaleMiddleware detects

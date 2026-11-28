@@ -1,0 +1,127 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{% trans "Test Result" %}: {{ language.name }} - kernify{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <nav aria-label="breadcrumb" class="mb-4">
+        <ol class="breadcrumb bg-transparent mb-0">
+            <li class="breadcrumb-item"><a href="{% url 'core:language_detail' language.slug %}">{{ language.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'practice:language_assessment' language.slug %}">{% trans "Knowledge Test" %}</a></li>
+            <li class="breadcrumb-item active">{% trans "Result" %}</li>
+        </ol>
+    </nav>
+
+    <div class="row g-4">
+        <!-- Summary -->
+        <div class="col-lg-4">
+            <div class="rtk-card sticky-top" style="top: 64px;">
+                <div class="card-body p-4 text-center">
+                    <div class="d-flex justify-content-center mb-3">
+                        {% include 'includes/language_icon.html' with language=language size=64 %}
+                    </div>
+                    <h4 class="fw-bold mb-1">{{ language.name }}</h4>
+                    <p class="text-theme-muted small mb-4">{{ result.created_at|date:"d.m.Y H:i" }}</p>
+
+                    {% if result.level == 'advanced' %}
+                    <i class="bi bi-trophy fs-1 text-warning"></i>
+                    {% elif result.level == 'intermediate' %}
+                    <i class="bi bi-graph-up-arrow fs-1 text-primary"></i>
+                    {% else %}
+                    <i class="bi bi-seedling fs-1 text-success"></i>
+                    {% endif %}
+
+                    <div class="display-4 fw-bold my-2">{{ result.score }}%</div>
+                    <div class="mb-3">
+                        <span class="badge bg-primary px-3 py-2">{{ result.get_level_display }}</span>
+                    </div>
+                    <p class="text-theme-muted mb-4">
+                        {% blocktrans with correct=result.correct_answers total=result.total_questions trimmed %}
+                            Верных ответов: {{ correct }} из {{ total }}
+                        {% endblocktrans %}
+                    </p>
+
+                    <div class="d-grid gap-2">
+                        <a href="{% url 'practice:language_assessment' language.slug %}" class="btn btn-outline-primary">
+                            <i class="bi bi-arrow-repeat me-1"></i>{% trans "Take the test again" %}
+                        </a>
+                        <a href="{% url 'core:language_detail' language.slug %}" class="btn btn-primary">
+                            <i class="bi bi-book me-1"></i>{% trans "Go to courses" %}
+                        </a>
+                        {% if user.is_authenticated and user.is_staff %}
+                        {% if not is_saved %}
+                        <a href="{% url 'practice:assessment_result' language.slug result.pk %}" class="btn btn-link btn-sm">{% trans "Open saved result" %}</a>
+                        {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-8">
+            <!-- Topics -->
+            <div class="rtk-card mb-4">
+                <div class="card-body p-4">
+                    <h5 class="fw-bold mb-3"><i class="bi bi-bar-chart me-2"></i>{% trans "What you know" %}</h5>
+                    {% with wrong=result.wrong_topics strong=result.strong_topics %}
+                    {% if strong %}
+                    <h6 class="text-success small fw-bold mb-2"><i class="bi bi-check-circle me-1"></i>{% trans "Strong topics" %}</h6>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        {% for item in strong %}
+                        <span class="badge bg-success bg-opacity-10 text-success px-3 py-2">{{ item.name }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if wrong %}
+                    <h6 class="text-danger small fw-bold mb-2"><i class="bi bi-exclamation-circle me-1"></i>{% trans "Topics to review" %}</h6>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        {% for item in wrong %}
+                        <span class="badge bg-danger bg-opacity-10 text-danger px-3 py-2">{{ item.name }} {{ item.correct }}/{{ item.total }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if not strong and not wrong %}
+                    <p class="text-theme-muted mb-0">{% trans "No data yet." %}</p>
+                    {% endif %}
+                    {% endwith %}
+                    <p class="text-theme-muted small mb-0 mt-3">
+                        <i class="bi bi-info-circle me-1"></i>{% trans "Check the highlighted topics in the courses below." %}
+                    </p>
+                </div>
+            </div>
+
+            <!-- Answers -->
+            <h5 class="fw-bold mb-3"><i class="bi bi-list-check me-2"></i>{% trans "Answer review" %}</h5>
+            {% for detail in details %}
+            <div class="rtk-card mb-3">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <span class="badge bg-secondary bg-opacity-10 text-secondary">{{ detail.topic }}</span>
+                        {% if detail.is_correct %}
+                        <span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>{% trans "Correct" %}</span>
+                        {% elif detail.answered %}
+                        <span class="badge bg-danger"><i class="bi bi-x-lg me-1"></i>{% trans "Wrong" %}</span>
+                        {% else %}
+                        <span class="badge bg-warning text-dark">{% trans "No answer" %}</span>
+                        {% endif %}
+                    </div>
+                    <p class="fw-semibold mb-3">{{ forloop.counter }}. {{ detail.question }}</p>
+                    {% if not detail.is_correct %}
+                        {% if detail.answered %}
+                        <p class="small mb-1"><span class="text-danger fw-semibold">{% trans "Your answer" %}:</span> {{ detail.selected_text }}</p>
+                        {% endif %}
+                        <p class="small mb-2"><span class="text-success fw-semibold">{% trans "Correct answer" %}:</span> {{ detail.correct_text }}</p>
+                    {% endif %}
+                    {% if detail.explanation %}
+                    <div class="alert alert-secondary py-2 px-3 small mb-0">
+                        <i class="bi bi-lightbulb me-1"></i>{{ detail.explanation }}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

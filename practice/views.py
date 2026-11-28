@@ -1,11 +1,26 @@
 """Views for practice app."""
+import json
+
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from django.views.generic import DetailView, ListView, TemplateView, View
 from django.http import JsonResponse
+from django_ratelimit.decorators import ratelimit
 
+from ai.services import (
+    AIServiceError,
+    chat_completion,
+    check_request_policy,
+    detect_policy_risk,
+    ensure_default_provider,
+    policy_refusal,
+    programming_only_prompt,
+    record_usage,
+    sanitize_output,
+)
 from core.views import SlugDetailMixin
 from practice.models import PracticeTask, PracticeSession
 from practice.services import run_task_tests, save_submission, get_daily_challenge
@@ -161,6 +176,215 @@ class TaskSolveView(LoginRequiredMixin, SlugDetailMixin, DetailView):
         context['session'] = session
         context['code_runner_enabled'] = code_runner.is_enabled()
         return context
+
+
+class TaskAIHelpAPIView(LoginRequiredMixin, View):
+    """POST /practice/api/tasks/<slug>/ai-help/ — контекстная помощь ИИ по задаче."""
+
+    MAX_CODE_LENGTH = 12000
+    MAX_QUESTION_LENGTH = 2000
+    MAX_HISTORY_MESSAGES = 10
+
+    @method_decorator(ratelimit(key='user', rate='20/m', method='POST', block=True))
+    def post(self, request, slug):
+        task = get_object_or_404(
+            PracticeTask.objects.select_related('topic__program__language'),
+            slug=slug,
+            status='published',
+        )
+
+        try:
+            payload = json.loads(request.body.decode('utf-8') or '{}')
+        except (ValueError, UnicodeDecodeError):
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        if not isinstance(payload, dict):
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        mode = payload.get('mode') or 'question'
+        if mode not in {'hint', 'review', 'question'}:
+            mode = 'question'
+
+        question = payload.get('question') or ''
+        if not isinstance(question, str):
+            return JsonResponse({'error': 'Invalid question'}, status=400)
+        question = question.strip()
+        if len(question) > self.MAX_QUESTION_LENGTH:
+            return JsonResponse({'error': 'Question is too long'}, status=400)
+        if mode == 'question' and not question:
+            return JsonResponse({'error': 'Question is required'}, status=400)
+
+        code = payload.get('code') or ''
+        if not isinstance(code, str):
+            return JsonResponse({'error': 'Invalid code'}, status=400)
+        code = code[:self.MAX_CODE_LENGTH]
+
+        history = self._clean_history(payload.get('history'))
+
+        # Security: check the user's question and code for injection / data
+        # exfiltration / internal-information requests before calling the model.
+        risk = detect_policy_risk(code)
+        if risk:
+            return JsonResponse({
+                'answer': policy_refusal(risk),
+                'blocked': True,
+                'reason': risk,
+            })
+
+        provider = ensure_default_provider()
+        check = None
+        if question:
+            classification_context = [
+                f'Практическая задача по программированию: {task.name}',
+                f'Язык: {task.language.name} ({task.language.slug})',
+                f'Текущий код ученика: {code[:800]}',
+            ]
+            classification_context += [
+                f'{item["role"]}: {item["content"][:500]}'
+                for item in history[-4:]
+            ]
+            try:
+                check = check_request_policy(
+                    question,
+                    provider=provider,
+                    context=classification_context,
+                )
+            except AIServiceError as exc:
+                return JsonResponse({'error': str(exc)}, status=502)
+            if not check['allowed']:
+                record_usage(
+                    request.user,
+                    provider,
+                    prompt_tokens=check['prompt_tokens'],
+                    completion_tokens=check['completion_tokens'],
+                    total_tokens=check['total_tokens'],
+                )
+                return JsonResponse({
+                    'answer': policy_refusal(check['reason']),
+                    'blocked': True,
+                    'reason': check['reason'],
+                })
+
+        system_prompt = programming_only_prompt(
+            'Ты — AI-наставник по практическим задачам на платформе Kernify. '
+            'Твоя цель — помочь ученику самому найти и понять ошибку. Анализируй '
+            'его код и объясняй, из-за чего код может не работать, на какие '
+            'участки и случаи стоит обратить внимание. НЕ указывай точное место '
+            'ошибки, НЕ говори, что именно исправить, и НЕ давай готовый код. '
+            'Задавай наводящие вопросы и предлагай проверить гипотезы. Если '
+            'ученик просит готовое решение, вежливо откажись и предложи разобрать '
+            'задачу по шагам. Отвечай кратко, по делу и на языке пользователя.'
+        )
+
+        task_context = self._build_task_context(task)
+        if mode == 'hint':
+            instruction = (
+                'Проанализируй текущий код ученика и подскажи, из-за чего он '
+                'может не работать. Опиши возможные причины и области для '
+                'проверки, но не называй конкретную ошибку и не говори, что '
+                'именно исправить. Не давай готовый код.'
+            )
+            if question:
+                instruction += f'\n\nДополнительный вопрос ученика: {question}'
+        elif mode == 'review':
+            instruction = (
+                'Разбери текущий код ученика и предположи, из-за чего он может '
+                'не проходить тесты. Опиши зоны риска и вопросы, которые стоит '
+                'себе задать, но не указывай точное исправление и не давай '
+                'готовый код.'
+            )
+            if question:
+                instruction += f'\n\nДополнительный вопрос ученика: {question}'
+        else:
+            instruction = f'Вопрос ученика: {question}'
+
+        user_parts = [f'Контекст задачи:\n{task_context}']
+        if code.strip():
+            user_parts.append(
+                f'Текущий код ученика ({task.language.slug}):\n'
+                f'```{task.language.slug}\n{code}\n```'
+            )
+        user_parts.append(instruction)
+        user_content = '\n\n'.join(user_parts)
+
+        messages = [{'role': 'system', 'content': system_prompt}]
+        messages += history
+        messages.append({'role': 'user', 'content': user_content})
+
+        try:
+            result = chat_completion(messages, provider=provider, temperature=0.4)
+        except AIServiceError as exc:
+            return JsonResponse({'error': str(exc)}, status=502)
+
+        usage = check or {
+            'prompt_tokens': 0,
+            'completion_tokens': 0,
+            'total_tokens': 0,
+        }
+        record_usage(
+            request.user,
+            provider,
+            prompt_tokens=result['prompt_tokens'] + usage['prompt_tokens'],
+            completion_tokens=result['completion_tokens'] + usage['completion_tokens'],
+            total_tokens=result['total_tokens'] + usage['total_tokens'],
+        )
+
+        return JsonResponse({
+            'answer': sanitize_output(result['content']),
+            'model': result['model'],
+        })
+
+    def _build_task_context(self, task):
+        parts = [
+            f'Название: {task.name}',
+            f'Язык: {task.language.name} ({task.language.slug})',
+            f'Тип задания: {task.get_task_type_display()}',
+            f'Сложность: {task.difficulty_level}/5',
+            f'Условие: {task.description[:4000]}',
+        ]
+
+        examples = []
+        for index, case in enumerate((task.test_cases or [])[:3], start=1):
+            if not isinstance(case, dict):
+                continue
+            examples.append(
+                f'Пример {index}:\n'
+                f'Ввод: {str(case.get("input", ""))[:500]}\n'
+                f'Ожидаемый вывод: {str(case.get("expected_output", ""))[:500]}'
+            )
+        if examples:
+            parts.append('Примеры:\n' + '\n\n'.join(examples))
+
+        hint_texts = []
+        for hint in (task.hints or [])[:5]:
+            if isinstance(hint, dict):
+                hint_texts.append(str(hint.get('text', ''))[:300])
+            else:
+                hint_texts.append(str(hint)[:300])
+        hint_texts = [text for text in hint_texts if text]
+        if hint_texts:
+            parts.append(
+                'Подсказки, которые уже доступны ученику (используй как ориентир, '
+                'не пересказывай их целиком):\n- ' + '\n- '.join(hint_texts)
+            )
+
+        return '\n\n'.join(parts)
+
+    def _clean_history(self, history):
+        if not isinstance(history, list):
+            return []
+        cleaned = []
+        for item in history[-self.MAX_HISTORY_MESSAGES:]:
+            if not isinstance(item, dict):
+                continue
+            role = item.get('role')
+            content = item.get('content')
+            if role not in {'user', 'assistant'}:
+                continue
+            if not isinstance(content, str) or not content.strip():
+                continue
+            cleaned.append({'role': role, 'content': content[:4000]})
+        return cleaned
 
 
 class TaskSubmitView(LoginRequiredMixin, View):

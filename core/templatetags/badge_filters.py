@@ -29,3 +29,21 @@ def badge_color(value):
     """Возвращает цвет Bootstrap ('success', 'info', ...) для значения."""
     key = str(value).lower() if value is not None else ''
     return COLORS.get(key, 'secondary')
+
+
+# Пометки тем по итогам теста знаний
+TOPIC_MARK_COLORS = {'known': 'success', 'unknown': 'danger'}
+
+
+@register.filter
+def topic_mark(marks, key):
+    """Пометка темы ('known' / 'unknown') по словарю из вьюхи."""
+    if not marks:
+        return ''
+    return marks.get(key) or marks.get(str(key), '')
+
+
+@register.filter
+def topic_mark_color(mark):
+    """Цвет бейджа для пометки темы."""
+    return TOPIC_MARK_COLORS.get(mark, 'secondary')

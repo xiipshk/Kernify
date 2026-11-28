@@ -290,3 +290,17 @@ class DailyChallenge(TimeStampedModel):
 
     def __str__(self):
         return f'{self.date}: {self.task.name}'
+
+
+# --- Тест-диагностика (см. practice/assessment_models.py) ---
+# Реэкспорт, чтобы модели были доступны как practice.models.AssessmentResult и т.д.
+from practice.assessment_models import (  # noqa: E402,F401
+    AssessmentQuestion,
+    AssessmentResult,
+)
+
+# --- Тест после курса (см. practice/course_assessment_models.py) ---
+from practice.course_assessment_models import (  # noqa: E402,F401
+    CourseTestQuestion,
+    CourseTestResult,
+)

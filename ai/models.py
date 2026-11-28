@@ -20,6 +20,7 @@ class AIProvider(TimeStampedModel):
 
     # Provider type
     class ProviderType(models.TextChoices):
+        DEEPSEEK = 'deepseek', _('DeepSeek')
         OPENAI = 'openai', _('OpenAI')
         ANTHROPIC = 'anthropic', _('Anthropic')
         LOCAL = 'local', _('Local Model')
@@ -29,7 +30,7 @@ class AIProvider(TimeStampedModel):
         _('provider type'),
         max_length=20,
         choices=ProviderType.choices,
-        default=ProviderType.OPENAI,
+        default=ProviderType.DEEPSEEK,
     )
 
     # API Configuration

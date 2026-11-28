@@ -92,6 +92,10 @@ class LanguageDetailView(SlugDetailMixin, DetailView):
         if self.request.user.is_authenticated:
             progress_cache = getattr(language, 'user_progress_cache', [])
             context['user_progress'] = progress_cache[0] if progress_cache else None
+
+            # Итог последнего теста — для блока «Тест» на странице языка
+            from practice.assessment import latest_result
+            context['assessment_result'] = latest_result(self.request.user, language)
         return context
 
 
@@ -125,11 +129,33 @@ class ProgramDetailView(SlugDetailMixin, DetailView):
             status='published'
         ).order_by('order')
         # User enrollment check (from prefetch)
+        # End-of-course test availability is public; results are per-user.
+        from practice.course_assessment import (
+            has_questions as course_test_available,
+            latest_result as latest_course_result,
+            topic_marks as course_topic_marks,
+        )
+        context['course_test_available'] = course_test_available(program)
+        context['course_test_result'] = None
+        context['topic_marks'] = {}
+
         if self.request.user.is_authenticated:
             progress_cache = getattr(program, 'user_progress_cache', [])
             user_progress = progress_cache[0] if progress_cache else None
             context['is_enrolled'] = user_progress is not None
             context['user_progress'] = user_progress
+
+            # Пометки тем «знаю / повторить»: сначала по тесту курса,
+            # затем по общему тесту языка.
+            from practice.assessment import latest_result, topic_marks
+            context['course_test_result'] = latest_course_result(
+                self.request.user, program
+            )
+            course_marks = course_topic_marks(self.request.user, program)
+            context['topic_marks'] = course_marks or topic_marks(
+                self.request.user, program.language
+            )
+            context['assessment_result'] = latest_result(self.request.user, program.language)
         return context
 
 
@@ -162,6 +188,12 @@ class TopicDetailView(SlugDetailMixin, DetailView):
             topic=topic,
             status='published'
         ).order_by('order')
+
+        if self.request.user.is_authenticated:
+            from practice.assessment import latest_result, topic_marks
+            language = topic.program.language
+            context['topic_marks'] = topic_marks(self.request.user, language)
+            context['assessment_result'] = latest_result(self.request.user, language)
         return context
 
 

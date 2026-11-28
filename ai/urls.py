@@ -22,9 +22,11 @@ urlpatterns = [
 
     # AI Explain Code
     path('explain/', views.ExplainCodeView.as_view(), name='explain_code'),
+    path('explain/submit/', views.ExplainCodeSubmitView.as_view(), name='explain_submit'),
 
     # AI Generate Exercise
     path('generate-exercise/', views.GenerateExerciseView.as_view(), name='generate_exercise'),
+    path('generate-exercise/submit/', views.GenerateExerciseSubmitView.as_view(), name='generate_exercise_submit'),
 
     # Usage stats
     path('usage/', views.UsageStatsView.as_view(), name='usage_stats'),

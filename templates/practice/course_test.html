@@ -1,0 +1,311 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{% trans "Knowledge Test" %}: {{ program.name }} - kernify{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <nav aria-label="breadcrumb" class="mb-4">
+        <ol class="breadcrumb bg-transparent mb-0">
+            <li class="breadcrumb-item"><a href="{% url 'core:languages' %}">{% trans "Learning" %}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:language_detail' language.slug %}">{{ language.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:program_detail' program.slug %}">{{ program.name }}</a></li>
+            <li class="breadcrumb-item active">{% trans "Knowledge Test" %}</li>
+        </ol>
+    </nav>
+
+    <div class="row">
+        <div class="col-lg-9">
+            <div class="rtk-card mb-4">
+                <div class="card-body p-4">
+                    <div class="d-flex align-items-center mb-3">
+                        {% include 'includes/language_icon.html' with language=language size=56 extra_class='me-3' %}
+                        <div>
+                            <h1 class="fw-bold mb-1">{% trans "Knowledge Test" %}: {{ program.name }}</h1>
+                            <p class="text-theme-muted mb-0">
+                                Проверьте, что вы усвоили после курса, а какие темы стоит повторить.
+                            </p>
+                        </div>
+                    </div>
+
+                    {% if no_questions %}
+                    <div class="alert alert-info mb-0">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Тест по этому курсу пока не готов. Вопросы появятся позже.
+                    </div>
+                    {% else %}
+                    <div class="d-flex flex-wrap gap-3 text-theme-muted small mb-3">
+                        <span><i class="bi bi-question-circle me-1"></i>{{ question_count }} {% trans "questions" %}</span>
+                        <span><i class="bi bi-clock me-1"></i>~{% trans "5-7 min" %}</span>
+                        <span><i class="bi bi-bar-chart me-1"></i>{% trans "Result and gaps by topic" %}</span>
+                    </div>
+                    <button type="button" id="assessment-start" class="btn btn-primary btn-lg px-4">
+                        <i class="bi bi-play-fill me-2"></i>{% trans "Start Test" %}
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if not no_questions %}
+            <form id="assessment-form" method="post" action="" class="d-none" novalidate>
+                {% csrf_token %}
+                <div class="rtk-card sticky-top mb-3" style="top: 64px; z-index: 10;">
+                    <div class="card-body py-3">
+                        <div class="d-flex justify-content-between align-items-center small text-theme-muted mb-2">
+                            <span><span id="assessment-progress-label">1</span> / {{ question_count }}</span>
+                            <span id="assessment-answered">0 {% trans "answered" %}</span>
+                        </div>
+                        <div class="progress" style="height: 6px;">
+                            <div id="assessment-progress" class="progress-bar bg-primary" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="assessment-questions"></div>
+
+                <div class="d-flex justify-content-between align-items-center mt-4 mb-5">
+                    <button type="button" id="assessment-prev" class="btn btn-outline-secondary" disabled>
+                        <i class="bi bi-arrow-left me-1"></i>{% trans "Back" %}
+                    </button>
+                    <div class="d-flex gap-2">
+                        <button type="button" id="assessment-next" class="btn btn-primary">
+                            {% trans "Next" %}<i class="bi bi-arrow-right ms-1"></i>
+                        </button>
+                        <button type="submit" id="assessment-submit" class="btn btn-success d-none">
+                            <i class="bi bi-check2-circle me-1"></i>{% trans "See Result" %}
+                        </button>
+                    </div>
+                </div>
+            </form>
+            {% endif %}
+        </div>
+
+        <aside class="col-lg-3">
+            <div class="rtk-card mb-3">
+                <div class="card-body">
+                    <h6 class="fw-bold mb-3"><i class="bi bi-lightbulb me-1"></i>{% trans "How it works" %}</h6>
+                    <ul class="small text-theme-muted ps-3 mb-0">
+                        <li class="mb-2">В тесте есть вопросы на теорию и небольшие задачи.</li>
+                        <li class="mb-2">Для задач с кодом нужно ввести результат его выполнения.</li>
+                        <li>После теста вы увидите сильные темы и темы, которые стоит повторить.</li>
+                    </ul>
+                </div>
+            </div>
+
+            {% if history %}
+            <div class="rtk-card">
+                <div class="card-body">
+                    <h6 class="fw-bold mb-3"><i class="bi bi-clock-history me-1"></i>{% trans "Previous results" %}</h6>
+                    <ul class="list-unstyled small mb-0">
+                        {% for item in history %}
+                        <li class="d-flex justify-content-between align-items-center mb-2">
+                            <a href="{% url 'practice:course_test_result' program.slug item.pk %}" class="text-decoration-none">{{ item.created_at|date:"d.m.Y H:i" }}</a>
+                            <span class="badge bg-primary bg-opacity-10 text-primary">{{ item.score }}%</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+            {% endif %}
+        </aside>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if not no_questions %}
+<script>
+(function () {
+    const questions = JSON.parse('{{ questions_payload|escapejs }}');
+    const form = document.getElementById('assessment-form');
+    const startBtn = document.getElementById('assessment-start');
+    const container = document.getElementById('assessment-questions');
+    const prevBtn = document.getElementById('assessment-prev');
+    const nextBtn = document.getElementById('assessment-next');
+    const submitBtn = document.getElementById('assessment-submit');
+    const progressBar = document.getElementById('assessment-progress');
+    const progressLabel = document.getElementById('assessment-progress-label');
+    const answeredLabel = document.getElementById('assessment-answered');
+    const STRINGS = {
+        answered: "{% trans 'answered' %}",
+        unanswered: "{% trans 'Answer the question before moving on.' %}"
+    };
+
+    if (!questions.length) { return; }
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = value;
+        return div.innerHTML;
+    }
+
+    function buildChoice(q, body, multiple) {
+        q.options.forEach(function (opt, optIndex) {
+            const label = document.createElement('label');
+            label.className = 'assessment-option d-flex align-items-start gap-2 p-3 mb-2 rounded border';
+            label.style.cursor = 'pointer';
+
+            const input = document.createElement('input');
+            input.type = multiple ? 'checkbox' : 'radio';
+            input.className = 'form-check-input mt-1';
+            input.name = 'q_' + q.id;
+            input.value = optIndex;
+            input.addEventListener('change', updateProgress);
+
+            const span = document.createElement('span');
+            span.textContent = opt.text;
+
+            label.appendChild(input);
+            label.appendChild(span);
+            body.appendChild(label);
+        });
+    }
+
+    function buildTextQuestion(q, body) {
+        if (q.code) {
+            const pre = document.createElement('pre');
+            pre.className = 'p-3 rounded small mb-3';
+            pre.style.background = 'var(--bg-secondary)';
+            pre.style.color = 'var(--text-primary)';
+            const code = document.createElement('code');
+            code.textContent = q.code;
+            pre.appendChild(code);
+            body.appendChild(pre);
+        }
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'form-control';
+        input.name = 'q_' + q.id;
+        input.autocomplete = 'off';
+        input.placeholder = 'Ваш ответ';
+        input.addEventListener('input', updateProgress);
+        body.appendChild(input);
+    }
+
+    const cards = questions.map(function (q, index) {
+        const card = document.createElement('div');
+        card.className = 'rtk-card mb-3 assessment-question' + (index === 0 ? '' : ' d-none');
+        card.dataset.index = index;
+        card.dataset.questionId = q.id;
+        card.dataset.type = q.type;
+
+        const body = document.createElement('div');
+        body.className = 'card-body p-4';
+
+        const head = document.createElement('div');
+        head.className = 'd-flex justify-content-between align-items-start mb-3';
+        head.innerHTML =
+            '<span class="badge bg-secondary bg-opacity-10 text-secondary">' +
+            (q.topic ? escapeHtml(q.topic) : '') + '</span>' +
+            '<small class="text-muted">' + (index + 1) + ' / ' + questions.length + '</small>';
+        body.appendChild(head);
+
+        const text = document.createElement('h5');
+        text.className = 'mb-3';
+        text.textContent = q.question;
+        body.appendChild(text);
+
+        if (q.type === 'single_choice') {
+            buildChoice(q, body, false);
+        } else if (q.type === 'multiple_choice') {
+            const hint = document.createElement('p');
+            hint.className = 'small text-muted';
+            hint.textContent = 'Можно выбрать несколько вариантов.';
+            body.appendChild(hint);
+            buildChoice(q, body, true);
+        } else {
+            buildTextQuestion(q, body);
+        }
+
+        card.appendChild(body);
+        return card;
+    });
+
+    let current = 0;
+    let started = false;
+
+    function isAnswered(card) {
+        const radios = card.querySelectorAll('input[type=radio]:checked');
+        const checks = card.querySelectorAll('input[type=checkbox]:checked');
+        const texts = card.querySelectorAll('input[type=text]');
+        if (radios.length || checks.length) return true;
+        return Array.prototype.some.call(texts, function (input) {
+            return input.value.trim().length > 0;
+        });
+    }
+
+    function answeredCount() {
+        return cards.filter(isAnswered).length;
+    }
+
+    function updateProgress() {
+        const total = questions.length;
+        const answered = answeredCount();
+        const percent = Math.round(answered * 100 / total);
+        progressBar.style.width = percent + '%';
+        progressBar.setAttribute('aria-valuenow', percent);
+        progressLabel.textContent = current + 1;
+        answeredLabel.textContent = answered + ' ' + STRINGS.answered;
+
+        cards.forEach(function (card, i) {
+            card.classList.toggle('d-none', i !== current);
+            card.querySelectorAll('.assessment-option').forEach(function (label) {
+                const input = label.querySelector('input');
+                label.classList.toggle('assessment-option-selected', input.checked);
+            });
+        });
+
+        prevBtn.disabled = current === 0;
+        const isLast = current === questions.length - 1;
+        nextBtn.classList.toggle('d-none', isLast);
+        submitBtn.classList.toggle('d-none', !isLast);
+    }
+
+    function goTo(index) {
+        current = Math.max(0, Math.min(questions.length - 1, index));
+        updateProgress();
+        window.scrollTo({ top: form.offsetTop - 20, behavior: 'smooth' });
+    }
+
+    nextBtn.addEventListener('click', function () {
+        const card = cards[current];
+        if (!isAnswered(card)) {
+            card.classList.add('border-danger');
+            alert(STRINGS.unanswered);
+            return;
+        }
+        card.classList.remove('border-danger');
+        goTo(current + 1);
+    });
+    prevBtn.addEventListener('click', function () { goTo(current - 1); });
+
+    if (startBtn) {
+        startBtn.addEventListener('click', function () {
+            if (started) { return; }
+            started = true;
+            startBtn.classList.add('d-none');
+            form.classList.remove('d-none');
+            cards.forEach(function (card) { container.appendChild(card); });
+            updateProgress();
+            window.scrollTo({ top: form.offsetTop - 20, behavior: 'smooth' });
+        });
+    }
+
+    form.addEventListener('submit', function (event) {
+        const unanswered = questions.length - answeredCount();
+        if (unanswered > 0) {
+            const ok = confirm("{% trans 'You have unanswered questions. Finish anyway?' %}");
+            if (!ok) {
+                const firstUnanswered = cards.findIndex(function (card) {
+                    return !isAnswered(card);
+                });
+                if (firstUnanswered >= 0) { goTo(firstUnanswered); }
+                event.preventDefault();
+            }
+        }
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

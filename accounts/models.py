@@ -199,7 +199,7 @@ class UserSettings(TimeStampedModel):
     ai_provider_preference = models.CharField(
         _('preferred AI provider'),
         max_length=20,
-        choices=[('openai', 'OpenAI'), ('anthropic', 'Anthropic'), ('auto', 'Auto')],
+        choices=[('deepseek', 'DeepSeek'), ('openai', 'OpenAI'), ('anthropic', 'Anthropic'), ('auto', 'Auto')],
         default='auto',
     )
     ai_model_preference = models.CharField(_('preferred AI model'), max_length=100, blank=True)

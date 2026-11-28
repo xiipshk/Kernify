@@ -73,16 +73,33 @@ document.getElementById('explainForm').addEventListener('submit', async (e) => {
 
     try {
         const formData = new FormData(form);
-        // Placeholder - would call actual API
-        resultContent.innerHTML = '<div class="text-muted">{% trans "Explanation feature coming soon. This would integrate with AI providers to provide detailed code explanations." %}</div>';
+        const response = await fetch('{% url "ai:explain_submit" %}', {
+            method: 'POST',
+            body: formData,
+        });
+        const data = await response.json();
+        if (data.explanation) {
+            resultContent.innerHTML = escapeHtml(data.explanation).replace(/\n/g, '<br>');
+        } else {
+            resultContent.innerHTML = '<div class="text-danger">' + escapeHtml(data.error || '{% trans "Unknown error" %}') + '</div>';
+        }
         resultCard.classList.remove('d-none');
     } catch (err) {
-        resultContent.innerHTML = '<div class="text-danger">{% trans "Error: " %}' + err.message + '</div>';
+        resultContent.innerHTML = '<div class="text-danger">{% trans "Error: " %}' + escapeHtml(err.message) + '</div>';
         resultCard.classList.remove('d-none');
     } finally {
         btn.disabled = false;
         btn.innerHTML = '{% trans "Explain" %}';
     }
 });
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 </script>
 {% endblock %}

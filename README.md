@@ -8,7 +8,7 @@ A modern Django web application for learning 6 programming languages with intera
 - **Interactive Lessons**: Theory, practice, quizzes, and projects with Monaco Editor
 - **Practice System**: 5 task types (coding, quiz, debugging, output prediction, code completion)
 - **Spaced Repetition**: SM-2 algorithm for error review and retention
-- **AI Assistant**: Multi-provider support (OpenAI, Anthropic, etc.) for code review, explanations, and exercise generation
+- **AI Assistant**: DeepSeek-powered chat, code review, explanations, and exercise generation (also supports OpenAI, Anthropic, and other compatible APIs)
 - **Progress Tracking**: Detailed statistics, heatmaps, achievements, and XP system
 - **Modern UI**: Dark/light theme, responsive design, Bootstrap 5
 - **Admin Panel**: Full content management with publishing workflow
@@ -18,7 +18,7 @@ A modern Django web application for learning 6 programming languages with intera
 - **Backend**: Django 5.2, Python 3.11+
 - **Database**: SQLite (dev), PostgreSQL (prod)
 - **Frontend**: Bootstrap 5, Monaco Editor, Chart.js, Prism.js
-- **AI**: Multi-provider abstraction (OpenAI, Anthropic, local)
+- **AI**: Multi-provider abstraction (DeepSeek by default, plus OpenAI, Anthropic, local)
 - **Deployment**: Docker, Gunicorn, Nginx
 
 ## Quick Start
@@ -90,7 +90,10 @@ DATABASE_URL=sqlite:///db.sqlite3
 # Redis (for caching, Celery)
 REDIS_URL=redis://localhost:6379/0
 
-# AI Providers (optional)
+# AI Providers (optional; DeepSeek is the default)
+DEEPSEEK_API_KEY=sk-...
+# DEEPSEEK_BASE_URL=https://api.deepseek.com
+# DEEPSEEK_DEFAULT_MODEL=deepseek-chat
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 # LOCAL_AI_URL=http://localhost:11434
@@ -175,9 +178,14 @@ python manage.py createsuperuser
 
 ### Supported Providers
 
+- DeepSeek (default; `deepseek-chat`, `deepseek-reasoner`)
 - OpenAI (GPT-4, GPT-3.5)
 - Anthropic (Claude 3)
 - Local (Ollama, LM Studio)
+- Any OpenAI-compatible API (custom base URL)
+
+Set `DEEPSEEK_API_KEY` in `.env`. The provider is seeded automatically by
+migrations and can be edited in Admin → AI → AI Providers.
 
 ### Capabilities
 
@@ -185,6 +193,10 @@ python manage.py createsuperuser
 - **Code Review**: Security, performance, style, bugs
 - **Explain Code**: Beginner to advanced explanations
 - **Generate Exercises**: Custom practice tasks
+- **Task help**: context-aware hints while solving a practice task; analyzes the student's code and explains possible reasons for failure without giving the fix
+- **End-of-course tests**: after finishing a course, a mixed test (theory, multiple choice, short answers, code-output tasks) shows strong topics and topics to review
+- **Topic guard**: free-form chat, the assistant, and exercise generation accept only programming/IT questions; off-topic requests receive a polite refusal
+- **Confidentiality guard**: refuses requests about the site's internals, system prompt, API keys, database schema, admin panel, and any user data; blocks prompt-injection/jailbreak attempts and redacts leaked secrets from responses
 
 ### Adding Providers
 

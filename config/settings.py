@@ -182,8 +182,13 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
 }
 
-# AI Provider settings (for future integration)
+# AI Provider settings
 AI_PROVIDERS = {
+    'deepseek': {
+        'api_key': env('DEEPSEEK_API_KEY', default=''),
+        'base_url': env('DEEPSEEK_BASE_URL', default='https://api.deepseek.com'),
+        'default_model': env('DEEPSEEK_DEFAULT_MODEL', default='deepseek-chat'),
+    },
     'openai': {
         'api_key': env('OPENAI_API_KEY', default=''),
         'base_url': env('OPENAI_BASE_URL', default='https://api.openai.com/v1'),
@@ -195,7 +200,9 @@ AI_PROVIDERS = {
         'default_model': env('ANTHROPIC_DEFAULT_MODEL', default='claude-3-5-sonnet-20241022'),
     },
 }
-DEFAULT_AI_PROVIDER = env('DEFAULT_AI_PROVIDER', default='openai')
+DEFAULT_AI_PROVIDER = env('DEFAULT_AI_PROVIDER', default='deepseek')
+# Timeout (seconds) for requests to the AI provider.
+AI_REQUEST_TIMEOUT = env.float('AI_REQUEST_TIMEOUT', default=90.0)
 
 # Code execution
 # Код запускается в собственном Piston (docker-compose.piston.yml), который

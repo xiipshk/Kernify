@@ -31,9 +31,23 @@ class LearningIndexView(LoginRequiredMixin, TemplateView):
             status='published'
         ).select_related('language').order_by('language', 'order')
 
+        # Группируем по языкам, чтобы показать вкладки «Тест» / «Курсы»
+        language_sections = {}
+        for program in available:
+            section = language_sections.setdefault(
+                program.language_id, {'language': program.language, 'programs': []}
+            )
+            section['programs'].append(program)
+
+        # Последний результат теста по каждому языку (для карточки «Тест»)
+        from practice.assessment import latest_result
+        for section in language_sections.values():
+            section['assessment_result'] = latest_result(user, section['language'])
+
         context.update({
             'enrolled_programs': enrolled,
             'available_programs': available,
+            'language_sections': list(language_sections.values()),
         })
         return context
 
@@ -156,6 +170,10 @@ class LessonLearnView(LoginRequiredMixin, SlugDetailMixin, DetailView):
         context['progress'] = progress
         context['code_runner_enabled'] = code_runner.is_enabled()
 
+        # Пометки темы по последнему тесту знаний («знаю / повторить»)
+        from practice.assessment import topic_marks
+        context['topic_marks'] = topic_marks(user, program.language)
+
         # Задачи к уроку — только из пройденного материала.
         from practice.lesson_tasks import lesson_tasks_for
         lesson_tasks = lesson_tasks_for(lesson, limit=5)
@@ -204,6 +222,13 @@ class LessonNextView(LoginRequiredMixin, View):
 
         if next_lesson:
             return redirect('learning:lesson_learn', slug=next_lesson.slug)
+
+        # Курс закончен — предложить итоговый тест, если он готов.
+        from practice.course_assessment import has_questions as course_test_available
+        program = lesson.topic.program
+        if course_test_available(program):
+            return redirect('practice:course_test', slug=program.slug)
+
         return redirect('learning:lesson_learn', slug=slug)
 
 

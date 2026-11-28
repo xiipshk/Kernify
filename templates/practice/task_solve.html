@@ -91,6 +91,7 @@
                     <button class="btn btn-sm btn-outline-light active" data-tab="editor">{% trans "Code" %}</button>
                     <button class="btn btn-sm btn-outline-light" data-tab="output">{% trans "Output" %}</button>
                     <button class="btn btn-sm btn-outline-light" data-tab="tests">{% trans "Tests" %}</button>
+                    <button class="btn btn-sm btn-outline-light" data-tab="ai"><i class="bi bi-stars me-1"></i>{% trans "AI Assistant" %}</button>
                 </div>
 
                 <!-- Editor -->
@@ -106,6 +107,39 @@
                 <!-- Tests Panel -->
                 <div id="testsPanel" class="d-none flex-grow-1 overflow-auto bg-theme-dark p-3" role="tabpanel" style="height: 100%;">
                     <div id="testsContent"></div>
+                </div>
+
+                <!-- AI Assistant Panel -->
+                <div id="aiPanel" class="d-none flex-grow-1 overflow-auto bg-theme-dark p-3" role="tabpanel" style="height: 100%;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="mb-0"><i class="bi bi-stars text-primary me-2"></i>{% trans "AI Assistant" %}</h6>
+                        <small class="text-muted d-none d-md-inline">Анализ кода и подсказки</small>
+                    </div>
+
+                    <div id="aiMessages" class="mb-3" aria-live="polite"></div>
+
+                    <div class="d-flex gap-2 flex-wrap mb-3">
+                        <button type="button" class="btn btn-sm btn-outline-info" id="aiHintBtn">
+                            <i class="bi bi-lightbulb me-1"></i>{% trans "Hints" %}
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="aiReviewBtn">
+                            <i class="bi bi-code-square me-1"></i>{% trans "Code Review" %}
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="aiExplainBtn">
+                            <i class="bi bi-question-circle me-1"></i>{% trans "Explain" %}
+                        </button>
+                    </div>
+
+                    <div class="form-text mb-2">
+                        Можно написать свой вопрос и нажать «Подсказки» — ИИ учтёт его. Или отправьте вопрос кнопкой со стрелкой.
+                    </div>
+
+                    <div class="input-group">
+                        <textarea id="aiQuestion" class="form-control" rows="2" placeholder="{% trans "Your Question" %}"></textarea>
+                        <button class="btn btn-primary" id="aiAskBtn" type="button" title="{% trans "Ask Assistant" %}">
+                            <i class="bi bi-send-fill"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -192,7 +226,12 @@ require(['vs/editor/editor.main'], function() {
             document.getElementById('outputPanel').classList.toggle('d-flex', btn.dataset.tab === 'output');
             document.getElementById('testsPanel').classList.toggle('d-none', btn.dataset.tab !== 'tests');
             document.getElementById('testsPanel').classList.toggle('d-flex', btn.dataset.tab === 'tests');
+            document.getElementById('aiPanel').classList.toggle('d-none', btn.dataset.tab !== 'ai');
             if (btn.dataset.tab === 'editor') { relayout(); setTimeout(relayout, 50); }
+            if (btn.dataset.tab === 'ai') {
+                const aiInput = document.getElementById('aiQuestion');
+                if (aiInput) aiInput.focus();
+            }
         });
     });
 
@@ -313,6 +352,132 @@ require(['vs/editor/editor.main'], function() {
         editor.setValue(`{{ task.starter_code|escapejs }}`);
         document.getElementById('outputContent').textContent = '';
         document.getElementById('testsContent').innerHTML = '';
+    });
+
+    // AI Assistant (context-aware help for the current task)
+    const aiMessages = document.getElementById('aiMessages');
+    const aiQuestion = document.getElementById('aiQuestion');
+    const aiAskBtn = document.getElementById('aiAskBtn');
+    const aiHintBtn = document.getElementById('aiHintBtn');
+    const aiReviewBtn = document.getElementById('aiReviewBtn');
+    const aiExplainBtn = document.getElementById('aiExplainBtn');
+    const aiHistory = [];
+    let aiBusy = false;
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function appendAiMessage(role, text, isError = false) {
+        const wrapper = document.createElement('div');
+        wrapper.className = `mb-3 ${role === 'user' ? 'text-end' : ''}`;
+        const bubble = document.createElement('div');
+        bubble.className = `d-inline-block rounded-3 p-3 ${role === 'user' ? 'bg-primary text-white' : 'bg-secondary bg-opacity-25'} ${isError ? 'text-danger' : ''}`;
+        bubble.style.maxWidth = '90%';
+        bubble.style.whiteSpace = 'pre-wrap';
+        bubble.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+        wrapper.appendChild(bubble);
+        aiMessages.appendChild(wrapper);
+        aiMessages.scrollTop = aiMessages.scrollHeight;
+    }
+
+    function setAiBusy(busy) {
+        aiBusy = busy;
+        [aiAskBtn, aiHintBtn, aiReviewBtn, aiExplainBtn].forEach(btn => {
+            if (btn) btn.disabled = busy;
+        });
+    }
+
+    async function askAI(mode, question, label) {
+        if (aiBusy) return;
+        if (mode === 'question' && !question) {
+            aiQuestion.focus();
+            return;
+        }
+
+        setAiBusy(true);
+        appendAiMessage('user', label || question);
+
+        const thinking = document.createElement('div');
+        thinking.className = 'mb-3 text-muted small';
+        thinking.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>{% trans "Thinking..." %}';
+        aiMessages.appendChild(thinking);
+        aiMessages.scrollTop = aiMessages.scrollHeight;
+
+        try {
+            const response = await fetch('{% url "practice:task_ai_help_api" task.slug %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}',
+                },
+                body: JSON.stringify({
+                    mode: mode,
+                    question: question || '',
+                    code: editor.getValue(),
+                    history: aiHistory,
+                }),
+            });
+            const data = await response.json();
+
+            if (data.answer) {
+                appendAiMessage('assistant', data.answer);
+                if (question) aiHistory.push({ role: 'user', content: question });
+                aiHistory.push({ role: 'assistant', content: data.answer });
+            } else {
+                appendAiMessage('assistant', data.error || 'Не удалось получить ответ.', true);
+            }
+        } catch (e) {
+            appendAiMessage('assistant', 'Ошибка: ' + e.message, true);
+        } finally {
+            thinking.remove();
+            setAiBusy(false);
+            aiQuestion.focus();
+        }
+    }
+
+    aiHintBtn.addEventListener('click', () => {
+        const question = aiQuestion.value.trim();
+        aiQuestion.value = '';
+        askAI('hint', question, question ? `Подсказка: ${question}` : 'Подсказка');
+    });
+
+    aiReviewBtn.addEventListener('click', () => {
+        const question = aiQuestion.value.trim();
+        aiQuestion.value = '';
+        askAI('review', question, question ? `Разбор кода: ${question}` : 'Разбор кода');
+    });
+
+    aiExplainBtn.addEventListener('click', () => {
+        const question = aiQuestion.value.trim();
+        aiQuestion.value = '';
+        askAI(
+            'question',
+            question || 'Объясни, что делает мой текущий код и из-за чего он может не работать.',
+            question ? `Объяснение: ${question}` : 'Объяснение кода'
+        );
+    });
+
+    aiAskBtn.addEventListener('click', () => {
+        const question = aiQuestion.value.trim();
+        if (!question) {
+            aiQuestion.focus();
+            return;
+        }
+        aiQuestion.value = '';
+        askAI('question', question);
+    });
+
+    aiQuestion.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            aiAskBtn.click();
+        }
     });
 
     // Keyboard shortcut
